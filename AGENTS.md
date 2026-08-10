@@ -4,7 +4,7 @@ Always start new features by reading @docs/README.md and finish your work by doc
 
 The `inseam` binary is installed on PATH via `cargo install`. After changing code, finish by running `cargo install --path crates/inseam-cli` so the local binary stays current with the source.
 
-Finish work by committing your changes.
+Finish work by committing your changes and mention the hash in your final message.
 
 ## Rust Styleguide
 
