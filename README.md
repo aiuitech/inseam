@@ -1,6 +1,6 @@
 # inseam
 
-One index for everything you have. Nothing leaves where it lives.
+One index for everything you have. Nothing leaves where it lives. A personal context engine for AI: your agents can read anything you have, wherever it lives — and the outside world reads only what its verified identity is granted.
 
 `inseam` indexes your data where it sits — a laptop's filesystem, a Gmail account, a service's API — and gives agents, apps, and people one way to find and fetch all of it. It stores addresses and a discovery index, never the content: the network syncs *where data is*, and source material is fetched on demand from where it already lives.
 
