@@ -26,6 +26,11 @@ Plugins do not get raw sockets. The core exposes host functions (HTTP requests, 
 
 No inseam-specific registry to start. A plugin is a `.wasm` + manifest, distributed through ecosystems people already use — npm, PyPI, crates.io, OCI registries, or a plain URL. Install = fetch by package ref or URL, verify, load.
 
+A community registry follows once the WIT contract settles ([positioning](positioning.md)) — the intended path is an agent skill that authors plugins against the contract, publishing to a registry the community shares. Two commitments made now:
+
+- **The contract is proven before the skill ships.** Exit criterion: the core carries zero service-specific dependencies — everything service-shaped reaches core through the plugin pathway. The OpenRouter extraction is the current test of this.
+- **Registry trust is a launch requirement, not hardening.** Plugins hold credentials and read personal data, and many will be machine-generated; the registry starts with signed manifests and declared capabilities (which host functions, which external hosts) or it doesn't start.
+
 ## Paths not taken
 
 - **Native dynamic libraries.** No sandbox, ABI instability, per-platform builds. Unacceptable for untrusted/AI-generated code.

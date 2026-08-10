@@ -12,6 +12,8 @@ Sync is **full and unfiltered**: every node converges on the entire catalog. Thi
 
 This decision buys simplicity (no per-edge personalization of the sync stream) and full offline discovery on every node. It would need revisiting only if federated networks — nodes with different owners — ever enter scope.
 
+One tension acknowledged: "content never moves" does not mean "nothing content-derived moves." Envelopes carry titles, discovery hints, and trust properties (correspondent emails, filenames), and full sync places all of that on every node — including a hosted one. Within a single trust domain this is by design, but the privacy claim should be stated precisely: content stays on hosts; envelope metadata replicates everywhere. Whether a host can opt sources down to minimal envelopes (address + type, no hints) is an open question below.
+
 ## Propagation
 
 - Catalog changes replicate across node↔node [connections](connections.md); nodes re-share what they learn, so knowledge crosses the network transitively even between nodes that never connect directly.
@@ -27,3 +29,4 @@ Removals sync as tombstones; a source that disappears from a host must disappear
 
 - Sync mechanism: gossip vs. log replication vs. CRDT-style merge (deletion + partial-order needs point toward a per-origin log with vector clocks).
 - Catalog scale ceilings on small devices, and whether a low-power node may opt into a partial catalog (a local capacity choice, not an access rule).
+- Minimal envelopes: whether a host or source can be marked to sync address + type only, withholding hints and property detail from replication at the cost of discovery quality elsewhere.
