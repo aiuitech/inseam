@@ -6,3 +6,8 @@
 - introduce assets for brand icon, distribute in the macos app manifest
 - ai skills for building inseam plugins, setting up nodes, and publishing to our plugin registry
   - plugin registry location TBD
+- introduce dedupe for sources on different hosts:
+  - eg) ios file, syncs to icloud / an ios file host has the same file as icloud host.
+- support fetching of binary data/files as well
+- figure out how to fetch sources from node -> node.ios that contains things like photo index. 
+  - if we can't: decide how to share indexes (at least the catalog) for sources that can only index locally (eg. ios photos)
