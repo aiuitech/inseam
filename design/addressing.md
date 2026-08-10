@@ -21,6 +21,7 @@ The host component is what makes routing work: resolving an address means findin
 Each address carries an **envelope**: a small, structured metadata record that syncs along with it. The envelope holds:
 
 - source type and content type
+- content length (lines for text, bytes otherwise) — what lets callers [scan](finder.md) a range instead of fetching whole sources
 - timestamps (created, modified, observed)
 - trust properties attached at the source level ([access-control](access-control.md))
 - discovery hints (title/summary-grade text the [index](discovery.md) can use without fetching)

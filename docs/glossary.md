@@ -7,7 +7,7 @@ The inseam vocabulary, one picture. Definitions here are canonical; the linked d
 - **Source** — a piece of data: an email, a file, a chat thread, a database row. The unit of addressing and discovery. ([design/addressing.md](../design/addressing.md))
 - **Address** — the global name of a source: host identity + locator. Addresses sync everywhere; content never does.
 - **Locator** — the within-host part of an address. Opaque to everything except the steward's connection plugin.
-- **Envelope** — the small, size-bounded metadata record that syncs alongside an address: types, timestamps, trust properties, discovery hints. The only content-derived thing that leaves a host.
+- **Envelope** — the small, size-bounded metadata record that syncs alongside an address: types, content length, timestamps, trust properties, discovery hints. The only content-derived thing that leaves a host.
 
 ## Topology
 
@@ -26,8 +26,18 @@ The inseam vocabulary, one picture. Definitions here are canonical; the linked d
 
 ## Discovery
 
-- **Index** — a node's local hybrid full-text + vector search index over the catalog and fetchable content. Derived, rebuildable, configured per node (small on a phone, deep on a server). ([design/discovery.md](../design/discovery.md))
-- **Discovery** — querying indexes (local first, then stronger connected nodes) to get ranked addresses + envelopes, then fetching sources progressively.
+- **Index** — a node's local semantic graph over the catalog and fetchable content, searchable by full-text and vector similarity. Derived, rebuildable, configured per node. ([design/indexing.md](../design/indexing.md))
+- **Fragment** — the unit of the index: a piece of understanding derived from a source (a markdown section, a transcript line, a summary, an entity), carrying a mimetype, an embedding, an extent, and typed relations. Index-local; never syncs; carries no access rules of its own — authorization is source-level only.
+- **Extent** — a fragment's recorded position and length within its parent (lines for text, bytes or timestamps otherwise); what makes `scan` ranges possible.
+- **Relation** — a typed edge between fragments: `contains`, `links-to`, `derived-from`, `mentions`, `transcribes`… Relation kinds drive retrieval boosting.
+- **Transform** — a registered handler (core or plugin) that takes a fragment of a mimetype it claims and emits child fragments. Indexing is recursive transform application.
+- **Entity** — a deduplicated fragment for a person, place, project, or date, related by `mentions` edges to every fragment that references it; the graph's connective tissue.
+- **Index profile** — a node's index configuration: embedding model, date cutoff, transforms and budgets, summary lengths, storage backend.
+- **Finder** — the retrieval algorithm: hybrid full-text + vector seed search, then relevance propagation along relations (spreading activation / Personalized PageRank), rolled up to ranked sources with scores, summaries, and hints. ([design/finder.md](../design/finder.md))
+- **Incremental discovery** — the client loop the Finder serves: query → expand or scan the promising results → fetch only what earns it, each step costing more context than the last.
+- **Expand** — boundary operation returning one source's fragments and relations from the serving node's index, so a client navigates a result's structure instead of re-searching.
+- **Scan** — boundary operation reading a range of a source (lines for text; on media, redirects to descendant text fragments such as a transcript), so a client peeks into a large source without fetching it all.
+- **Discovery** — querying indexes (local first, then stronger connected nodes) to get ranked addresses + envelopes, then fetching sources progressively. ([design/discovery.md](../design/discovery.md))
 
 ## Trust
 
@@ -41,7 +51,7 @@ The inseam vocabulary, one picture. Definitions here are canonical; the linked d
 
 ## Interfaces
 
-- **Operation** — a typed, transport-neutral request/response the core defines: boundary operations (`query`, `fetch`, `verify`) and owner operations (managing connections, hosts, plugins). ([design/node-api.md](../design/node-api.md))
+- **Operation** — a typed, transport-neutral request/response the core defines: boundary operations (`query`, `expand`, `scan`, `fetch`, `verify`) and owner operations (managing connections, hosts, plugins). ([design/node-api.md](../design/node-api.md))
 - **Adapter** — a thin transport skin over the operations layer: HTTP/JSON, MCP, CLI in core; gRPC and others are mechanical additions.
 
 ## Extensibility

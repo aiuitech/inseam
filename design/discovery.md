@@ -4,13 +4,13 @@ Discovery is how anything — an agent, an app, a person — finds the addresses
 
 ## The index
 
-Every node maintains a **local search index** over its catalog (and over content it is entitled to fetch). The index is hybrid full-text + vector. The specific indexing algorithm is its own future design doc; for now it is treated as a black-box search index.
+Every node maintains a **local search index** over its catalog (and over content it is entitled to fetch). The index is a hybrid full-text + vector **semantic graph**, built by decomposing sources into related fragments — [indexing](indexing.md) covers how it's built, and the [Finder](finder.md) covers how it's queried.
 
 The index is derived data: rebuildable at any time from the catalog + fetches, never a source of truth.
 
 ## Per-node configuration
 
-Index quality is a *local* decision, configured per node:
+Index quality is a *local* decision, configured per node via its [index profile](indexing.md):
 
 - A phone builds a small, cheap index over envelope hints only — enough to work offline.
 - A home server or our hosted service builds a large, high-quality index, fetching full content (through the normal access-controlled fetch path) and running better models.
@@ -28,7 +28,7 @@ Queries between nodes are unfiltered — the network is a single trust domain. Q
 
 ## Indexing and the boundary
 
-Within the network, a node may fetch and deep-index anything — indexing is an ordinary consumer of the fetch path. Index entries inherit their source's trust properties so that boundary-time filtering of results is possible.
+Within the network, a node may fetch and deep-index anything — indexing is an ordinary consumer of the fetch path. Authorization stays at the source level: index fragments carry no access rules of their own, and boundary-time filtering resolves each result against its source's trust properties ([access-control](access-control.md)).
 
 ## Paths not taken
 
@@ -37,7 +37,5 @@ Within the network, a node may fetch and deep-index anything — indexing is an 
 
 ## Open questions
 
-- The indexing algorithm itself (owner has a design; to be written up as its own doc).
 - How nodes advertise index capability/quality to peers.
-- Ranking when merging local and remote results.
 - Embedding model choice and versioning across heterogeneous nodes.

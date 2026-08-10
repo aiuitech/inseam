@@ -7,9 +7,13 @@ How anything outside a node talks to it. The ruling intent: **one operations lay
 The core defines a small set of typed operations: plain request/response messages with no transport assumptions (no headers, routes, or status codes), JSON-serializable by construction. Two scopes:
 
 - **Boundary operations** — available to [external requesters](access-control.md):
-  - `query` — run [discovery](discovery.md) with a topic/filters; returns ranked addresses + envelopes.
-  - `fetch` — retrieve a source's content by address.
+  - `query` — run [discovery](discovery.md) with a topic/filters; returns ranked results: addresses + envelopes, each with score, summary, and fragment hints ([Finder](finder.md)).
+  - `expand` — return one source's fragments and relations from the serving node's index, for navigating a result's structure instead of re-searching.
+  - `scan` — read a range of a source (lines for text; media redirects to descendant text fragments), so a client peeks into a large source without fetching it all.
+  - `fetch` — retrieve a source's full content by address.
   - `verify` — initiate a property-verification flow (e.g. send a confirmation link), yielding a verified property the requester can subsequently present.
+
+  `query` → `expand`/`scan` → `fetch` is the incremental-discovery ladder ([Finder](finder.md)): each rung costs more context than the last, and an AI client climbs only where the previous rung earned it.
 - **Owner operations** — managing the node itself: connections, hosts, plugins, index configuration, sync status. Same layer, separate scope; never exposed at the boundary.
 
 ## Transport adapters
@@ -32,7 +36,7 @@ Every boundary request carries:
 
 Why the node believes the assertion: a registered caller is granted **verifier trust** for specific property namespaces — my chat service may assert `email:*` because I trust its email-verification flow. Callers without that grant can only use properties the node itself verified for them via `verify`. Either way, the [access-control](access-control.md) matching rule then governs what the request can see: sources carrying the asserted properties, plus anything the network exposes as public.
 
-So the example flow: my external service calls `query("some topic", properties: [email:some@user.com])` over HTTP with its API key; the node fans out across the network with the property filter attached, and returns matching addresses + envelopes as JSON; the service then `fetch`es the sources worth reading.
+So the example flow: my external service calls `query("some topic", properties: [email:some@user.com])` over HTTP with its API key; the node fans out across the network with the property filter attached, and returns matching results as JSON; the service then `expand`s or `scan`s the promising ones and `fetch`es only the sources that earn it.
 
 ## Paths not taken
 
