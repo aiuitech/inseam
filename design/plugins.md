@@ -1,0 +1,40 @@
+# Plugins
+
+The core stays small and does the invariant things well: catalog + [sync](address-sync.md), routing, [discovery](discovery.md), [access control](access-control.md), plugin execution. Everything service- and format-specific is a plugin. The long tail of integrations will come from the community and from **AI-authored plugins** — non-developers must be able to have an agent write the plugin they need, so the surface must be small, typed, and generatable.
+
+## What plugins provide
+
+- **Connection types**: how to reach and authenticate against a service ([connections](connections.md)) — Gmail, Slack, a filesystem, an arbitrary REST API.
+- **Source handling**: enumerating a host's sources, extracting [envelopes](addressing.md), fetching content on demand.
+- **Verification methods**: new ways to verify trust properties ([access-control](access-control.md)).
+- Later, most likely: index enrichment, content transformers.
+
+## Runtime: WASM components (WASI)
+
+Plugins are WebAssembly components against WIT-defined interfaces.
+
+- **Sandboxed by construction** — a plugin sees only the capabilities the core hands it, critical when most plugins are third-party or machine-generated.
+- **Any language** — anything that compiles to a WASM component (Rust, Go, Python, JS, …), so authors and AI agents work in whatever they know.
+- **Typed contract** — WIT interfaces are the API: machine-readable, versionable, and exactly the kind of narrow schema an agent can reliably target.
+- **One artifact** — a `.wasm` file runs identically on every node the core runs on.
+
+### Capability-mediated I/O
+
+Plugins do not get raw sockets. The core exposes host functions (HTTP requests, credential access, storage) and the plugin's manifest declares what it needs — down to which external hosts it may call. The core mediates every call. This is both the sandbox story and the workaround for WASI's still-maturing native networking: the core owns the network stack; plugins just describe requests.
+
+## Distribution
+
+No inseam-specific registry to start. A plugin is a `.wasm` + manifest, distributed through ecosystems people already use — npm, PyPI, crates.io, OCI registries, or a plain URL. Install = fetch by package ref or URL, verify, load.
+
+## Paths not taken
+
+- **Native dynamic libraries.** No sandbox, ABI instability, per-platform builds. Unacceptable for untrusted/AI-generated code.
+- **Sidecar processes over RPC.** Heavier per-plugin cost and a much larger attack surface, but kept as a documented **escape hatch** for the rare integration WASM cannot express (native SDK dependencies, device drivers).
+- **Embedded scripting language (Lua/JS only).** Single-language lock-in contradicts meeting authors where they are.
+
+## Open questions
+
+- Wasmtime directly vs. a plugin-framework layer (e.g. Extism) on top; leaning wasmtime + our own WIT world for full control of the contract.
+- Manifest schema: capability grants, version pinning, signing/provenance (matters more as AI-generated plugins circulate).
+- Long-running vs. per-call plugin instantiation; state a plugin may keep.
+- Streaming large fetch results across the component boundary without copying whole payloads.
