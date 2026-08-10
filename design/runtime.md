@@ -6,6 +6,10 @@ Technology decisions for the core.
 
 The core is written in **Rust** and ships as a single static binary. One artifact runs a node anywhere — a laptop, a phone-adjacent device, a beefy server, a container. A node is: the binary + a config file + a data directory. Rust also gives us first-class wasmtime embedding for [plugins](plugins.md) and the performance headroom the [index](discovery.md) needs.
 
+## Workspace: one core library, many app crates
+
+The repo is a Cargo workspace. All business logic lives in the `inseam` library crate; each shipping artifact is a thin app crate that embeds it. The CLI (`inseam-cli`, installing the `inseam` binary) is the first app; future apps — a macOS GUI (SwiftUI over an FFI layer), mobile targets, a daemon — are additional crates consuming the same core. "Single binary" remains true per artifact: each app is one self-contained binary embedding the whole node core; nothing is a client to a separate core process. App crates hold only transport/UI concerns (argument parsing, env loading, logging setup, platform bindings) — anything two apps would both need belongs in the core.
+
 ## Index storage: LanceDB
 
 The discovery index is built on **LanceDB** (embedded, via the native Rust crate):

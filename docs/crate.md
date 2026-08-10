@@ -1,6 +1,11 @@
 # Crate Layout
 
-`inseam` is one Rust crate: a library plus the `inseam` CLI binary (`src/main.rs`), per the single-binary node decision in [design/runtime.md](../design/runtime.md).
+The repo is a Cargo workspace, per the workspace decision in [design/runtime.md](../design/runtime.md):
+
+- `crates/inseam` — the core library; all business logic lives here. All modules below are in this crate.
+- `crates/inseam-cli` — the `inseam` binary (`cargo install --path crates/inseam-cli`): clap parsing, env/profile resolution, logging setup, and calls into the core's `ops`/`agent`. No business logic.
+
+Shared dependency versions live in `[workspace.dependencies]` in the root `Cargo.toml`; member crates reference them with `dep.workspace = true`.
 
 | Module | What lives there |
 | --- | --- |
@@ -18,4 +23,4 @@
 | `agent` | The live-LLM demo loop driving the operations as tools |
 | `dates` | Civil-date <-> epoch helpers (no calendar crate) |
 
-Tests: unit tests inline per module; `tests/` holds the end-to-end ladder walk (`index_and_find.rs`), the relational-relevance proof (`finder_graph.rs`), and property tests over the Finder's numeric core (`finder_props.rs`). All tests run offline on the hashed embedder.
+Tests: unit tests inline per module; `crates/inseam/tests/` holds the end-to-end ladder walk (`index_and_find.rs`), the relational-relevance proof (`finder_graph.rs`), and property tests over the Finder's numeric core (`finder_props.rs`). All tests run offline on the hashed embedder.

@@ -1,9 +1,14 @@
-[package]
-name = "inseam"
+[workspace]
+resolver = "3"
+members = ["crates/inseam", "crates/inseam-cli"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
+[workspace.dependencies]
+inseam = { path = "crates/inseam" }
+
 anyhow = "1.0.104"
 arrow-array = "58"
 arrow-schema = "58"
@@ -27,6 +32,5 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 walkdir = "2.5.0"
 
-[dev-dependencies]
 proptest = "1.11.0"
 tempfile = "3.27.0"

@@ -2592,12 +2592,8 @@ dependencies = [
 name = "inseam"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "arrow-array",
  "arrow-schema",
- "clap",
- "dirs",
- "dotenvy",
  "futures",
  "gethostname",
  "lance-index",
@@ -2614,8 +2610,21 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
- "tracing-subscriber",
  "walkdir",
+]
+
+[[package]]
+name = "inseam-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dirs",
+ "dotenvy",
+ "inseam",
+ "serde_json",
+ "tokio",
+ "tracing-subscriber",
 ]
 
 [[package]]
