@@ -47,9 +47,16 @@ The Finder runs per node against that node's own index. Fan-out ([discovery](dis
 - **Ad-hoc additive boosts as the spec.** The 0.2 → 0.25 arithmetic is the intuition, not the algorithm; hand-tuned addition invites feedback loops and order dependence. PPR/spreading activation is the same idea with convergence behavior you can reason about.
 - **LLM re-ranking in the core loop.** Not rejected forever, but not the core algorithm: the Finder must run on a phone, offline, in milliseconds. A re-ranking pass could be a big-node option later.
 
+## Settled since
+
+- **Weights and PPR parameters are profile-configurable with fixed defaults** (`[finder]`: damping 0.5, ≤12 iterations with ε early-exit, RRF k=60; weights contains 1.0, transcribes 1.0, derived-from 0.9, mentions 0.8, links-to 0.4). Learned weights remain future work.
+- **Boost, never gate — the formula**: final = seed + PPR score. Addition keeps every seed's standing (each retains ≥ (1−damping) of its normalized mass; property-tested).
+- **Rollup**: source = f1 + 0.1·f2 + 0.05·f3 over its fragments' final scores, best-first.
+- **Vector seeds carry a distance floor** (`max_vector_distance`, cosine): nearest-k always returns something, and beyond the floor a "neighbor" is noise, not a seed. Discovered the day flat similarity happily returned an orchid note for a fern query.
+- **Scan mechanics, first cut**: 1-based inclusive line ranges, end clamped; media scans serve the largest text descendant fragment. Byte fallback and time-range addressing remain open below.
+
 ## Open questions
 
-- Per-relation-kind weights: fixed defaults, profile-configurable, or eventually learned from fetch-through feedback (a fetch after a query is a relevance signal).
-- PPR parameters (restart probability, iteration budget) and whether small devices run one-hop spreading as the cheap approximation.
+- Learning relation weights from fetch-through feedback (a fetch after a query is a relevance signal).
 - Merging fan-out results when nodes' indexes overlap (same source indexed by two nodes) — dedupe by address, but whose hint wins? Same question for `expand`: which node's index serves the subtree when several have one.
-- Scan range mechanics: the line/byte unit fallback for structureless text, and whether media scans can address a time range directly (mapped through transcript extents).
+- Scan ranges for structureless single-line text (byte fallback) and media time ranges mapped through transcript extents.

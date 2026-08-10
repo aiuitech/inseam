@@ -61,10 +61,14 @@ The index lives in LanceDB ([runtime](runtime.md)), whose object-store backend m
 - **Fixed-size chunking.** Rejected as the primary decomposition: semantic structure (headings, subtitles, threads) produces fragments that mean something, which the relation graph and Finder depend on. A dumb chunker can still exist as a fallback transform for structureless text.
 - **Entities as a separate store.** Rejected: entities are fragments in the same graph. One graph, one retrieval algorithm.
 
+## Settled since
+
+- **Where relations live physically**: the SQLite catalog store holds the graph (fragments, relations, entity registry); Lance holds vectors + FTS over text-bearing fragments and is strictly derived.
+- **Incremental re-indexing, first cut**: change detection is `modified` timestamp + raw byte size, with an `indexed` completion mark so interrupted runs re-index; a changed source's whole fragment subtree is deleted (relations cascade) and rebuilt. Content-hash detection can replace the heuristic later without structural change.
+- **Maintenance**: how the index stays true to sources and profile after the first build — the reconciling sweep, profile-change invalidation tiers, deletion handling, entity GC — is its own concept: [index-maintenance](index-maintenance.md).
+- **Entity fragments and source-level authorization**: a deduplicated entity belongs to no single source, so entity fragments carry no source address. They conduct relevance and appear in `expand`, but never rank as results themselves — boundary exposure remains source-level.
+
 ## Open questions
 
-- Where relations live physically — Lance tables are columnar and unloved as edge stores; the catalog store (SQLite) may hold the graph with Lance holding vectors + FTS.
-- Incremental re-indexing: detecting source change (envelope content hash?) and invalidating exactly the affected fragment subtree.
-- Transform budgets and cycle prevention when link-following transforms recurse into the open web.
-- Entity deduplication/resolution quality ("Greg" vs "Greg Hunt" vs an email address) — and whether entity resolution is itself a pluggable transform.
-- Embedding model migration: re-embedding the graph when a profile's model changes.
+- Transform budgets and cycle prevention when link-following transforms recurse into the open web (v1 records `text/uri-list` fragments but does not fetch them).
+- Entity deduplication/resolution quality ("Greg" vs "Greg Hunt" vs an email address) — and whether entity resolution is itself a pluggable transform. (Embedding-model migration was open here; settled as in-place re-embed in [index-maintenance](index-maintenance.md).)

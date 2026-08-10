@@ -15,7 +15,7 @@ Every connection specifies:
 
 - **Protocol** — how to speak: inseam-native over WebSocket or HTTP, or a service protocol supplied by a [plugin](plugins.md).
 - **Credentials** — OAuth grants, API keys, mutual keys between nodes. Held locally by the owning node, never synced.
-- **Capabilities** — what the edge supports: read-only vs. read-write, sync-capable (node↔node only) vs. fetch-only, enumeration support.
+- **Capabilities** — what the edge supports: read-only vs. read-write, sync-capable (node↔node only) vs. fetch-only, enumeration support, and whether it offers a **change feed** (FSEvents, Gmail history API, …) that lets [index maintenance](index-maintenance.md) run targeted sweeps instead of full ones.
 
 ## Plugins provide the long tail
 

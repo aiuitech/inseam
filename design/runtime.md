@@ -14,7 +14,7 @@ The discovery index is built on **LanceDB** (embedded, via the native Rust crate
 - **Embedded**, no server process — matches "a node is one binary" and works on small devices.
 - **Object-store backend** — the same tables run on local disk for devices and on **S3** for large hosted nodes.
 
-The catalog itself (addresses, envelopes, properties — the source of truth) is not necessarily Lance; a small transactional store (SQLite is the working assumption) may hold it, with Lance strictly as the derived index. To be settled when the storage layer is designed.
+The catalog itself (addresses, envelopes, properties — the source of truth) is **SQLite**, settled when the storage layer was built: one transactional store holds the catalog *and* the semantic graph (fragments + relations + entity registry), with Lance strictly the derived search surface (vectors + FTS over text-bearing fragments). Lance data is rebuildable from SQLite + fetches at any time; the embedding model/dimensions an index was built with are recorded and guarded at open.
 
 ### Known risks
 
@@ -29,6 +29,5 @@ The catalog itself (addresses, envelopes, properties — the source of truth) is
 
 ## Open questions
 
-- Embedding generation on small devices (bundled small model? remote node as embedding provider?).
-- Catalog store decision (SQLite vs. Lance-for-everything vs. custom log).
+- Embedding generation on small devices (bundled small model? remote node as embedding provider?). A deterministic hashed bag-of-words embedder ships as the zero-cost offline fallback; it is a stopgap, not the answer.
 - Minimum supported targets (is mobile a first-class node platform?).

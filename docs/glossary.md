@@ -31,7 +31,7 @@ The inseam vocabulary, one picture. Definitions here are canonical; the linked d
 - **Extent** — a fragment's recorded position and length within its parent (lines for text, bytes or timestamps otherwise); what makes `scan` ranges possible.
 - **Relation** — a typed edge between fragments: `contains`, `links-to`, `derived-from`, `mentions`, `transcribes`… Relation kinds drive retrieval boosting.
 - **Transform** — a registered handler (core or plugin) that takes a fragment of a mimetype it claims and emits child fragments. Indexing is recursive transform application.
-- **Entity** — a deduplicated fragment for a person, place, project, or date, related by `mentions` edges to every fragment that references it; the graph's connective tissue.
+- **Entity** — a deduplicated fragment for a person, place, organization, project, or date, related by `mentions` edges to every fragment that references it; the graph's connective tissue. Belongs to no single source, so it conducts relevance but never ranks as a result.
 - **Index profile** — a node's index configuration: embedding model, date cutoff, transforms and budgets, summary lengths, storage backend.
 - **Finder** — the retrieval algorithm: hybrid full-text + vector seed search, then relevance propagation along relations (spreading activation / Personalized PageRank), rolled up to ranked sources with scores, summaries, and hints. ([design/finder.md](../design/finder.md))
 - **Incremental discovery** — the client loop the Finder serves: query → expand or scan the promising results → fetch only what earns it, each step costing more context than the last.

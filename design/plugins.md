@@ -32,6 +32,12 @@ No inseam-specific registry to start. A plugin is a `.wasm` + manifest, distribu
 - **Sidecar processes over RPC.** Heavier per-plugin cost and a much larger attack surface, but kept as a documented **escape hatch** for the rare integration WASM cannot express (native SDK dependencies, device drivers).
 - **Embedded scripting language (Lua/JS only).** Single-language lock-in contradicts meeting authors where they are.
 
+## Settled since
+
+- **Core transforms go through the plugin pathway already.** The index's `TransformRegistry` is the registration door: core transforms register with the same claims/apply contract and capability-mediated I/O (the LLM handle is granted per call and withheld when budgets are spent) that WASM transforms will use behind a host-side adapter. One registry, two backends; the WIT world can be extracted from this contract rather than invented.
+- **An OpenAI-compatible LLM endpoint is configuration, not a plugin.** The profile's `[endpoint]` (base URL + key env var) covers OpenRouter, OpenAI, Ollama, vLLM and kin; plugin-supplied embedders remain for genuinely custom implementations (bundled models, novel protocols).
+- **The WIT contract waits for the first connection plugin.** Connections (Gmail, IMAP) cannot be faked natively, so they force the real design; transforms and verification methods ride the same world then.
+
 ## Open questions
 
 - Wasmtime directly vs. a plugin-framework layer (e.g. Extism) on top; leaning wasmtime + our own WIT world for full control of the contract.
