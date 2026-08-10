@@ -14,13 +14,13 @@ Swapping providers is configuration, not code. The `inseam models` catalog listi
 
 ## Secrets
 
-The endpoint API key is the only secret, read from whatever environment variable `api_key_env` names. The binary loads `.env` from the working directory at startup (`dotenvy`), so the idiomatic setup is:
+The endpoint API key is the only secret, read from whatever environment variable `api_key_env` names — a plain exported variable, set in your shell profile or injected by your runner:
 
 ```sh
-cp .env.example .env   # then paste your key
+export OPENROUTER_API_KEY=sk-or-v1-...
 ```
 
-`.env` is gitignored. A plain exported environment variable works identically. Without a key: embeddings with `provider = "endpoint"` refuse to run (clear error), LLM summaries/entities silently fall back to their offline forms, and `inseam agent` / `inseam models` bail with instructions.
+Secrets never live in the profile: profiles are shareable, copyable documents, and the data dir is deletable derived state. There is no `.env` loading — behavior doesn't depend on the directory you invoke `inseam` from. Without a key: embeddings with `provider = "endpoint"` refuse to run (clear error), LLM summaries/entities silently fall back to their offline forms, and `inseam agent` / `inseam models` bail with instructions.
 
 ## Data directory
 
