@@ -1,6 +1,8 @@
 - design for host naming/registration in the network. Right now we have something like  inseam://fs-gregmini-lan/Users/...
-- openrouter implementation is baked into core, this should be openai compatible requests configured only in the profile, shouldn't have an openrouter dependency it's a plugins job.
 - implement the plugin structure.
 - query results should have meta data for time, etc
 - build a side UI to consume the HTTP version over web UI
 - query: ignore options to ignore some sources by paths
+- introduce assets for brand icon, distribute in the macos app manifest
+- ai skills for building inseam plugins, setting up nodes, and publishing to our plugin registry
+  - plugin registry location TBD
