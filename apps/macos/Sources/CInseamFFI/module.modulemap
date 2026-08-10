@@ -1,0 +1,5 @@
+module CInseamFFI {
+    header "../../../../crates/inseam-ffi/include/inseam_ffi.h"
+    link "inseam_ffi"
+    export *
+}

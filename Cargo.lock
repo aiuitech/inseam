@@ -2621,6 +2621,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "inseam-ffi"
+version = "0.1.0"
+dependencies = [
+ "inseam",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "io-uring"
 version = "0.7.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"

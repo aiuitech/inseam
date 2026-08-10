@@ -8,7 +8,9 @@ The core is written in **Rust** and ships as a single static binary. One artifac
 
 ## Workspace: one core library, many app crates
 
-The repo is a Cargo workspace. All business logic lives in the `inseam` library crate; each shipping artifact is a thin app crate that embeds it. The CLI (`inseam-cli`, installing the `inseam` binary) is the first app; future apps — a macOS GUI (SwiftUI over an FFI layer), mobile targets, a daemon — are additional crates consuming the same core. "Single binary" remains true per artifact: each app is one self-contained binary embedding the whole node core; nothing is a client to a separate core process. App crates hold only transport/UI concerns (argument parsing, env loading, logging setup, platform bindings) — anything two apps would both need belongs in the core.
+The repo is a Cargo workspace. All business logic lives in the `inseam` library crate; each shipping artifact is a thin app crate that embeds it. The CLI (`inseam-cli`, installing the `inseam` binary) is the first app; the macOS GUI (SwiftUI in `apps/macos`, linking the core through the `inseam-ffi` C ABI staticlib) is the second. Non-Rust app shells live under `apps/`, outside the cargo workspace, in this same repo — the FFI header and app are generated against the core source, and one repo keeps them in lockstep. Future apps — mobile targets, a daemon — follow the same pattern.
+
+The FFI boundary is deliberately thin: opaque node handle, blocking calls (the handle owns its tokio runtime), JSON responses reusing the exact serde views the `ops` layer already defines. No second protocol to design — the C ABI is just another transport adapter over `node-api.md` operations. "Single binary" remains true per artifact: each app is one self-contained binary embedding the whole node core; nothing is a client to a separate core process. App crates hold only transport/UI concerns (argument parsing, env loading, logging setup, platform bindings) — anything two apps would both need belongs in the core.
 
 ## Index storage: LanceDB
 

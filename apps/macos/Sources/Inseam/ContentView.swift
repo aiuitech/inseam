@@ -1,0 +1,150 @@
+import AppKit
+import SwiftUI
+
+/// Owns the node handle and marshals blocking FFI calls off the main thread.
+@MainActor
+final class AppModel: ObservableObject {
+    @Published var status = "opening node…"
+    @Published var results: [QueryResult] = []
+    @Published var busy = false
+
+    let coreVersion = CoreNode.coreVersion()
+    let dataDir: URL
+    private var node: CoreNode?
+
+    init() {
+        let base = FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        )[0]
+        dataDir = base.appendingPathComponent("inseam")
+    }
+
+    func openNode() {
+        let dataDir = dataDir
+        run("node open") { [weak self] in
+            let node = try CoreNode(dataDir: dataDir)
+            return {
+                self?.node = node
+                self?.status = "node open · data dir \(dataDir.path)"
+            }
+        }
+    }
+
+    func query(_ text: String) {
+        guard let node, !text.isEmpty else { return }
+        run("query") { [weak self] in
+            let response = try node.query(text)
+            return {
+                self?.results = response.results
+                self?.status = response.results.isEmpty
+                    ? "no results — index a folder first"
+                    : "\(response.results.count) result(s)"
+            }
+        }
+    }
+
+    func indexFolder() {
+        guard let node else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.message = "Choose a folder to index"
+        guard panel.runModal() == .OK, let dir = panel.url else { return }
+        run("index \(dir.lastPathComponent)") { [weak self] in
+            let report = try node.indexDirectory(dir)
+            return {
+                self?.status = "indexed \(dir.lastPathComponent): "
+                    + "\(report.indexed) indexed, \(report.unchanged) unchanged, "
+                    + "\(report.fragments) fragments"
+            }
+        }
+    }
+
+    /// Run blocking core work off the main actor, then apply its main-actor
+    /// completion. Errors land in `status`.
+    private func run(
+        _ label: String,
+        _ work: @escaping () throws -> @MainActor () -> Void
+    ) {
+        busy = true
+        Task.detached(priority: .userInitiated) {
+            do {
+                let apply = try work()
+                await MainActor.run {
+                    apply()
+                    self.busy = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.status = "\(label) failed: \(error.localizedDescription)"
+                    self.busy = false
+                }
+            }
+        }
+    }
+}
+
+struct ContentView: View {
+    @StateObject private var model = AppModel()
+    @State private var queryText = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Inseam").font(.title2).bold()
+                Text("core \(model.coreVersion)")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if model.busy { ProgressView().controlSize(.small) }
+                Button("Index Folder…") { model.indexFolder() }
+                    .disabled(model.busy)
+            }
+
+            TextField("Search your data…", text: $queryText)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { model.query(queryText) }
+                .disabled(model.busy)
+
+            if model.results.isEmpty {
+                Spacer()
+                Text(model.status)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                Spacer()
+            } else {
+                List(model.results) { result in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Text(result.envelope.title ?? result.address)
+                                .font(.headline)
+                                .lineLimit(1)
+                            Spacer()
+                            Text(String(format: "%.3f", result.score))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(result.address)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        if let summary = result.summary {
+                            Text(summary).font(.callout).lineLimit(3)
+                        }
+                        Text("\(result.envelope.contentType) · \(result.envelope.length)")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.vertical, 2)
+                }
+                .listStyle(.inset)
+                Text(model.status)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .frame(minWidth: 560, minHeight: 420)
+        .onAppear { model.openNode() }
+    }
+}
