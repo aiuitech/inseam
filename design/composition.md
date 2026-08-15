@@ -1,0 +1,47 @@
+# Composition
+
+A node's configuration is its **composition**: a declarative tree of plugin entries the [kernel](kernel.md) reconciles against. There is no imperative setup and no boot order — the composition says *what should be running with what config*, and reactive lifecycle plus confluence guarantee the running system converges to exactly that, whatever state it started from.
+
+## Entries
+
+The composition is a TOML tree of entries. Each entry:
+
+- **id** — stable identity; the reconciler's diffing key, so edits restart exactly the entries they touch.
+- **plugin** — which plugin: a native name from the distribution, or a sandboxed artifact ref.
+- **config** — the plugin's typed config, validated against its schema before the plugin runs.
+- **disabled** — mount toggle.
+- (later, with realms) **isolate** — scope a service key to this entry's subtree.
+
+Entries nest into groups; a group is itself an ordinary entry, so subtrees can be toggled, shipped, and patched as units.
+
+## Layers
+
+A running node's composition is layered, later layers patching earlier ones by entry id:
+
+1. **Distribution base** — each app crate ships the composition that makes it that product ([plugins](plugins.md)): the CLI's base mounts the filesystem connection, core transforms, finder, CLI transport.
+2. **Node config** — the user's file: enable entries, override configs, add sandboxed plugins.
+3. **Invocation overlays** — flag-level overrides for one run.
+
+The same pure layering function answers `inseam config --resolved`, so what prints is what boots, by construction.
+
+## Node profiles are compositions
+
+The old standalone "index profile" dissolves: what made a phone a phone and a cloud node a cloud node was always plugin selection and plugin config — summarizer-only vs. every transform, short vs. long summaries, hashed vs. endpoint embedder, tight vs. no cutoff. Those dials live in the entries' configs now; a *profile* is just a named base composition a distribution ships. The per-node asymmetry [discovery](discovery.md) promises is expressed entirely in composition, and the four invalidation tiers of [index maintenance](index-maintenance.md) become properties of *which entry's config changed*: finder config is query-time, sweep budgets are run-metering, transform configs are shape, embedder config is embedding.
+
+The **shape stamp** generalizes accordingly: it is a digest of the shape-relevant entries (transform plugins + their configs) that built a source's subtree. Adding a community transform, removing one, or editing its config changes the stamp, and the sweep converges affected sources — plugin ecosystem churn is absorbed by the same mechanism as any profile edit, with no new invalidation machinery.
+
+## Reconciliation
+
+Composition edits apply transactionally per entry: config-only changes update the fiber in place (or restart it, per the plugin's declaration); plugin/structure changes dispose-then-mount with rollback to the previous entry on failure. A failed entry is contained — the rest of the tree keeps running, and the error names the entry. Hot reload of the composition file is the ordinary path, not a special mode.
+
+## Paths not taken
+
+- **A monolithic profile struct in core** (the previous design). Every field was secretly some module's config plus hand-written invalidation-tier bookkeeping; the composition gives each plugin its own schema-validated config and derives the tiers from entry identity.
+- **Row order as load order.** Activation is service-availability-driven ([kernel](kernel.md)); order in the file carries no semantics, which is what lets layers insert entries freely.
+- **YAML with embedded expressions.** `dsh` interpolates JS in config values; powerful, but a config file that executes is a capability we don't want to hand the composition layer of a security-sensitive node. Dynamic values come from the environment through explicit, declared config fields (`key_env`-style), which is already the pattern.
+
+## Open questions
+
+- Patch semantics: whole-config replacement per id (simple, verbose overrides) vs. field-level merge (convenient, ambiguous for maps/arrays). The studied systems chose replacement and documented the pain; leaning replacement-with-`extends` sugar.
+- Where sandboxed-plugin *installation* state lives (composition entry with artifact ref + content hash, vs. a lockfile beside it).
+- Owner operations that edit the composition at runtime (enable/disable a connection from the macOS app) and how they write back through the layering.

@@ -21,13 +21,13 @@ Three refusals define the product against the landscape:
 Open-source core; revenue from hosting well-provisioned cloud nodes — a strong, always-on index for a user's network. The sale is index quality and uptime. This only stays honest under two architectural invariants:
 
 - The hosted node runs the same open-source software with no private capabilities.
-- The per-node [index profile](indexing.md) asymmetry is the product: weak devices borrow quality from the paid node, so the upgrade is felt on every device without any device being locked in.
+- The per-node [composition](composition.md) asymmetry is the product: weak devices borrow quality from the paid node, so the upgrade is felt on every device without any device being locked in.
 
 ## Community plugins are the connector strategy
 
 The long tail of integrations will not be built in-house. The plan: a plugin surface small and typed enough for agents to target ([plugins](plugins.md)), an agent skill that writes plugins for users who need one, and a public registry so plugins written once circulate. Two obligations fall out:
 
-- **Boundary proof before skill.** The plugin contract counts as real only when the core carries zero service-specific dependencies — the OpenRouter extraction is the current test. Shipping the plugin-authoring skill before that invites a generation of plugins against a leaky contract.
+- **Boundary proof before skill.** The plugin contract counts as real only when every service-shaped feature in the shipping distributions reaches the [kernel](kernel.md) through the service seams — the native tier proves the contract before the sandboxed tier is invited. Shipping the plugin-authoring skill before that invites a generation of plugins against a leaky contract.
 - **Registry trust from day one.** Machine-generated connectors holding OAuth grants are a supply-chain risk by default; signing and declared capabilities are launch requirements of the registry, not hardening added later ([plugins](plugins.md)).
 
 ## Sequencing

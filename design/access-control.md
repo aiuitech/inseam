@@ -32,6 +32,8 @@ Additionally, a host or source may be marked **public**: exposed to any external
 
 The property filter travels with the request: wherever a boundary request routes ([network](network.md)), the serving node applies the same rule, and [discovery](discovery.md) filters results before addresses are ever revealed. Internal node↔node traffic carries no such filter.
 
+Mechanically, enforcement is a guard chain on the `operations` seam ([node-api](node-api.md), [services](services.md)): boundary policy listeners run on every dispatch, any listener may deny, and **no listener can force-allow what another denied** — the rule composes monotonically as plugins add policy.
+
 ## Worked example
 
 A third-party chat widget on my website verifies visitors by email, and its backend reaches my inseam network through one of my nodes. A visitor's session arrives as an external requester with verified `email:user@example.com`. My Gmail is a host in the network, and every Gmail source where that address was a correspondent carries `email:user@example.com` on its envelope. Result: the chat session can discover and fetch exactly that visitor's correspondence with me — nothing else — with no user database anywhere.

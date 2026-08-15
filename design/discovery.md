@@ -10,7 +10,7 @@ The index is derived data: rebuildable at any time from the catalog + fetches, n
 
 ## Per-node configuration
 
-Index quality is a *local* decision, configured per node via its [index profile](indexing.md):
+Index quality is a *local* decision, configured per node via its [composition](composition.md) ([indexing](indexing.md)):
 
 - A phone builds a small, cheap index over envelope hints only — enough to work offline.
 - A home server or our hosted service builds a large, high-quality index, fetching full content (through the normal access-controlled fetch path) and running better models.

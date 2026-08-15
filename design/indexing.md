@@ -26,7 +26,7 @@ A **transform** is a registered handler: it takes a fragment of a mimetype it cl
 - A URL fragment's transform may fetch the target — yielding a `text/html` child — whose own transform summarizes the page. Recursion, mimetype by mimetype.
 - A `video/mp4` transform emits an `application/x-subrip` child, whose transform emits `timestamp:text` line fragments.
 
-Transforms come from two places: **core** ships the universal ones, and [plugins](plugins.md) supply the long tail — the same WASM/WIT surface as connection plugins, with fetches going through capability-mediated I/O (a transform that follows links declares which hosts it may call; no raw sockets).
+Every transform is a [plugin](plugins.md) registering into the `transforms` [seam](services.md): the universal ones ship as native plugins in every distribution, and the long tail arrives as sandboxed plugins claiming emitted mimetypes — same registry, same claims/apply contract, with fetches going through capability-mediated I/O (a transform that follows links declares which hosts it may call; no raw sockets) and LLM budgets metered at the `llm` seam.
 
 Two core transforms matter enough to name:
 
@@ -35,18 +35,9 @@ Two core transforms matter enough to name:
 
 Transforms are why unreadable data becomes findable: registering a handler for a mimetype teaches the whole network's indexes what that data means.
 
-## Index profiles
+## Configuration is composition
 
-Everything above is configured per node in its **index profile**:
-
-- embedding model (and thereby which mimetypes embed)
-- source date cutoff — don't index past a horizon
-- which transforms run, and recursion depth / budget
-- summary lengths
-- entity extraction on/off and entity budget
-- storage backend for the index
-
-A phone's profile: summarizer only, short summaries, envelope-derived text, tight cutoff. A cloud node's profile: every transform, link-following, entities, long summaries. Same machinery, different dial positions — the asymmetry [discovery](discovery.md) promises.
+Everything above is configured per node by its [composition](composition.md): which transform plugins are mounted and each one's config (summary lengths, entity budgets, recursion depth), which embedder provider runs, the sweep's cutoffs and budgets. A phone's composition: summarizer only, short summaries, envelope-derived text, tight cutoff. A cloud node's: every transform, link-following, entities, long summaries. Same machinery, different entries — the asymmetry [discovery](discovery.md) promises, with no profile mechanism separate from ordinary plugin config.
 
 ## Storage
 
@@ -65,7 +56,7 @@ The index lives in LanceDB ([runtime](runtime.md)), whose object-store backend m
 
 - **Where relations live physically**: the SQLite catalog store holds the graph (fragments, relations, entity registry); Lance holds vectors + FTS over text-bearing fragments and is strictly derived.
 - **Incremental re-indexing, first cut**: change detection is `modified` timestamp + raw byte size, with an `indexed` completion mark so interrupted runs re-index; a changed source's whole fragment subtree is deleted (relations cascade) and rebuilt. Content-hash detection can replace the heuristic later without structural change.
-- **Maintenance**: how the index stays true to sources and profile after the first build — the reconciling sweep, profile-change invalidation tiers, deletion handling, entity GC — is its own concept: [index-maintenance](index-maintenance.md).
+- **Maintenance**: how the index stays true to sources and composition after the first build — the reconciling sweep, invalidation tiers, deletion handling, entity GC — is its own concept: [index-maintenance](index-maintenance.md).
 - **Entity fragments and source-level authorization**: a deduplicated entity belongs to no single source, so entity fragments carry no source address. They conduct relevance and appear in `expand`, but never rank as results themselves — boundary exposure remains source-level.
 
 ## Open questions

@@ -49,7 +49,7 @@ The Finder runs per node against that node's own index. Fan-out ([discovery](dis
 
 ## Settled since
 
-- **Weights and PPR parameters are profile-configurable with fixed defaults** (`[finder]`: damping 0.5, ≤12 iterations with ε early-exit, RRF k=60; weights contains 1.0, transcribes 1.0, derived-from 0.9, mentions 0.8, links-to 0.4). Learned weights remain future work.
+- **Weights and PPR parameters are configurable (finder entry config) with fixed defaults** (`[finder]`: damping 0.5, ≤12 iterations with ε early-exit, RRF k=60; weights contains 1.0, transcribes 1.0, derived-from 0.9, mentions 0.8, links-to 0.4). Learned weights remain future work.
 - **Boost, never gate — the formula**: final = seed + PPR score. Addition keeps every seed's standing (each retains ≥ (1−damping) of its normalized mass; property-tested).
 - **Rollup**: source = f1 + 0.1·f2 + 0.05·f3 over its fragments' final scores, best-first.
 - **Vector seeds carry a distance floor** (`max_vector_distance`, cosine): nearest-k always returns something, and beyond the floor a "neighbor" is noise, not a seed. Discovered the day flat similarity happily returned an orchid note for a fern query.

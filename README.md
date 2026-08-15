@@ -33,7 +33,7 @@ Developers and tech-forward users, in two postures:
 
 ## Open source, and the hosted node
 
-The core is open source, and stays small: catalog, sync, routing, discovery, access control, plugin execution. The long tail of connectors comes from the community — including plugins written by agents against the typed plugin contract, shared through a public registry.
+The core is open source, and stays small — a kernel that runs plugins and owns the store, with everything else (connections, transforms, discovery, sync, access control, transports) as plugins on typed service seams. The long tail of connectors comes from the community — including plugins written by agents against the typed plugin contract, shared through a public registry.
 
 The commercial offering is a hosted, well-provisioned cloud node: a strong always-on index for your network. Architecturally it's an ordinary node with no special powers — the same software this repo builds — so what it sells is index quality and uptime, not lock-in. Nothing in inseam requires it.
 

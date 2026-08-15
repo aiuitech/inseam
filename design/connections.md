@@ -17,9 +17,9 @@ Every connection specifies:
 - **Credentials** — OAuth grants, API keys, mutual keys between nodes. Held locally by the owning node, never synced.
 - **Capabilities** — what the edge supports: read-only vs. read-write, sync-capable (node↔node only) vs. fetch-only, enumeration support, and whether it offers a **change feed** (FSEvents, Gmail history API, …) that lets [index maintenance](index-maintenance.md) run targeted sweeps instead of full ones.
 
-## Plugins provide the long tail
+## Every connection type is a plugin
 
-The core ships the inseam-native protocols. Every service-specific connection type (Gmail, Slack, a filesystem watcher, a CalDAV server) is a plugin. Adding a new kind of host to the network means writing a connection plugin, not touching the core.
+Connection types are providers on the `connection` [seam](services.md): the filesystem connection and the inseam-native node↔node protocols ship as native plugins in the distributions, and every service-specific type (Gmail, Slack, a CalDAV server) arrives as a sandboxed [plugin](plugins.md). Adding a new kind of host to the network means writing a connection plugin, not touching anything. A connection's capabilities — change feed, writability — surface as capability facts consumers branch on ([kernel](kernel.md)).
 
 ## Open questions
 

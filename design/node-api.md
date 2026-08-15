@@ -4,7 +4,7 @@ How anything outside a node talks to it. The ruling intent: **one operations lay
 
 ## The operations layer
 
-The core defines a small set of typed operations: plain request/response messages with no transport assumptions (no headers, routes, or status codes), JSON-serializable by construction. Two scopes:
+Operations are typed request/response messages with no transport assumptions (no headers, routes, or status codes), JSON-serializable by construction. The `operations` [seam](services.md) is a registry: plugins register the operations their features expose, transports consume the registry — so a new capability (a connection's owner ops, a verification flow) brings its operations with it instead of editing a central table. Every dispatch runs through a waterfall where boundary policy lives: [access-control](access-control.md) property filtering, and later rate limits and audit, are listeners there, with denial monotonic — no listener can force-allow what another denied. Two scopes:
 
 - **Boundary operations** — available to [external requesters](access-control.md):
   - `query` — run [discovery](discovery.md) with a topic/filters; returns ranked results: addresses + envelopes, each with score, summary, and fragment hints ([Finder](finder.md)).
@@ -18,13 +18,13 @@ The core defines a small set of typed operations: plain request/response message
 
 ## Transport adapters
 
-Adapters translate a wire protocol into operation calls and back. Shipping in core:
+Adapters are transport [plugins](plugins.md) translating a wire protocol into operation calls and back. Shipping in the first distributions:
 
 - **HTTP/JSON** — `inseam serve` exposes the operations as a plain request/response API; the obvious integration path for external services.
 - **MCP** — the same operations exposed as MCP tools (stdio for local agents, streamable HTTP for remote ones). This is how AI agents get inseam as a context engine without any custom integration.
 - **CLI** — the same binary invoking operations directly: in-process against the local data, or against a running node.
 
-Everything else (gRPC, language SDKs, …) is a mechanical wrapping of the same schemas; adapters carry no logic of their own, so the community can add them without touching the core.
+Everything else (gRPC, language SDKs, …) is a mechanical wrapping of the same schemas; adapters carry no logic of their own, so the community can add them as plugins without touching anything.
 
 ## Anatomy of a boundary request
 
