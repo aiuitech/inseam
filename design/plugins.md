@@ -47,7 +47,21 @@ No inseam-specific registry to start. A sandboxed plugin is a `.wasm` + manifest
 A community registry follows once the WIT projection settles ([positioning](positioning.md)) — the intended path is an agent skill that authors plugins against the contract. Two commitments made now:
 
 - **The contract is proven before the skill ships.** Exit criterion: every service-shaped feature in the shipping distributions reaches the kernel through the seams — the native tier eats its own dog food before the sandboxed tier is invited.
-- **Registry trust is a launch requirement, not hardening.** Plugins hold credentials and read personal data, and many will be machine-generated; the registry starts with signed manifests and declared capabilities or it doesn't start.
+- **Registry trust is a launch requirement, not hardening.** Plugins hold credentials and read personal data, and many will be machine-generated; the registry starts with signed manifests, declared capabilities, and an advisory/yank feed or it doesn't start.
+
+### Release cooldown
+
+New versions of sandboxed plugins do not activate immediately. A node holds each newly observed version in **cooldown** for a configurable window (per node, with a sane default; the whole mechanism applies to the sandboxed tier only — native plugins ride deliberate binary updates). The point is to let the ecosystem's detection outrun the attacker's distribution: most registry supply-chain compromises are caught within days, by which time a cooled-down version has never run anywhere. Prior art: pnpm's `minimumReleaseAge`, adopted ecosystem-wide after the 2025 npm worm attacks.
+
+The rules that make it hold:
+
+- **The clock is locally unforgeable.** Cooldown counts from when *this node* first observed the version — a manifest's self-claimed release date is worthless. A registry-signed publish timestamp (transparency log) may shorten the wait for versions that are already old, never lengthen a claim into an exemption.
+- **Cooldown ends with a check, not a timer.** At activation the node re-checks the registry's advisory feed; a version yanked or flagged during its window never activates. Delay without a detection channel is just hoping the owner reads the news.
+- **Capability widening is its own gate.** A version whose manifest requests capabilities its predecessor didn't (new hosts, new seams) requires explicit owner approval regardless of soak time — the diff, not the clock, is the question.
+- **The running version keeps running.** Cooldown delays upgrades and fresh installs; it never deactivates what is already active. Activation after cooldown is an ordinary fiber replacement.
+- **The owner can override.** Sovereignty stands: an explicit per-install override activates immediately, with the prompt stating the version's age plainly. Overriding is a consent moment, not a config default.
+
+Known trade-off: security *fixes* are delayed by the same window. An expedite path — a registry-signed advisory that marks a version as a vetted fix — is the likely answer and stays open below.
 
 ## Paths not taken
 
@@ -65,5 +79,7 @@ A community registry follows once the WIT projection settles ([positioning](posi
 
 - Wasmtime directly vs. a framework layer on top; leaning wasmtime + our own generated WIT world for full contract control.
 - Manifest schema: capability grants, version pinning, signing/provenance (matters more as AI-generated plugins circulate).
+- Cooldown expedite path: how a registry-signed advisory vouches a security fix past the window without becoming a bypass an attacker can earn.
+- Cooldown for plugins installed from a plain URL (no registry, no advisory feed): the timer still applies, but the end-of-window check has nothing to ask — possibly require a registry ref for anything holding credentials.
 - Streaming large fetch results across the component boundary without copying whole payloads.
 - How sandboxed plugins subscribe to events (project the bus into WIT, or keep components request/response-only and let bridges listen on their behalf).
