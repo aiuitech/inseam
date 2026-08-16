@@ -1,6 +1,6 @@
 # Address Sync
 
-How every node converges on the network-wide catalog of addresses + envelopes.
+How every node converges on the network-wide catalog of addresses + envelopes. The same machinery carries the [roster](roster.md) — node, host, and stewardship records are just additional record kinds in the stream; one replication mechanism, one convergence story.
 
 ## The catalog
 
@@ -18,8 +18,12 @@ One tension acknowledged: "content never moves" does not mean "nothing content-d
 
 - Catalog changes replicate across node↔node [connections](connections.md); nodes re-share what they learn, so knowledge crosses the network transitively even between nodes that never connect directly.
 - Consistency is **eventual**. An offline node serves discovery from its last-known catalog and reconciles on reconnect.
-- **Stewards originate entries** for the hosts they serve: the steward's connection plugin enumerates the host, emits address + envelope records, and publishes updates (new, changed, deleted) into sync.
-- **Origin wins**: the authoritative record for an address is whatever its steward last published. Catalog entries elsewhere are observations, not claims, so conflicts reduce to "latest from origin."
+- **Stewards originate entries** for the hosts they serve: the steward's connection plugin enumerates the host, emits address + envelope records, and publishes updates (new, changed, deleted) into sync. Likewise each node originates its own [roster](roster.md) records.
+- **Origin wins**: the authoritative record for any key is whatever its origin last published — the steward for an address, the node itself for its node record. Entries elsewhere are observations, not claims, so conflicts reduce to "latest from origin."
+
+## Mechanism
+
+**Per-origin append-only logs with version vectors.** Every record a node originates goes into its own log with a monotonic sequence number. Sync between two nodes is an exchange of version vectors (highest sequence seen per origin) followed by shipping the missing suffixes — including logs of origins neither end has met directly, which is what makes propagation transitive. Within one origin's log, later overwrites earlier per key; deletions are tombstone entries like any other. This shape was chosen over pure gossip (no convergence proof per key) and CRDT merge (origin-wins makes general merge unnecessary — there is exactly one writer per key).
 
 ## Deletion
 
@@ -27,6 +31,6 @@ Removals sync as tombstones; a source that disappears from a host must disappear
 
 ## Open questions
 
-- Sync mechanism: gossip vs. log replication vs. CRDT-style merge (deletion + partial-order needs point toward a per-origin log with vector clocks).
+- Log compaction: how long tombstones and overwritten entries live before a log is squashed, and how a squashed log resyncs to a node holding an older vector.
 - Catalog scale ceilings on small devices, and whether a low-power node may opt into a partial catalog (a local capacity choice, not an access rule).
 - Minimal envelopes: whether a host or source can be marked to sync address + type only, withholding hints and property detail from replication at the cost of discovery quality elsewhere.

@@ -29,6 +29,8 @@ A node may steward several hosts — the macOS node above might serve the local 
 
 The model is uniform: one concept of host, one stewarding relationship, different connection plugins.
 
+Stewardship is published, not private: each steward emits a stewardship record into the [roster](roster.md), so the whole network knows which nodes can serve which hosts and with what capabilities. Host identity is an opaque stable id derived from the host's own identity material ([addressing](addressing.md)); two nodes stewarding the same host derive the same id and the network sees one host with two stewards, catalog entries deduping by host id + locator.
+
 ## Paths not taken
 
 - **"Controlled / uncontrolled" hosts.** Rejected: described our relationship to the host and smuggled in a read-only assumption. Writability is a property of the connection, not the host category.
@@ -36,6 +38,4 @@ The model is uniform: one concept of host, one stewarding relationship, differen
 
 ## Open questions
 
-- **Host identity.** A stable host ID scheme is needed, especially so two nodes that both connect to the same Gmail account resolve to *one* host, not two.
-- **Multiple stewards.** If two nodes steward the same host, who publishes? Likely: both may, catalog entries dedupe by host ID + locator, and routing may prefer any steward.
-- **Steward failover.** A host is only reachable while some steward is; unreachability semantics belong in [network](network.md).
+- **Steward failover.** A host is only reachable while some steward is; the [roster](roster.md) makes "no live steward" a knowable state, but unreachability semantics (stale entries, error surfaces) belong in [network](network.md).

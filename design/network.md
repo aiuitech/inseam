@@ -12,10 +12,15 @@ Each node holds [connections](connections.md) to one or more other nodes (and to
 
 Nodes do not need direct connections to reach each other. If A connects to B and B connects to C, then A can discover and fetch from C **by way of B**. Nodes route requests for hosts they cannot reach directly through connected nodes that can.
 
-Two kinds of knowledge with different scope:
+Three kinds of knowledge with different scope:
 
 - **Addresses are global.** [Address sync](address-sync.md) converges every node on the full catalog, so every node knows what exists everywhere.
-- **Connectivity is local.** A node only knows its own connections. Reaching a host means routing hop-by-hop toward a node that has it (natively or as steward).
+- **Reachability facts are global.** The [roster](roster.md) converges every node on who exists, their dialable endpoints, and who stewards what — so any node can *attempt* to reach any other, and knows which node a fetch must ultimately land on.
+- **Sessions are local.** Which connections are actually live right now is known only to the nodes holding them. Reaching a host means dialing roster endpoints and routing hop-by-hop toward a live steward; liveness is learned by trying, never read from a synced record.
+
+## The backbone convention
+
+Because unstable nodes (rotating IPs, NAT, intermittent power) only converge while some mutual peer is reachable, every network is encouraged to include at least one **always-on node with a stable endpoint** — typically hosted. It acts as the reliable meeting point through which roster and catalog updates flow. This is a deployment convention, not architecture: it is an ordinary node ([roster](roster.md) covers the mechanics), and the network functions without it, just with slower convergence.
 
 ## Boundary requests route too
 
@@ -28,6 +33,6 @@ External requesters enter the network through whichever node they reach, but the
 
 ## Open questions
 
-- Route selection when multiple paths to a host exist (prefer steward? shortest? healthiest?).
+- Route selection when multiple paths to a host exist (the roster names the candidate stewards; prefer a live session? shortest? healthiest?).
 - Loop prevention and hop limits for forwarded requests.
 - Semantics when a host is unreachable (stale catalog entries, error surfaces).

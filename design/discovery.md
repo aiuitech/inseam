@@ -20,7 +20,7 @@ This asymmetry is the point: underpowered devices stay functional alone, and bor
 ## Query path
 
 1. Query the local index. Offline, this is the whole story.
-2. If online and configured to, fan the query out to connected nodes that advertise stronger indexes (typically the big home/hosted node).
+2. If online and configured to, fan the query out to nodes whose [roster](roster.md) node records advertise stronger indexes (typically the big home/hosted node).
 3. Merge and rank; return **addresses + envelope metadata**, never content.
 4. The caller fetches full sources progressively, only when a result earns it.
 
@@ -37,5 +37,5 @@ Within the network, a node may fetch and deep-index anything — indexing is an 
 
 ## Open questions
 
-- How nodes advertise index capability/quality to peers.
+- The vocabulary of index-quality advertisement (what "stronger index" means as a comparable capability in a roster node record).
 - Embedding model choice and versioning across heterogeneous nodes.
