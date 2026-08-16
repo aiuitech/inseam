@@ -4,7 +4,7 @@ Install a node, index something, query it — then make the node yours by modify
 
 ## Install
 
-Two default paths. Pick by whether you want to compile the node itself.
+Two default paths — pick by whether you want to compile the node itself — or skip both and hand the whole job to an agent.
 
 ### Just run it — no toolchain required
 
@@ -17,6 +17,21 @@ curl -fsSL https://docs.inseam.io/install.sh | sh
 The script detects your platform, downloads the latest [GitHub release](https://github.com/aiuitech/inseam/releases), verifies its sha256 against the release's checksums, and installs to `~/.local/bin` (`INSEAM_INSTALL_DIR` and `INSEAM_VERSION` override; the tarballs are on the releases page if you'd rather fetch by hand). Or run an app that bundles the core — the [macOS app](architecture/macos-app.md) embeds the same node through the FFI and shares its data dir with the CLI.
 
 The prebuilt binary is not a dead end: it installs registry plugins (`inseam plugin install <name>`, [plugins/registry.md](plugins/registry.md)) and validates ones you author (`inseam plugin check`) — and since loaded plugins can be written in any language that compiles to a WASM component, you can extend the node without ever installing Rust (see [Self-modify](#self-modify)).
+
+### Hand it to an agent — the prompt install
+
+You don't have to run any of this yourself. Paste this into an agent with shell access (Claude Code or similar) and let it drive:
+
+```text
+Fetch https://docs.inseam.io/llms.txt and follow its Get Started guide:
+install the inseam CLI, configure it, index a directory I name, and verify
+a query returns results. Prefer the from-source path if Rust is available
+so the node can modify itself; otherwise use the one-line installer. If
+something I need indexed isn't supported yet, author a loaded plugin per
+the guide, validate it with `inseam plugin check`, and mount it.
+```
+
+`llms.txt` is the agent-readable index of this whole site, with this page promoted to the top — so that one URL is enough for an agent to install, configure, extend, and start a node on its own.
 
 ### From source — the self-modifying node
 
