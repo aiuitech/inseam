@@ -1,0 +1,100 @@
+---
+import '@fontsource/commit-mono/400.css';
+import '@fontsource/commit-mono/700.css';
+
+interface Props {
+	title: string;
+	description: string;
+}
+
+const { title, description } = Astro.props;
+---
+
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<link rel="icon" href="/favicon.ico" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="generator" content={Astro.generator} />
+		<meta name="description" content={description} />
+		<meta property="og:title" content={title} />
+		<meta property="og:description" content={description} />
+		<meta property="og:type" content="website" />
+		<title>{title}</title>
+	</head>
+	<body>
+		<!--
+		THESIS: the category-standard dev-tool landing played straight at Stripe/Linear craft; the architecture diagram, not a screenshot, is the hero. Refuses glow-and-cards furniture.
+		OWN-WORLD: ground #0a0b0a, single chartreuse #d8ff1c accent, off-white #f2f0e9, Commit Mono everywhere, lowercase voice, dash-dash-dot stitch lines; no cards, no boxes — hierarchy is scale, brightness, spacing.
+		STORY: visitor understands data never moves / access is first-class / plugins are for AI to build — combined: context anywhere, to the right audience only; open source guarantees it; installs in one line.
+		FIRST VIEWPORT: nav hairline; centered headline, dim subline, chartreuse install one-liner; below, full-width stitch-line network diagram, envelopes traveling, content dots fixed, leader-line labels.
+		FORM: category canon (standing exit), user-pinned; seed 679ee37c.
+		FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+		-->
+		<slot />
+	</body>
+</html>
+
+<style is:global>
+	:root {
+		--ground: #0a0b0a;
+		--thread: #d8ff1c;
+		--ink: #f2f0e9;
+		--ink-dim: #a6ab9b;
+		--ink-faint: #8a8f80;
+		--hairline: rgba(242, 240, 233, 0.12);
+		--mono: 'Commit Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+	}
+
+	* {
+		margin: 0;
+		padding: 0;
+		box-sizing: border-box;
+	}
+
+	html {
+		background: var(--ground);
+		color-scheme: dark;
+		scrollbar-color: #2a2d27 var(--ground);
+	}
+
+	html,
+	body {
+		overflow-x: clip;
+	}
+
+	body {
+		font-family: var(--mono);
+		background: var(--ground);
+		color: var(--ink);
+		font-size: 1rem;
+		line-height: 1.6;
+		-webkit-font-smoothing: antialiased;
+		caret-color: var(--thread);
+	}
+
+	::selection {
+		background: var(--thread);
+		color: var(--ground);
+	}
+
+	:focus-visible {
+		outline: 2px solid var(--thread);
+		outline-offset: 3px;
+		border-radius: 2px;
+	}
+
+	a {
+		color: var(--ink);
+		text-decoration: underline;
+		text-decoration-color: var(--thread);
+		text-decoration-thickness: 1px;
+		text-underline-offset: 5px;
+		transition: color 120ms ease-out, text-decoration-color 120ms ease-out;
+	}
+
+	a:hover {
+		color: var(--thread);
+	}
+</style>
