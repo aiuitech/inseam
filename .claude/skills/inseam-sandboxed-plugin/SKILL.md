@@ -46,6 +46,9 @@ plugins/<name>/
   Cargo.toml
   src/lib.rs
   <name>.manifest.toml     # reviewed by owners; enforced by the bridge
+  <name>.checks.toml       # your golden checks — WRITE THESE FIRST (below)
+  fixtures/                # byte fixtures the checks reference
+    README.md              # REQUIRED: what each fixture is and why
   README.md                # one paragraph: what it does, what it needs
 ```
 
@@ -130,6 +133,42 @@ Request the **minimum** capabilities: every extra grant is attack surface an
 owner has to approve, and capability widening between versions triggers an
 explicit approval gate.
 
+## Golden checks — write these FIRST (`<name>.checks.toml`)
+
+Before writing `apply`, declare what the plugin promises: example inputs
+and the output shapes they must produce. These are your enforced tests —
+run by `inseam plugin check` during authoring, by registry CI at publish,
+and by every installing node at admission. They are data, not code
+(`docs/plugins/validation.md` has the full schema):
+
+```toml
+[[check]]
+name = "does the thing on the happy path"
+mimetype = "image/png"              # what the application arrives as
+bytes_file = "fixtures/sample.png"  # handed to source-bytes (relative path)
+llm_returns = "CANNED REPLY"        # what the granted LLM returns verbatim
+
+[check.expect]
+fragment_contains = "CANNED"        # the reply must land in a fragment
+relation = "transcribes"
+mimetype = "text/plain"
+
+[[check]]
+name = "emits nothing when the llm is withheld"   # ALWAYS include a degrade check
+mimetype = "image/png"
+bytes_file = "fixtures/sample.png"
+# no llm_returns => the llm refuses
+
+[check.expect]
+min_fragments = 0
+max_fragments = 0
+```
+
+Keep fixtures tiny and well-formed (they are downloaded by every install),
+and document every fixture in `fixtures/README.md` — what it is, why it
+exists. The LLM is always canned during checks, so fixtures prove
+*plumbing and shape*, never model quality.
+
 ## Build
 
 ```sh
@@ -147,17 +186,25 @@ the artifact uses underscores — rename the copy to match the manifest.)
 1. `cargo build --release --target wasm32-wasip2` — must be warning-free.
 2. From the repo root:
    ```sh
+   inseam plugin check plugins/<name>/<name>.wasm
+   # (or, without the installed binary:)
    cargo run -p inseam-wasm-host --example inspect -- plugins/<name>/<name>.wasm
    ```
-   This mounts the component through the real bridge and prints the
-   effective claims. It must end with `OK`, and the claim list must match
-   your intent — an empty claim list means manifest and `claims()` disagree.
-3. If validation fails, fix and repeat. Do not hand off a plugin whose
-   inspect run fails.
+   This is the conformance harness — the exact gate registry CI and every
+   node's install-time admission run: static manifest checks, a real
+   bridge mount, a hostile-input contract battery, then **your golden
+   checks**. It must end with `PASS`, and the effective-claims line must
+   match your intent — an empty list means manifest and `claims()`
+   disagree.
+3. If any phase fails, fix and repeat. Do not hand off a plugin whose
+   check run fails — admission on the user's node runs the same harness
+   and will refuse the mount.
 
-Reading inspect failures:
+Reading check failures:
 - The first invocation cold-compiles wasmtime and can take a few minutes —
   that is a build, not a hang.
+- `contract` failures mean a code path traps (panics) instead of
+  degrading; hunt the `unwrap`/`expect`/indexing in that path.
 - A failure like `component imports instance wasi:...` (an unsatisfied
   `wasi:*` import) is a **host-linker gap in the bridge**, not a plugin
   authoring error; report it against `inseam-wasm-host` instead of

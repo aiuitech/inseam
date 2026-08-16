@@ -46,6 +46,7 @@ plugin = "wasm:plugins/ocr/ocr.wasm"
 [entry.config]
 cooldown_days = 7      # release cooldown for newly observed artifact versions
 # allow_new = true     # explicit consent to activate a version inside its cooldown
+# admission = "enforce"  # conformance harness on first sighting: enforce | warn | off
 ```
 
 Secrets never live in the composition or the store: the `llm` entry names an environment variable (`api_key_env`), nothing more.

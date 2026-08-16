@@ -1,0 +1,19 @@
+# The inseam plugin registry index (design/registry.md).
+#
+# This tree IS registry v0: every plugin listed here ships as a directory
+# beside this file (source, artifact, manifest, golden checks, fixtures).
+# CI re-verifies on every merge that each sha256 matches the committed
+# artifact and that the artifact rebuilds from its source;
+# `inseam plugin install` verifies the fetched bytes against this index
+# before anything runs. An entry's sha256 is authoritative — a mismatch
+# anywhere is a refusal, not a warning.
+#
+# Recompute after rebuilding an artifact:
+#   shasum -a 256 plugins/<name>/<name>.wasm
+
+[[plugin]]
+name = "ocr"
+version = "0.1.0"
+description = "Transcribe text in images through the granted vision LLM"
+artifact = "ocr/ocr.wasm"
+sha256 = "cf009072570a78b7c6130726a1487e4aca4b376bc7b22121b803d72db9f77ba3"

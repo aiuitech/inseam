@@ -19,6 +19,10 @@
 //!   of soak (`design/plugins.md` — release cooldown).
 //! - **Fuel limits**: every application runs with bounded fuel, so a
 //!   spinning component times out instead of wedging the sweep.
+//! - **Install-time admission**: the first time this node sees an artifact,
+//!   the conformance harness ([`check_artifact`]) runs against it — a
+//!   component that traps on hostile input or fails its own golden checks
+//!   is refused with a reason instead of mounting and silently degrading.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -44,7 +48,33 @@ wasmtime::component::bindgen!({
     exports: { default: async },
 });
 
+mod check;
+
+pub use check::{check_artifact, fixture_files, CheckItem, CheckReport, Outcome, Phase};
+
 use inseam::plugin::host::Host as HostImports;
+
+/// The engine every bridge and harness instance shares the configuration
+/// of: async execution with fuel metering.
+fn new_engine() -> Engine {
+    let mut config = wasmtime::Config::new();
+    config.async_support(true);
+    config.consume_fuel(true);
+    Engine::new(&config).expect("static wasmtime config is valid")
+}
+
+/// The real bridge linker: our `host` interface plus core WASI (satisfied
+/// only by the empty context). The harness links the same way, so a
+/// component that mounts under `check` mounts under the kernel.
+fn build_linker(engine: &Engine) -> Result<Linker<Invocation>, wasmtime::Error> {
+    let mut linker: Linker<Invocation> = Linker::new(engine);
+    inseam::plugin::host::add_to_linker::<Invocation, wasmtime::component::HasSelf<Invocation>>(
+        &mut linker,
+        |state| state,
+    )?;
+    wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+    Ok(linker)
+}
 
 /// One transform application's host-side state: the capabilities this
 /// invocation was granted, and nothing else. The WASI context exists only
@@ -169,6 +199,17 @@ impl Capabilities {
     }
 }
 
+/// What a failed admission check does to the mount: refuse (the default),
+/// mount with a logged warning, or skip admission entirely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AdmissionMode {
+    #[default]
+    Enforce,
+    Warn,
+    Off,
+}
+
 /// Per-entry bridge config (the composition side, distinct from the
 /// artifact's own manifest).
 #[derive(Debug, Clone, Deserialize)]
@@ -185,6 +226,10 @@ pub struct WasmEntryConfig {
     /// Fuel per application; a spinning component runs out instead of
     /// wedging the sweep.
     pub fuel: u64,
+    /// Install-time admission: run the conformance harness the first time
+    /// this artifact (+ manifest + checks) is seen, and refuse a failing
+    /// plugin. Cached by content hash in the node's state.
+    pub admission: AdmissionMode,
 }
 
 impl Default for WasmEntryConfig {
@@ -193,6 +238,7 @@ impl Default for WasmEntryConfig {
             cooldown_days: 0,
             allow_new: false,
             fuel: 2_000_000_000,
+            admission: AdmissionMode::Enforce,
         }
     }
 }
@@ -209,11 +255,8 @@ pub struct WasmSchemeFactory {
 
 impl WasmSchemeFactory {
     pub fn new(_data_dir: &Path) -> Self {
-        let mut config = wasmtime::Config::new();
-        config.async_support(true);
-        config.consume_fuel(true);
         Self {
-            engine: Engine::new(&config).expect("static wasmtime config is valid"),
+            engine: new_engine(),
         }
     }
 }
@@ -247,10 +290,19 @@ impl SchemeFactory for WasmSchemeFactory {
         let bytes = std::fs::read(&artifact).map_err(|e| {
             PluginError(format!("cannot read artifact {}: {e}", artifact.display()))
         })?;
+        // Admission is keyed over everything that decides its verdict, so
+        // editing the manifest or the golden checks re-runs it even when the
+        // component itself is unchanged.
+        let checks = std::fs::read(artifact.with_extension("checks.toml")).unwrap_or_default();
+        let admission_hash = format!(
+            "{:016x}",
+            fnv1a(&[bytes.as_slice(), raw.as_bytes(), checks.as_slice()].concat())
+        );
         Ok(Box::new(WasmTransformPlugin {
             engine: self.engine.clone(),
             artifact,
             artifact_hash: format!("{:016x}", fnv1a(&bytes)),
+            admission_hash,
             artifact_bytes: bytes,
             manifest,
             config: parse_config(config)?,
@@ -262,6 +314,7 @@ pub struct WasmTransformPlugin {
     engine: Engine,
     artifact: PathBuf,
     artifact_hash: String,
+    admission_hash: String,
     artifact_bytes: Vec<u8>,
     manifest: ArtifactManifest,
     config: WasmEntryConfig,
@@ -284,19 +337,11 @@ impl Plugin for WasmTransformPlugin {
 
     async fn apply(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
         self.enforce_cooldown(cx)?;
+        self.admit(cx).await?;
 
         let component = Component::new(&self.engine, &self.artifact_bytes)
             .map_err(|e| PluginError(format!("{}: not a valid component: {e}", self.artifact.display())))?;
-        let mut linker: Linker<Invocation> = Linker::new(&self.engine);
-        inseam::plugin::host::add_to_linker::<Invocation, wasmtime::component::HasSelf<Invocation>>(
-            &mut linker,
-            |state| state,
-        )
-        .map_err(|e| PluginError(format!("linker: {e}")))?;
-        // Core WASI, satisfied with the empty context: the wasip2 std needs
-        // these interfaces to exist, not to reach anything.
-        wasmtime_wasi::p2::add_to_linker_async(&mut linker)
-            .map_err(|e| PluginError(format!("wasi linker: {e}")))?;
+        let linker = build_linker(&self.engine).map_err(|e| PluginError(format!("linker: {e}")))?;
 
         // Ask the component for its claims once, at mount: the effective
         // claim set is declared ∩ exported.
@@ -426,6 +471,56 @@ impl WasmTransformPlugin {
             )));
         }
         Ok(())
+    }
+
+    /// Install-time admission (`design/registry.md`): run the conformance
+    /// harness the first time this exact artifact + manifest + checks
+    /// combination is seen, and cache the verdict in the node's state. A
+    /// plugin that traps on hostile input or fails its own golden checks is
+    /// refused with the report's first failure instead of mounting and
+    /// silently degrading forever.
+    async fn admit(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
+        if self.config.admission == AdmissionMode::Off {
+            return Ok(());
+        }
+        let state = cx.get(&STATE)?;
+        let ns = state
+            .namespace("wasm-host", "1")
+            .map_err(|e| PluginError(e.to_string()))?;
+        let key = format!("admission:{}", self.admission_hash);
+        let verdict = match ns.get(&key).map_err(|e| PluginError(e.to_string()))? {
+            Some(cached) => cached,
+            None => {
+                tracing::info!(
+                    plugin = %self.manifest.name,
+                    "first sighting of this artifact; running admission checks"
+                );
+                let report = check::check_artifact(&self.artifact).await;
+                let verdict = match report.first_failure() {
+                    None => "pass".to_string(),
+                    Some(failure) => format!("fail:{failure}"),
+                };
+                ns.put(&key, &verdict)
+                    .map_err(|e| PluginError(e.to_string()))?;
+                verdict
+            }
+        };
+        match (verdict.strip_prefix("fail:"), self.config.admission) {
+            (None, _) => Ok(()),
+            (Some(reason), AdmissionMode::Warn) => {
+                tracing::warn!(
+                    plugin = %self.manifest.name,
+                    "failed admission but admission = \"warn\": {reason}"
+                );
+                Ok(())
+            }
+            (Some(reason), _) => Err(PluginError(format!(
+                "plugin `{}` failed admission: {reason} — run `inseam plugin check {}` for the \
+                 full report; set `admission = \"warn\"` or `\"off\"` on its entry to override",
+                self.manifest.name,
+                self.artifact.display()
+            ))),
+        }
     }
 
     async fn call_claims(

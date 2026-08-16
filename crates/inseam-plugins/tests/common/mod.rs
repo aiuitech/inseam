@@ -1,6 +1,7 @@
 //! Test harness: boot a kernel with the offline test composition (hashed
 //! embeddings, no LLM, no entity extractor) and optionally layer a patch
 //! over it — exactly how a distribution boots a node.
+#![allow(dead_code)] // shared across test binaries; each uses a subset
 
 use std::path::Path;
 use std::sync::Arc;

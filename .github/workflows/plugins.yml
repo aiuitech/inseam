@@ -1,0 +1,146 @@
+# The registry's merge gate (design/registry.md): every version enters
+# plugins/ through a PR that must rebuild reproducibly, hash-match the
+# index, pass the same conformance harness nodes run at admission, and
+# survive an AI security review. A scheduled sweep re-reviews the whole
+# tree so a compromise missed at merge is caught by the advisory feed
+# before cooldowns expire.
+
+name: plugins
+
+on:
+  pull_request:
+    paths:
+      - "plugins/**"
+      - "crates/inseam-wasm-host/**"
+  push:
+    branches: [main]
+    paths:
+      - "plugins/**"
+  schedule:
+    # Weekly full-tree security sweep, Monday 06:00 UTC.
+    - cron: "0 6 * * 1"
+
+jobs:
+  conformance:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Reproducibility depends on the pinned toolchain + each plugin's
+      # committed Cargo.lock. Bump this in lockstep with a rebuild of every
+      # committed artifact.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.97.1"
+          targets: wasm32-wasip2
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Rebuild every plugin from source; committed artifacts must match
+        run: |
+          set -euo pipefail
+          for dir in plugins/*/; do
+            name=$(basename "$dir")
+            [ -f "$dir/Cargo.toml" ] || continue
+            echo "::group::build $name"
+            (cd "$dir" && cargo build --release --target wasm32-wasip2 --locked)
+            built="$dir/target/wasm32-wasip2/release/${name//-/_}.wasm"
+            if ! cmp -s "$built" "$dir/$name.wasm"; then
+              echo "::error file=$dir$name.wasm::committed artifact does not match a locked rebuild from source"
+              exit 1
+            fi
+            echo "::endgroup::"
+          done
+
+      - name: Verify registry.toml hashes against committed artifacts
+        run: |
+          python3 - <<'EOF'
+          import hashlib, sys, tomllib
+          with open("plugins/registry.toml", "rb") as f:
+              index = tomllib.load(f)
+          failed = False
+          for entry in index.get("plugin", []):
+              path = f"plugins/{entry['artifact']}"
+              digest = hashlib.sha256(open(path, "rb").read()).hexdigest()
+              if digest != entry["sha256"].lower():
+                  print(f"::error file=plugins/registry.toml::{entry['name']}: index says {entry['sha256']}, {path} hashes to {digest}")
+                  failed = True
+          sys.exit(1 if failed else 0)
+          EOF
+
+      - name: Conformance harness (the same checks nodes run at admission)
+        run: |
+          set -euo pipefail
+          for dir in plugins/*/; do
+            name=$(basename "$dir")
+            [ -f "$dir/$name.wasm" ] || continue
+            echo "::group::check $name"
+            cargo run -p inseam-cli -- plugin check "$dir/$name.wasm"
+            echo "::endgroup::"
+          done
+
+  security-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            You are the security reviewer for the inseam plugin registry.
+            Plugins here are sandboxed WASM transforms, frequently
+            AI-authored, that receive personal data (fragment text, source
+            bytes) and a metered LLM capability. Review this PR's diff under
+            plugins/ for:
+            - capability requests in *.manifest.toml the code does not need
+              (llm, source_bytes, oversized llm_call_budget), and capability
+              widening relative to the previous version;
+            - exfiltration: fragment text or source bytes smuggled into
+              llm-complete/llm-describe-image prompts beyond the plugin's
+              stated purpose, or personal data encoded into emitted
+              fragments, log lines, or error strings;
+            - prompt injection staging: emitted fragment text crafted to
+              instruct downstream agents rather than describe content;
+            - obfuscation: encoded blobs, packed strings, unusual control
+              flow, or dependencies whose purpose the README does not
+              explain;
+            - golden checks (*.checks.toml) weakened to stop asserting on
+              output content, and registry.toml/advisories.toml edits that
+              do not match the artifacts changed.
+            Post your findings as a PR review. If anything above applies,
+            request changes and say precisely which file and line. If the
+            diff is clean, approve with a one-paragraph summary of what the
+            plugin does with its capabilities.
+
+  security-sweep:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Periodic security sweep of the inseam plugin registry. Audit
+            every plugin under plugins/ (source, manifest, checks, README,
+            and the registry index) with the same criteria as the PR
+            review: unjustified capabilities, data exfiltration through LLM
+            prompts or emitted fragments, prompt-injection staging,
+            obfuscation, and index/artifact mismatches. Compare each
+            committed .wasm's size and the manifest's capabilities against
+            what the source plausibly produces. If you find anything
+            suspicious, open a GitHub issue titled
+            "security-sweep: <plugin> <finding>" describing the evidence
+            and the recommended advisories.toml entry. If everything is
+            clean, do nothing.

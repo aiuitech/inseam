@@ -33,14 +33,15 @@ Beside the artifact sits its manifest (`<name>.manifest.toml`): identity, versio
 - **Fuel limits** — a spinning component traps instead of wedging the sweep; a trap or error logs and emits nothing (indexing is enrichment, never gated).
 - **Output hygiene** — emitted fragments are validated: inseam-defined mimetypes dropped, unknown relations coerced to `contains`, malformed parents treated as roots.
 - **Release cooldown** — a newly observed artifact hash soaks for `cooldown_days` before activating, on a first-seen clock recorded in this node's plugin state (locally unforgeable). Requesting different capabilities than the approved version is its own gate regardless of soak. `allow_new = true` on the entry is the explicit consent moment.
+- **Install-time admission** — the first sighting of an artifact runs the full conformance harness ([validation.md](validation.md)); a plugin that traps on hostile input or fails its own golden checks refuses to mount with the failing check named. `admission = "enforce" | "warn" | "off"` per entry; verdicts cached by content hash.
 - **Shape stamps carry the artifact** — name, version, and content hash are in the registration's shape fingerprint, so an upgraded plugin dirties exactly the sources it built ([index/maintenance.md](../index/maintenance.md)).
 
 ## Authoring and validating
 
-The agent skill at `.claude/skills/inseam-sandboxed-plugin/SKILL.md` is the authoring procedure (scaffold, manifest, build to `wasm32-wasip2`, validate). The validation gate is:
+The agent skill at `.claude/skills/inseam-sandboxed-plugin/SKILL.md` is the authoring procedure (scaffold, golden checks first, manifest, build to `wasm32-wasip2`, validate). The validation gate is the conformance harness ([validation.md](validation.md)):
 
 ```sh
-cargo run -p inseam-wasm-host --example inspect -- plugins/<name>/<name>.wasm
+inseam plugin check plugins/<name>/<name>.wasm
 ```
 
-which mounts the component through the real bridge and prints its effective claims. `plugins/ocr` — image OCR through the vision-capable LLM grant — is the reference plugin and was authored by an agent running that skill; `crates/inseam-wasm-host/tests/ocr_e2e.rs` exercises it end to end (with a fake `llm` provider, proving the component only ever sees the granted capability).
+the same harness CI runs at publish and every node runs at admission. `plugins/ocr` — image OCR through the vision-capable LLM grant — is the reference plugin and was authored by an agent running that skill; `crates/inseam-wasm-host/tests/ocr_e2e.rs` exercises it end to end (with a fake `llm` provider, proving the component only ever sees the granted capability). Distribution and installation: [registry.md](registry.md).

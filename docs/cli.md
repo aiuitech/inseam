@@ -13,6 +13,8 @@ inseam agent "when did I ...?"      # live LLM driving query/expand/scan/fetch a
 inseam models [--embeddings]        # endpoint model catalog, cheapest first
 inseam status                       # store stats + embedding identity + re-embed pending
 inseam plugins                      # the fiber tree: each entry, its state, its live effects
+inseam plugin check <artifact.wasm> # conformance harness: static/mount/contract/golden (plugins/validation.md)
+inseam plugin install <name>        # fetch from the registry, verify sha256, check, mount (plugins/registry.md)
 inseam config [--resolved]          # the composition; --resolved = the layered result that boots
 ```
 

@@ -1,0 +1,11 @@
+# The registry's advisory feed (design/registry.md): versions yanked or
+# flagged after publication. `inseam plugin install` refuses anything listed
+# here, and the release-cooldown end check consults this feed so a version
+# yanked during its soak window never activates anywhere.
+#
+# Yanking is an append-only act done by PR, like publishing:
+#
+# [[advisory]]
+# name = "example"
+# version = "1.2.3"
+# reason = "exfiltrates fragment text through llm-complete prompts"

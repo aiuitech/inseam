@@ -1,5 +1,10 @@
 # ocr
 
+Install: `inseam plugin install ocr` (verifies, checks, and mounts — see
+`docs/plugins/registry.md`), or mount a local build as below. Golden checks
+live in `ocr.checks.toml` (fixtures documented in `fixtures/README.md`);
+validate any change with `inseam plugin check plugins/ocr/ocr.wasm`.
+
 Extracts text from images encountered during indexing. Claims `image/png`,
 `image/jpeg`, and `image/webp` at source roots, reads the source bytes, and
 makes one metered vision call asking the model to transcribe all visible

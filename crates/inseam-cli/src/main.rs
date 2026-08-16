@@ -4,6 +4,8 @@
 //! top (`design/composition.md`). Command handlers are a thin transport over
 //! the `operations` seam; no command contains node logic.
 
+mod registry;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -142,11 +144,35 @@ enum Command {
     Status,
     /// The plugin tree: every fiber, its state, and its live effects.
     Plugins,
+    /// Sandboxed plugin artifacts: validate, install.
+    Plugin {
+        #[command(subcommand)]
+        command: PluginCommand,
+    },
     /// Print the composition. --resolved shows the layered result the node
     /// boots — what prints is what runs, by construction.
     Config {
         #[arg(long)]
         resolved: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum PluginCommand {
+    /// Run the conformance harness against a .wasm artifact: static checks,
+    /// a real bridge mount, the hostile-input contract battery, and the
+    /// plugin's own golden checks (<artifact>.checks.toml). Exits nonzero
+    /// on failure — the same verdict install-time admission enforces.
+    Check { artifact: PathBuf },
+    /// Fetch a plugin from a registry, verify its sha256 against the
+    /// reviewed index, run the conformance harness, and mount it in this
+    /// node's composition.
+    Install {
+        name: String,
+        /// Registry root: an https URL or a local directory containing
+        /// registry.toml. Defaults to the inseam repository's plugins tree.
+        #[arg(long, env = "INSEAM_REGISTRY")]
+        registry: Option<String>,
     },
 }
 
@@ -168,6 +194,30 @@ async fn main() -> anyhow::Result<()> {
             .context("no platform data directory; pass --data-dir")?
             .join("inseam"),
     };
+    // `plugin check`/`plugin install` never boot the kernel: validating an
+    // artifact is hermetic, and installing must work before the composition
+    // it edits can settle.
+    if let Command::Plugin { command } = &cli.command {
+        match command {
+            PluginCommand::Check { artifact } => {
+                let report = inseam_wasm_host::check_artifact(artifact).await;
+                print!("{}", report.render());
+                if !report.passed() {
+                    std::process::exit(1);
+                }
+            }
+            PluginCommand::Install { name, registry } => {
+                let composition_path = cli
+                    .composition
+                    .clone()
+                    .unwrap_or_else(|| data_dir.join("composition.toml"));
+                registry::install(name, registry.as_deref(), &data_dir, &composition_path)
+                    .await?;
+            }
+        }
+        return Ok(());
+    }
+
     let composition = load_composition(&cli, &data_dir)?;
 
     // `config` never boots the kernel: printing the composition must work
@@ -374,7 +424,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Command::Config { .. } => unreachable!("handled before boot"),
+        Command::Config { .. } | Command::Plugin { .. } => unreachable!("handled before boot"),
     }
     kernel.shutdown().await;
     Ok(())

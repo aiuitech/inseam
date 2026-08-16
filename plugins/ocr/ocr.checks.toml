@@ -1,0 +1,30 @@
+# Golden checks for the OCR plugin (docs/plugins/validation.md): example
+# inputs the conformance harness feeds through the real bridge with a canned
+# LLM, and the output shapes this plugin promises for them. Fixture files
+# are documented in fixtures/README.md.
+
+# The happy path: bytes + a granted vision LLM produce a transcript fragment
+# hung off the image with a `transcribes` relation.
+[[check]]
+name = "transcribes image text through the granted vision llm"
+mimetype = "image/png"
+bytes_file = "fixtures/pixel.png"
+llm_returns = "GARAGE SALE SATURDAY 9AM — 12 ELM STREET"
+
+[check.expect]
+min_fragments = 1
+fragment_contains = "GARAGE SALE"
+relation = "transcribes"
+mimetype = "text/plain"
+
+# The degrade path: when the LLM refuses (offline node, spent budget), OCR
+# must emit nothing — never an error, never a placeholder fragment that
+# would pollute the search index.
+[[check]]
+name = "emits nothing when the llm is withheld"
+mimetype = "image/png"
+bytes_file = "fixtures/pixel.png"
+
+[check.expect]
+min_fragments = 0
+max_fragments = 0
