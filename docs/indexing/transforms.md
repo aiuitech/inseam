@@ -1,6 +1,6 @@
 # Transforms
 
-Transforms take a fragment of a mimetype they claim and emit child fragments with typed relations ([design/indexing.md](../../design/indexing.md)). Each transform is a **plugin**; the registry it registers into is the `transforms` seam ([../kernel.md](../kernel.md)).
+Transforms take a fragment of a mimetype they claim and emit child fragments with typed relations ([design/indexing.md](../../design/indexing.md)). Each transform is a **plugin**; the registry it registers into is the `transforms` seam ([../kernel.md](../architecture/kernel.md)).
 
 ## One registration pathway, two tiers
 

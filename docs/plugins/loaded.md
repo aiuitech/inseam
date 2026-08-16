@@ -34,7 +34,7 @@ Beside the artifact sits its manifest (`<name>.manifest.toml`): identity, versio
 - **Output hygiene** — emitted fragments are validated: inseam-defined mimetypes dropped, unknown relations coerced to `contains`, malformed parents treated as roots.
 - **Release cooldown** — a newly observed artifact hash soaks for `cooldown_days` before activating, on a first-seen clock recorded in this node's plugin state (locally unforgeable). Requesting different capabilities than the approved version is its own gate regardless of soak. `allow_new = true` on the entry is the explicit consent moment.
 - **Install-time admission** — the first sighting of an artifact runs the full conformance harness ([validation.md](validation.md)); a plugin that traps on hostile input or fails its own golden checks refuses to mount with the failing check named. `admission = "enforce" | "warn" | "off"` per entry; verdicts cached by content hash.
-- **Shape stamps carry the artifact** — name, version, and content hash are in the registration's shape fingerprint, so an upgraded plugin dirties exactly the sources it built ([index/maintenance.md](../index/maintenance.md)).
+- **Shape stamps carry the artifact** — name, version, and content hash are in the registration's shape fingerprint, so an upgraded plugin dirties exactly the sources it built ([index/maintenance.md](../indexing/maintenance.md)).
 
 ## Authoring and validating
 

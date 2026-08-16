@@ -2,11 +2,11 @@
 
 The trusted tier ([design/plugins.md](../../design/plugins.md)), named for how it arrives: **linked** into the binary at build, where [loaded plugins](loaded.md) mount from artifacts at runtime. Rust, statically linked, activated by composition. `crates/inseam-plugins` ships the first-party set; a distribution registers the factories it links (`inseam_plugins::factories()`) with `Kernel::boot`, and a custom distribution compiles additional linked plugins in from source ([distributions.md](distributions.md)).
 
-Every plugin is the same five declarations — name, config, inject, provide, apply ([kernel.md](../kernel.md)). What each first-party plugin does:
+Every plugin is the same five declarations — name, config, inject, provide, apply ([kernel.md](../architecture/kernel.md)). What each first-party plugin does:
 
 | Plugin | Provides | Injects | Role |
 | --- | --- | --- | --- |
-| `connection-fs` | `connection` | — | the local filesystem host ([index/filesystem-host.md](../index/filesystem-host.md)) |
+| `connection-fs` | `connection` | — | the local filesystem host ([index/filesystem-host.md](../indexing/filesystem-host.md)) |
 | `llm-endpoint` | `llm` | — | OpenAI-compatible client; declares `transform_model`/`agent_model` as facts. Fails loudly (alone) when its key env is unset |
 | `embedder` | `embedder` | store, llm? | endpoint / hashed / none; declares the embedding identity to the store, which binds the search surface |
 | `transforms` | `transforms` | — | the registry seam transform plugins register into |
@@ -15,7 +15,7 @@ Every plugin is the same five declarations — name, config, inject, provide, ap
 | `transform-summarizer` | — | transforms | the mandatory summary (LLM → extractive → envelope) |
 | `transform-entities` | — | transforms | LLM entity extraction |
 | `finder` | `finder` | store, embedder | RRF + personalized PageRank ranking ([finder/algorithm.md](../finder/algorithm.md)) |
-| `sweep` | `sweep` | store, connection, transforms, embedder, llm? | the reconciling sweep ([index/maintenance.md](../index/maintenance.md)) |
+| `sweep` | `sweep` | store, connection, transforms, embedder, llm? | the reconciling sweep ([index/maintenance.md](../indexing/maintenance.md)) |
 | `operations` | `operations` | store, connection, finder, sweep | the transport-neutral node API ([finder/operations.md](../finder/operations.md)) |
 
 Discipline notes:

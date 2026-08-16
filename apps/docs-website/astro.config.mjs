@@ -14,7 +14,23 @@ export default defineConfig({
       starlight({
           title: 'Inseam',
           social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/aiuitech/inseam' }],
-          // No sidebar config: Starlight autogenerates it from the synced tree.
+          // Top-level order and group labels are pinned here; each group's
+          // contents still autogenerate from the synced docs tree, so pages
+          // added under an existing folder need no config change. A new
+          // top-level docs/ folder needs one line here.
+          sidebar: [
+              { slug: 'get-started' },
+              { slug: 'cli' },
+              { slug: 'configuration' },
+              { label: 'Architecture', items: [{ autogenerate: { directory: 'architecture' } }] },
+              { label: 'Indexing', items: [{ autogenerate: { directory: 'indexing' } }] },
+              { label: 'Finder', items: [{ autogenerate: { directory: 'finder' } }] },
+              { label: 'Plugins', items: [{ autogenerate: { directory: 'plugins' } }] },
+              { label: 'Crates', items: [{ autogenerate: { directory: 'crates' } }], collapsed: true },
+              { label: 'Skills', items: [{ autogenerate: { directory: 'skills' } }], collapsed: true },
+              { label: 'Brand', items: [{ autogenerate: { directory: 'brand' } }], collapsed: true },
+              { slug: 'glossary' },
+          ],
           // get-started is the entry point handed to agents; keep it at the
           // top of llms.txt so a bare docs link is enough to bootstrap one.
           plugins: [starlightLlmsTxt({ promote: ['index', 'get-started'] })],

@@ -31,10 +31,16 @@ for (const rel of mdFiles) {
 	const { title, body } = splitTitle(raw, rel);
 	const outRel = rel.replace(/README\.md$/, 'index.md');
 	const out = path.join(dest, outRel);
+	// A folder's README is its section landing page: pin it first in the
+	// sidebar group as "Overview" (the page keeps its real title).
+	const sidebar =
+		outRel !== 'index.md' && outRel.endsWith('/index.md')
+			? '\nsidebar:\n  label: Overview\n  order: 0'
+			: '';
 	await mkdir(path.dirname(out), { recursive: true });
 	await writeFile(
 		out,
-		`---\ntitle: ${JSON.stringify(title)}\n---\n\n${rewriteLinks(body, rel)}`,
+		`---\ntitle: ${JSON.stringify(title)}${sidebar}\n---\n\n${rewriteLinks(body, rel)}`,
 	);
 }
 // The repo-root installer is served at docs.inseam.io/install.sh so the

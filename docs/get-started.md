@@ -14,7 +14,7 @@ One line installs the prebuilt binary (macOS and Linux, arm64 and x86_64):
 curl -fsSL https://docs.inseam.io/install.sh | sh
 ```
 
-The script detects your platform, downloads the latest [GitHub release](https://github.com/aiuitech/inseam/releases), verifies its sha256 against the release's checksums, and installs to `~/.local/bin` (`INSEAM_INSTALL_DIR` and `INSEAM_VERSION` override; the tarballs are on the releases page if you'd rather fetch by hand). Or run an app that bundles the core — the [macOS app](macos-app.md) embeds the same node through the FFI and shares its data dir with the CLI.
+The script detects your platform, downloads the latest [GitHub release](https://github.com/aiuitech/inseam/releases), verifies its sha256 against the release's checksums, and installs to `~/.local/bin` (`INSEAM_INSTALL_DIR` and `INSEAM_VERSION` override; the tarballs are on the releases page if you'd rather fetch by hand). Or run an app that bundles the core — the [macOS app](architecture/macos-app.md) embeds the same node through the FFI and shares its data dir with the CLI.
 
 The prebuilt binary is not a dead end: it installs registry plugins (`inseam plugin install <name>`, [plugins/registry.md](plugins/registry.md)) and validates ones you author (`inseam plugin check`) — and since loaded plugins can be written in any language that compiles to a WASM component, you can extend the node without ever installing Rust (see [Self-modify](#self-modify)).
 
@@ -50,7 +50,7 @@ A node's behavior is its **composition**: which plugins run with what config ([c
 
 1. **Loaded plugins — the default, and the preferred method for AI-written plugins.** Sandboxed WASM components mounted at runtime with manifest-attenuated capabilities ([plugins/loaded.md](plugins/loaded.md)) — a plugin an agent wrote minutes ago can be mounted safely because the bridge, not the author, bounds what it can do. Install community plugins from the registry (`inseam plugin install`), or author your own: the agent skill at `skills/inseam-loaded-plugin/SKILL.md` ([docs mirror](skills/inseam-loaded-plugin.md)) is the complete authoring procedure, and `inseam plugin check` is the gate. **This subpath needs no Rust toolchain**: the contract is a language-neutral WIT world ([plugins/transform-plugin-wit.md](plugins/transform-plugin-wit.md)), so any language that compiles to a WASM component works — the skill's walkthrough uses Rust, but componentize-py (Python), ComponentizeJS/jco (JavaScript), or TinyGo (Go) produce the same artifact, and the prebuilt CLI validates all of them with the same `inseam plugin check`.
 2. **Linked plugins / a custom distribution** — trusted Rust compiled into the binary, for first-party-grade or proprietary plugins ([plugins/linked.md](plugins/linked.md), [plugins/distributions.md](plugins/distributions.md)).
-3. **Core changes** — edit the kernel or seams in the checkout ([crate.md](crate.md) maps the workspace, `design/` holds intent), then `cargo install --path crates/inseam-cli` to make the running binary current.
+3. **Core changes** — edit the kernel or seams in the checkout ([workspace-layout.md](architecture/workspace-layout.md) maps the workspace, `design/` holds intent), then `cargo install --path crates/inseam-cli` to make the running binary current.
 
 ## For agents: set up and self-modify, start to finish
 

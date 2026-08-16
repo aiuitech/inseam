@@ -53,4 +53,4 @@ Secrets never live in the composition or the store: the `llm` entry names an env
 
 ## Invalidation tiers
 
-Which entry's config changed decides the blast radius ([index/maintenance.md](index/maintenance.md)): `finder` and the llm `agent_model` are query-time (free); budgets (`max_sources`, `llm_call_budget`) are run-metering (free); transform configs and the sweep's decomposition dials are shape (affected sources re-index); the `embedder` entry re-embeds in place. Mounting/unmounting a transform plugin dirties exactly the sources its claims touch.
+Which entry's config changed decides the blast radius ([index/maintenance.md](indexing/maintenance.md)): `finder` and the llm `agent_model` are query-time (free); budgets (`max_sources`, `llm_call_budget`) are run-metering (free); transform configs and the sweep's decomposition dials are shape (affected sources re-index); the `embedder` entry re-embeds in place. Mounting/unmounting a transform plugin dirties exactly the sources its claims touch.

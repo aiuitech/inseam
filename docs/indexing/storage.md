@@ -1,6 +1,6 @@
 # Index Storage
 
-Two layers under the node's data dir, owned entirely by the kernel ([../kernel.md](../kernel.md)) — no plugin ever issues DDL, and there are no data migrations anywhere: a schema-version bump drops and recreates tables, and the next sweep rebuilds them from enumeration.
+Two layers under the node's data dir, owned entirely by the kernel ([../kernel.md](../architecture/kernel.md)) — no plugin ever issues DDL, and there are no data migrations anywhere: a schema-version bump drops and recreates tables, and the next sweep rebuilds them from enumeration.
 
 ## SQLite: source of truth (`catalog.sqlite3`)
 

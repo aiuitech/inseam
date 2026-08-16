@@ -4,7 +4,7 @@
 //! overviews from each crate's `//!` block, the WIT contract via
 //! wit-bindgen's markdown backend, and skill pages from `skills/*/SKILL.md`
 //! — so the prose docs tree stays the single serialization the doc site
-//! consumes (`docs/doc-generation.md`).
+//! consumes (`docs/architecture/doc-generation.md`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
