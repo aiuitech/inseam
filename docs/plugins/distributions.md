@@ -1,8 +1,8 @@
 # Custom Distributions
 
-The linked tier's professional-configuration path ([design/plugins.md](../../design/plugins.md)): a node operator — a commercial cloud node, a fleet with proprietary performant plugins — ships private trusted plugins by **compiling them in from source**, not through the registry. The registry ([registry.md](registry.md)) distributes loaded artifacts; trusted code is a build input.
+The linked tier's path for professional setups ([design/plugins.md](../../design/plugins.md)): a node operator — a commercial cloud node, a fleet with private high-performance plugins — ships private trusted plugins by **compiling them in from source**, not through the registry. The registry ([registry.md](registry.md)) distributes loaded artifacts; trusted code is a build input.
 
-A distribution is an app crate that links a set of linked plugins and ships a base composition. `inseam-cli` is a library plus a three-line binary, so a custom distribution is a thin crate:
+A distribution is an app crate that compiles in a set of linked plugins and ships a base composition. `inseam-cli` is a library plus a three-line binary, so a custom distribution is a thin crate:
 
 ```toml
 # Cargo.toml of your private distribution repo
@@ -31,9 +31,9 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-Provisioning a node is `git clone` + `cargo install --path .` — the same shape as installing the stock CLI. Your plugins are addressable from any `composition.toml` by bare name, exactly like the first-party set; `with_base_entries` activates them by default, and a node's composition file patches those entries by id like any base entry.
+Provisioning a node is `git clone` + `cargo install --path .` — the same shape as installing the stock CLI. Your plugins are addressable from any `composition.toml` by bare name, exactly like the first-party set; `with_base_entries` turns them on by default, and a node's composition file overrides those entries by id like any base entry.
 
-## The conformance guarantee travels with you
+## The validation guarantee travels with you
 
 The linked tier's validation gate ([validation.md](validation.md)) is the reusable `inseam-conformance` crate, not something private to this workspace. A custom distribution's test suite enrolls its own factories:
 
@@ -50,9 +50,9 @@ async fn linked_transforms_survive_hostile_inputs() {
 }
 ```
 
-`check_factories` is the build/manifest sweep with the enrollment gate (an unenrolled factory panics with instructions); `batter_transforms` is the same hostile-input battery loaded plugins face in `inseam plugin check` — claims determinism, text withheld/empty/garbage, never a granted LLM, degrade-never-panic. The registry-specific steps (sha256 index, advisories, cooldown) don't apply: those defend against untrusted serving channels, and a source build has none.
+`check_factories` is the build/manifest sweep with the enrollment gate (an unenrolled factory panics with instructions); `batter_transforms` is the same hostile-input battery loaded plugins face in `inseam plugin check` — consistent claims, text withheld/empty/garbage, never a granted LLM, degrade gracefully and never crash. The registry-specific steps (sha256 index, advisories, cooldown) don't apply here: those defend against untrusted download channels, and a source build has none.
 
 ## What this path is not
 
-- **Not dynamic loading.** Native dynamic libraries stay rejected ([design/plugins.md](../../design/plugins.md) — paths not taken); private trusted code links statically, riding deliberate binary updates.
+- **Not dynamic loading.** Native dynamic libraries stay rejected ([design/plugins.md](../../design/plugins.md) — paths not taken); private trusted code links statically and rides deliberate binary updates.
 - **Not a private registry.** The registry is the loaded tier's channel; pointing `inseam plugin install --registry` at a private tree works for private *loaded* plugins, but trusted linked code never flows through it.

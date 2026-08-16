@@ -1,26 +1,26 @@
 # The Finder Algorithm
 
-Implements [design/finder.md](../../design/finder.md): seed with hybrid search, then let the graph boost what search alone would underrank. All constants live in the `finder` entry's config ([../configuration.md](../configuration.md)) — query-time tier: tuning them never re-indexes.
+Implements [design/finder.md](../../design/finder.md): start from hybrid search hits, then let the graph boost what search alone would underrank. All the constants live in the `finder` entry's config ([../configuration.md](../configuration.md)) — it's a query-time setting, so tuning them never re-indexes anything.
 
-## 1. Seed: hybrid search, fused by rank
+## 1. Seed: two searches, merged by rank
 
-The query runs against both Lance surfaces: full-text (BM25) and vector nearest-k under cosine distance — the latter only after dropping hits beyond `max_vector_distance`, because nearest-k always returns *something*, however unrelated. The two best-first lists fuse by **reciprocal rank fusion**:
+The query runs against both search tables: full-text (BM25) and vector nearest-k by cosine distance — the latter after dropping hits beyond `max_vector_distance`, because nearest-k always returns *something*, however unrelated. The two best-first lists merge by **reciprocal rank fusion**:
 
 ```
 seed(f) = Σ over lists  1 / (rrf_k + rank_f)
 ```
 
-Rank-based fusion sidesteps BM25 scores and cosine distances living on incomparable scales, and will fuse the same way across nodes when fan-out arrives.
+Merging by rank instead of score sidesteps the fact that BM25 scores and cosine distances aren't comparable numbers — and it will merge the same way across nodes when multi-node search arrives.
 
-## 2. Boost: personalized PageRank over the relation graph
+## 2. Boost: spread relevance along the graph
 
-Seed scores, normalized to a distribution, become the restart vector for power-iterated PPR on the **undirected** relation graph, edge weights by relation kind (`[finder.weights]`), parallel edges summed:
+The seed scores, normalized into a distribution, become the restart vector for personalized PageRank over the **undirected** relation graph, with edge weights by relation kind (`[finder.weights]`) and parallel edges summed:
 
 ```
 p ← (1 − damping) · seed  +  damping · (Wᵀ p + dangling · seed)
 ```
 
-Bounded propagation: `damping = 0.5` and ≤ `iterations` rounds (ε early-exit) keep the boost local rather than converging to global centrality. Entity fragments are the highways: an entity seeded by the query conducts relevance to every fragment that mentions it.
+The spread is kept local: `damping = 0.5` and at most `iterations` rounds (with an ε early exit) mean the boost stays near the seeds instead of drifting toward globally central fragments. Entity fragments are the highways: an entity the query hits carries relevance to every fragment that mentions it.
 
 ## 3. Score: boost, never gate
 
@@ -28,14 +28,14 @@ Bounded propagation: `damping = 0.5` and ≤ `iterations` rounds (ε early-exit)
 final(f) = seed(f) + p(f)
 ```
 
-Addition guarantees a fragment with no useful relations keeps its seed standing (property-tested: every seed retains at least `(1 − damping)` of its normalized mass).
+Because the boost is *added*, a fragment with no useful relations keeps its search score (property-tested: every seed keeps at least `(1 − damping)` of its normalized mass).
 
-## 4. Rollup: fragments -> sources
+## 4. Rollup: fragments → sources
 
-Fragments group by source (entity fragments, having none, conduct but never rank). A source scores its best fragment plus a tapered corroboration bonus — max alone ignores independent hits, sum invites long-document bias:
+Fragments group by source (entity fragments, having none, carry relevance but never rank). A source scores its best fragment plus a tapering bonus for additional hits — using only the max would ignore independent hits; summing everything would favor long documents:
 
 ```
 source = f1 + 0.1·f2 + 0.05·f3
 ```
 
-Results normalize to `score = 1.0` at the top and carry the envelope, the mandatory summary, and up to `max_hints` fragment hints (text preview + extent) so a client knows where to `scan` next.
+Results are normalized so the top score is `1.0`, and each carries the envelope, the mandatory summary, and up to `max_hints` fragment hints (text preview + extent) so a client knows where to `scan` next.

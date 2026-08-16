@@ -1,8 +1,8 @@
 # Inseam Docs
 
-Inseam documentation lives here. Docs are to describe what is and act as concise serialization of the codebase in natural language. Keep files authored as markdown with well named descriptive filenames. They should be concise and stay on topic to the filename, breaking larger docs into multiple smaller topics. Nested folders are encouraged for grouping and follow the same descriptive naming of folders.
+This is the documentation for inseam. Docs describe what the code does today, in plain language. Keep files short, on the topic their filename names, and split big topics into smaller files. Folders group related topics and follow the same descriptive naming.
 
-Docs are written for **incremental discovery** so that agents, and people, can scan at a high level, and drive themselves to the right documentation through the filesystem, without bloating the context window, or their brain's, with large files spanning multiple topics.
+Docs are written for **incremental discovery**: a person or an agent should be able to scan the tree at a high level and click down to exactly the page they need, without loading one giant file that covers everything.
 
 ## Map
 
@@ -10,17 +10,17 @@ Start here:
 
 - [get-started.md](get-started.md) — install a node, index something, query it, modify it.
 - [cli.md](cli.md) — the `inseam` binary, command by command.
-- [configuration.md](configuration.md) — composition: the node's one config surface.
-- [glossary.md](glossary.md) — the vocabulary, one picture.
+- [configuration.md](configuration.md) — the composition file, the node's only config.
+- [glossary.md](glossary.md) — the vocabulary, one page.
 
 Then by area:
 
-- [architecture/](architecture/README.md) — workspace layout, the kernel, the macOS app, doc generation.
-- [indexing/](indexing/README.md) — filesystem host, transforms, storage, index maintenance.
-- [finder/](finder/README.md) — query-time discovery: the algorithm and its operations.
-- [plugins/](plugins/README.md) — both plugin tiers, validation, the registry, custom distributions.
+- [architecture/](architecture/README.md) — how the repo is laid out, the kernel, the macOS app, and doc generation.
+- [indexing/](indexing/README.md) — how files become an index: the filesystem host, transforms, storage, and index upkeep.
+- [finder/](finder/README.md) — how queries work: the ranking algorithm and the operations built on it.
+- [plugins/](plugins/README.md) — the two plugin kinds, validation, the registry, and custom builds.
 - [crates/](crates/inseam-kernel.md) — per-crate overviews, generated from each crate's doc block.
 - [skills/](skills/inseam-loaded-plugin.md) — agent skills, generated from their `SKILL.md` sources.
 - [brand/](brand/README.md) — the brand and its assets.
 
-Architectural *intent* — the decisions behind these shapes — lives in [design/](../design/README.md), deliberately outside this tree.
+The *why* behind these shapes — the design decisions — lives in [design/](../design/README.md), deliberately outside this tree.

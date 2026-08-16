@@ -1,3 +1,3 @@
 # Indexing
 
-How a node turns sources into a queryable index: the [filesystem host](filesystem-host.md) enumerating reality, [transforms](transforms.md) decomposing sources into fragments, [storage](storage.md) holding catalog + graph + search surfaces, and [maintenance](maintenance.md) — the reconciling sweep that converges the index on reality and the composition.
+How a node turns sources into a searchable index: the [filesystem host](filesystem-host.md) lists what exists, [transforms](transforms.md) break sources into fragments, [storage](storage.md) holds the catalog, graph, and search tables, and [maintenance](maintenance.md) covers the sweep that keeps the index matching both reality and the configuration.

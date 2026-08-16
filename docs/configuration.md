@@ -1,14 +1,14 @@
 # Configuration
 
-A node's configuration is its **composition**: which plugins run with what config ([design/composition.md](../design/composition.md)). There is no other config file.
+A node's configuration is its **composition**: which plugins run, with what config ([design/composition.md](../design/composition.md)). There is no other config file.
 
 ## Layers
 
-1. **Distribution base** — the CLI (and the FFI library) ship a base composition mounting the standard entries below.
-2. **Node composition** — `<data-dir>/composition.toml` (or `--composition` / `INSEAM_COMPOSITION`), patching base entries **by id** and adding new ones.
-3. `inseam config` prints the composition; `inseam config --resolved` prints the layered result the node boots — what prints is what runs.
+1. **Distribution base** — the CLI (and the FFI library) ship a built-in base composition with the standard entries below.
+2. **Node composition** — `<data-dir>/composition.toml` (or `--composition` / `INSEAM_COMPOSITION`), which changes base entries **by id** and adds new ones.
+3. `inseam config` prints the composition; `inseam config --resolved` prints the merged result the node actually boots with — what prints is what runs.
 
-Patch semantics: a patch entry's `config` **replaces** the target's config wholesale (no field merge); `plugin` and `disabled` override when present; unknown ids append as new entries. Entries may nest (`[[entry.entries]]`) into groups; disabling a group prunes its subtree.
+How merging works: when your entry matches a base entry's id, your `config` **replaces** the base config entirely (fields are not merged one by one); `plugin` and `disabled` override when present; ids the base doesn't know become new entries. Entries can nest (`[[entry.entries]]`) into groups; disabling a group disables everything inside it.
 
 ## The base entries and their configs
 
@@ -26,7 +26,7 @@ Patch semantics: a patch entry's `config` **replaces** the target's config whole
 | `sweep` | `sweep` | `max_sources` (0 = unlimited), `max_fragments_per_source` (400), `max_depth` (6), `max_content_bytes` (2 MB), `modified_after` (`YYYY-MM-DD`) |
 | `operations` | `operations` | — |
 
-Example `composition.toml` — offline node with a loaded OCR plugin:
+Example `composition.toml` — an offline node with a loaded OCR plugin:
 
 ```toml
 [[entry]]
@@ -44,13 +44,19 @@ disabled = true
 id = "ocr"
 plugin = "wasm:plugins/ocr/ocr.wasm"
 [entry.config]
-cooldown_days = 7      # release cooldown for newly observed artifact versions
-# allow_new = true     # explicit consent to activate a version inside its cooldown
-# admission = "enforce"  # conformance harness on first sighting: enforce | warn | off
+cooldown_days = 7      # wait period before a newly seen plugin version activates
+# allow_new = true     # explicit consent to activate a version still inside its wait period
+# admission = "enforce"  # validation on first sighting: enforce | warn | off
 ```
 
 Secrets never live in the composition or the store: the `llm` entry names an environment variable (`api_key_env`), nothing more.
 
-## Invalidation tiers
+## What a config change costs
 
-Which entry's config changed decides the blast radius ([index/maintenance.md](indexing/maintenance.md)): `finder` and the llm `agent_model` are query-time (free); budgets (`max_sources`, `llm_call_budget`) are run-metering (free); transform configs and the sweep's decomposition dials are shape (affected sources re-index); the `embedder` entry re-embeds in place. Mounting/unmounting a transform plugin dirties exactly the sources its claims touch.
+Which entry you change decides how much work the next `inseam index` does ([indexing/maintenance.md](indexing/maintenance.md)):
+
+- `finder` and the llm `agent_model` only affect query time — free.
+- Budgets (`max_sources`, `llm_call_budget`) only limit each run — free.
+- Transform configs and the sweep's size/depth dials change what the index would build, so affected sources re-index.
+- The `embedder` entry re-computes vectors in place, without re-running transforms.
+- Mounting or unmounting a transform plugin re-indexes only the sources that plugin applies to.
