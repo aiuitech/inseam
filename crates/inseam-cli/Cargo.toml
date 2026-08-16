@@ -8,11 +8,18 @@ name = "inseam"
 path = "src/main.rs"
 
 [dependencies]
-inseam.workspace = true
+inseam-kernel.workspace = true
+inseam-seams.workspace = true
+inseam-plugins.workspace = true
+inseam-wasm-host.workspace = true
 
 anyhow.workspace = true
 clap.workspace = true
 dirs.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+toml.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

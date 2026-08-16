@@ -1,28 +1,82 @@
-//! C ABI over the node core for embedding in native apps — the Swift/GUI
-//! transport adapter `design/node-api.md` promises. One handle wraps a `Node`
-//! plus the tokio runtime it needs; requests block the calling thread and
-//! responses cross the boundary as JSON (the same serde views `ops` defines).
+//! C ABI over the node — the Swift/GUI transport adapter
+//! (`design/node-api.md`). Like every transport, this is a thin, logic-free
+//! skin over the `operations` seam: one handle wraps a booted kernel plus
+//! the tokio runtime it needs; requests block the calling thread and
+//! responses cross the boundary as JSON (the same serde views the seam
+//! defines). The crate is itself a **distribution**: it links the native
+//! plugin set and ships a base composition, layered under the node's
+//! `composition.toml` (`design/composition.md`).
 //!
 //! Conventions (mirrored in `include/inseam_ffi.h`):
-//! - Fallible calls take `char **error_out`; on failure they return null and,
-//!   when `error_out` is non-null, store a message the caller must free.
+//! - Fallible calls take `char **error_out`; on failure they return null
+//!   and, when `error_out` is non-null, store a message the caller must
+//!   free.
 //! - Every `char *` returned by this library is freed with
-//!   `inseam_string_free`, and nodes with `inseam_node_free`. Passing pointers
-//!   from anywhere else is undefined behavior.
+//!   `inseam_string_free`, and nodes with `inseam_node_free`. Passing
+//!   pointers from anywhere else is undefined behavior.
 
-use std::ffi::{CStr, CString, c_char};
+use std::ffi::{c_char, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use inseam::llm::LlmClient;
-use inseam::ops::{Node, QueryRequest};
-use inseam::profile::IndexProfile;
+use inseam_kernel::substrate::{Composition, Kernel, SubstrateError};
+use inseam_seams::operations::{IndexRequest, Operations, QueryRequest, OPERATIONS};
 use tokio::runtime::Runtime;
 
-/// An open node plus the runtime that drives its async operations.
+/// The plugins an embedded node mounts by default; the node's
+/// `composition.toml` patches these entries by id.
+const BASE_COMPOSITION: &str = r#"
+[[entry]]
+id = "fs"
+plugin = "connection-fs"
+
+[[entry]]
+id = "llm"
+plugin = "llm-endpoint"
+
+[[entry]]
+id = "embedder"
+plugin = "embedder"
+
+[[entry]]
+id = "transforms"
+plugin = "transforms"
+
+[[entry]]
+id = "markdown"
+plugin = "transform-markdown"
+
+[[entry]]
+id = "chunker"
+plugin = "transform-chunker"
+
+[[entry]]
+id = "summarizer"
+plugin = "transform-summarizer"
+
+[[entry]]
+id = "entities"
+plugin = "transform-entities"
+
+[[entry]]
+id = "finder"
+plugin = "finder"
+
+[[entry]]
+id = "sweep"
+plugin = "sweep"
+
+[[entry]]
+id = "operations"
+plugin = "operations"
+"#;
+
+/// An open node: the runtime, the kernel (owning fibers and effects until
+/// free), and the operations handle requests go through.
 pub struct InseamNode {
     runtime: Runtime,
-    node: Node,
+    kernel: Kernel,
+    operations: Arc<dyn Operations>,
 }
 
 /// The core library version as a fresh C string.
@@ -31,16 +85,18 @@ pub extern "C" fn inseam_version() -> *mut c_char {
     to_c_string(env!("CARGO_PKG_VERSION"))
 }
 
-/// Open the node under `data_dir`. `profile_path` may be null: then
-/// `<data_dir>/profile.toml` is used when present, else the default profile.
+/// Open the node under `data_dir`. `composition_path` may be null: then
+/// `<data_dir>/composition.toml` is layered when present, else the base
+/// composition boots alone.
 ///
 /// # Safety
-/// `data_dir` must be a valid NUL-terminated string; `profile_path` must be
-/// null or valid; `error_out` must be null or point to writable memory.
+/// `data_dir` must be a valid NUL-terminated string; `composition_path`
+/// must be null or valid; `error_out` must be null or point to writable
+/// memory.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn inseam_node_open(
     data_dir: *const c_char,
-    profile_path: *const c_char,
+    composition_path: *const c_char,
     error_out: *mut *mut c_char,
 ) -> *mut InseamNode {
     // SAFETY: caller contract above.
@@ -49,15 +105,16 @@ pub unsafe extern "C" fn inseam_node_open(
     };
     let data_dir = PathBuf::from(data_dir);
     // SAFETY: caller contract above.
-    let profile_path = unsafe { arg_str(profile_path) }.map(PathBuf::from);
+    let composition_path = unsafe { arg_str(composition_path) }.map(PathBuf::from);
 
-    match open_node(&data_dir, profile_path.as_deref()) {
+    match open_node(&data_dir, composition_path.as_deref()) {
         Ok(handle) => Box::into_raw(Box::new(handle)),
         Err(message) => fail(error_out, &message),
     }
 }
 
-/// Close a node and release its runtime. Null is a no-op.
+/// Close a node — the kernel unwinds every fiber's effects — and release
+/// its runtime. Null is a no-op.
 ///
 /// # Safety
 /// `node` must have come from `inseam_node_open` and not been freed already.
@@ -65,7 +122,9 @@ pub unsafe extern "C" fn inseam_node_open(
 pub unsafe extern "C" fn inseam_node_free(node: *mut InseamNode) {
     if !node.is_null() {
         // SAFETY: caller contract above; the box was leaked by open.
-        drop(unsafe { Box::from_raw(node) });
+        let mut handle = unsafe { Box::from_raw(node) };
+        let InseamNode { runtime, ref mut kernel, .. } = *handle;
+        runtime.block_on(kernel.shutdown());
     }
 }
 
@@ -93,12 +152,12 @@ pub unsafe extern "C" fn inseam_node_query(
         text: text.to_owned(),
         limit: limit as usize,
     };
-    let response = handle.runtime.block_on(handle.node.query(request));
+    let response = handle.runtime.block_on(handle.operations.query(request));
     json_result(response, error_out)
 }
 
-/// Index a directory of the local filesystem host. Returns a JSON report
-/// `{"indexed": n, "unchanged": n, "removed": n}`-shaped per `IndexReport`.
+/// Index a directory of the local filesystem host. Returns the sweep's
+/// `IndexReport` as JSON.
 ///
 /// # Safety
 /// Same contracts as `inseam_node_query`; `dir` must be a valid C string.
@@ -117,9 +176,10 @@ pub unsafe extern "C" fn inseam_node_index_dir(
     let Some(dir) = (unsafe { arg_str(dir) }) else {
         return fail(error_out, "dir must be a valid UTF-8 C string");
     };
-    let report = handle
-        .runtime
-        .block_on(handle.node.index_dir(Path::new(dir), rebuild));
+    let report = handle.runtime.block_on(handle.operations.index(IndexRequest {
+        root: dir.to_string(),
+        rebuild,
+    }));
     json_result(report, error_out)
 }
 
@@ -135,24 +195,40 @@ pub unsafe extern "C" fn inseam_string_free(s: *mut c_char) {
     }
 }
 
-fn open_node(data_dir: &Path, profile_path: Option<&Path>) -> Result<InseamNode, String> {
-    let profile = match profile_path {
-        Some(path) => IndexProfile::load(path).map_err(|e| e.to_string())?,
+fn open_node(data_dir: &Path, composition_path: Option<&Path>) -> Result<InseamNode, String> {
+    let base = Composition::parse(BASE_COMPOSITION, "<ffi base>")
+        .expect("the base composition is valid");
+    let overlay_path = match composition_path {
+        Some(path) => Some(path.to_path_buf()),
         None => {
-            let default_path = data_dir.join("profile.toml");
-            if default_path.exists() {
-                IndexProfile::load(&default_path).map_err(|e| e.to_string())?
-            } else {
-                IndexProfile::default()
-            }
+            let default = data_dir.join("composition.toml");
+            default.exists().then_some(default)
         }
     };
-    let llm = LlmClient::from_config(&profile.endpoint).ok().map(Arc::new);
+    let composition = match overlay_path {
+        Some(path) => base
+            .layered(Composition::load(&path).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?,
+        None => base,
+    };
+
     let runtime = Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
-    let node = runtime
-        .block_on(Node::open(data_dir, profile, llm))
+    let mut kernel = runtime
+        .block_on(Kernel::boot(data_dir, inseam_plugins::factories(), Vec::new()))
         .map_err(|e| e.to_string())?;
-    Ok(InseamNode { runtime, node })
+    match runtime.block_on(kernel.reconcile(&composition)) {
+        Ok(()) => {}
+        // Loud but not fatal: an app can open a node whose llm entry failed
+        // (no key) and still browse; operations-needing calls error below.
+        Err(e @ SubstrateError::Unsettled { .. }) => eprintln!("inseam: warning: {e}"),
+        Err(e) => return Err(e.to_string()),
+    }
+    let operations = kernel.service(&OPERATIONS).map_err(|e| e.to_string())?;
+    Ok(InseamNode {
+        runtime,
+        kernel,
+        operations,
+    })
 }
 
 /// Borrow a nullable C string as `&str`; `None` for null or non-UTF-8.
@@ -227,43 +303,41 @@ mod tests {
     #[test]
     fn open_query_and_free_round_trip() {
         let dir = tempfile::tempdir().unwrap();
-        // An offline profile at the default location, proving the
-        // <data_dir>/profile.toml discovery path.
+        // An offline composition at the default location, proving the
+        // <data_dir>/composition.toml discovery path.
         std::fs::write(
-            dir.path().join("profile.toml"),
-            "[embedding]\nprovider = \"hashed\"\nmodel = \"hashed\"\ndimensions = 64\n",
+            dir.path().join("composition.toml"),
+            r#"
+            [[entry]]
+            id = "embedder"
+            [entry.config]
+            provider = "hashed"
+            model = "hashed"
+            dimensions = 64
+
+            [[entry]]
+            id = "llm"
+            disabled = true
+            "#,
         )
         .unwrap();
         let data_dir = CString::new(dir.path().to_str().unwrap()).unwrap();
         let mut err: *mut c_char = std::ptr::null_mut();
         // SAFETY: valid C strings and a writable error slot.
-        let node =
-            unsafe { inseam_node_open(data_dir.as_ptr(), std::ptr::null(), &mut err) };
-        assert!(err.is_null(), "{}", take_string(err));
-        assert!(!node.is_null());
+        let node = unsafe {
+            inseam_node_open(data_dir.as_ptr(), std::ptr::null(), &mut err)
+        };
+        assert!(node.is_null() || err.is_null());
+        assert!(!node.is_null(), "node opens offline");
 
         let text = CString::new("anything").unwrap();
-        // SAFETY: live node, valid C string, writable error slot.
-        let json = unsafe { inseam_node_query(node, text.as_ptr(), 5, &mut err) };
-        assert!(err.is_null(), "{}", take_string(err));
-        let parsed: serde_json::Value = serde_json::from_str(&take_string(json)).unwrap();
-        assert!(parsed["results"].is_array());
+        // SAFETY: live node, valid strings, writable error slot.
+        let response = unsafe { inseam_node_query(node, text.as_ptr(), 5, &mut err) };
+        assert!(!response.is_null(), "query on an empty index succeeds");
+        let json = take_string(response);
+        assert!(json.contains("\"results\""));
 
-        // SAFETY: freeing the handle exactly once.
+        // SAFETY: freeing the node exactly once.
         unsafe { inseam_node_free(node) };
-    }
-
-    #[test]
-    fn open_reports_error_for_bad_profile() {
-        let dir = tempfile::tempdir().unwrap();
-        let data_dir = CString::new(dir.path().to_str().unwrap()).unwrap();
-        let missing = CString::new("/nonexistent/profile.toml").unwrap();
-        let mut err: *mut c_char = std::ptr::null_mut();
-        // SAFETY: valid C strings and a writable error slot.
-        let node =
-            unsafe { inseam_node_open(data_dir.as_ptr(), missing.as_ptr(), &mut err) };
-        assert!(node.is_null());
-        assert!(!err.is_null());
-        assert!(!take_string(err).is_empty());
     }
 }

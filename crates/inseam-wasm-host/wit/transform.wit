@@ -1,0 +1,81 @@
+/// The sandboxed-transform contract: the `transforms` seam projected across
+/// the component boundary (`design/plugins.md` — the native seam is the
+/// source of truth; this WIT world is its projection, kept in lockstep with
+/// `inseam-seams::transforms`).
+///
+/// Capabilities are imports: a component only ever receives what the bridge
+/// hands it, attenuated per its manifest. There are no sockets, no
+/// filesystem, no clocks — a transform describes work; the host performs it.
+package inseam:plugin@0.1.0;
+
+/// Host capabilities, granted per the plugin's manifest. Calling a function
+/// the manifest did not request (or whose budget is spent) returns an error
+/// string; a well-behaved transform degrades to emitting less.
+interface host {
+    /// Diagnostic logging into the node's tracing output.
+    log: func(message: string);
+
+    /// One metered LLM completion (requires the `llm` capability). Model
+    /// choice and budgeting belong to the host, not the plugin.
+    llm-complete: func(system: string, user: string) -> result<string, string>;
+
+    /// One metered vision call: OCR, captioning (requires `llm`).
+    llm-describe-image: func(prompt: string, mimetype: string, image: list<u8>) -> result<string, string>;
+
+    /// The raw bytes of the claimed source (requires the `source-bytes`
+    /// capability; granted at the root only).
+    source-bytes: func() -> result<list<u8>, string>;
+}
+
+interface transform {
+    /// The envelope of the source under transformation.
+    record envelope {
+        source-type: string,
+        content-type: string,
+        hint: option<string>,
+        /// Unix-epoch seconds.
+        modified: option<s64>,
+        raw-bytes: u64,
+    }
+
+    /// What this transform claims. The bridge intersects these with the
+    /// manifest's declared claims — the effective claim set is
+    /// `declared AND exported`, so a component cannot quietly widen its
+    /// reach past what its manifest promised.
+    record claim-spec {
+        /// Mimetype essences (`image/png`) or `type/*` patterns.
+        mimetypes: list<string>,
+        /// Claim source roots only, or emitted fragments too.
+        roots-only: bool,
+    }
+
+    /// One emitted fragment. WIT has no recursive types, so the sprout tree
+    /// is flattened: `parent` indexes an EARLIER fragment in the same list,
+    /// and `none` hangs the fragment off the claimed fragment itself.
+    record fragment {
+        parent: option<u32>,
+        /// Mimetype of the emitted fragment, params allowed
+        /// (`text/plain;via=ocr`).
+        mimetype: string,
+        /// Relation to the parent: `contains`, `derived-from`,
+        /// `transcribes`, `links-to`, or `mentions`.
+        relation: string,
+        text: option<string>,
+    }
+
+    record output {
+        fragments: list<fragment>,
+    }
+
+    claims: func() -> claim-spec;
+
+    /// Transform one claimed fragment. Infallible by contract on the seam:
+    /// an error here is logged and treated as an empty output — indexing is
+    /// enrichment, and a broken transform must not gate the source.
+    apply: func(env: envelope, mimetype: string, is-root: bool, text: option<string>) -> result<output, string>;
+}
+
+world transform-plugin {
+    import host;
+    export transform;
+}

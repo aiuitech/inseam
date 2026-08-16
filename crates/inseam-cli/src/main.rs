@@ -1,5 +1,8 @@
-//! The inseam CLI: the same binary invoking operations directly against the
-//! local node — one of the transport adapters `design/node-api.md` promises.
+//! The inseam CLI: a **distribution** (`design/plugins.md`) — an app crate
+//! that links the first-party native plugins plus the wasm plugin host,
+//! ships a base composition, and layers the node's own composition file on
+//! top (`design/composition.md`). Command handlers are a thin transport over
+//! the `operations` seam; no command contains node logic.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -7,12 +10,62 @@ use std::sync::Arc;
 use anyhow::{bail, Context};
 use clap::{Parser, Subcommand};
 
-use inseam::agent::{run_agent, AgentEvent};
-use inseam::llm::LlmClient;
-use inseam::ops::{
-    ExpandRequest, FetchRequest, Node, QueryRequest, QueryResponse, ScanRequest,
+use inseam_kernel::substrate::{Composition, FiberState, Kernel, SubstrateError};
+use inseam_plugins::agent::{run_agent, AgentEvent};
+use inseam_seams::llm::{self, ModelInfo, LLM};
+use inseam_seams::operations::{
+    ExpandRequest, FetchRequest, IndexRequest, QueryRequest, QueryResponse, ScanRequest,
+    OPERATIONS,
 };
-use inseam::profile::IndexProfile;
+
+/// What makes the CLI the CLI: the plugins it mounts by default. A user's
+/// composition file patches these entries by id or adds new ones (sandboxed
+/// plugins included); `inseam config --resolved` prints the layered result.
+const BASE_COMPOSITION: &str = r#"
+[[entry]]
+id = "fs"
+plugin = "connection-fs"
+
+[[entry]]
+id = "llm"
+plugin = "llm-endpoint"
+
+[[entry]]
+id = "embedder"
+plugin = "embedder"
+
+[[entry]]
+id = "transforms"
+plugin = "transforms"
+
+[[entry]]
+id = "markdown"
+plugin = "transform-markdown"
+
+[[entry]]
+id = "chunker"
+plugin = "transform-chunker"
+
+[[entry]]
+id = "summarizer"
+plugin = "transform-summarizer"
+
+[[entry]]
+id = "entities"
+plugin = "transform-entities"
+
+[[entry]]
+id = "finder"
+plugin = "finder"
+
+[[entry]]
+id = "sweep"
+plugin = "sweep"
+
+[[entry]]
+id = "operations"
+plugin = "operations"
+"#;
 
 #[derive(Parser)]
 #[command(
@@ -25,9 +78,10 @@ struct Cli {
     /// dir, e.g. ~/Library/Application Support/inseam.
     #[arg(long, global = true, env = "INSEAM_DATA_DIR")]
     data_dir: Option<PathBuf>,
-    /// Index profile TOML. Defaults to <data-dir>/profile.toml when present.
-    #[arg(long, global = true, env = "INSEAM_PROFILE")]
-    profile: Option<PathBuf>,
+    /// Composition TOML layered over the distribution base. Defaults to
+    /// <data-dir>/composition.toml when present.
+    #[arg(long, global = true, env = "INSEAM_COMPOSITION")]
+    composition: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -68,17 +122,17 @@ enum Command {
     },
     /// Retrieve a source's full content.
     Fetch { address: String },
-    /// Let a live LLM discover things through the finder API (query/expand/
-    /// scan/fetch as tools). Requires the endpoint API key.
+    /// Let a live LLM discover things through the operations seam
+    /// (query/expand/scan/fetch as tools). Requires the endpoint API key.
     Agent {
         question: String,
-        /// Override the profile's agent model.
+        /// Override the llm provider's agent model.
         #[arg(long)]
         model: Option<String>,
         #[arg(long, default_value_t = 12)]
         turns: usize,
     },
-    /// List OpenRouter models suitable for a role, cheapest first.
+    /// List endpoint models suitable for a role, cheapest first.
     Models {
         /// Embedding models instead of tool-capable chat models.
         #[arg(long)]
@@ -86,6 +140,14 @@ enum Command {
     },
     /// Index and catalog statistics for this node.
     Status,
+    /// The plugin tree: every fiber, its state, and its live effects.
+    Plugins,
+    /// Print the composition. --resolved shows the layered result the node
+    /// boots — what prints is what runs, by construction.
+    Config {
+        #[arg(long)]
+        resolved: bool,
+    },
 }
 
 #[tokio::main]
@@ -106,19 +168,50 @@ async fn main() -> anyhow::Result<()> {
             .context("no platform data directory; pass --data-dir")?
             .join("inseam"),
     };
-    let profile = load_profile(&cli, &data_dir)?;
-    let key_env = profile.endpoint.api_key_env.clone();
-    let llm = LlmClient::from_config(&profile.endpoint).ok().map(Arc::new);
+    let composition = load_composition(&cli, &data_dir)?;
+
+    // `config` never boots the kernel: printing the composition must work
+    // even when the composition is broken enough that boot would not.
+    if let Command::Config { resolved } = &cli.command {
+        if *resolved {
+            let mut flat = Composition::default();
+            flat.entries = composition.resolved();
+            println!("{}", flat.to_toml());
+        } else {
+            println!("{}", composition.to_toml());
+        }
+        return Ok(());
+    }
+
+    let mut kernel = Kernel::boot(
+        &data_dir,
+        inseam_plugins::factories(),
+        vec![Arc::new(inseam_wasm_host::WasmSchemeFactory::new(&data_dir))],
+    )
+    .await?;
+    match kernel.reconcile(&composition).await {
+        Ok(()) => {}
+        // A composition that cannot fully settle is loud but not fatal to
+        // the process: commands touching the waiting seams fail with the
+        // same message, and `inseam plugins` shows the tree.
+        Err(e @ SubstrateError::Unsettled { .. }) => eprintln!("warning: {e}"),
+        Err(e) => return Err(e.into()),
+    }
 
     match cli.command {
         Command::Index { root, rebuild } => {
-            let node = Node::open(&data_dir, profile, llm).await?;
-            let report = node.index_dir(&root, rebuild).await?;
+            let ops = kernel.service(&OPERATIONS)?;
+            let report = ops
+                .index(IndexRequest {
+                    root: root.display().to_string(),
+                    rebuild,
+                })
+                .await?;
             println!("{report}");
         }
         Command::Query { text, limit, json } => {
-            let node = Node::open(&data_dir, profile, llm).await?;
-            let response = node.query(QueryRequest { text, limit }).await?;
+            let ops = kernel.service(&OPERATIONS)?;
+            let response = ops.query(QueryRequest { text, limit }).await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&response)?);
             } else {
@@ -126,10 +219,12 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Command::Expand { address, json } => {
-            let node = Node::open(&data_dir, profile, llm).await?;
-            let response = node.expand(ExpandRequest {
-                address: address.parse()?,
-            })?;
+            let ops = kernel.service(&OPERATIONS)?;
+            let response = ops
+                .expand(ExpandRequest {
+                    address: address.parse()?,
+                })
+                .await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&response)?);
             } else {
@@ -142,8 +237,8 @@ async fn main() -> anyhow::Result<()> {
             end,
             json,
         } => {
-            let node = Node::open(&data_dir, profile, llm).await?;
-            let response = node
+            let ops = kernel.service(&OPERATIONS)?;
+            let response = ops
                 .scan(ScanRequest {
                     address: address.parse()?,
                     start,
@@ -160,8 +255,8 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Command::Fetch { address } => {
-            let node = Node::open(&data_dir, profile, llm).await?;
-            let response = node
+            let ops = kernel.service(&OPERATIONS)?;
+            let response = ops
                 .fetch(FetchRequest {
                     address: address.parse()?,
                 })
@@ -173,13 +268,20 @@ async fn main() -> anyhow::Result<()> {
             model,
             turns,
         } => {
-            let Some(client) = llm else {
-                bail!("`inseam agent` needs {key_env} set (see .env.example)");
+            let ops = kernel.service(&OPERATIONS)?;
+            let Ok(client) = kernel.service(&LLM) else {
+                bail!("`inseam agent` needs the llm entry active (set the endpoint API key)");
             };
-            let model = model.unwrap_or_else(|| profile.llm.agent_model.clone());
-            let node = Node::open(&data_dir, profile, Some(client.clone())).await?;
+            let model = model
+                .or_else(|| {
+                    kernel
+                        .facts("llm")
+                        .and_then(|f| f.str(llm::facts::AGENT_MODEL))
+                        .map(str::to_string)
+                })
+                .context("no agent model configured")?;
             println!("· model {model}\n");
-            let outcome = run_agent(&node, &client, &model, &question, turns, |event| {
+            let outcome = run_agent(ops.as_ref(), client.as_ref(), &model, &question, turns, |event| {
                 match event {
                     AgentEvent::ToolCall { name, arguments } => {
                         println!("→ {name} {arguments}");
@@ -199,15 +301,15 @@ async fn main() -> anyhow::Result<()> {
             );
         }
         Command::Models { embeddings } => {
-            let Some(client) = llm else {
-                bail!("`inseam models` needs {key_env} set (see .env.example)");
+            let Ok(client) = kernel.service(&LLM) else {
+                bail!("`inseam models` needs the llm entry active (set the endpoint API key)");
             };
             let mut models = client.models(embeddings).await?;
             if !embeddings {
                 models.retain(|m| m.supports_tools());
             }
             models.sort_by(|a, b| {
-                let price = |m: &inseam::llm::ModelInfo| {
+                let price = |m: &ModelInfo| {
                     m.pricing
                         .as_ref()
                         .and_then(|p| p.prompt_per_million())
@@ -237,37 +339,64 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Command::Status => {
-            let node = Node::open(&data_dir, profile, llm).await?;
-            let stats = node.store().stats()?;
-            let rows = node.store().search_rows_count().await?;
+            let ops = kernel.service(&OPERATIONS)?;
+            let status = ops.status().await?;
             println!("data dir       {}", data_dir.display());
-            println!(
-                "embedding      {} ({} dims)",
-                node.profile().embedding.model,
-                node.store().dimensions()
-            );
-            if node.store().reembed_pending() {
+            match &status.embedding_model {
+                Some(model) => println!(
+                    "embedding      {} ({} dims)",
+                    model, status.embedding_dimensions
+                ),
+                None => println!("embedding      none (no embedder mounted)"),
+            }
+            if status.reembed_pending {
                 println!("re-embed       pending — run `inseam index <dir>` to migrate");
             }
-            println!("sources        {} ({} indexed)", stats.sources, stats.indexed_sources);
-            println!("fragments      {}", stats.fragments);
-            println!("relations      {}", stats.relations);
-            println!("entities       {}", stats.entities);
-            println!("search rows    {rows}");
+            println!(
+                "sources        {} ({} indexed)",
+                status.sources, status.indexed_sources
+            );
+            println!("fragments      {}", status.fragments);
+            println!("relations      {}", status.relations);
+            println!("entities       {}", status.entities);
+            println!("search rows    {}", status.search_rows);
         }
+        Command::Plugins => {
+            for fiber in kernel.fibers() {
+                let state = match &fiber.state {
+                    FiberState::Active => "active".to_string(),
+                    FiberState::Pending => format!("pending (missing: {})", fiber.missing.join(", ")),
+                    FiberState::Failed(e) => format!("failed: {e}"),
+                };
+                println!("{:14} {:24} {}", fiber.id, fiber.plugin, state);
+                for effect in &fiber.effects {
+                    println!("{:14} · {}", "", effect);
+                }
+            }
+        }
+        Command::Config { .. } => unreachable!("handled before boot"),
     }
+    kernel.shutdown().await;
     Ok(())
 }
 
-fn load_profile(cli: &Cli, data_dir: &std::path::Path) -> anyhow::Result<IndexProfile> {
-    if let Some(path) = &cli.profile {
-        return Ok(IndexProfile::load(path)?);
+fn load_composition(cli: &Cli, data_dir: &std::path::Path) -> anyhow::Result<Composition> {
+    let base = Composition::parse(BASE_COMPOSITION, "<distribution base>")
+        .expect("the distribution base composition is valid");
+    let overlay_path = match &cli.composition {
+        Some(path) => Some(path.clone()),
+        None => {
+            let default = data_dir.join("composition.toml");
+            default.exists().then_some(default)
+        }
+    };
+    match overlay_path {
+        Some(path) => {
+            let overlay = Composition::load(&path)?;
+            Ok(base.layered(overlay)?)
+        }
+        None => Ok(base),
     }
-    let default_path = data_dir.join("profile.toml");
-    if default_path.exists() {
-        return Ok(IndexProfile::load(&default_path)?);
-    }
-    Ok(IndexProfile::default())
 }
 
 fn print_results(response: &QueryResponse) {
@@ -299,7 +428,7 @@ fn print_results(response: &QueryResponse) {
     }
 }
 
-fn print_expansion(response: &inseam::ops::ExpandResponse) {
+fn print_expansion(response: &inseam_seams::operations::ExpandResponse) {
     println!("{}", response.address);
     if let Some(summary) = &response.summary {
         println!("summary: {summary}\n");
