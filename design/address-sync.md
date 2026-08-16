@@ -25,6 +25,8 @@ One tension acknowledged: "content never moves" does not mean "nothing content-d
 
 **Per-origin append-only logs with version vectors.** Every record a node originates goes into its own log with a monotonic sequence number. Sync between two nodes is an exchange of version vectors (highest sequence seen per origin) followed by shipping the missing suffixes — including logs of origins neither end has met directly, which is what makes propagation transitive. Within one origin's log, later overwrites earlier per key; deletions are tombstone entries like any other. This shape was chosen over pure gossip (no convergence proof per key) and CRDT merge (origin-wins makes general merge unnecessary — there is exactly one writer per key).
 
+The mechanism is **deliberately owned code, not an off-the-shelf sync engine**. Automerge, yrs, and iroh-docs are multi-writer CRDTs solving concurrent-edit merge — a problem origin-wins designed out of existence — and adopting one would embed its merge semantics inside the catalog while moving the log out of the kernel's own store ([kernel](kernel.md)). What remains is a small, proven pattern (per-author signed logs à la Secure Scuttlebutt; Kafka-style log shipping), cheaper to implement directly than to adapt. The [transport underneath is adopted, not owned](connections.md) — iroh carries the bytes; this layer decides what they mean.
+
 ## Deletion
 
 Removals sync as tombstones; a source that disappears from a host must disappear from every catalog, not linger as a dead address.

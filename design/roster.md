@@ -10,9 +10,9 @@ An [address](addressing.md) is pure identity — resolving one requires knowledg
 
 **Node record** — authored by the node it describes; the node is origin and sole authority.
 
-- **Node id: the node's public key** (fingerprint). Identity *is* the key — it survives IP rotation, re-homing, and reinstalls that keep the key. This resolves the node-identity question in [connections](connections.md); node↔node authentication is mutual proof of roster keys.
+- **Node id: the node's public key** (fingerprint). Identity *is* the key — it survives IP rotation, re-homing, and reinstalls that keep the key. This resolves the node-identity question in [connections](connections.md); node↔node authentication is mutual proof of roster keys, and the id doubles as the dial target for the iroh transport.
 - Display name.
-- **Endpoints**: zero or more dialable URLs (`wss://`, `https://`) — LAN and WAN entries both welcome. Zero is legal: an **outbound-only node** (laptop behind NAT, phone) participates by dialing others and is never dialed.
+- **Endpoints**: dialing hints for the transport — for iroh, the node's relay URL and last-known direct addresses ([connections](connections.md)). May be empty: an **outbound-only node** (laptop behind NAT, phone) participates by dialing others and is never dialed.
 - **Capabilities**: always-on, index quality/depth (how [discovery](discovery.md) fan-out picks targets), willingness to relay fetches.
 
 **Host record** — authored by any steward of the host.
@@ -33,7 +33,7 @@ The roster syncs slowly-changing truth. Who is online *right now* is not a recor
 
 When a node's endpoint changes, it bumps its own node record and publishes it over whatever connection it can make — outbound dialing still works even when the node's inbound address just died. The update then spreads transitively like any catalog change.
 
-The failure mode is a network of *only* unstable nodes: two laptops that both rotated can hold each other's stale endpoints forever. Hence the strong recommendation — a convention, not architecture: **every network should include at least one always-on node with a stable (DNS-named) endpoint.** Unstable nodes keep a standing outbound connection to it; roster updates flow through it; outbound-only nodes reach the network by dialing it. Per [network](network.md), it remains an ordinary node — well-provisioned, never privileged.
+The failure mode is a network of *only* unstable nodes: two laptops that both rotated can hold each other's stale endpoints forever. Hence the strong recommendation — a convention, not architecture: **every network should include at least one always-on node with a stable (DNS-named) endpoint.** Unstable nodes keep a standing outbound connection to it; roster updates flow through it; outbound-only nodes reach the network by dialing it; and it runs the network's own iroh relay ([connections](connections.md)), so no traffic ever depends on public relay infrastructure. Per [network](network.md), it remains an ordinary node — well-provisioned, never privileged.
 
 ## Paths not taken
 
@@ -45,4 +45,5 @@ The failure mode is a network of *only* unstable nodes: two laptops that both ro
 
 - **Admission and revocation ceremony**: invite format (endpoint + key fingerprint pinning is the working assumption), and how a lost/compromised node's record is expelled.
 - **Endpoint privacy**: the roster reveals every node's addresses to the whole network — fine inside one trust domain, but worth stating; possibly LAN endpoints sync scoped.
-- **NAT traversal**: two outbound-only nodes can only reach each other through a relay-willing node; whether relayed fetch is core routing or a capability flag on the relay.
+
+NAT traversal between two outbound-only nodes, previously open here, is resolved by the transport: both hole punching and relayed fallback are iroh's job, through the backbone-hosted relay ([connections](connections.md)).

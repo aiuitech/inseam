@@ -28,7 +28,7 @@ External requesters enter the network through whichever node they reach, but the
 
 ## Paths not taken
 
-- **Central relay/store.** Rejected: contradicts local-first and "data doesn't move"; a hosted node may *act* as a popular hub, but nothing in the architecture requires one.
+- **Central relay/store.** Rejected: contradicts local-first and "data doesn't move"; a hosted node may *act* as a popular hub, but nothing in the architecture requires one. Distinct from the backbone's iroh packet relay ([connections](connections.md)): that is stateless transport plumbing — encrypted bytes pass through, nothing lands or is readable there.
 - **DHT-style partial knowledge (for now).** Personal networks are small (tens of nodes, not millions); full catalog replication is simpler and enables offline discovery. Revisit if network sizes demand it.
 
 ## Open questions
