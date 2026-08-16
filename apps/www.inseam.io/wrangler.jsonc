@@ -3,6 +3,7 @@
 	"compatibility_date": "2026-08-16",
 	"compatibility_flags": ["global_fetch_strictly_public"],
 	"name": "www-inseam-io",
+	"routes": [{ "pattern": "www.inseam.io", "custom_domain": true }],
 	"main": "@astrojs/cloudflare/entrypoints/server",
 	"assets": {
 		"directory": "./dist",
