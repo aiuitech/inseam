@@ -10,5 +10,8 @@ The repo is a Cargo workspace mirroring the architecture ([design/kernel.md](../
 - `crates/inseam-ffi` — C ABI staticlib distribution for native app shells; header at `include/inseam_ffi.h`. See [macos-app.md](macos-app.md).
 - `plugins/` — sandboxed plugin projects (standalone crates, **not** workspace members; they build to `wasm32-wasip2`) **and registry v0** ([plugins/registry.md](plugins/registry.md)): `registry.toml` index, `advisories.toml`, per-plugin golden checks and fixtures (`plugins/README.md`). `plugins/ocr` is the reference example.
 - `apps/macos` — the SwiftUI macOS app (SwiftPM, not a cargo member). See [macos-app.md](macos-app.md).
+- `apps/docs-website` — the docs.inseam.io site (Astro Starlight on Cloudflare Workers, pnpm, not a cargo member); content synced from `docs/` ([doc-generation.md](doc-generation.md)).
+- `xtask/` — repo automation, `cargo xtask docs` regenerates the source-exported doc pages ([doc-generation.md](doc-generation.md)).
+- `skills/` — agent skills (symlinked into `.claude/skills`); exported into [docs/skills/](skills/) by the doc generator.
 
 Shared dependency versions live in `[workspace.dependencies]` in the root `Cargo.toml`; member crates reference them with `dep.workspace = true`.

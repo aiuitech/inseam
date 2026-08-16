@@ -7,6 +7,7 @@ members = [
     "crates/inseam-wasm-host",
     "crates/inseam-cli",
     "crates/inseam-ffi",
+    "xtask",
 ]
 
 [workspace.package]
@@ -50,7 +51,13 @@ wasmtime-wasi = { version = "38", default-features = false, features = ["p2"] }
 proptest = "1.11.0"
 tempfile = "3.27.0"
 
-# Debuginfo for dependency crates costs ~40 GB of target/ on this tree
-# (lance, datafusion, wasmtime); workspace crates keep theirs.
+# Debuginfo dominates target/ on this tree: 520 crates (lance, datafusion,
+# wasmtime) statically linked into every test binary. Dependency crates get
+# none; workspace crates keep file/line tables, which is what backtraces and
+# panic locations actually read. Set `debug = true` here when a step-debugging
+# session needs locals and types.
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.dev.package."*"]
 debug = false
