@@ -28,7 +28,7 @@ The same pure layering function answers `inseam config --resolved`, so what prin
 
 The old standalone "index profile" dissolves: what made a phone a phone and a cloud node a cloud node was always plugin selection and plugin config — summarizer-only vs. every transform, short vs. long summaries, hashed vs. endpoint embedder, tight vs. no cutoff. Those dials live in the entries' configs now; a *profile* is just a named base composition a distribution ships. The per-node asymmetry [discovery](discovery.md) promises is expressed entirely in composition, and the four invalidation tiers of [index maintenance](index-maintenance.md) become properties of *which entry's config changed*: finder config is query-time, sweep budgets are run-metering, transform configs are shape, embedder config is embedding.
 
-The **shape stamp** generalizes accordingly: it is a digest of the shape-relevant entries (transform plugins + their configs) that built a source's subtree. Adding a community transform, removing one, or editing its config changes the stamp, and the sweep converges affected sources — plugin ecosystem churn is absorbed by the same mechanism as any profile edit, with no new invalidation machinery.
+The **shape stamp** generalizes accordingly: each source records a digest of the transform entries that built its subtree, plus the subtree's mimetype inventory — so removing or editing a transform dirties the sources it touched, and adding one dirties only sources it could claim ([index-maintenance](index-maintenance.md) has the mechanics). Plugin ecosystem churn is absorbed by the same sweep as any config edit, with no new invalidation machinery.
 
 ## Reconciliation
 

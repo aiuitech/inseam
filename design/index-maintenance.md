@@ -40,7 +40,12 @@ Config edits partition into four tiers by blast radius, and the tier is a proper
 | **Shape** | transform entries: which are mounted and their configs (transform model, summary lengths, entity caps, decomposition budgets) | The fragment subtrees built under the old shape, source by source |
 | **Embedding** | embedder entry (provider, model, dimensions) | Vectors only — the graph is untouched |
 
-**Shape** is captured in the **shape stamp**: a canonical digest of the mounted transform entries and their configs, recorded per source when its subtree lands. A stamp mismatch makes the source dirty; the sweep rebuilds it like any content change. A composition edit is therefore never a big-bang re-index — it makes everything *look* dirty, and the run budgets meter the convergence across as many sweeps as it takes. This is also how plugin churn is absorbed: installing, removing, or upgrading a community transform changes the stamp and converges affected sources through the same door, with no new invalidation machinery. Granularity is deliberately the source subtree, not the individual transform: finer invalidation would save some LLM calls but means mixing fragments built under different shapes inside one source, which is where inconsistency bugs live.
+**Shape** is captured per source when its subtree lands, and it is **claims-aware** — a global "all mounted transforms" digest would make plugin churn ruinously expensive (mounting a video transform must not re-run paid LLM summaries over every markdown note). Two records per source:
+
+- the **shape stamp**: a canonical digest of the transform entries that *participated* in the subtree — entry config plus artifact version for sandboxed transforms. Removing, reconfiguring, or upgrading a transform dirties exactly the sources it touched.
+- the **mimetype inventory**: every mimetype present in the subtree, root and emitted. A newly mounted transform dirties only sources whose inventory intersects its claims.
+
+A stamp or inventory hit makes the source dirty; the sweep rebuilds its subtree like any content change, with the full mounted transform set, so chains resolve in one rebuild (a transform claiming what another new transform emits is satisfied in the same pass; the rebuilt inventory catches anything discovered later on the next sweep). A composition edit is therefore never a big-bang re-index — it makes the affected sources *look* dirty, and the run budgets meter the convergence across as many sweeps as it takes. Plugin churn is absorbed through the same door, with no plugin-lifecycle hooks into the index: the reconciler restarts fibers, their registrations unwind or appear as effects, and the next sweep discovers the divergence — dirtiness stays discovered, never triggered. Granularity is deliberately the source subtree, not the individual transform: finer invalidation would save some LLM calls but means mixing fragments built under different shapes inside one source, which is where inconsistency bugs live.
 
 **Embedding** changes trigger an **in-place re-embed**, not a rebuild: fragment text is all in SQLite, so the Lance table is recreated and re-populated by re-embedding stored text — zero LLM spend, no transforms re-run, no graph changes. Detected at open (the store records the model + dimensions it was built with), performed by the next index run, and search refuses with instructions until that run completes. Interrupted re-embeds redo: the stored embedding meta is updated only at the end.
 
@@ -59,6 +64,8 @@ Out-of-cutoff sources are still *cataloged* (address + envelope, no fragments) w
 - **A composition-version counter instead of a stamp.** A counter invalidates on *any* composition edit, including query-time tiers; the stamp invalidates only on entries that change what a subtree looks like.
 
 ## Open questions
+
+- Whether a sandboxed transform's version bump always invalidates (artifact version is in the stamp) or its manifest may declare a release shape-compatible ("output unchanged, bug fix only") to skip the re-spend — and whether trusting that claim is acceptable, since the cost of a lie is staleness, not compromise.
 
 - Targeted sweeps: the scoping API a change feed uses to sweep a subset without paying full enumeration (v1 sweeps the directory it is given).
 - `vacuum`: the explicit reclamation operation (drop out-of-scope subtrees, compact Lance).
