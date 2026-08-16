@@ -21,7 +21,11 @@ express the change (`docs/plugins/linked.md`).
 The `inseam` CLI is self-documenting (`inseam --help`,
 `inseam plugin check --help`) — use it for flags and commands. This skill
 covers only what the CLI can't tell you: the authoring contract,
-conventions, and pitfalls.
+conventions, and pitfalls. The contract itself is a language-neutral WIT
+world: this skill's procedure targets Rust, but a component built with
+componentize-py, ComponentizeJS/jco, or TinyGo satisfies the same
+contract and the same `inseam plugin check` — the contract rules below
+apply regardless of language.
 
 ## The contract (source of truth)
 

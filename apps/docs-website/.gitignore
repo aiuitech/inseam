@@ -2,6 +2,8 @@
 dist/
 # synced from ../../docs by scripts/sync-content.mjs
 src/content/docs/
+# synced from ../../install.sh by scripts/sync-content.mjs
+public/install.sh
 # generated types
 .astro/
 

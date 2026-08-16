@@ -37,6 +37,10 @@ for (const rel of mdFiles) {
 		`---\ntitle: ${JSON.stringify(title)}\n---\n\n${rewriteLinks(body, rel)}`,
 	);
 }
+// The repo-root installer is served at docs.inseam.io/install.sh so the
+// one-liner in get-started stays on the docs domain.
+await cp(path.join(repo, 'install.sh'), path.join(site, 'public/install.sh'));
+
 console.log(`synced ${mdFiles.length} pages from ${path.relative(site, source)}`);
 
 function splitTitle(raw, rel) {

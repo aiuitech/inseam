@@ -2,27 +2,25 @@
 
 Install a node, index something, query it — then make the node yours by modifying it. This page is written so a person *or an agent* can follow it top to bottom: give an agent this link and it can install the CLI, run it, extend the node with plugins, and start itself.
 
-Prerequisite for every path below: a Rust toolchain (`curl https://sh.rustup.rs -sSf | sh` or [rustup.rs](https://rustup.rs)).
-
 ## Install
 
-Two default paths. Pick by whether you want to modify the node.
+Two default paths. Pick by whether you want to compile the node itself.
 
-### Just run it
+### Just run it — no toolchain required
 
-Install the stock `inseam` binary straight from the repo, no source tree kept:
+One line installs the prebuilt binary (macOS and Linux, arm64 and x86_64):
 
 ```sh
-cargo install --git https://github.com/aiuitech/inseam inseam-cli
+curl -fsSL https://docs.inseam.io/install.sh | sh
 ```
 
-Or run an app that bundles the core — the [macOS app](macos-app.md) embeds the same node through the FFI and shares its data dir with the CLI.
+The script detects your platform, downloads the latest [GitHub release](https://github.com/aiuitech/inseam/releases), verifies its sha256 against the release's checksums, and installs to `~/.local/bin` (`INSEAM_INSTALL_DIR` and `INSEAM_VERSION` override; the tarballs are on the releases page if you'd rather fetch by hand). Or run an app that bundles the core — the [macOS app](macos-app.md) embeds the same node through the FFI and shares its data dir with the CLI.
 
-Either way you can still extend the node with **loaded plugins** (`inseam plugin install <name>`, [plugins/registry.md](plugins/registry.md)) — installing plugins never requires the source tree.
+The prebuilt binary is not a dead end: it installs registry plugins (`inseam plugin install <name>`, [plugins/registry.md](plugins/registry.md)) and validates ones you author (`inseam plugin check`) — and since loaded plugins can be written in any language that compiles to a WASM component, you can extend the node without ever installing Rust (see [Self-modify](#self-modify)).
 
 ### From source — the self-modifying node
 
-Clone the repo and install the CLI from your checkout:
+This path compiles the node, so it needs a Rust toolchain (`curl https://sh.rustup.rs -sSf | sh` or [rustup.rs](https://rustup.rs)). Clone the repo and install the CLI from your checkout:
 
 ```sh
 git clone https://github.com/aiuitech/inseam
@@ -50,13 +48,13 @@ No API key? The node boots anyway, warns about the waiting entries, and everythi
 
 A node's behavior is its **composition**: which plugins run with what config ([configuration.md](configuration.md)). Modifying the node means adding or changing plugins, and there is a preferred order:
 
-1. **Loaded plugins — the default, and the preferred method for AI-written plugins.** Sandboxed WASM components mounted at runtime with manifest-attenuated capabilities ([plugins/loaded.md](plugins/loaded.md)) — a plugin an agent wrote minutes ago can be mounted safely because the bridge, not the author, bounds what it can do. Install community plugins from the registry (`inseam plugin install`), or author your own: the agent skill at `skills/inseam-loaded-plugin/SKILL.md` ([docs mirror](skills/inseam-loaded-plugin.md)) is the complete authoring procedure, and `inseam plugin check` is the gate.
+1. **Loaded plugins — the default, and the preferred method for AI-written plugins.** Sandboxed WASM components mounted at runtime with manifest-attenuated capabilities ([plugins/loaded.md](plugins/loaded.md)) — a plugin an agent wrote minutes ago can be mounted safely because the bridge, not the author, bounds what it can do. Install community plugins from the registry (`inseam plugin install`), or author your own: the agent skill at `skills/inseam-loaded-plugin/SKILL.md` ([docs mirror](skills/inseam-loaded-plugin.md)) is the complete authoring procedure, and `inseam plugin check` is the gate. **This subpath needs no Rust toolchain**: the contract is a language-neutral WIT world ([plugins/transform-plugin-wit.md](plugins/transform-plugin-wit.md)), so any language that compiles to a WASM component works — the skill's walkthrough uses Rust, but componentize-py (Python), ComponentizeJS/jco (JavaScript), or TinyGo (Go) produce the same artifact, and the prebuilt CLI validates all of them with the same `inseam plugin check`.
 2. **Linked plugins / a custom distribution** — trusted Rust compiled into the binary, for first-party-grade or proprietary plugins ([plugins/linked.md](plugins/linked.md), [plugins/distributions.md](plugins/distributions.md)).
 3. **Core changes** — edit the kernel or seams in the checkout ([crate.md](crate.md) maps the workspace, `design/` holds intent), then `cargo install --path crates/inseam-cli` to make the running binary current.
 
 ## For agents: set up and self-modify, start to finish
 
-Follow these verbatim from a fresh machine with Rust installed:
+Follow these verbatim from a fresh machine with Rust installed. No Rust and no permission to install it? Replace steps 1–2 with the curl one-liner from [Just run it](#just-run-it--no-toolchain-required) and, at step 6, author in a component-capable language the machine does have — everything else is identical:
 
 1. `git clone https://github.com/aiuitech/inseam && cd inseam`
 2. `cargo install --path crates/inseam-cli` — the CLI is now on PATH and current with this source tree. Re-run this after any source change.
