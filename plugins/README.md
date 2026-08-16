@@ -72,4 +72,10 @@ runs (`.github/workflows/plugins.yml`):
   does, exfiltration through LLM prompts or emitted fragments, obfuscation),
   plus a scheduled periodic sweep of the whole tree.
 
+The AI review is **advisory** — the merge gate is human CODEOWNERS review
+(`.github/CODEOWNERS`). Workflows are SHA-pinned, run untrusted plugin
+code only in a secret-free read-only job, and never use
+`pull_request_target`; the full supply-chain posture is in
+`design/registry.md`.
+
 Yanking a version is a PR adding an `advisories.toml` entry.

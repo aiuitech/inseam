@@ -1,0 +1,13 @@
+# Required-review ownership (design/registry.md — supply-chain posture).
+# Branch protection must require CODEOWNERS review: a green CI check name
+# can be forged by a PR that edits the workflow producing it, so the human
+# review — especially of .github/** and the registry index — is the gate
+# that cannot be automated away.
+
+* @greghunt
+
+# The trust roots: CI definitions, the registry index, and the advisory
+# feed. Changes here decide what every installing node believes.
+/.github/ @greghunt
+/plugins/registry.toml @greghunt
+/plugins/advisories.toml @greghunt

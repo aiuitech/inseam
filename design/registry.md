@@ -65,6 +65,54 @@ The advisory feed closes the loop with the release cooldown
 ([plugins.md](plugins.md)): a version flagged during its soak window never
 activates anywhere.
 
+## Supply-chain posture
+
+Using GitHub as the registry makes GitHub part of the trust surface, so
+the CI and repo configuration are treated as attack targets in their own
+right:
+
+- **Fork PRs never see secrets.** All triggers are `pull_request` — never
+  `pull_request_target` — so third-party PRs run with no secrets and a
+  read-only token by construction. The AI-review job additionally guards
+  on same-repo head; fork submissions reach review by a maintainer
+  retargeting the branch after reading it, not by loosening triggers (the
+  classic pwn-request).
+- **Untrusted code executes only in a disarmed job.** The conformance job
+  runs PR code by design (`cargo build` executes build scripts and proc
+  macros), so it holds no secrets, gets `contents: read` only, and checks
+  out with `persist-credentials: false`. GitHub's cache scoping keeps a
+  PR's poisoned caches out of `main`'s.
+- **Actions are pinned to commit SHAs**, with the version as a comment —
+  mutable tags are how the 2025 `tj-actions/changed-files` compromise
+  spread. Bumps change the SHA and comment together, through review.
+- **A green check name proves nothing.** A PR can edit the workflow that
+  emits its own required check, so the merge gate that cannot be forged is
+  **human CODEOWNERS review** (`.github/CODEOWNERS`), with `.github/**`,
+  `registry.toml`, and `advisories.toml` called out as trust roots.
+  Branch protection must require it; the AI review is explicitly
+  advisory, instructed never to approve, and must never be a required
+  approver — a malicious plugin could try to prompt-inject its own
+  reviewer, so both AI jobs treat repository content as data to analyze
+  and flag reviewer-addressed text as a finding in itself.
+- **Repo settings are part of the design** (they live outside the tree, so
+  they are recorded here). Applied now: read-only default `GITHUB_TOKEN`,
+  workflows barred from approving PRs
+  (`can_approve_pull_request_reviews = false`), SHA pinning required for
+  all actions (`sha_pinning_required = true`), secrets limited to
+  `ANTHROPIC_API_KEY`. **Flipped the day the repo goes public or gains
+  collaborators** (today it is private and solo, so required-review
+  protection would only block the owner's own pushes): branch protection
+  on `main` requiring CODEOWNERS review + the conformance check, no
+  direct or force pushes, and Actions approval required for all outside
+  collaborators' workflow runs (a setting GitHub only exposes on public
+  repos; the default covers only first-time contributors).
+- **The node is the last line, and it holds without CI.** Even a fully
+  subverted pipeline changes nothing a node trusts: install verifies
+  sha256 against the human-reviewed index, re-runs the harness locally,
+  and mount-time admission, cooldown, and capability gates run on-node.
+  Corrupting what nodes install requires merging an index change — which
+  is exactly the human-reviewed act the rest of the posture protects.
+
 ## Graduation path (not yet)
 
 Signals that v0 has outgrown the repo: third-party submissions arriving
