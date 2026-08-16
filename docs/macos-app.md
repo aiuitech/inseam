@@ -31,6 +31,6 @@ apps/macos/build.sh            # → /Applications/Inseam.app
 apps/macos/build.sh /tmp/out   # → any other destination dir
 ```
 
-The script builds `inseam-ffi` in release, `swift build -c release` with `-L target/release`, assembles the `.app` bundle from `apps/macos/Info.plist`, ad-hoc codesigns, and copies to the destination — default `/Applications`, so the finished app is directly launchable. Requires the Xcode Command Line Tools (`swift`) only.
+The script builds `inseam-ffi` in release, `swift build -c release` with `-L target/release`, assembles the `.app` bundle from `apps/macos/Info.plist` (including the app icon from `assets/icon-macos.icns` — see `docs/assets.md`), ad-hoc codesigns, and copies to the destination — default `/Applications`, so the finished app is directly launchable. Requires the Xcode Command Line Tools (`swift`) only.
 
 Known cosmetic warning: the Rust objects target the host macOS version while the app declares `LSMinimumSystemVersion` 14.0, so `ld` prints version-mismatch warnings. Harmless for local builds; set `MACOSX_DEPLOYMENT_TARGET=14.0` when building the Rust side for distribution.

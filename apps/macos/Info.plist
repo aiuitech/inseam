@@ -10,6 +10,8 @@
     <string>Inseam</string>
     <key>CFBundleExecutable</key>
     <string>Inseam</string>
+    <key>CFBundleIconFile</key>
+    <string>Inseam</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
