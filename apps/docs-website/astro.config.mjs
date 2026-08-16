@@ -15,7 +15,9 @@ export default defineConfig({
           title: 'Inseam',
           social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/aiuitech/inseam' }],
           // No sidebar config: Starlight autogenerates it from the synced tree.
-          plugins: [starlightLlmsTxt()],
+          // get-started is the entry point handed to agents; keep it at the
+          // top of llms.txt so a bare docs link is enough to bootstrap one.
+          plugins: [starlightLlmsTxt({ promote: ['index', 'get-started'] })],
       }),
 	],
 
