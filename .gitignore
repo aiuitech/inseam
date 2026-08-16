@@ -3,3 +3,5 @@
 /.inseam
 plugins/*/target
 .DS_Store
+.impeccable
+.claude
