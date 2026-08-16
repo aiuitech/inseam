@@ -1,46 +1,55 @@
 # Configuration
 
-## The LLM endpoint
+A node's configuration is its **composition**: which plugins run with what config ([design/composition.md](../design/composition.md)). There is no other config file.
 
-All LLM work — embeddings, summary/entity transforms, the agent demo — goes through one OpenAI-compatible endpoint, configured in the profile:
+## Layers
+
+1. **Distribution base** — the CLI (and the FFI library) ship a base composition mounting the standard entries below.
+2. **Node composition** — `<data-dir>/composition.toml` (or `--composition` / `INSEAM_COMPOSITION`), patching base entries **by id** and adding new ones.
+3. `inseam config` prints the composition; `inseam config --resolved` prints the layered result the node boots — what prints is what runs.
+
+Patch semantics: a patch entry's `config` **replaces** the target's config wholesale (no field merge); `plugin` and `disabled` override when present; unknown ids append as new entries. Entries may nest (`[[entry.entries]]`) into groups; disabling a group prunes its subtree.
+
+## The base entries and their configs
+
+| id | plugin | config (defaults) |
+| --- | --- | --- |
+| `fs` | `connection-fs` | `host_id` (default `fs-<hostname>`) |
+| `llm` | `llm-endpoint` | `base_url` (OpenRouter), `api_key_env` (`OPENROUTER_API_KEY`), `transform_model`, `agent_model` |
+| `embedder` | `embedder` | `provider` = `endpoint` \| `hashed` \| `none`, `model`, `dimensions` |
+| `transforms` | `transforms` | — (the registry) |
+| `markdown` | `transform-markdown` | — |
+| `chunker` | `transform-chunker` | `target_chars` (1600) |
+| `summarizer` | `transform-summarizer` | `target_chars` (400), `llm_call_budget` (500) |
+| `entities` | `transform-entities` | `max_per_source` (12), `llm_call_budget` (500) |
+| `finder` | `finder` | `seed_k`, `rrf_k`, `damping`, `iterations`, `epsilon`, `max_hints`, `max_vector_distance`, `[weights]` |
+| `sweep` | `sweep` | `max_sources` (0 = unlimited), `max_fragments_per_source` (400), `max_depth` (6), `max_content_bytes` (2 MB), `modified_after` (`YYYY-MM-DD`) |
+| `operations` | `operations` | — |
+
+Example `composition.toml` — offline node with a sandboxed OCR plugin:
 
 ```toml
-[endpoint]
-base_url = "https://openrouter.ai/api/v1"   # the default; OpenAI, Ollama, vLLM, ... all work
-api_key_env = "OPENROUTER_API_KEY"          # which env var holds the key
+[[entry]]
+id = "embedder"
+[entry.config]
+provider = "hashed"
+model = "hashed"
+dimensions = 256
+
+[[entry]]
+id = "entities"
+disabled = true
+
+[[entry]]
+id = "ocr"
+plugin = "wasm:plugins/ocr/ocr.wasm"
+[entry.config]
+cooldown_days = 7      # release cooldown for newly observed artifact versions
+# allow_new = true     # explicit consent to activate a version inside its cooldown
 ```
 
-Swapping providers is configuration, not code. The `inseam models` catalog listing uses OpenRouter-specific endpoints and may 404 elsewhere.
+Secrets never live in the composition or the store: the `llm` entry names an environment variable (`api_key_env`), nothing more.
 
-## Secrets
+## Invalidation tiers
 
-The endpoint API key is the only secret, read from whatever environment variable `api_key_env` names — a plain exported variable, set in your shell profile or injected by your runner:
-
-```sh
-export OPENROUTER_API_KEY=sk-or-v1-...
-```
-
-Secrets never live in the profile: profiles are shareable, copyable documents, and the data dir is deletable derived state. There is no `.env` loading — behavior doesn't depend on the directory you invoke `inseam` from. Without a key: embeddings with `provider = "endpoint"` refuse to run (clear error), LLM summaries/entities silently fall back to their offline forms, and `inseam agent` / `inseam models` bail with instructions.
-
-## Data directory
-
-The node's index and catalog live in one directory:
-
-1. `--data-dir <path>` or `INSEAM_DATA_DIR`
-2. otherwise the platform data dir, e.g. `~/Library/Application Support/inseam`
-
-Deleting the directory deletes derived state only; the index is rebuildable from sources at any time.
-
-## Profile
-
-The [index profile](index/profiles.md) is TOML, resolved in order:
-
-1. `--profile <path>` or `INSEAM_PROFILE`
-2. `<data-dir>/profile.toml` if present
-3. built-in defaults
-
-Every field has a default; a partial file overrides only what it names. Unknown keys are rejected (typo protection).
-
-## Logging
-
-`INSEAM_LOG` (or nothing: `inseam=info`) with `tracing_subscriber` env-filter syntax; logs go to stderr so stdout stays pipeable JSON/text.
+Which entry's config changed decides the blast radius ([index/maintenance.md](index/maintenance.md)): `finder` and the llm `agent_model` are query-time (free); budgets (`max_sources`, `llm_call_budget`) are run-metering (free); transform configs and the sweep's decomposition dials are shape (affected sources re-index); the `embedder` entry re-embeds in place. Mounting/unmounting a transform plugin dirties exactly the sources its claims touch.

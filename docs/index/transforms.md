@@ -1,28 +1,26 @@
 # Transforms
 
-Transforms take a fragment of a mimetype they claim and emit child fragments with typed relations ([design/indexing.md](../../design/indexing.md)).
+Transforms take a fragment of a mimetype they claim and emit child fragments with typed relations ([design/indexing.md](../../design/indexing.md)). Each transform is a **plugin**; the registry it registers into is the `transforms` seam ([../kernel.md](../kernel.md)).
 
-## One registration pathway
+## One registration pathway, two tiers
 
-Every transform — core today, plugin tomorrow — registers into the `TransformRegistry` with the same contract: a `claims(mimetype, is_root)` predicate and an `apply(ctx) -> output` implementation. The indexer consults the registry per source root, in registration order (structural before enrichment), and mediates every capability: a transform never performs I/O itself. The LLM handle arrives in the context, and is withheld once the transform's per-run call budget (declared at registration) is spent — budget enforcement *is* capability withholding, the same story the WASM sandbox will enforce mechanically. WASM transforms will join as additional registrants behind a host-side adapter; the registry and the indexer's pathway don't change.
+Native transform plugins and sandboxed WASM transforms register identically: `claims(mimetype, is_root)` + `apply(ctx) -> output`, plus a per-run LLM call budget and a **shape fingerprint** (config digest; artifact version for sandboxed ones) that feeds the shape stamp ([maintenance.md](maintenance.md)). Registration returns a disposer held as a fiber effect — unmounting the plugin unwinds it, and the next sweep discovers the divergence.
 
-Output is uniform: `sprouts` (child fragments with their relation kinds — a summary is just a sprout related `derived-from`) plus `entities`, which the core deduplicates index-wide and wires `mentions` edges for, since a transform cannot know fragment ids.
+The sweep applies claimants recursively: registered transforms over the source root, then over every emitted fragment, until nothing claims the output — a transform claiming another's emitted mimetype (the sandboxed tier's normal shape, e.g. OCR emitting `text/plain` from images) chains in the same rebuild. Application order is structural before enrichment, then entry id: deterministic regardless of activation order.
 
-They come in two shapes in the current core:
+Capabilities are handed in, never grabbed: the context carries the text, optionally the raw bytes (only for transforms that declare `wants_bytes`, at the root), and optionally a **granted LLM** (`GrantedLlm`) — metered mechanically against the transform's per-run budget and checked against the `LlmCall` guard on every call. Budget spent or guard denied → the capability refuses and the transform degrades.
 
-## Structural (claim source roots, emit whole trees)
+Output is uniform: `sprouts` (child fragments with relation kinds — a summary is a sprout related `derived-from`) plus `entities`, which the sweep deduplicates index-wide and wires `mentions` edges for, since a transform cannot know fragment ids.
 
-- **Markdown** (`text/markdown`) — decomposes by the document's own heading outline: each section is a fragment whose text is the section's *own* content, whose extent (in lines) spans the section *including* subsections, and whose children are its subsections. Preamble text before the first heading becomes a section. `http(s)` links become `text/uri-list` child fragments (`links-to`) of the section containing them. Documents without headings fall back to the chunker.
-- **Chunker** (any other indexable text) — paragraph-boundary chunks aimed at ~1,600 characters (hard break at twice that), line extents, parent's mimetype preserved.
+## The first-party transforms
 
-Both emit their full subtree in one application, so recursive transform application bottoms out immediately; plugin transforms ([design/plugins.md](../../design/plugins.md)) will re-enter the recursion by claiming the emitted mimetypes.
+- **Markdown** (structural, `text/markdown` roots) — decomposes by the document's own heading outline; sections nest as authored, `http(s)` links become `text/uri-list` children (`links-to`). Headingless documents fall back to chunking.
+- **Chunker** (structural, other indexable text roots) — paragraph-boundary chunks aimed at `target_chars` (hard break at twice it), line extents.
+- **Summarizer** (enrichment, every root) — **mandatory**: every indexed source gets a summary fragment (`text/x-inseam-summary`, `derived-from` the root). Three qualities by circumstance: LLM (capability granted), extractive (text otherwise), envelope-derived (content never read). Provenance rides the mimetype as `via=llm|extractive|envelope`.
+- **Entity extractor** (enrichment, every root) — LLM-extracts up to `max_per_source` named entities; each becomes one `text/x-inseam-entity;kind=…` fragment per index with `mentions` edges from the fragments whose text contains the name.
+- **OCR** (`plugins/ocr`, sandboxed, image roots) — the reference community-tier transform: transcribes image text through the granted vision LLM, emitting `text/plain;via=ocr` related `transcribes` ([../plugins/sandboxed.md](../plugins/sandboxed.md)).
 
-Budgets from the profile prune decomposition: depth cap, per-source fragment cap.
-
-## Enrichment (registered after the structural transforms)
-
-- **Summarizer — mandatory.** It claims every source root, so every indexed source gets a summary fragment (`text/x-inseam-summary`, `derived-from` the root). Three qualities, chosen by circumstance: LLM (capability granted and within the run's call budget), extractive (text sources otherwise: first words, markdown stripped), envelope-derived (content never read — binary, oversized, or envelope-only profiles). Provenance is recorded on the fragment's mimetype as `via=llm|extractive|envelope`; the index report counts by it.
-- **Entity extractor — optional.** LLM-extracts up to `max_per_source` named entities (person, place, org, project, date). Each becomes one `text/x-inseam-entity;kind=…` fragment per index — deduplicated through the registry — with `mentions` edges from every fragment of the source whose text contains the name (root as fallback). Entities carry no source of their own; they are the graph's connective tissue.
+Decomposition budgets from the sweep entry prune every transform's output: depth cap, per-source fragment cap.
 
 ## Mimetypes the index defines
 
@@ -32,4 +30,4 @@ Budgets from the profile prune decomposition: depth cap, per-source fragment cap
 | `text/x-inseam-entity;kind=<kind>` | a deduplicated entity |
 | `text/uri-list` | a link found inside a fragment |
 
-inseam-defined types are derived understanding: structural transforms never decompose them.
+inseam-defined types are derived understanding: no transform may claim them, and the wasm bridge refuses components that emit them.

@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use inseam_kernel::substrate::{
-    ApplyCx, Composition, Facts, Inject, Kernel, Manifest, Plugin, PluginError, PluginFactory,
+    ApplyCx, Composition, Facts, Kernel, Manifest, Plugin, PluginError, PluginFactory,
     ServiceKey,
 };
 use inseam_seams::transforms::{Registration, Transforms, TRANSFORMS};

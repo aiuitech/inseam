@@ -1,10 +1,10 @@
 # The Filesystem Host
 
-The one connection shipped in core: a node stewarding its own machine's filesystem. Service hosts (Gmail, Slack, …) arrive later as WASM connection plugins ([design/plugins.md](../../design/plugins.md)).
+The first `connection` seam provider: the `connection-fs` plugin, stewarding this machine's filesystem. Service hosts (Gmail, Slack, …) arrive later as sandboxed connection plugins on the same seam ([design/connections.md](../../design/connections.md)).
 
 ## Identity and addresses
 
-The host id is `fs-<hostname>` (sanitized). Locators are absolute paths with the leading `/` stripped, so addresses round-trip textually:
+The host id is `fs-<hostname>` (sanitized; `host_id` in the entry config overrides). Locators are absolute paths with the leading `/` stripped, so addresses round-trip textually:
 
 ```
 /Users/greg/Data/Notes/reno.md  ->  inseam://fs-gregs-mba/Users/greg/Data/Notes/reno.md

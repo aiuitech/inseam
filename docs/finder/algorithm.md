@@ -1,6 +1,6 @@
 # The Finder Algorithm
 
-Implements [design/finder.md](../../design/finder.md): seed with hybrid search, then let the graph boost what search alone would underrank. All constants live in the profile's `[finder]` section ([../index/profiles.md](../index/profiles.md)).
+Implements [design/finder.md](../../design/finder.md): seed with hybrid search, then let the graph boost what search alone would underrank. All constants live in the `finder` entry's config ([../configuration.md](../configuration.md)) — query-time tier: tuning them never re-indexes.
 
 ## 1. Seed: hybrid search, fused by rank
 

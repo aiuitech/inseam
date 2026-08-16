@@ -47,11 +47,37 @@ wasmtime::component::bindgen!({
 use inseam::plugin::host::Host as HostImports;
 
 /// One transform application's host-side state: the capabilities this
-/// invocation was granted, and nothing else.
+/// invocation was granted, and nothing else. The WASI context exists only
+/// because the `wasm32-wasip2` std links core WASI interfaces; it is built
+/// **empty** — no preopened directories, no environment, no args, no
+/// network — so the component's real surface stays the `host` interface.
 struct Invocation {
     plugin: String,
     llm: Option<Arc<dyn GrantedLlm>>,
     bytes: Option<Vec<u8>>,
+    wasi: wasmtime_wasi::WasiCtx,
+    table: wasmtime_wasi::ResourceTable,
+}
+
+impl Invocation {
+    fn new(plugin: String, llm: Option<Arc<dyn GrantedLlm>>, bytes: Option<Vec<u8>>) -> Self {
+        Self {
+            plugin,
+            llm,
+            bytes,
+            wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
+            table: wasmtime_wasi::ResourceTable::new(),
+        }
+    }
+}
+
+impl wasmtime_wasi::WasiView for Invocation {
+    fn ctx(&mut self) -> wasmtime_wasi::WasiCtxView<'_> {
+        wasmtime_wasi::WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
+        }
+    }
 }
 
 impl HostImports for Invocation {
@@ -267,6 +293,10 @@ impl Plugin for WasmTransformPlugin {
             |state| state,
         )
         .map_err(|e| PluginError(format!("linker: {e}")))?;
+        // Core WASI, satisfied with the empty context: the wasip2 std needs
+        // these interfaces to exist, not to reach anything.
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker)
+            .map_err(|e| PluginError(format!("wasi linker: {e}")))?;
 
         // Ask the component for its claims once, at mount: the effective
         // claim set is declared ∩ exported.
@@ -405,11 +435,7 @@ impl WasmTransformPlugin {
     ) -> Result<exports::inseam::plugin::transform::ClaimSpec, wasmtime::Error> {
         let mut store = Store::new(
             &self.engine,
-            Invocation {
-                plugin: self.manifest.name.clone(),
-                llm: None,
-                bytes: None,
-            },
+            Invocation::new(self.manifest.name.clone(), None, None),
         );
         store.set_fuel(self.config.fuel)?;
         let plugin = TransformPlugin::instantiate_async(&mut store, component, linker).await?;
@@ -462,11 +488,11 @@ impl Transform for WasmTransform {
     async fn apply(&self, ctx: TransformCtx<'_>) -> TransformOutput {
         let mut store = Store::new(
             &self.engine,
-            Invocation {
-                plugin: self.plugin_name.clone(),
-                llm: if self.grant_llm { ctx.llm.clone() } else { None },
-                bytes: ctx.bytes.map(<[u8]>::to_vec),
-            },
+            Invocation::new(
+                self.plugin_name.clone(),
+                if self.grant_llm { ctx.llm.clone() } else { None },
+                ctx.bytes.map(<[u8]>::to_vec),
+            ),
         );
         if store.set_fuel(self.fuel).is_err() {
             return TransformOutput::default();

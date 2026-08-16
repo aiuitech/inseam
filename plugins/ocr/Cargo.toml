@@ -1,0 +1,18 @@
+[package]
+name = "ocr"
+version = "0.1.0"
+edition = "2021"
+
+# Standalone: the root workspace must not adopt this crate.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.60"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

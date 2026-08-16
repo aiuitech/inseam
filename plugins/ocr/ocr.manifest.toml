@@ -1,0 +1,11 @@
+name = "ocr"
+version = "0.1.0"
+seam = "transform"
+claims = ["image/png", "image/jpeg", "image/webp"]
+roots_only = true
+kind = "enrichment"
+
+[capabilities]
+llm = true
+source_bytes = true
+llm_call_budget = 25

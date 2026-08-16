@@ -40,8 +40,11 @@ Composition edits apply transactionally per entry: config-only changes update th
 - **Row order as load order.** Activation is service-availability-driven ([kernel](kernel.md)); order in the file carries no semantics, which is what lets layers insert entries freely.
 - **YAML with embedded expressions.** `dsh` interpolates JS in config values; powerful, but a config file that executes is a capability we don't want to hand the composition layer of a security-sensitive node. Dynamic values come from the environment through explicit, declared config fields (`key_env`-style), which is already the pattern.
 
+## Settled since
+
+- **Patch semantics: whole-config replacement per id.** A patch entry's `config` replaces the target's wholesale; `plugin` and `disabled` override when present; unknown ids append (and a patch that targets nothing *and* names no plugin is a loud error). `extends` sugar can come later without breaking files.
+- **Sandboxed installation state**: the composition entry holds the artifact ref; the trust bookkeeping (first-seen clock per content hash, approved capability summary) lives in the wasm host's versioned state namespace — discardable, re-derivable, never synced.
+
 ## Open questions
 
-- Patch semantics: whole-config replacement per id (simple, verbose overrides) vs. field-level merge (convenient, ambiguous for maps/arrays). The studied systems chose replacement and documented the pain; leaning replacement-with-`extends` sugar.
-- Where sandboxed-plugin *installation* state lives (composition entry with artifact ref + content hash, vs. a lockfile beside it).
 - Owner operations that edit the composition at runtime (enable/disable a connection from the macOS app) and how they write back through the layering.

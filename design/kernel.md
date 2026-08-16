@@ -64,5 +64,10 @@ Two trust tiers, detailed in [plugins](plugins.md): **native plugins** are trust
 ## Open questions
 
 - **Realms**: Cordis supports isolating the same service key to different providers for different subtrees (two `llm` endpoints, a sandboxed group). Almost certainly wanted eventually (per-requester attenuation may ride on it); deferred until a concrete composition needs it.
-- **Event representation in Rust**: typed event registry keyed by type vs. generated enum; how sandboxed plugins participate in events across the boundary.
 - **How much lifecycle to verify at compile time**: injection sets are static, so pending-forever cycles are statically detectable; how far to push (proc-macro derived handles, typestate on fiber phases) is an implementation question.
+- **Sandboxed plugins and events**: the bus is host-side only; whether to project it into WIT or keep components request/response-only with bridges listening on their behalf.
+
+## Settled since
+
+- **Event representation**: a typed bus keyed by event type, with the dispatch mode declared per type — `Notify` (fan-out), `Guard` (monotonic deny: every listener asked, any deny wins, no force-allow), and `Waterfall` (a `Next` token the listener must consume or replace with its own decision). Budget metering and boundary filtering landed as guards; waterfall remains the wrapping seam.
+- **Dependency appearance restarts consumers.** Not just provider-identity *change*: when a key a fiber injects (even optionally) becomes available, the fiber restarts against it. This is what makes composition order carry no semantics for optional dependencies too; a bounded restart count per reconcile turns genuine provide-cycles into a contained fiber failure instead of a livelock.

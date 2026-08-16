@@ -24,10 +24,11 @@ typedef struct InseamNode InseamNode;
 /* The core library version as a fresh string. */
 char *inseam_version(void);
 
-/* Open the node under data_dir. profile_path may be NULL: then
- * <data_dir>/profile.toml is used when present, else the default profile. */
+/* Open the node under data_dir. composition_path may be NULL: then
+ * <data_dir>/composition.toml is layered over the built-in base composition
+ * when present. */
 InseamNode *inseam_node_open(const char *data_dir,
-                             const char *profile_path,
+                             const char *composition_path,
                              char **error_out);
 
 /* Close a node and release its runtime. NULL is a no-op. */

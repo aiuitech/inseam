@@ -9,12 +9,12 @@ A C ABI staticlib (`libinseam_ffi.a`) with a hand-maintained header at `crates/i
 | Function | Does |
 | --- | --- |
 | `inseam_version` | Core version string |
-| `inseam_node_open` | Open the node under a data dir; optional profile path, else `<data_dir>/profile.toml`, else defaults |
+| `inseam_node_open` | Open the node under a data dir; optional composition path, else `<data_dir>/composition.toml` layered over the built-in base composition |
 | `inseam_node_query` | Finder query → `QueryResponse` JSON |
 | `inseam_node_index_dir` | Index a local directory → `IndexReport` JSON |
 | `inseam_node_free` / `inseam_string_free` | Release handles/strings the library allocated |
 
-Conventions: fallible calls take `char **error_out` (null return + owned message on failure); every returned string is freed with `inseam_string_free`. The handle owns a tokio runtime, so calls block — app shells run them off the main thread. Responses are the same serde views `ops` serializes everywhere else.
+Conventions: fallible calls take `char **error_out` (null return + owned message on failure); every returned string is freed with `inseam_string_free`. The handle owns a booted kernel and its tokio runtime, so calls block — app shells run them off the main thread. Responses are the same serde views `ops` serializes everywhere else.
 
 ## The Swift side (`apps/macos`)
 

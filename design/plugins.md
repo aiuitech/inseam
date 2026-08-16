@@ -72,12 +72,15 @@ Known trade-off: security *fixes* are delayed by the same window. An expedite pa
 
 ## Settled since
 
+- **The substrate, both tiers, and the cooldown shipped.** Native plugins are modules in `inseam-plugins` behind one factory registry; the wasm bridge (`inseam-wasm-host`) mounts `wasm:<artifact>` composition entries with manifest-attenuated capabilities, declared∩exported claims, per-call instantiation, fuel limits, and the release cooldown exactly as specified below (local first-seen clock in the kernel's state service, capability-widening gate, `allow_new` as the explicit consent moment). The wasip2 toolchain forces one nuance: components import core WASI interfaces, which the bridge satisfies with an **empty** context — no preopens, env, args, or sockets — so the effective surface stays the host interface.
+- **The WIT projection is hand-maintained, not generated — yet.** `wit/transform.wit` mirrors `inseam-seams::transforms` and is kept in lockstep by review; generating it from the seam definitions remains the intent once more than one seam crosses the boundary. v1 also omits entity emission (sandboxed transforms emit fragments only); entity extraction stays native until the WIT vocabulary earns it.
+- **Wasmtime directly** (no framework layer), with our own WIT world — resolved from the open question below.
+- **The authoring loop is skill-shaped already.** `.claude/skills/inseam-sandboxed-plugin` authors against the contract, and `plugins/ocr` (image OCR through the granted vision LLM) was produced by an agent running it, validated by the bridge-backed `inspect` example — a working rehearsal of the community-registry path while the registry itself waits on positioning's exit criterion.
 - **An OpenAI-compatible LLM endpoint is configuration, not a plugin implementation.** The `llm` seam's default provider speaks the OpenAI-compatible protocol to any base URL (OpenRouter, OpenAI, Ollama, vLLM); genuinely novel protocols or bundled models arrive as alternative providers.
 - **The transform pathway was proven native-first.** The transform registry with claims/apply and capability-granted LLM handles ran natively before any WASM existed; that contract is what the WIT projection now derives from, rather than an invented one.
 
 ## Open questions
 
-- Wasmtime directly vs. a framework layer on top; leaning wasmtime + our own generated WIT world for full contract control.
 - Manifest schema: capability grants, version pinning, signing/provenance (matters more as AI-generated plugins circulate).
 - Cooldown expedite path: how a registry-signed advisory vouches a security fix past the window without becoming a bypass an attacker can earn.
 - Cooldown for plugins installed from a plain URL (no registry, no advisory feed): the timer still applies, but the end-of-window check has nothing to ask — possibly require a registry ref for anything holding credentials.

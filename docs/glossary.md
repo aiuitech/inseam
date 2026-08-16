@@ -30,9 +30,9 @@ The inseam vocabulary, one picture. Definitions here are canonical; the linked d
 - **Fragment** — the unit of the index: a piece of understanding derived from a source (a markdown section, a transcript line, a summary, an entity), carrying a mimetype, an embedding, an extent, and typed relations. Index-local; never syncs; carries no access rules of its own — authorization is source-level only.
 - **Extent** — a fragment's recorded position and length within its parent (lines for text, bytes or timestamps otherwise); what makes `scan` ranges possible.
 - **Relation** — a typed edge between fragments: `contains`, `links-to`, `derived-from`, `mentions`, `transcribes`… Relation kinds drive retrieval boosting.
-- **Transform** — a registered handler (core or plugin) that takes a fragment of a mimetype it claims and emits child fragments. Indexing is recursive transform application.
+- **Transform** — a plugin-registered handler that takes a fragment of a mimetype it claims and emits child fragments. Indexing is recursive transform application.
 - **Entity** — a deduplicated fragment for a person, place, organization, project, or date, related by `mentions` edges to every fragment that references it; the graph's connective tissue. Belongs to no single source, so it conducts relevance but never ranks as a result.
-- **Index profile** — a node's index configuration: embedding model, date cutoff, transforms and budgets, summary lengths, storage backend.
+- **Shape stamp / mimetype inventory** — the two per-source records that make invalidation claims-aware: a digest of the transform registrations that built the subtree, and the mimetypes present in it. Plugin churn dirties only sources whose inventory intersects the changed claims. ([design/index-maintenance.md](../design/index-maintenance.md))
 - **Finder** — the retrieval algorithm: hybrid full-text + vector seed search, then relevance propagation along relations (spreading activation / Personalized PageRank), rolled up to ranked sources with scores, summaries, and hints. ([design/finder.md](../design/finder.md))
 - **Incremental discovery** — the client loop the Finder serves: query → expand or scan the promising results → fetch only what earns it, each step costing more context than the last.
 - **Expand** — boundary operation returning one source's fragments and relations from the serving node's index, so a client navigates a result's structure instead of re-searching.
@@ -54,7 +54,15 @@ The inseam vocabulary, one picture. Definitions here are canonical; the linked d
 - **Operation** — a typed, transport-neutral request/response the core defines: boundary operations (`query`, `expand`, `scan`, `fetch`, `verify`) and owner operations (managing connections, hosts, plugins). ([design/node-api.md](../design/node-api.md))
 - **Adapter** — a thin transport skin over the operations layer: HTTP/JSON, MCP, CLI in core; gRPC and others are mechanical additions.
 
-## Extensibility
+## The kernel and plugins
 
-- **Plugin** — a sandboxed WASM component supplying the service-specific parts: connection types, source handling, verification methods. Any language; distributed through existing package ecosystems. ([design/plugins.md](../design/plugins.md))
-- **Capability** — an I/O grant a plugin's manifest declares and the core mediates (e.g. which external hosts it may call). Plugins get no raw network access.
+- **Kernel** — the smallest thing that makes "everything is a plugin" true: it runs plugins (the substrate) and owns persistent structure (the store). Knows no host, format, ranking, or transport. ([design/kernel.md](../design/kernel.md))
+- **Seam** — a typed service interface bound to a well-known key (`connection`, `transforms`, `llm`, …); the system's real API surface. Definitions live in `inseam-seams`, apart from providers and consumers. ([design/services.md](../design/services.md))
+- **Capability fact** — a declared property of whatever provider is mounted at a key ("offers a change feed", "works offline"); consumers branch on facts, never provider identity.
+- **Plugin** — the unit of everything: name + typed config + inject (its capability manifest) + provide + apply. Two trust tiers, one model: **native** (Rust, statically linked, activated by composition) and **sandboxed** (WASM components mounted at runtime through the plugin-host bridge). ([design/plugins.md](../design/plugins.md))
+- **Fiber** — one running plugin instance with a reactive lifecycle: activates when its required seams are provided, restarts when a provider changes, fails alone.
+- **Effect** — a change to shared state registered together with its undo at the moment it is made; unload unwinds a fiber's effects in reverse, so removal is derived, never authored.
+- **Composition** — the declarative TOML entry tree saying what runs with what config; layered (distribution base ← node file) and reconciled with confluence: any edit history ends where a fresh boot of the final composition would. ([design/composition.md](../design/composition.md))
+- **Distribution** — an app crate that links a set of native plugins and ships a base composition: the CLI, the FFI library, the macOS app.
+- **Capability** — a grant handed to a plugin, never grabbed: the metered LLM handle, source bytes, host allowlists. For sandboxed plugins the manifest declares requests and the bridge attenuates; plugins get no raw network access.
+- **Release cooldown** — the soak a newly observed sandboxed-plugin version waits before activating, on this node's own first-seen clock; capability widening needs explicit consent regardless of soak. ([design/plugins.md](../design/plugins.md))

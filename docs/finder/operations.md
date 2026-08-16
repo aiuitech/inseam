@@ -1,6 +1,6 @@
 # Finder Operations
 
-The boundary operations from [design/node-api.md](../../design/node-api.md), as implemented on `ops::Node`. Messages are plain serde types — JSON-serializable by construction, no transport assumptions. The CLI and the agent demo are both thin adapters over these; HTTP and MCP adapters will wrap the same types.
+The boundary operations from [design/node-api.md](../../design/node-api.md), as served by the `operations` plugin on its seam (`inseam-seams::operations`). Messages are plain serde types — JSON-serializable by construction, no transport assumptions. The CLI and the agent demo are both thin adapters over these; HTTP and MCP adapters will wrap the same types.
 
 ## The ladder
 
@@ -15,8 +15,8 @@ Errors are typed and sentence-shaped (`no source at …`, `scan start line 200 i
 
 ## Owner operations
 
-`Node::index_dir(root, rebuild)` — enumerate + index a directory of the local filesystem host, returning an `IndexReport` (counts per summary kind, fragments, relations, entities, dollars spent). Owner scope; never exposed at a boundary adapter.
+`operations.index { root, rebuild }` — delegate to the `sweep` seam over a scope of the mounted connection, returning an `IndexReport` (counts per summary kind, fragments, relations, entities, dollars spent). Owner scope; never exposed at a boundary adapter.
 
 ## The agent demo
 
-`inseam agent "<question>"` hands a live model exactly the four boundary operations as OpenAI-style tools and prints each rung it climbs. It is both a demo and a conformance test of the ladder's ergonomics: if the model can't navigate it, neither can a real client. Access control (`properties` on requests) is not yet wired — the network is one trust domain until the boundary layer lands.
+`inseam agent "<question>"` hands a live model exactly the four boundary operations as OpenAI-style tools and prints each rung it climbs. It is both a demo and a conformance test of the ladder's ergonomics: if the model can't navigate it, neither can a real client. Boundary enforcement is a monotonic-deny guard on dispatch (`OperationRequest`); no access-control listeners ship yet, so the network is one trust domain until the boundary layer lands.

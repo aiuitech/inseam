@@ -12,9 +12,9 @@ Each seam names its definition, its expected providers, and the capability facts
 ## Data plane
 
 - **`connection`** — a configured edge to one host: enumerate sources, extract envelopes, fetch content, optionally stream a change feed ([connections](connections.md)). Providers: filesystem (first), Gmail/IMAP/Slack/REST (community, sandboxed). Capability facts: change feed offered, writability, enumeration cost class.
-- **`transforms`** — the registration door for [indexing](indexing.md): claims (mimetype + position) → apply (fragment in, sprouts + entities out). Providers register transforms; the sweep consumes the registry. Native transforms: markdown, chunker, summarizer, entity extractor. Sandboxed transforms claim emitted mimetypes and recurse. Capability facts per transform: structural vs. enrichment, LLM-hungry or not.
+- **`transforms`** — the registration door for [indexing](indexing.md): claims (mimetype + position) → apply (fragment in, sprouts + entities out). Providers register transforms; the sweep consumes the registry. Registrations carry the shape fingerprint and LLM budget the sweep mediates; disposers returned by registration are the entire uninstall path. Native transforms: markdown, chunker, summarizer, entity extractor. Sandboxed transforms (the OCR reference plugin) claim roots or emitted mimetypes and recurse.
 - **`embedder`** — text (later multimodal) → vector, with declared model identity + dimensions. Providers: endpoint-backed, hashed bag-of-words offline fallback, sandboxed custom. Capability facts: offline, dimensions, mimetypes embedded.
-- **`llm`** — chat/completion against a configured endpoint. One seam, metered at the seam: per-consumer budgets are waterfall interception on `llm` calls, which is how a transform's LLM allowance is enforced without the transform's cooperation.
+- **`llm`** — chat/completion (and vision) against a configured endpoint; the models consumers should use ride on the seam as capability facts. One seam, metered at the seam: transforms receive a narrowed **granted handle** whose every call is counted mechanically against the per-run budget and checked against the `LlmCall` guard event — monotonic-deny policy without the transform's cooperation.
 
 ## Retrieval plane
 
