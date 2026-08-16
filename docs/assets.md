@@ -1,6 +1,6 @@
 # Brand Assets
 
-`assets/` holds the brand sources and their rendered outputs. The brand itself — mark geometry, colors, type, voice — is defined in `design/brand.md`.
+`assets/` holds the brand sources and their rendered outputs. The brand itself — mark geometry, colors, type, voice — is defined in `docs/brand.md`.
 
 ## Sources (SVG, hand-edited)
 
