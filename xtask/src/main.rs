@@ -132,7 +132,7 @@ fn wit_pages(root: &Path) -> Result<()> {
         let page = format!(
             "{}{}",
             generated_header("crates/inseam-wasm-host/wit"),
-            String::from_utf8_lossy(contents),
+            retitle_world(&String::from_utf8_lossy(contents), stem),
         );
         write_page(
             &root.join("docs/plugins").join(format!("{stem}-wit.md")),
@@ -140,6 +140,18 @@ fn wit_pages(root: &Path) -> Result<()> {
         )?;
     }
     Ok(())
+}
+
+/// Replaces wit-bindgen's page title — `# <a id="…"></a>World <name>` — with a
+/// plain heading. The doc site lifts each page's `# ` line into the Starlight
+/// frontmatter title, where the raw anchor would show up verbatim. Anchors
+/// further down the page stay: the type cross-links point at them.
+fn retitle_world(rendered: &str, world: &str) -> String {
+    let body = rendered
+        .strip_prefix("# ")
+        .and_then(|rest| rest.split_once('\n'))
+        .map_or(rendered, |(_, body)| body);
+    format!("# WIT world: {world}\n\n{}", body.trim_start_matches('\n'))
 }
 
 /// One page per skill under `docs/skills/`, from `skills/*/SKILL.md` with the
@@ -245,6 +257,21 @@ mod tests {
     #[test]
     fn rejects_source_without_doc_block() {
         assert_eq!(crate_doc_block("use std::fs;\n"), None);
+    }
+
+    #[test]
+    fn replaces_anchored_world_title() {
+        let rendered = "# <a id=\"transform_plugin\"></a>World transform-plugin\n\n\n\n - Imports:\n";
+        assert_eq!(
+            retitle_world(rendered, "transform-plugin"),
+            "# WIT world: transform-plugin\n\n - Imports:\n"
+        );
+    }
+
+    #[test]
+    fn keeps_anchors_below_the_title() {
+        let rendered = "# <a id=\"w\"></a>World w\n\n## <a id=\"log\"></a>`log: func`\n";
+        assert!(retitle_world(rendered, "w").contains("<a id=\"log\"></a>"));
     }
 
     #[test]
