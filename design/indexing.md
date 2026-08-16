@@ -41,7 +41,7 @@ Everything above is configured per node by its [composition](composition.md): wh
 
 ## Storage
 
-The index lives in LanceDB ([runtime](runtime.md)), whose object-store backend makes "where" a profile setting: local disk or S3-compatible storage.
+The index lives in LanceDB ([runtime](runtime.md)), whose object-store backend makes "where" a node setting: local disk or S3-compatible storage.
 
 **Remote object storage is for co-located nodes, not for small devices.** Vector + FTS queries against S3 pay object-store round trips per probe; run from a laptop against a distant bucket, interactive queries degrade badly. But inseam already has a better answer for "limitless index off device": that is exactly query fan-out — the small node keeps its lean local index and forwards queries to a big node whose index is deep. The big node may itself back its Lance data with S3 — it runs in the same region as the bucket and can cache hot data locally, so the latency argument disappears. S3 as a *backend for a nearby node*: yes. S3 as a *remote index for a far-away device*: no — use the network.
 
