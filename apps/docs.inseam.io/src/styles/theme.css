@@ -1,0 +1,183 @@
+/*
+ * inseam brand theme for Starlight.
+ *
+ * Read-mode surface: comprehension and wayfinding first; brand lives in
+ * precise details. Overrides Starlight's CSS custom properties only — no
+ * component forks. Authority: docs/brand/README.md (binding) and DESIGN.md
+ * (the www.inseam.io visual world: ground #0a0b0a, one chartreuse thread
+ * #d8ff1c, ink ramp #f2f0e9 / #a6ab9b / #8a8f80, Commit Mono 400/700).
+ */
+
+/* ---------- brand tokens ---------- */
+
+:root {
+	--in-ground: #0a0b0a;
+	--in-thread: #d8ff1c;
+	--in-ink: #f2f0e9;
+	--in-ink-dim: #a6ab9b;
+	--in-ink-faint: #8a8f80;
+	--in-hairline: rgba(242, 240, 233, 0.12);
+
+	/* monospace everywhere — body and code are the same face */
+	--sl-font: 'Commit Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+	--sl-font-mono: 'Commit Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+/* ---------- dark (primary) ---------- */
+
+:root {
+	/* ink ramp: white for small text contrast, then ink → ink-dim → ink-faint */
+	--sl-color-white: #ffffff;
+	--sl-color-gray-1: #f2f0e9;
+	--sl-color-gray-2: #f2f0e9; /* body text = node ink, per brand */
+	--sl-color-gray-3: #a6ab9b;
+	--sl-color-gray-4: #8a8f80;
+	--sl-color-gray-5: #2a2d27;
+	--sl-color-gray-6: #14160f;
+	--sl-color-black: #0a0b0a;
+
+	/* the one thread */
+	--sl-color-accent-low: #222905; /* dark chartreuse tint: current-page pill, note/tip aside bg */
+	--sl-color-accent: #d8ff1c;
+	--sl-color-accent-high: #e9ff85;
+	--sl-color-text-accent: #d8ff1c;
+	/* current-page sidebar pill: ground text on the thread, like the CTA */
+	--sl-color-text-invert: var(--in-ground);
+
+	--sl-color-bg: var(--in-ground);
+	--sl-color-bg-nav: var(--in-ground);
+	--sl-color-bg-sidebar: var(--in-ground);
+	--sl-color-bg-inline-code: #191c13;
+	--sl-color-hairline-light: var(--in-hairline);
+	--sl-color-hairline: var(--in-hairline);
+	--sl-color-hairline-shade: var(--in-hairline);
+	--sl-color-backdrop-overlay: rgba(10, 11, 10, 0.66);
+
+	/* one plane of ground — no elevation */
+	--sl-shadow-sm: none;
+	--sl-shadow-md: none;
+	--sl-shadow-lg: none;
+
+	/* code block background (fed to expressive-code via astro.config) */
+	--in-code-bg: #101207;
+
+	color-scheme: dark;
+	scrollbar-color: #2a2d27 var(--in-ground);
+	caret-color: var(--in-thread);
+}
+
+/* ---------- light (the rare inverted surface) ---------- */
+/* ground becomes the ink; the thread stays #d8ff1c but only as underline,
+ * marker, and tinted surface — chartreuse text on white fails contrast, so
+ * text-level accents darken to an AA olive drawn from the same hue. */
+
+:root[data-theme='light'],
+[data-theme='light'] ::backdrop {
+	--in-hairline: rgba(10, 11, 10, 0.14);
+
+	--sl-color-white: #0a0b0a;
+	--sl-color-gray-1: #181a15;
+	--sl-color-gray-2: #24261f;
+	--sl-color-gray-3: #4c5044;
+	--sl-color-gray-4: #767b6c;
+	--sl-color-gray-5: #d9d8cf;
+	--sl-color-gray-6: #efeee7;
+	--sl-color-gray-7: #f7f6f1;
+	--sl-color-black: #ffffff;
+
+	--sl-color-accent-low: #f2ffc0; /* pale chartreuse tint */
+	--sl-color-accent: #556700; /* AA olive of the thread hue, for borders/markers */
+	--sl-color-accent-high: #333d00;
+	--sl-color-text-accent: #333d00;
+	/* our unlayered :root override wins over Starlight's layered light
+	 * redefinition, so restate it: white text on the olive pill */
+	--sl-color-text-invert: #ffffff;
+
+	--sl-color-bg: #ffffff;
+	--sl-color-bg-nav: #ffffff;
+	--sl-color-bg-sidebar: #ffffff;
+	--sl-color-bg-inline-code: #efeee7;
+	--sl-color-hairline-light: var(--in-hairline);
+	--sl-color-hairline: var(--in-hairline);
+	--sl-color-hairline-shade: var(--in-hairline);
+	--sl-color-backdrop-overlay: rgba(10, 11, 10, 0.4);
+
+	--sl-shadow-sm: none;
+	--sl-shadow-md: none;
+	--sl-shadow-lg: none;
+
+	--in-code-bg: #f7f6f1;
+
+	color-scheme: light;
+	scrollbar-color: #d9d8cf #ffffff;
+	caret-color: var(--sl-color-accent);
+}
+
+/* ---------- browser surfaces ---------- */
+
+/* thread-on-ground selection in both themes: ground text on chartreuse is ~15:1 */
+::selection {
+	background: var(--in-thread);
+	color: var(--in-ground);
+}
+
+:focus-visible {
+	outline: 2px solid var(--sl-color-accent);
+	outline-offset: 3px;
+	border-radius: 2px;
+}
+
+/* ---------- type details ---------- */
+
+body {
+	-webkit-font-smoothing: antialiased;
+}
+
+/* two weights only: Starlight leans on 600; snap semibold to bold */
+:is(h1, h2, h3, h4, h5, h6),
+.starlight-aside__title,
+.sl-markdown-content :is(th, strong) {
+	font-weight: 700;
+}
+
+/* ---------- links: ink text, thread underline ---------- */
+
+.sl-markdown-content a:not(:where(.not-content *)) {
+	color: var(--sl-color-white);
+	text-decoration: underline;
+	text-decoration-color: var(--in-thread);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 4px;
+	transition: color 120ms ease-out;
+}
+.sl-markdown-content a:hover:not(:where(.not-content *)) {
+	color: var(--sl-color-text-accent);
+}
+
+/* ---------- asides: ink ramp + the one thread, no rainbow ---------- */
+
+.starlight-aside--note,
+.starlight-aside--tip {
+	--sl-color-asides-text-accent: var(--sl-color-text-accent);
+	--sl-color-asides-border: var(--sl-color-accent);
+	background-color: var(--sl-color-accent-low);
+}
+.starlight-aside--caution,
+.starlight-aside--danger {
+	--sl-color-asides-text-accent: var(--sl-color-white);
+	--sl-color-asides-border: var(--sl-color-gray-3);
+	background-color: var(--sl-color-gray-6);
+}
+
+/* ---------- chrome details ---------- */
+
+/* lowercase wordmark next to the mark: ink, not accent */
+.site-title {
+	font-weight: 700;
+	color: var(--sl-color-white);
+	gap: 0.75rem;
+}
+/* the mark stays a small inline stitch beside the wordmark, never a banner */
+.site-title img {
+	height: 0.95rem;
+}

@@ -12,7 +12,37 @@ export default defineConfig({
   site: 'https://docs.inseam.io',
   integrations: [
       starlight({
-          title: 'Inseam',
+          title: 'inseam',
+          logo: {
+              light: './src/assets/mark-light.svg',
+              dark: './src/assets/mark.svg',
+              alt: 'inseam mark: dash dot dash',
+          },
+          favicon: '/favicon.svg',
+          // Brand theme (docs/brand/README.md + DESIGN.md): Commit Mono
+          // everywhere, ground/thread/ink tokens over Starlight's props.
+          customCss: [
+              '@fontsource/commit-mono/400.css',
+              '@fontsource/commit-mono/700.css',
+              './src/styles/theme.css',
+          ],
+          expressiveCode: {
+              styleOverrides: {
+                  borderRadius: '4px',
+                  borderColor: 'var(--sl-color-hairline-light)',
+                  codeBackground: 'var(--in-code-bg)',
+                  frames: {
+                      shadowColor: 'transparent',
+                      terminalBackground: 'var(--in-code-bg)',
+                      terminalTitlebarBackground: 'var(--in-code-bg)',
+                      terminalTitlebarBorderBottomColor: 'var(--sl-color-hairline-light)',
+                      editorTabBarBackground: 'var(--in-code-bg)',
+                      editorActiveTabBackground: 'var(--in-code-bg)',
+                      editorActiveTabIndicatorTopColor: 'var(--sl-color-accent)',
+                      editorTabBarBorderBottomColor: 'var(--sl-color-hairline-light)',
+                  },
+              },
+          },
           social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/aiuitech/inseam' }],
           // Top-level order and group labels are pinned here; each group's
           // contents still autogenerate from the synced docs tree, so pages
