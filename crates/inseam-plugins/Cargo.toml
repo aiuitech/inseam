@@ -22,5 +22,6 @@ tracing.workspace = true
 walkdir.workspace = true
 
 [dev-dependencies]
+inseam-conformance.workspace = true
 proptest.workspace = true
 tempfile.workspace = true

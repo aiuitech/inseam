@@ -1,6 +1,6 @@
 # Plugin Registry
 
-The registry problem in one sentence: sandboxed plugins hold credentials and
+The registry problem in one sentence: loaded plugins hold credentials and
 read personal data, many are machine-generated, and the distribution channel
 must therefore prove **integrity** (you got the bytes the publisher
 published), **fitness** (they work), and **review** (someone — or something

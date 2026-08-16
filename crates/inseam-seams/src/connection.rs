@@ -1,7 +1,7 @@
 //! The `connection` seam: a configured edge to one host — enumerate sources,
 //! extract envelopes, serve fetches (`design/connections.md`). Providers:
-//! the filesystem connection (native), service connections like Gmail or
-//! Slack (community, sandboxed). Change *detection* belongs here too: a
+//! the filesystem connection (linked), service connections like Gmail or
+//! Slack (community, loaded). Change *detection* belongs here too: a
 //! change feed is a connection capability, never a kernel feature.
 
 use inseam_kernel::address::{Address, Envelope, HostId};

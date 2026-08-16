@@ -38,8 +38,8 @@ pub struct Kernel {
 
 impl Kernel {
     /// Open the store under `data_dir` and stand up an empty plugin tree.
-    /// `factories` are the native plugins this distribution links; scheme
-    /// factories resolve dynamic refs (the sandboxed tier).
+    /// `factories` are the linked plugins this distribution ships; scheme
+    /// factories resolve dynamic refs (the loaded tier).
     pub async fn boot(
         data_dir: &Path,
         factories: Vec<Arc<dyn PluginFactory>>,

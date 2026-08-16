@@ -42,7 +42,7 @@ Config edits partition into four tiers by blast radius, and the tier is a proper
 
 **Shape** is captured per source when its subtree lands, and it is **claims-aware** — a global "all mounted transforms" digest would make plugin churn ruinously expensive (mounting a video transform must not re-run paid LLM summaries over every markdown note). Two records per source:
 
-- the **shape stamp**: a canonical digest of the transform entries that *participated* in the subtree — entry config, artifact version + content hash for sandboxed transforms, the transform model for LLM-hungry transforms, and the sweep's own decomposition dials (depth, fragment, and content-byte caps). Removing, reconfiguring, or upgrading a transform dirties exactly the sources it touched.
+- the **shape stamp**: a canonical digest of the transform entries that *participated* in the subtree — entry config, artifact version + content hash for loaded transforms, the transform model for LLM-hungry transforms, and the sweep's own decomposition dials (depth, fragment, and content-byte caps). Removing, reconfiguring, or upgrading a transform dirties exactly the sources it touched.
 - the **mimetype inventory**: every mimetype present in the subtree, root and emitted. A newly mounted transform dirties only sources whose inventory intersects its claims.
 
 A stamp or inventory hit makes the source dirty; the sweep rebuilds its subtree like any content change, with the full mounted transform set, so chains resolve in one rebuild (a transform claiming what another new transform emits is satisfied in the same pass; the rebuilt inventory catches anything discovered later on the next sweep). A composition edit is therefore never a big-bang re-index — it makes the affected sources *look* dirty, and the run budgets meter the convergence across as many sweeps as it takes. Plugin churn is absorbed through the same door, with no plugin-lifecycle hooks into the index: the reconciler restarts fibers, their registrations unwind or appear as effects, and the next sweep discovers the divergence — dirtiness stays discovered, never triggered. Granularity is deliberately the source subtree, not the individual transform: finer invalidation would save some LLM calls but means mixing fragments built under different shapes inside one source, which is where inconsistency bugs live.
@@ -65,7 +65,7 @@ Out-of-cutoff sources are still *cataloged* (address + envelope, no fragments) w
 
 ## Open questions
 
-- Whether a sandboxed transform's version bump always invalidates (artifact version is in the stamp) or its manifest may declare a release shape-compatible ("output unchanged, bug fix only") to skip the re-spend — and whether trusting that claim is acceptable, since the cost of a lie is staleness, not compromise.
+- Whether a loaded transform's version bump always invalidates (artifact version is in the stamp) or its manifest may declare a release shape-compatible ("output unchanged, bug fix only") to skip the re-spend — and whether trusting that claim is acceptable, since the cost of a lie is staleness, not compromise.
 
 - Targeted sweeps: the scoping API a change feed uses to sweep a subset without paying full enumeration (v1 sweeps the directory it is given).
 - `vacuum`: the explicit reclamation operation (drop out-of-scope subtrees, compact Lance).

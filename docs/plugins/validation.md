@@ -1,7 +1,7 @@
 # Plugin Validation
 
 One conformance harness (`crates/inseam-wasm-host/src/check.rs`) is the
-fitness gate for sandboxed plugins everywhere it matters
+fitness gate for loaded plugins everywhere it matters
 ([design/registry.md](../../design/registry.md)): the author's loop, the
 registry's CI, and every node's install-time admission run the identical
 code, so a plugin that passes once passes everywhere.
@@ -68,13 +68,16 @@ check named, instead of mounting and silently degrading forever. Per-entry
 config: `admission = "enforce"` (default) `| "warn" | "off"`. Order of
 mount gates: release cooldown, then admission, then claims intersection.
 
-## The native tier's equivalent
+## The linked tier's equivalent
 
-Native plugins are gated by CI instead:
+Linked plugins are gated at build time instead, through the shared harness
+crate `inseam-conformance`:
 `crates/inseam-plugins/tests/conformance.rs` sweeps
 `inseam_plugins::factories()` itself — every factory must build from an
 enrolled config and declare a coherent manifest, and every registered
 transform faces the same hostile-input battery (text withheld, empty,
-garbage, no LLM) through the seam. Adding a native plugin without enrolling
+garbage, no LLM) through the seam. Adding a linked plugin without enrolling
 it panics the suite with instructions; there is no way to link one into a
-distribution without inheriting the tests.
+distribution without inheriting the tests. A custom distribution runs the
+same harness over its own factories
+([distributions.md](distributions.md)).

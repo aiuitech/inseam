@@ -1,4 +1,4 @@
-//! Both tiers in one composition: the native plugin set plus the sandboxed
+//! Both tiers in one composition: the linked plugin set plus the loaded
 //! OCR component (`plugins/ocr`), end to end. A fake `llm` provider stands
 //! in for the vision model so the test is hermetic; the OCR plugin cannot
 //! tell the difference — it reaches the LLM only through the granted,
@@ -176,7 +176,7 @@ const PNG: &[u8] = &[
 ];
 
 #[tokio::test]
-async fn sandboxed_ocr_transcribes_images_through_the_seam() {
+async fn loaded_ocr_transcribes_images_through_the_seam() {
     let Some(artifact) = ocr_artifact() else {
         eprintln!("skipping: plugins/ocr/ocr.wasm not built");
         return;
@@ -190,7 +190,7 @@ async fn sandboxed_ocr_transcribes_images_through_the_seam() {
     kernel
         .reconcile(&composition(&artifact, ""))
         .await
-        .expect("settles with the sandboxed plugin mounted");
+        .expect("settles with the loaded plugin mounted");
     let ops = kernel.service(&OPERATIONS).expect("operations");
 
     let report = ops
@@ -249,7 +249,7 @@ async fn sandboxed_ocr_transcribes_images_through_the_seam() {
     );
 
     // Unmounting the OCR entry dirties exactly the image on the next sweep —
-    // claims-aware invalidation covers the sandboxed tier identically.
+    // claims-aware invalidation covers the loaded tier identically.
     let mut without = composition(&artifact, "");
     if let Some(e) = without.entries.iter_mut().find(|e| e.id == "ocr") {
         e.disabled = true;

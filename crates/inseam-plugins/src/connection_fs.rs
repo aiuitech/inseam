@@ -1,7 +1,7 @@
 //! The filesystem connection plugin: binds the `connection` seam for this
 //! machine's local filesystem host. Enumerates sources read-only, extracts
 //! envelopes, and serves fetches and scans. Service-specific connections
-//! (Gmail, Slack, ...) arrive as sandboxed plugins on the same seam.
+//! (Gmail, Slack, ...) arrive as loaded plugins on the same seam.
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;

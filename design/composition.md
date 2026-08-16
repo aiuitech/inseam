@@ -7,7 +7,7 @@ A node's configuration is its **composition**: a declarative tree of plugin entr
 The composition is a TOML tree of entries. Each entry:
 
 - **id** — stable identity; the reconciler's diffing key, so edits restart exactly the entries they touch.
-- **plugin** — which plugin: a native name from the distribution, or a sandboxed artifact ref.
+- **plugin** — which plugin: a linked plugin's name from the distribution, or a loaded artifact ref.
 - **config** — the plugin's typed config, validated against its schema before the plugin runs.
 - **disabled** — mount toggle.
 - (later, with realms) **isolate** — scope a service key to this entry's subtree.
@@ -19,7 +19,7 @@ Entries nest into groups; a group is itself an ordinary entry, so subtrees can b
 A running node's composition is layered, later layers patching earlier ones by entry id:
 
 1. **Distribution base** — each app crate ships the composition that makes it that product ([plugins](plugins.md)): the CLI's base mounts the filesystem connection, core transforms, finder, CLI transport.
-2. **Node config** — the user's file: enable entries, override configs, add sandboxed plugins.
+2. **Node config** — the user's file: enable entries, override configs, add loaded plugins.
 3. **Invocation overlays** — flag-level overrides for one run.
 
 The same pure layering function answers `inseam config --resolved`, so what prints is what boots, by construction.
@@ -43,7 +43,7 @@ Composition edits apply transactionally per entry: config-only changes update th
 ## Settled since
 
 - **Patch semantics: whole-config replacement per id.** A patch entry's `config` replaces the target's wholesale; `plugin` and `disabled` override when present; unknown ids append (and a patch that targets nothing *and* names no plugin is a loud error). `extends` sugar can come later without breaking files.
-- **Sandboxed installation state**: the composition entry holds the artifact ref; the trust bookkeeping (first-seen clock per content hash, approved capability summary) lives in the wasm host's versioned state namespace — discardable, re-derivable, never synced.
+- **Loaded-plugin installation state**: the composition entry holds the artifact ref; the trust bookkeeping (first-seen clock per content hash, approved capability summary) lives in the wasm host's versioned state namespace — discardable, re-derivable, never synced.
 
 ## Open questions
 

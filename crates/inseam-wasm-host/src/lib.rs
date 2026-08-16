@@ -1,15 +1,15 @@
-//! The plugin-host bridge (`design/plugins.md`): mounts **sandboxed
+//! The plugin-host bridge (`design/plugins.md`): mounts **loaded
 //! plugins** — WASM components against the WIT projection of the service
-//! seams — into the same plugin model native plugins use. Tier is
+//! seams — into the same plugin model linked plugins use. Tier is
 //! provenance, not shape: to the `transforms` registry, a component-backed
-//! transform is indistinguishable from a native one.
+//! transform is indistinguishable from a linked one.
 //!
 //! Security posture, in order:
 //! - **Sandboxed by construction**: a component sees only the host imports
 //!   the bridge implements, attenuated per its manifest. No sockets, no
 //!   filesystem, no ambient anything.
 //! - **Capability attenuation at the bridge**: the LLM handle a component
-//!   calls through is the same metered grant native transforms get; the
+//!   calls through is the same metered grant linked transforms get; the
 //!   manifest gates whether it exists at all.
 //! - **Claims cannot widen silently**: effective claims are the manifest's
 //!   declared claims intersected with what the component exports.
@@ -396,7 +396,7 @@ impl Plugin for WasmTransformPlugin {
                 0
             },
             // The artifact version and content hash are in the shape
-            // fingerprint: an upgraded sandboxed transform dirties exactly
+            // fingerprint: an upgraded loaded transform dirties exactly
             // the sources it built (`design/index-maintenance.md`).
             shape_fingerprint: format!(
                 "wasm|{}|{}|{}",
@@ -404,7 +404,7 @@ impl Plugin for WasmTransformPlugin {
             ),
         });
         cx.effect(
-            format!("register sandboxed transform {}", self.manifest.name),
+            format!("register loaded transform {}", self.manifest.name),
             disposer,
         );
         Ok(())
@@ -620,14 +620,14 @@ impl Transform for WasmTransform {
             Ok(Err(plugin_error)) => {
                 tracing::warn!(
                     plugin = %self.plugin_name,
-                    "sandboxed transform reported an error, emitting nothing: {plugin_error}"
+                    "loaded transform reported an error, emitting nothing: {plugin_error}"
                 );
                 TransformOutput::default()
             }
             Err(trap) => {
                 tracing::warn!(
                     plugin = %self.plugin_name,
-                    "sandboxed transform trapped (fuel exhausted or fault), emitting nothing: {trap}"
+                    "loaded transform trapped (fuel exhausted or fault), emitting nothing: {trap}"
                 );
                 TransformOutput::default()
             }
@@ -650,7 +650,7 @@ fn sprout_forest(
         let mimetype = match Mimetype::parse(&f.mimetype) {
             Ok(m) if !m.is_inseam_defined() => m,
             Ok(_) => {
-                tracing::warn!(plugin, mimetype = %f.mimetype, "sandboxed transform may not emit inseam-defined mimetypes; dropped");
+                tracing::warn!(plugin, mimetype = %f.mimetype, "loaded transform may not emit inseam-defined mimetypes; dropped");
                 nodes.push(None);
                 continue;
             }

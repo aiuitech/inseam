@@ -13,7 +13,7 @@ Every `inseam index <dir>` run is a **reconciling sweep** ([design/index-mainten
 
 Each deep-indexed source stores two records ([storage.md](storage.md)):
 
-- the **shape stamp** — a digest of the transform registrations that *participated* in its subtree (entry id + config fingerprint, plus artifact version/hash for sandboxed transforms, plus the sweep's own decomposition dials);
+- the **shape stamp** — a digest of the transform registrations that *participated* in its subtree (entry id + config fingerprint, plus artifact version/hash for loaded transforms, plus the sweep's own decomposition dials);
 - the **mimetype inventory** — every mimetype in the subtree, root and emitted.
 
 On a later sweep the expected stamp is recomputed from the *current* registrations intersected with the stored inventory. So: removing, reconfiguring, or upgrading a transform dirties exactly the sources it touched; mounting a new transform dirties only sources whose inventory intersects its claims — installing a video plugin never re-runs paid LLM summaries over markdown notes. Rebuilds run with the full mounted set, so chained transforms (one claiming what another emits) resolve in one pass.

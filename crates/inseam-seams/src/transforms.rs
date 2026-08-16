@@ -1,6 +1,6 @@
 //! The `transforms` seam: the registration door for indexing
 //! (`design/indexing.md`). Transform plugins register claims + apply here as
-//! effects; the sweep consumes the registry. Native and sandboxed transforms
+//! effects; the sweep consumes the registry. Linked and loaded transforms
 //! are indistinguishable to the consumer — tier is provenance, not shape.
 //!
 //! This module also owns the claims-aware **shape stamp** helpers
@@ -114,7 +114,7 @@ pub struct Registration {
     /// LLM calls this transform may make per index run (0 = never granted).
     pub llm_call_budget: usize,
     /// Digest input capturing everything that changes this transform's
-    /// output shape: its config, and for sandboxed transforms the artifact
+    /// output shape: its config, and for loaded transforms the artifact
     /// version. Two mounts with equal fingerprints build equal subtrees.
     pub shape_fingerprint: String,
 }

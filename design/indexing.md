@@ -26,7 +26,7 @@ A **transform** is a registered handler: it takes a fragment of a mimetype it cl
 - A URL fragment's transform may fetch the target — yielding a `text/html` child — whose own transform summarizes the page. Recursion, mimetype by mimetype.
 - A `video/mp4` transform emits an `application/x-subrip` child, whose transform emits `timestamp:text` line fragments.
 
-Every transform is a [plugin](plugins.md) registering into the `transforms` [seam](services.md): the universal ones ship as native plugins in every distribution, and the long tail arrives as sandboxed plugins claiming emitted mimetypes — same registry, same claims/apply contract, with fetches going through capability-mediated I/O (a transform that follows links declares which hosts it may call; no raw sockets) and LLM budgets metered at the `llm` seam.
+Every transform is a [plugin](plugins.md) registering into the `transforms` [seam](services.md): the universal ones ship as linked plugins in every distribution, and the long tail arrives as loaded plugins claiming emitted mimetypes — same registry, same claims/apply contract, with fetches going through capability-mediated I/O (a transform that follows links declares which hosts it may call; no raw sockets) and LLM budgets metered at the `llm` seam.
 
 Two core transforms matter enough to name:
 

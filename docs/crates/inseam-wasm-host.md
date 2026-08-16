@@ -2,18 +2,18 @@
 
 # inseam-wasm-host
 
-The plugin-host bridge (`design/plugins.md`): mounts **sandboxed
+The plugin-host bridge (`design/plugins.md`): mounts **loaded
 plugins** — WASM components against the WIT projection of the service
-seams — into the same plugin model native plugins use. Tier is
+seams — into the same plugin model linked plugins use. Tier is
 provenance, not shape: to the `transforms` registry, a component-backed
-transform is indistinguishable from a native one.
+transform is indistinguishable from a linked one.
 
 Security posture, in order:
 - **Sandboxed by construction**: a component sees only the host imports
   the bridge implements, attenuated per its manifest. No sockets, no
   filesystem, no ambient anything.
 - **Capability attenuation at the bridge**: the LLM handle a component
-  calls through is the same metered grant native transforms get; the
+  calls through is the same metered grant linked transforms get; the
   manifest gates whether it exists at all.
 - **Claims cannot widen silently**: effective claims are the manifest's
   declared claims intersected with what the component exports.

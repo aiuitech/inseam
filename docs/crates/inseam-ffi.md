@@ -7,8 +7,8 @@ C ABI over the node — the Swift/GUI transport adapter
 skin over the `operations` seam: one handle wraps a booted kernel plus
 the tokio runtime it needs; requests block the calling thread and
 responses cross the boundary as JSON (the same serde views the seam
-defines). The crate is itself a **distribution**: it links the native
-plugin set and ships a base composition, layered under the node's
+defines). The crate is itself a **distribution**: it links the
+first-party linked plugins and ships a base composition, layered under the node's
 `composition.toml` (`design/composition.md`).
 
 Conventions (mirrored in `include/inseam_ffi.h`):

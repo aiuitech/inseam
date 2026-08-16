@@ -1,6 +1,6 @@
-# Native Plugins
+# Linked Plugins
 
-The trusted tier ([design/plugins.md](../../design/plugins.md)): Rust, statically linked, activated by composition. `crates/inseam-plugins` ships the first-party set; a distribution registers the factories it links (`inseam_plugins::factories()`) with `Kernel::boot`.
+The trusted tier ([design/plugins.md](../../design/plugins.md)), named for how it arrives: **linked** into the binary at build, where [loaded plugins](loaded.md) mount from artifacts at runtime. Rust, statically linked, activated by composition. `crates/inseam-plugins` ships the first-party set; a distribution registers the factories it links (`inseam_plugins::factories()`) with `Kernel::boot`, and a custom distribution compiles additional linked plugins in from source ([distributions.md](distributions.md)).
 
 Every plugin is the same five declarations — name, config, inject, provide, apply ([kernel.md](../kernel.md)). What each first-party plugin does:
 

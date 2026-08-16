@@ -1,4 +1,4 @@
-//! `inseam plugin install`: fetch a sandboxed plugin from a registry, verify
+//! `inseam plugin install`: fetch a loaded-tier plugin from a registry, verify
 //! it, and mount it (`design/registry.md`).
 //!
 //! A registry is nothing but a directory tree — served over HTTPS (the

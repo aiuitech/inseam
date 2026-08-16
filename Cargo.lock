@@ -2914,6 +2914,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inseam-conformance"
+version = "0.1.0"
+dependencies = [
+ "inseam-kernel",
+ "inseam-seams",
+ "toml",
+]
+
+[[package]]
 name = "inseam-ffi"
 version = "0.1.0"
 dependencies = [
@@ -2954,6 +2963,7 @@ dependencies = [
  "async-trait",
  "futures",
  "gethostname",
+ "inseam-conformance",
  "inseam-kernel",
  "inseam-seams",
  "mime_guess",

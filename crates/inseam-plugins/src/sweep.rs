@@ -12,7 +12,7 @@
 //! dirtiness stays discovered, never triggered.
 //!
 //! Transform applications recurse: a transform claiming an emitted mimetype
-//! (the sandboxed tier's normal shape) is applied to the emitted fragment in
+//! (the loaded tier's normal shape) is applied to the emitted fragment in
 //! the same rebuild, so chains resolve in one pass.
 
 use std::collections::{HashMap, HashSet, VecDeque};

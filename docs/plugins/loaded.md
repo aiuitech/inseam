@@ -1,6 +1,6 @@
-# Sandboxed Plugins
+# Loaded Plugins
 
-The untrusted tier ([design/plugins.md](../../design/plugins.md)): WASM components mounted at runtime by the plugin-host bridge (`crates/inseam-wasm-host`). Tier is provenance, not shape — a component-backed transform registers into the same `transforms` seam as a native one and is indistinguishable to the sweep.
+The untrusted tier ([design/plugins.md](../../design/plugins.md)), named for how it arrives: **loaded** from an artifact at runtime, where [linked plugins](linked.md) are compiled in at build. WASM components mounted by the plugin-host bridge (`crates/inseam-wasm-host`), sandboxed by construction. Tier is provenance, not shape — a component-backed transform registers into the same `transforms` seam as a linked one and is indistinguishable to the sweep.
 
 ## Mounting
 
@@ -23,7 +23,7 @@ Beside the artifact sits its manifest (`<name>.manifest.toml`): identity, versio
 `crates/inseam-wasm-host/wit/transform.wit` — the `transforms` seam projected into WIT. Exports: `claims()` and `apply(envelope, mimetype, is-root, text)`. Imports (the only ones besides core WASI, which is satisfied with an **empty** context — no preopens, env, args, or sockets):
 
 - `log` — into the node's tracing output
-- `llm-complete`, `llm-describe-image` — the same metered, guarded LLM grant native transforms get; absent from the manifest → every call errors
+- `llm-complete`, `llm-describe-image` — the same metered, guarded LLM grant linked transforms get; absent from the manifest → every call errors
 - `source-bytes` — the claimed source's raw bytes, root-only
 
 ## Enforcement at the bridge
@@ -38,7 +38,7 @@ Beside the artifact sits its manifest (`<name>.manifest.toml`): identity, versio
 
 ## Authoring and validating
 
-The agent skill at `.claude/skills/inseam-sandboxed-plugin/SKILL.md` is the authoring procedure (scaffold, golden checks first, manifest, build to `wasm32-wasip2`, validate). The validation gate is the conformance harness ([validation.md](validation.md)):
+The agent skill at `skills/inseam-loaded-plugin/SKILL.md` is the authoring procedure (scaffold, golden checks first, manifest, build to `wasm32-wasip2`, validate). The validation gate is the conformance harness ([validation.md](validation.md)):
 
 ```sh
 inseam plugin check plugins/<name>/<name>.wasm

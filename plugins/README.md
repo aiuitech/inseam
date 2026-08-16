@@ -1,6 +1,6 @@
-# plugins/ — the sandboxed plugin registry (v0)
+# plugins/ — the loaded plugin registry (v0)
 
-This directory is both the **home of first-party sandboxed plugins** and the
+This directory is both the **home of first-party loaded plugins** and the
 **registry** nodes install from (`design/registry.md`): a reviewed git tree
 whose integrity anchors are the committed `registry.toml` hashes and the CI
 gates on every merge. `inseam plugin install <name>` fetches from this tree
@@ -24,7 +24,7 @@ plugins/
     README.md          # what the plugin does, what it needs
 ```
 
-Authoring is skill-driven: `.claude/skills/inseam-sandboxed-plugin` walks an
+Authoring is skill-driven: `skills/inseam-loaded-plugin` walks an
 agent (or a person) through the whole loop, ending in a green
 `inseam plugin check`.
 
@@ -54,9 +54,9 @@ Three layers of data exercise every plugin, from generic to specific
    every `inseam plugin install`, so size is a cost multiplied across
    nodes.
 
-Native-tier plugins are tested separately by the workspace conformance
+Linked-tier plugins are tested separately by the shared conformance harness (`crates/inseam-conformance`), whose workspace
 suite (`crates/inseam-plugins/tests/conformance.rs`), which sweeps every
-registered factory automatically — a native plugin cannot be added without
+registered factory automatically — a linked plugin cannot be added without
 inheriting it.
 
 ## Publishing and CI

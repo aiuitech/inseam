@@ -27,7 +27,7 @@ Open-source core; revenue from hosting well-provisioned cloud nodes — a strong
 
 The long tail of integrations will not be built in-house. The plan: a plugin surface small and typed enough for agents to target ([plugins](plugins.md)), an agent skill that writes plugins for users who need one, and a public registry so plugins written once circulate. Two obligations fall out:
 
-- **Boundary proof before skill.** The plugin contract counts as real only when every service-shaped feature in the shipping distributions reaches the [kernel](kernel.md) through the service seams — the native tier proves the contract before the sandboxed tier is invited. Shipping the plugin-authoring skill before that invites a generation of plugins against a leaky contract.
+- **Boundary proof before skill.** The plugin contract counts as real only when every service-shaped feature in the shipping distributions reaches the [kernel](kernel.md) through the service seams — the linked tier proves the contract before the loaded tier is invited. Shipping the plugin-authoring skill before that invites a generation of plugins against a leaky contract.
 - **Registry trust from day one.** Machine-generated connectors holding OAuth grants are a supply-chain risk by default; signing and declared capabilities are launch requirements of the registry, not hardening added later ([plugins](plugins.md)).
 
 ## Sequencing

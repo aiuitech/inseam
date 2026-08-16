@@ -33,7 +33,7 @@ pub enum CompositionError {
 #[serde(deny_unknown_fields)]
 pub struct Entry {
     pub id: String,
-    /// Plugin ref: a native name from the distribution, or a scheme ref the
+    /// Plugin ref: a linked plugin's name from the distribution, or a scheme ref the
     /// distribution registered a resolver for (`wasm:<artifact>`). Absent in
     /// a patch layer entry that only overrides config/disabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]

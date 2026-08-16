@@ -1,6 +1,6 @@
 # The Filesystem Host
 
-The first `connection` seam provider: the `connection-fs` plugin, stewarding this machine's filesystem. Service hosts (Gmail, Slack, …) arrive later as sandboxed connection plugins on the same seam ([design/connections.md](../../design/connections.md)).
+The first `connection` seam provider: the `connection-fs` plugin, stewarding this machine's filesystem. Service hosts (Gmail, Slack, …) arrive later as loaded connection plugins on the same seam ([design/connections.md](../../design/connections.md)).
 
 ## Identity and addresses
 

@@ -1,15 +1,27 @@
 ---
-name: inseam-sandboxed-plugin
-description: Author, build, and validate a sandboxed (WASM component) inseam plugin against the transform seam contract. Use when creating or modifying a community/AI-authored plugin under plugins/.
+name: inseam-loaded-plugin
+description: Author, build, and validate a loaded (WASM component) inseam plugin against the transform seam contract. Use when creating or modifying a community/AI-authored plugin under plugins/.
 ---
 
-# Authoring a sandboxed inseam plugin
+# Authoring a loaded inseam plugin
 
-You are writing a **sandboxed transform plugin**: a WASM component that the
+You are writing a **loaded transform plugin**: a WASM component that the
 inseam kernel mounts through the plugin-host bridge. It registers into the
-same `transforms` seam native transforms use — tier is provenance, not
+same `transforms` seam linked transforms use — tier is provenance, not
 shape. Read `design/plugins.md` and `design/kernel.md` if you need the
 architecture; this skill is the mechanical contract.
+
+**Loaded plugins are the preferred method for AI-written plugins.** The
+sandbox — manifest-attenuated capabilities, fuel limits, per-call
+instantiation, admission checks — is what makes code written minutes ago
+safe to mount, so default here rather than to linked plugins or core
+edits; reach for those only when the transform seam genuinely can't
+express the change (`docs/plugins/linked.md`).
+
+The `inseam` CLI is self-documenting (`inseam --help`,
+`inseam plugin check --help`) — use it for flags and commands. This skill
+covers only what the CLI can't tell you: the authoring contract,
+conventions, and pitfalls.
 
 ## The contract (source of truth)
 

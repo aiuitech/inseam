@@ -21,7 +21,7 @@ Capabilities of node→host connections are published network-wide as stewardshi
 
 ## Every connection type is a plugin
 
-Connection types are providers on the `connection` [seam](services.md): the filesystem connection and the iroh node↔node transport ship as native plugins in the distributions, and every service-specific type (Gmail, Slack, a CalDAV server) arrives as a sandboxed [plugin](plugins.md). Adding a new kind of host to the network means writing a connection plugin, not touching anything. A connection's capabilities — change feed, writability — surface as capability facts consumers branch on ([kernel](kernel.md)).
+Connection types are providers on the `connection` [seam](services.md): the filesystem connection and the iroh node↔node transport ship as linked plugins in the distributions, and every service-specific type (Gmail, Slack, a CalDAV server) arrives as a loaded [plugin](plugins.md). Adding a new kind of host to the network means writing a connection plugin, not touching anything. A connection's capabilities — change feed, writability — surface as capability facts consumers branch on ([kernel](kernel.md)).
 
 Node↔node connections authenticate by mutual proof of the peers' keypairs — a node's identity *is* its public key, distributed via its [roster](roster.md) node record.
 

@@ -490,7 +490,7 @@ mod tests {
         }
     }
 
-    fn native_transforms() -> Vec<(&'static str, Arc<dyn Transform>)> {
+    fn linked_transforms() -> Vec<(&'static str, Arc<dyn Transform>)> {
         vec![
             ("markdown", Arc::new(MarkdownTransform) as Arc<dyn Transform>),
             ("chunker", Arc::new(ChunkerTransform { target_chars: 1600 })),
@@ -509,7 +509,7 @@ mod tests {
         ];
         for (mimetype, expected) in cases {
             let m = Mimetype::parse(mimetype).expect("valid");
-            let names: Vec<&str> = native_transforms()
+            let names: Vec<&str> = linked_transforms()
                 .iter()
                 .filter(|(_, t)| t.claims(&m, true))
                 .map(|(n, _)| *n)
@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn nothing_claims_non_roots_or_inseam_defined_types() {
-        for (_, t) in native_transforms() {
+        for (_, t) in linked_transforms() {
             assert!(!t.claims(&Mimetype::markdown(), false));
             assert!(!t.claims(&Mimetype::summary(), true));
             assert!(!t.claims(&Mimetype::entity(), true));

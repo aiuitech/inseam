@@ -73,7 +73,7 @@ pub trait PluginFactory: Send + Sync {
 }
 
 /// Resolves plugins the distribution did not statically link, keyed by a ref
-/// scheme (`wasm:` today). This is how the sandboxed tier enters the same
+/// scheme (`wasm:` today). This is how the loaded tier enters the same
 /// plugin model: the plugin-host bridge registers a scheme factory.
 pub trait SchemeFactory: Send + Sync {
     /// The scheme prefix, including the colon (e.g. `"wasm:"`).

@@ -51,21 +51,21 @@ The kernel owns the data model — addresses, envelopes, sources, fragments, rel
 
 ## Security posture
 
-Two trust tiers, detailed in [plugins](plugins.md): **native plugins** are trusted in-process Rust whose declared injections form an auditable capability manifest — the substrate makes undeclared access unrepresentable, which is discipline and reviewability, not a sandbox. **Sandboxed plugins** are WASM components behind a real execution boundary, bridged onto the same service seams with capabilities attenuated per their manifest. The kernel's contribution is that both tiers pass through one mediation point: services are the only way to reach anything, so attenuation (budgets, host allowlists, boundary property filters) is interception on a seam, not per-feature code.
+Two trust tiers, detailed in [plugins](plugins.md): **linked plugins** are trusted in-process Rust whose declared injections form an auditable capability manifest — the substrate makes undeclared access unrepresentable, which is discipline and reviewability, not a sandbox. **Loaded plugins** are WASM components behind a real execution boundary, bridged onto the same service seams with capabilities attenuated per their manifest. The kernel's contribution is that both tiers pass through one mediation point: services are the only way to reach anything, so attenuation (budgets, host allowlists, boundary property filters) is interception on a seam, not per-feature code.
 
 ## Paths not taken
 
 - **The fat core (this project's own first architecture).** Indexer, transforms, finder, LLM client, embedder, host access, and transports as core modules, with plugins bolted on at the edges for connectors. Rejected: every one of those modules was already growing config knobs and swap points — provider seams by another name, each hand-rolled. The substrate does it once, uniformly, with lifecycle and teardown for free, and the core stops being a privileged author of features it should merely host.
 - **A single all-WASM plugin tier.** Maximal uniformity, rejected: the sandbox tax (instantiation, copying across the boundary, WIT ceremony) on every transform application and finder call contradicts the performance budget, and first-party code gains nothing from sandboxing itself. Trust tiers are a property of provenance, not of the plugin model.
-- **Dynamic native loading (`dlopen`).** No sandbox, no ABI stability, per-platform artifacts. Native plugins are statically linked and *activated* by composition; dynamism at runtime is lifecycle, not code loading. Dynamic code arrival is exactly what the WASM tier is for.
+- **Dynamic native loading (`dlopen`).** No sandbox, no ABI stability, per-platform artifacts. Linked plugins are statically linked and *activated* by composition; dynamism at runtime is lifecycle, not code loading. Dynamic code arrival is exactly what the WASM tier is for.
 - **A migrations framework.** The industry default, rejected on principle: migrations exist to preserve mutable authoritative state through schema change, and the design deliberately has almost no such state. Keeping the catalog minimal and everything else derived is cheaper than maintaining migration machinery forever.
 - **Stringly-typed hooks and untyped service lookup.** The dynamic-language versions of this model pay for openness with runtime `undefined` and compensating CI gates. Rust lets declarations be the type system's problem; we take that trade everywhere it's available.
 
 ## Open questions
 
-- **Realms**: Cordis supports isolating the same service key to different providers for different subtrees (two `llm` endpoints, a sandboxed group). Almost certainly wanted eventually (per-requester attenuation may ride on it); deferred until a concrete composition needs it.
+- **Realms**: Cordis supports isolating the same service key to different providers for different subtrees (two `llm` endpoints, an isolated loaded-plugin group). Almost certainly wanted eventually (per-requester attenuation may ride on it); deferred until a concrete composition needs it.
 - **How much lifecycle to verify at compile time**: injection sets are static, so pending-forever cycles are statically detectable; how far to push (proc-macro derived handles, typestate on fiber phases) is an implementation question.
-- **Sandboxed plugins and events**: the bus is host-side only; whether to project it into WIT or keep components request/response-only with bridges listening on their behalf.
+- **Loaded plugins and events**: the bus is host-side only; whether to project it into WIT or keep components request/response-only with bridges listening on their behalf.
 
 ## Settled since
 

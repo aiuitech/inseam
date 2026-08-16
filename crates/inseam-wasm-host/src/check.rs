@@ -1,4 +1,4 @@
-//! The sandboxed-plugin conformance harness (`design/registry.md`): every
+//! The loaded-plugin conformance harness (`design/registry.md`): every
 //! gate a `.wasm` artifact passes through — the author's red/green loop
 //! (`inseam plugin check`), the node's install-time admission, and the
 //! registry's CI — runs this same code, so passing it once means passing it

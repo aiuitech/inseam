@@ -5,7 +5,7 @@ Parts of this docs tree are exported from source rather than authored by hand, s
 Three exports:
 
 - **Crate overviews** → `docs/crates/<name>.md`. The leading `//!` doc block of each workspace crate's `lib.rs` (or `main.rs`), verbatim. Write those blocks as the crate's doc page.
-- **The WIT contract** → `docs/plugins/<world>-wit.md`. `crates/inseam-wasm-host/wit` rendered by wit-bindgen's markdown backend — the granular reference for sandboxed-plugin authors.
+- **The WIT contract** → `docs/plugins/<world>-wit.md`. `crates/inseam-wasm-host/wit` rendered by wit-bindgen's markdown backend — the granular reference for loaded-plugin authors.
 - **Skills** → `docs/skills/<name>.md`. Each `skills/*/SKILL.md` (agent-facing authoring guides, symlinked into `.claude/skills`), with its frontmatter folded into the title and byline.
 
 Everything else in `docs/` is authored prose. Generated pages are committed like any other doc; rerun `cargo xtask docs` whenever a `//!` block, the WIT, or a skill changes.

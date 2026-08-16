@@ -4,6 +4,7 @@ members = [
     "crates/inseam-kernel",
     "crates/inseam-seams",
     "crates/inseam-plugins",
+    "crates/inseam-conformance",
     "crates/inseam-wasm-host",
     "crates/inseam-cli",
     "crates/inseam-ffi",
@@ -18,6 +19,7 @@ edition = "2024"
 inseam-kernel = { path = "crates/inseam-kernel" }
 inseam-seams = { path = "crates/inseam-seams" }
 inseam-plugins = { path = "crates/inseam-plugins" }
+inseam-conformance = { path = "crates/inseam-conformance" }
 inseam-wasm-host = { path = "crates/inseam-wasm-host" }
 
 anyhow = "1.0.104"

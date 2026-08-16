@@ -2,7 +2,7 @@
 
 # inseam-plugins
 
-First-party native plugins (`design/plugins.md`): every feature of a
+First-party linked plugins (`design/plugins.md`): every feature of a
 shipping inseam distribution, as providers and consumers on the seams
 `inseam-seams` defines. Nothing here is privileged — a community plugin
 binding the same seam is structurally identical.

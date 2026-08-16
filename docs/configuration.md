@@ -26,7 +26,7 @@ Patch semantics: a patch entry's `config` **replaces** the target's config whole
 | `sweep` | `sweep` | `max_sources` (0 = unlimited), `max_fragments_per_source` (400), `max_depth` (6), `max_content_bytes` (2 MB), `modified_after` (`YYYY-MM-DD`) |
 | `operations` | `operations` | — |
 
-Example `composition.toml` — offline node with a sandboxed OCR plugin:
+Example `composition.toml` — offline node with a loaded OCR plugin:
 
 ```toml
 [[entry]]

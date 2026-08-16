@@ -1,6 +1,6 @@
 # CLI
 
-The `inseam` binary is a distribution: the native plugin set + the wasm plugin host + a base composition, with every command a thin call on the `operations` seam ([design/node-api.md](../design/node-api.md)). Global flags: `--data-dir` (`INSEAM_DATA_DIR`), `--composition` (`INSEAM_COMPOSITION`); see [configuration.md](configuration.md).
+The `inseam` binary is a distribution: the first-party linked plugins + the wasm plugin host + a base composition, with every command a thin call on the `operations` seam ([design/node-api.md](../design/node-api.md)). Global flags: `--data-dir` (`INSEAM_DATA_DIR`), `--composition` (`INSEAM_COMPOSITION`); see [configuration.md](configuration.md).
 
 ```sh
 inseam index ~/Data                 # reconciling sweep (read-only): new/changed/vanished sources,
