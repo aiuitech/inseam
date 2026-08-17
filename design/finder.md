@@ -54,9 +54,10 @@ The Finder runs per node against that node's own index. Fan-out ([discovery](dis
 - **Rollup**: source = f1 + 0.1·f2 + 0.05·f3 over its fragments' final scores, best-first.
 - **Vector seeds carry a distance floor** (`max_vector_distance`, cosine): nearest-k always returns something, and beyond the floor a "neighbor" is noise, not a seed. Discovered the day flat similarity happily returned an orchid note for a fern query.
 - **Scan mechanics, first cut**: 1-based inclusive line ranges, end clamped; media scans serve the largest text descendant fragment. Byte fallback and time-range addressing remain open below.
+- **Merge collapses by content digest.** After ranking (and after fan-out merging), results whose envelopes carry equal content digests ([addressing](addressing.md)) collapse into one logical result listing every address — the local file and its Google Drive twin rank once, not twice, and the caller picks its replica at fetch time. The best-scoring copy supplies the score, summary, and hints. Boundary filtering runs per address before the collapse, so an external requester's merged result lists only the copies they could fetch. Results without a digest never collapse — best-effort dedup degrades to duplication, never to a wrong merge.
 
 ## Open questions
 
 - Learning relation weights from fetch-through feedback (a fetch after a query is a relevance signal).
-- Merging fan-out results when nodes' indexes overlap (same source indexed by two nodes) — dedupe by address, but whose hint wins? Same question for `expand`: which node's index serves the subtree when several have one.
+- Merging fan-out results when nodes' indexes overlap (same source indexed by two nodes) — dedupe by address (cross-host copies dedupe by digest, settled above), but whose hint wins? Same question for `expand`: which node's index serves the subtree when several have one.
 - Scan ranges for structureless single-line text (byte fallback) and media time ranges mapped through transcript extents.
