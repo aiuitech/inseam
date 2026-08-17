@@ -1,10 +1,9 @@
 //! The index store — the kernel's second responsibility (`design/kernel.md`).
-//! Two layers in one engine, as `design/runtime.md` settled: a libSQL catalog
-//! database is the transactional source of truth for the catalog (sources +
-//! envelopes), the semantic graph (fragments + relations + entity registry),
-//! and plugin state namespaces; a second libSQL database holds the derived
-//! search surfaces — FTS5 full-text and native vectors — and is rebuildable
-//! from the catalog at any time.
+//! One libSQL database, two layers, as `design/runtime.md` settled: the
+//! catalog tables are the transactional source of truth (sources + envelopes,
+//! the semantic graph of fragments + relations + the entity registry, and
+//! plugin state namespaces); the search tables — FTS5 full-text and native
+//! vectors — are derived, rebuildable from the catalog tables at any time.
 //!
 //! There are no data migrations, anywhere, ever: a schema-version bump drops
 //! and recreates the tables (everything here is derived and rebuilt by the
@@ -23,9 +22,16 @@ use thiserror::Error;
 use crate::address::{Address, ContentLength, Envelope, HostId, Locator, Property, Timestamp};
 use crate::fragment::{Extent, FragmentId, Mimetype, NewFragment, Relation, RelationKind};
 
-const SCHEMA_VERSION: &str = "3";
+const SCHEMA_VERSION: &str = "4";
 /// Ids per DELETE predicate; keeps the SQL bounded.
 const DELETE_CHUNK: usize = 400;
+
+/// Drops the derived search tables (and their sync triggers) — the inverse
+/// of [`search_schema_sql`], used by re-embeds and the schema converge.
+const SEARCH_SCHEMA_DROP_SQL: &str = "DROP TRIGGER IF EXISTS search_rows_after_insert;
+     DROP TRIGGER IF EXISTS search_rows_after_delete;
+     DROP TABLE IF EXISTS search_fts;
+     DROP TABLE IF EXISTS search_rows;";
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -109,7 +115,7 @@ pub struct InventoryEntry {
     pub is_root: bool,
 }
 
-/// A row bound for the search database: a text-bearing fragment and its
+/// A row bound for the search tables: a text-bearing fragment and its
 /// (optional) embedding.
 #[derive(Debug, Clone)]
 pub struct SearchRow {
@@ -128,21 +134,18 @@ pub struct StoreStats {
     pub entities: u64,
 }
 
-/// The live search surface: bound when an embedder declares its identity.
-/// The `Database` handle owns the file; connections are cheap clones over it.
+/// The live search surface: the embedding identity the search tables are
+/// bound to once an embedder declares it. The tables themselves live in the
+/// one store database alongside the catalog.
 struct SearchSurface {
-    #[expect(dead_code, reason = "keeps the database handle alive for its connections")]
-    db: libsql::Database,
-    conn: libsql::Connection,
     dims: usize,
     model: String,
 }
 
 pub struct IndexStore {
     #[expect(dead_code, reason = "keeps the database handle alive for its connections")]
-    catalog_db: libsql::Database,
+    db: libsql::Database,
     catalog: libsql::Connection,
-    search_path: std::path::PathBuf,
     /// `None` until an embedder plugin declares the embedding identity; the
     /// search surface belongs to that identity, not to the store's opening.
     surface: Mutex<Option<Arc<SearchSurface>>>,
@@ -161,17 +164,16 @@ impl IndexStore {
             path: dir.display().to_string(),
             source,
         })?;
-        let catalog_db = libsql::Builder::new_local(dir.join("catalog.sqlite3"))
+        let db = libsql::Builder::new_local(dir.join("catalog.sqlite3"))
             .build()
             .await?;
-        let catalog = catalog_db.connect()?;
+        let catalog = db.connect()?;
         catalog.query("PRAGMA journal_mode = WAL", ()).await?;
         catalog.query("PRAGMA foreign_keys = ON", ()).await?;
         converge_schema(&catalog).await?;
         Ok(Self {
-            catalog_db,
+            db,
             catalog,
-            search_path: dir.join("search.sqlite3"),
             surface: Mutex::new(None),
             reembed_from: Mutex::new(None),
         })
@@ -196,16 +198,11 @@ impl IndexStore {
             Some(mismatch) => Some(mismatch),
         };
 
-        let db = libsql::Builder::new_local(&self.search_path).build().await?;
-        let conn = db.connect()?;
-        conn.query("PRAGMA journal_mode = WAL", ()).await?;
-        // `IF NOT EXISTS` deliberately leaves a table built under a different
+        // `IF NOT EXISTS` deliberately leaves tables built under a different
         // identity in place: searches refuse while the re-embed is pending,
-        // and `begin_reembed` recreates the table under the new dimensions.
-        conn.execute_batch(&search_schema_sql(dims)).await?;
+        // and `begin_reembed` recreates them under the new dimensions.
+        self.catalog.execute_batch(&search_schema_sql(dims)).await?;
         *self.surface.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(SearchSurface {
-            db,
-            conn,
             dims,
             model: model.to_string(),
         }));
@@ -701,7 +698,7 @@ impl IndexStore {
         }
         let surface = self.surface()?;
         let dims = surface.dims;
-        let tx = surface.conn.transaction().await?;
+        let tx = self.catalog.transaction().await?;
         for row in rows {
             if let Some(vector) = &row.vector {
                 assert_eq!(vector.len(), dims, "search row vector matches declared dims");
@@ -728,15 +725,14 @@ impl IndexStore {
         if ids.is_empty() {
             return Ok(());
         }
-        let surface = self.surface()?;
+        self.surface()?;
         for chunk in ids.chunks(DELETE_CHUNK) {
             let list = chunk
                 .iter()
                 .map(i64::to_string)
                 .collect::<Vec<_>>()
                 .join(",");
-            surface
-                .conn
+            self.catalog
                 .execute(&format!("DELETE FROM search_rows WHERE id IN ({list})"), ())
                 .await?;
         }
@@ -747,9 +743,8 @@ impl IndexStore {
     /// `search_rows` through triggers, so this is maintenance, not a rebuild:
     /// it merges the incremental b-trees appended since the last index run.
     pub async fn rebuild_fts(&self) -> Result<(), StoreError> {
-        let surface = self.surface()?;
-        surface
-            .conn
+        self.surface()?;
+        self.catalog
             .execute("INSERT INTO search_fts (search_fts) VALUES ('optimize')", ())
             .await?;
         Ok(())
@@ -758,13 +753,13 @@ impl IndexStore {
     /// Full-text seed search: fragment ids with BM25 scores, best first.
     pub async fn search_fts(&self, query: &str, k: usize) -> Result<Vec<(i64, f32)>, StoreError> {
         self.refuse_while_reembed_pending()?;
-        let surface = self.surface()?;
+        self.surface()?;
         let matcher = fts_match_expression(query);
         if matcher.is_empty() {
             return Ok(Vec::new());
         }
-        let rows = surface
-            .conn
+        let rows = self
+            .catalog
             .query(
                 "SELECT rowid, bm25(search_fts) FROM search_fts
                  WHERE search_fts MATCH ?1 ORDER BY bm25(search_fts) LIMIT ?2",
@@ -790,8 +785,8 @@ impl IndexStore {
             return Ok(Vec::new());
         }
         assert_eq!(vector.len(), surface.dims, "query vector matches declared dims");
-        let rows = surface
-            .conn
+        let rows = self
+            .catalog
             .query(
                 "SELECT id, vector_distance_cos(vector, ?1) AS distance FROM search_rows
                  WHERE vector IS NOT NULL ORDER BY distance LIMIT ?2",
@@ -802,9 +797,9 @@ impl IndexStore {
     }
 
     pub async fn search_rows_count(&self) -> Result<usize, StoreError> {
-        let surface = self.surface()?;
-        let mut rows = surface
-            .conn
+        self.surface()?;
+        let mut rows = self
+            .catalog
             .query("SELECT COUNT(*) FROM search_rows", ())
             .await?;
         let row = rows.next().await?.ok_or_else(|| {
@@ -873,17 +868,8 @@ impl IndexStore {
     /// refusing until [`Self::finish_reembed`].
     pub async fn begin_reembed(&self) -> Result<(), StoreError> {
         let surface = self.surface()?;
-        surface
-            .conn
-            .execute_batch(
-                "DROP TRIGGER IF EXISTS search_rows_after_insert;
-                 DROP TRIGGER IF EXISTS search_rows_after_delete;
-                 DROP TABLE IF EXISTS search_fts;
-                 DROP TABLE IF EXISTS search_rows;",
-            )
-            .await?;
-        surface
-            .conn
+        self.catalog.execute_batch(SEARCH_SCHEMA_DROP_SQL).await?;
+        self.catalog
             .execute_batch(&search_schema_sql(surface.dims))
             .await?;
         Ok(())
@@ -996,6 +982,7 @@ async fn converge_schema(conn: &libsql::Connection) -> Result<(), StoreError> {
             to = SCHEMA_VERSION,
             "store schema version changed; dropping derived tables for rebuild"
         );
+        conn.execute_batch(SEARCH_SCHEMA_DROP_SQL).await?;
         conn.execute_batch(
             "DROP TABLE IF EXISTS relations;
              DROP TABLE IF EXISTS entities;
@@ -1114,7 +1101,7 @@ async fn set_embedding_meta(
     Ok(())
 }
 
-/// The search database schema. The FTS5 table is external-content over
+/// The derived search tables' schema. The FTS5 table is external-content over
 /// `search_rows`, kept in sync by triggers so inserts and deletes never
 /// leave the two out of step — the pair to `rebuild_fts` only compacting.
 /// The vector column exists only under an embedding identity with dims;

@@ -12,9 +12,9 @@
 
 ## The store (`store.rs`, `state.rs`)
 
-One libSQL engine, two databases: the catalog holds the graph and plugin state, the search database holds full-text and vectors ([indexing/storage.md](../indexing/storage.md)). Kernel-owned rules:
+One libSQL database: catalog tables hold the graph and plugin state, derived search tables hold full-text and vectors ([indexing/storage.md](../indexing/storage.md)). Kernel-owned rules:
 
 - **No migrations, ever.** A schema-version change drops and recreates the tables; everything in them is derived, and the next sweep rebuilds it. Plugins extend by vocabulary (mimetypes, relation kinds, properties), never by changing the schema.
-- **The search surface is tied to the embedder.** The embedder declares its identity (`declare_embedding(model, dims)`) when it starts, and the search database opens under that identity. If it doesn't match what's recorded, an in-place re-embed is queued. No embedder mounted → searches refuse, with instructions.
+- **The search surface is tied to the embedder.** The embedder declares its identity (`declare_embedding(model, dims)`) when it starts, and the search tables open under that identity. If it doesn't match what's recorded, an in-place re-embed is queued. No embedder mounted → searches refuse, with instructions.
 - **Plugin state is namespaced and versioned** (the `state` service): a version mismatch discards the namespace. State must be rebuildable; credentials never live here.
 - **Two records per source track what built it**: the `shape_stamp` (a fingerprint of the transforms that participated) and the `mimetypes` inventory. These are what let a plugin change re-index only the sources it actually touches ([indexing/maintenance.md](../indexing/maintenance.md)).

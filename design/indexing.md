@@ -53,7 +53,7 @@ Everything above is configured per node by its [composition](composition.md): wh
 
 ## Storage
 
-The index lives in libSQL ([runtime](runtime.md)) as a single database file on the node's local disk, beside the catalog database (same engine, separate file).
+The index lives in libSQL ([runtime](runtime.md)) as a single database file on the node's local disk — catalog tables and derived search tables in one file.
 
 **The index is local storage; reach comes from the network.** An earlier cut of this design (the LanceDB era) kept an object-store backend open so a node could put its index on S3. That door is closed: remote storage pays round trips per probe — run from a laptop against a distant bucket, interactive queries degrade badly — and inseam already has a better answer for "limitless index off device": query fan-out. The small node keeps its lean local index and forwards queries to a big node whose index is deep; the big node keeps *its* index on its own fast local disk. Big index → big node's disk, reached over the network — never a far-away device mounting remote index storage.
 
@@ -67,7 +67,7 @@ The index lives in libSQL ([runtime](runtime.md)) as a single database file on t
 
 ## Settled since
 
-- **Where relations live physically**: the SQLite catalog store holds the graph (fragments, relations, entity registry); the libSQL search database holds vectors + FTS over text-bearing fragments and is strictly derived.
+- **Where relations live physically**: the catalog tables hold the graph (fragments, relations, entity registry); the search tables in the same libSQL database hold vectors + FTS over text-bearing fragments and are strictly derived.
 - **Incremental re-indexing, first cut**: change detection is `modified` timestamp + raw byte size, with an `indexed` completion mark so interrupted runs re-index; a changed source's whole fragment subtree is deleted (relations cascade) and rebuilt. The timestamp + size heuristic stays the *detector* — it needs no fetch — and the digest-keyed artifact caches (above) make its false positives cheap: a touched-but-unchanged file rebuilds structure and re-spends nothing.
 - **Maintenance**: how the index stays true to sources and composition after the first build — the reconciling sweep, invalidation tiers, deletion handling, entity GC — is its own concept: [index-maintenance](index-maintenance.md).
 - **Entity fragments and source-level authorization**: a deduplicated entity belongs to no single source, so entity fragments carry no source address. They conduct relevance and appear in `expand`, but never rank as results themselves — boundary exposure remains source-level.
