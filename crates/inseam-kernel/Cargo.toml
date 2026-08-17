@@ -4,13 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-arrow-array.workspace = true
-arrow-schema.workspace = true
 async-trait.workspace = true
-futures.workspace = true
-lance-index.workspace = true
-lancedb.workspace = true
-rusqlite.workspace = true
+libsql.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

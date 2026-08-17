@@ -45,5 +45,5 @@ pub trait Finder: Send + Sync {
     async fn query(&self, text: &str, limit: usize) -> Result<Vec<RankedSource>, SeamError>;
 
     /// One source's subtree of the semantic graph and its cross-links.
-    fn expand(&self, source: &StoredSource) -> Result<Expansion, SeamError>;
+    async fn expand(&self, source: &StoredSource) -> Result<Expansion, SeamError>;
 }

@@ -336,7 +336,7 @@ impl Plugin for WasmTransformPlugin {
     }
 
     async fn apply(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
-        self.enforce_cooldown(cx)?;
+        self.enforce_cooldown(cx).await?;
         self.admit(cx).await?;
 
         let component = Component::new(&self.engine, &self.artifact_bytes)
@@ -416,10 +416,10 @@ impl WasmTransformPlugin {
     /// kernel-provided state service under this bridge's namespace; the
     /// capability summary of the last approved version is stored beside
     /// them so widening is its own gate, regardless of soak time.
-    fn enforce_cooldown(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
+    async fn enforce_cooldown(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
         let state = cx.get(&STATE)?;
         let ns = state
-            .namespace("wasm-host", "1")
+            .namespace("wasm-host", "1").await
             .map_err(|e| PluginError(e.to_string()))?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -427,10 +427,10 @@ impl WasmTransformPlugin {
             .unwrap_or(0);
 
         let seen_key = format!("first-seen:{}", self.artifact_hash);
-        let first_seen: u64 = match ns.get(&seen_key).map_err(|e| PluginError(e.to_string()))? {
+        let first_seen: u64 = match ns.get(&seen_key).await.map_err(|e| PluginError(e.to_string()))? {
             Some(ts) => ts.parse().unwrap_or(now),
             None => {
-                ns.put(&seen_key, &now.to_string())
+                ns.put(&seen_key, &now.to_string()).await
                     .map_err(|e| PluginError(e.to_string()))?;
                 now
             }
@@ -439,7 +439,7 @@ impl WasmTransformPlugin {
         // Capability widening is its own gate: the diff, not the clock, is
         // the question.
         let caps_key = format!("capabilities:{}", self.manifest.name);
-        let approved = ns.get(&caps_key).map_err(|e| PluginError(e.to_string()))?;
+        let approved = ns.get(&caps_key).await.map_err(|e| PluginError(e.to_string()))?;
         let requested = self.manifest.capabilities.summary();
         match approved {
             Some(prior) if prior != requested && !self.config.allow_new => {
@@ -451,7 +451,7 @@ impl WasmTransformPlugin {
                 )));
             }
             _ => {
-                ns.put(&caps_key, &requested)
+                ns.put(&caps_key, &requested).await
                     .map_err(|e| PluginError(e.to_string()))?;
             }
         }
@@ -485,10 +485,10 @@ impl WasmTransformPlugin {
         }
         let state = cx.get(&STATE)?;
         let ns = state
-            .namespace("wasm-host", "1")
+            .namespace("wasm-host", "1").await
             .map_err(|e| PluginError(e.to_string()))?;
         let key = format!("admission:{}", self.admission_hash);
-        let verdict = match ns.get(&key).map_err(|e| PluginError(e.to_string()))? {
+        let verdict = match ns.get(&key).await.map_err(|e| PluginError(e.to_string()))? {
             Some(cached) => cached,
             None => {
                 tracing::info!(
@@ -500,7 +500,7 @@ impl WasmTransformPlugin {
                     None => "pass".to_string(),
                     Some(failure) => format!("fail:{failure}"),
                 };
-                ns.put(&key, &verdict)
+                ns.put(&key, &verdict).await
                     .map_err(|e| PluginError(e.to_string()))?;
                 verdict
             }

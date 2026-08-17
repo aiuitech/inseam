@@ -178,7 +178,7 @@ impl Finder for FinderService {
             return Ok(Vec::new());
         }
 
-        let relations = self.store.all_relations()?;
+        let relations = self.store.all_relations().await?;
         let edges = weighted_edges(&relations, &self.config.weights);
         let boosted = personalized_pagerank(
             &seeds,
@@ -195,13 +195,13 @@ impl Finder for FinderService {
             *final_scores.entry(id).or_insert(0.0) += score;
         }
 
-        self.rollup(final_scores, limit)
+        self.rollup(final_scores, limit).await
     }
 
-    fn expand(&self, source: &StoredSource) -> Result<Expansion, SeamError> {
-        let fragments = self.store.fragments_of(source.id)?;
+    async fn expand(&self, source: &StoredSource) -> Result<Expansion, SeamError> {
+        let fragments = self.store.fragments_of(source.id).await?;
         let ids: Vec<FragmentId> = fragments.iter().map(|f| f.id).collect();
-        let relations = self.store.relations_touching(&ids)?;
+        let relations = self.store.relations_touching(&ids).await?;
         let known: std::collections::HashSet<i64> = ids.iter().map(|f| f.0).collect();
         let mut foreign_ids: Vec<FragmentId> = relations
             .iter()
@@ -210,7 +210,7 @@ impl Finder for FinderService {
             .collect();
         foreign_ids.sort();
         foreign_ids.dedup();
-        let neighbors = self.store.fragments(&foreign_ids)?;
+        let neighbors = self.store.fragments(&foreign_ids).await?;
         Ok(Expansion {
             fragments,
             relations,
@@ -222,13 +222,13 @@ impl Finder for FinderService {
 impl FinderService {
     /// Group fragment scores by source, aggregate, and dress results with
     /// envelope, summary, and hints.
-    fn rollup(
+    async fn rollup(
         &self,
         final_scores: HashMap<i64, f64>,
         limit: usize,
     ) -> Result<Vec<RankedSource>, SeamError> {
         let ids: Vec<FragmentId> = final_scores.keys().map(|id| FragmentId(*id)).collect();
-        let owners = self.store.sources_of_fragments(&ids)?;
+        let owners = self.store.sources_of_fragments(&ids).await?;
 
         let mut per_source: HashMap<SourceId, Vec<ScoredFragment>> = HashMap::new();
         for (fid, sid) in owners {
@@ -251,16 +251,16 @@ impl FinderService {
 
         let mut out = Vec::with_capacity(ranked.len());
         for (sid, score, frags) in ranked {
-            let Some(source) = self.store.source(sid)? else {
+            let Some(source) = self.store.source(sid).await? else {
                 continue;
             };
-            let summary = self.store.summary_of(sid)?;
+            let summary = self.store.summary_of(sid).await?;
             let mut hints = Vec::new();
             for (fid, fscore) in &frags {
                 if hints.len() >= self.config.max_hints {
                     break;
                 }
-                let Some(fragment) = self.store.fragment(*fid)? else {
+                let Some(fragment) = self.store.fragment(*fid).await? else {
                     continue;
                 };
                 // Summaries ride along separately; text-less roots hint

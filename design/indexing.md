@@ -53,7 +53,7 @@ Everything above is configured per node by its [composition](composition.md): wh
 
 ## Storage
 
-The index lives in libSQL ([runtime](runtime.md)) as a single database file on the node's local disk, beside the SQLite catalog.
+The index lives in libSQL ([runtime](runtime.md)) as a single database file on the node's local disk, beside the catalog database (same engine, separate file).
 
 **The index is local storage; reach comes from the network.** An earlier cut of this design (the LanceDB era) kept an object-store backend open so a node could put its index on S3. That door is closed: remote storage pays round trips per probe — run from a laptop against a distant bucket, interactive queries degrade badly — and inseam already has a better answer for "limitless index off device": query fan-out. The small node keeps its lean local index and forwards queries to a big node whose index is deep; the big node keeps *its* index on its own fast local disk. Big index → big node's disk, reached over the network — never a far-away device mounting remote index storage.
 

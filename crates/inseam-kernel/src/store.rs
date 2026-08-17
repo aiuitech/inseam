@@ -1,9 +1,10 @@
 //! The index store — the kernel's second responsibility (`design/kernel.md`).
-//! Two layers, as `design/runtime.md` settled: SQLite is the transactional
-//! source of truth for the catalog (sources + envelopes), the semantic graph
-//! (fragments + relations + entity registry), and plugin state namespaces;
-//! LanceDB holds the derived search surfaces — full-text and vectors — and is
-//! rebuildable from SQLite at any time.
+//! Two layers in one engine, as `design/runtime.md` settled: a libSQL catalog
+//! database is the transactional source of truth for the catalog (sources +
+//! envelopes), the semantic graph (fragments + relations + entity registry),
+//! and plugin state namespaces; a second libSQL database holds the derived
+//! search surfaces — FTS5 full-text and native vectors — and is rebuildable
+//! from the catalog at any time.
 //!
 //! There are no data migrations, anywhere, ever: a schema-version bump drops
 //! and recreates the tables (everything here is derived and rebuilt by the
@@ -14,34 +15,22 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
-use arrow_array::builder::{FixedSizeListBuilder, Float32Builder};
-use arrow_array::{Int64Array, RecordBatch, StringArray};
-use arrow_schema::{DataType, Field, Schema, SchemaRef};
-use futures::TryStreamExt;
-use lance_index::scalar::FullTextSearchQuery;
-use lancedb::index::scalar::FtsIndexBuilder;
-use lancedb::index::Index;
-use lancedb::query::{ExecutableQuery, QueryBase};
-use lancedb::{DistanceType, Table};
-use rusqlite::{params, Connection, OptionalExtension};
+use libsql::params;
 use thiserror::Error;
 
 use crate::address::{Address, ContentLength, Envelope, HostId, Locator, Property, Timestamp};
 use crate::fragment::{Extent, FragmentId, Mimetype, NewFragment, Relation, RelationKind};
 
 const SCHEMA_VERSION: &str = "3";
-const LANCE_TABLE: &str = "fragments";
 /// Ids per DELETE predicate; keeps the SQL bounded.
 const DELETE_CHUNK: usize = 400;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
-    #[error("catalog database error: {0}")]
-    Sqlite(#[from] rusqlite::Error),
-    #[error("lance index error: {0}")]
-    Lance(#[from] lancedb::Error),
+    #[error("store database error: {0}")]
+    Database(#[from] libsql::Error),
     #[error("could not prepare index directory {path}: {source}")]
     Io {
         path: String,
@@ -120,7 +109,7 @@ pub struct InventoryEntry {
     pub is_root: bool,
 }
 
-/// A row bound for the Lance search table: a text-bearing fragment and its
+/// A row bound for the search database: a text-bearing fragment and its
 /// (optional) embedding.
 #[derive(Debug, Clone)]
 pub struct SearchRow {
@@ -140,16 +129,20 @@ pub struct StoreStats {
 }
 
 /// The live search surface: bound when an embedder declares its identity.
+/// The `Database` handle owns the file; connections are cheap clones over it.
 struct SearchSurface {
-    conn: lancedb::Connection,
-    table: Table,
+    #[expect(dead_code, reason = "keeps the database handle alive for its connections")]
+    db: libsql::Database,
+    conn: libsql::Connection,
     dims: usize,
     model: String,
 }
 
 pub struct IndexStore {
-    sql: Mutex<Connection>,
-    lance_dir: std::path::PathBuf,
+    #[expect(dead_code, reason = "keeps the database handle alive for its connections")]
+    catalog_db: libsql::Database,
+    catalog: libsql::Connection,
+    search_path: std::path::PathBuf,
     /// `None` until an embedder plugin declares the embedding identity; the
     /// search surface belongs to that identity, not to the store's opening.
     surface: Mutex<Option<Arc<SearchSurface>>>,
@@ -168,13 +161,17 @@ impl IndexStore {
             path: dir.display().to_string(),
             source,
         })?;
-        let sql = Connection::open(dir.join("catalog.sqlite3"))?;
-        sql.pragma_update(None, "journal_mode", "WAL")?;
-        sql.pragma_update(None, "foreign_keys", "ON")?;
-        converge_schema(&sql)?;
+        let catalog_db = libsql::Builder::new_local(dir.join("catalog.sqlite3"))
+            .build()
+            .await?;
+        let catalog = catalog_db.connect()?;
+        catalog.query("PRAGMA journal_mode = WAL", ()).await?;
+        catalog.query("PRAGMA foreign_keys = ON", ()).await?;
+        converge_schema(&catalog).await?;
         Ok(Self {
-            sql: Mutex::new(sql),
-            lance_dir: dir.join("lance"),
+            catalog_db,
+            catalog,
+            search_path: dir.join("search.sqlite3"),
             surface: Mutex::new(None),
             reembed_from: Mutex::new(None),
         })
@@ -185,10 +182,10 @@ impl IndexStore {
     /// the index was built under pends an in-place re-embed rather than
     /// refusing; searches refuse until an index run performs it.
     pub async fn declare_embedding(&self, model: &str, dims: usize) -> Result<(), StoreError> {
-        let stored = read_embedding_meta(&self.conn())?;
+        let stored = read_embedding_meta(&self.catalog).await?;
         let pending = match stored {
             None => {
-                set_embedding_meta(&self.conn(), dims, model)?;
+                set_embedding_meta(&self.catalog, dims, model).await?;
                 None
             }
             Some((stored_model, stored_dims))
@@ -199,25 +196,16 @@ impl IndexStore {
             Some(mismatch) => Some(mismatch),
         };
 
-        let conn = lancedb::connect(
-            self.lance_dir
-                .to_str()
-                .expect("data dir paths are valid UTF-8 by construction"),
-        )
-        .execute()
-        .await?;
-        let table = match conn.open_table(LANCE_TABLE).execute().await {
-            Ok(t) => t,
-            Err(lancedb::Error::TableNotFound { .. }) => {
-                conn.create_empty_table(LANCE_TABLE, lance_schema(dims))
-                    .execute()
-                    .await?
-            }
-            Err(e) => return Err(e.into()),
-        };
+        let db = libsql::Builder::new_local(&self.search_path).build().await?;
+        let conn = db.connect()?;
+        conn.query("PRAGMA journal_mode = WAL", ()).await?;
+        // `IF NOT EXISTS` deliberately leaves a table built under a different
+        // identity in place: searches refuse while the re-embed is pending,
+        // and `begin_reembed` recreates the table under the new dimensions.
+        conn.execute_batch(&search_schema_sql(dims)).await?;
         *self.surface.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(SearchSurface {
+            db,
             conn,
-            table,
             dims,
             model: model.to_string(),
         }));
@@ -231,20 +219,12 @@ impl IndexStore {
         *self.surface.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
-    fn conn(&self) -> MutexGuard<'_, Connection> {
-        self.sql.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
     fn surface(&self) -> Result<Arc<SearchSurface>, StoreError> {
         self.surface
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
             .ok_or(StoreError::NoSearchSurface)
-    }
-
-    fn table(&self) -> Result<Table, StoreError> {
-        Ok(self.surface()?.table.clone())
     }
 
     // ------------------------------------------------------------------
@@ -255,76 +235,95 @@ impl IndexStore {
     /// decision. `None` means the source has never been cataloged. The shape
     /// verdict is the sweep's to make: it intersects the stored inventory
     /// with the currently mounted transforms' claims and compares stamps.
-    pub fn index_meta(&self, address: &Address) -> Result<Option<SourceIndexMeta>, StoreError> {
-        let conn = self.conn();
-        let row: Option<(Option<i64>, i64, i64, Option<String>, Option<String>)> = conn
-            .query_row(
+    pub async fn index_meta(
+        &self,
+        address: &Address,
+    ) -> Result<Option<SourceIndexMeta>, StoreError> {
+        let row = self
+            .first_row(
                 "SELECT modified, raw_bytes, indexed, shape_stamp, mimetypes
                  FROM sources WHERE host = ?1 AND locator = ?2",
                 params![address.host.as_str(), address.locator.as_str()],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
-            .optional()?;
-        Ok(row.map(|(modified, raw_bytes, indexed, shape_stamp, mimetypes)| {
-            SourceIndexMeta {
-                modified: modified.map(Timestamp),
-                raw_bytes: raw_bytes as u64,
-                indexed: indexed == 1,
-                shape_stamp,
-                mimetypes: mimetypes
-                    .as_deref()
-                    .and_then(|m| serde_json::from_str(m).ok())
-                    .unwrap_or_default(),
-            }
+            .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let modified: Option<i64> = row.get(0)?;
+        let raw_bytes: i64 = row.get(1)?;
+        let indexed: i64 = row.get(2)?;
+        let shape_stamp: Option<String> = row.get(3)?;
+        let mimetypes: Option<String> = row.get(4)?;
+        Ok(Some(SourceIndexMeta {
+            modified: modified.map(Timestamp),
+            raw_bytes: u64::try_from(raw_bytes).unwrap_or(0),
+            indexed: indexed == 1,
+            shape_stamp,
+            mimetypes: mimetypes
+                .as_deref()
+                .and_then(|m| serde_json::from_str(m).ok())
+                .unwrap_or_default(),
         }))
+    }
+
+    /// First row of a catalog query, if any — the optional-single-row shape
+    /// the catalog reads use throughout.
+    async fn first_row(
+        &self,
+        sql: &str,
+        params: impl libsql::params::IntoParams,
+    ) -> Result<Option<libsql::Row>, StoreError> {
+        let mut rows = self.catalog.query(sql, params).await?;
+        Ok(rows.next().await?)
     }
 
     /// Write a source's envelope into the catalog, clearing its indexed mark
     /// until `mark_indexed` confirms the fragments are in place.
-    pub fn upsert_source(
+    pub async fn upsert_source(
         &self,
         address: &Address,
         envelope: &Envelope,
         raw_bytes: u64,
     ) -> Result<SourceId, StoreError> {
-        let conn = self.conn();
         let properties = serde_json::to_string(&envelope.properties)
             .expect("envelope properties serialize to JSON");
-        let id: i64 = conn.query_row(
-            "INSERT INTO sources
-               (host, locator, source_type, content_type, len_unit, len,
-                created, modified, observed, hint, properties, raw_bytes, indexed)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0)
-             ON CONFLICT (host, locator) DO UPDATE SET
-               source_type = excluded.source_type,
-               content_type = excluded.content_type,
-               len_unit = excluded.len_unit,
-               len = excluded.len,
-               created = excluded.created,
-               modified = excluded.modified,
-               observed = excluded.observed,
-               hint = excluded.hint,
-               properties = excluded.properties,
-               raw_bytes = excluded.raw_bytes,
-               indexed = 0
-             RETURNING id",
-            params![
-                address.host.as_str(),
-                address.locator.as_str(),
-                envelope.source_type,
-                envelope.content_type.to_string(),
-                envelope.length.unit(),
-                envelope.length.value() as i64,
-                envelope.created.map(|t| t.0),
-                envelope.modified.map(|t| t.0),
-                envelope.observed.0,
-                envelope.hint,
-                properties,
-                raw_bytes as i64,
-            ],
-            |r| r.get(0),
-        )?;
-        Ok(SourceId(id))
+        let row = self
+            .first_row(
+                "INSERT INTO sources
+                   (host, locator, source_type, content_type, len_unit, len,
+                    created, modified, observed, hint, properties, raw_bytes, indexed)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0)
+                 ON CONFLICT (host, locator) DO UPDATE SET
+                   source_type = excluded.source_type,
+                   content_type = excluded.content_type,
+                   len_unit = excluded.len_unit,
+                   len = excluded.len,
+                   created = excluded.created,
+                   modified = excluded.modified,
+                   observed = excluded.observed,
+                   hint = excluded.hint,
+                   properties = excluded.properties,
+                   raw_bytes = excluded.raw_bytes,
+                   indexed = 0
+                 RETURNING id",
+                params![
+                    address.host.as_str(),
+                    address.locator.as_str(),
+                    envelope.source_type.as_str(),
+                    envelope.content_type.to_string(),
+                    envelope.length.unit(),
+                    i64::try_from(envelope.length.value()).unwrap_or(i64::MAX),
+                    envelope.created.map(|t| t.0),
+                    envelope.modified.map(|t| t.0),
+                    envelope.observed.0,
+                    envelope.hint.as_deref(),
+                    properties,
+                    i64::try_from(raw_bytes).unwrap_or(i64::MAX),
+                ],
+            )
+            .await?
+            .ok_or_else(|| StoreError::Corrupt(0, "source upsert returned no id".into()))?;
+        Ok(SourceId(row.get(0)?))
     }
 
     /// Confirm a source's index run completed. A deep-indexed source records
@@ -332,7 +331,7 @@ impl IndexStore {
     /// mimetype inventory; a catalog-only source records neither, which is
     /// exactly what makes it dirty again the moment budget or cutoff would
     /// let it be deep-indexed.
-    pub fn mark_indexed(
+    pub async fn mark_indexed(
         &self,
         source: SourceId,
         shape: Option<(&str, &[InventoryEntry])>,
@@ -347,92 +346,111 @@ impl IndexStore {
             ),
             None => (None, None),
         };
-        self.conn().execute(
-            "UPDATE sources SET indexed = 1, shape_stamp = ?2, mimetypes = ?3 WHERE id = ?1",
-            params![source.0, stamp, inventory],
-        )?;
+        self.catalog
+            .execute(
+                "UPDATE sources SET indexed = 1, shape_stamp = ?2, mimetypes = ?3 WHERE id = ?1",
+                params![source.0, stamp, inventory],
+            )
+            .await?;
         Ok(())
     }
 
     /// Every cataloged source of a host, as `(id, locator)` — the sweep's
     /// deletion reconciliation diffs this against what enumeration saw.
-    pub fn sources_of_host(&self, host: &HostId) -> Result<Vec<(SourceId, String)>, StoreError> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare("SELECT id, locator FROM sources WHERE host = ?1")?;
-        let rows = stmt
-            .query_map(params![host.as_str()], |r| {
-                Ok((SourceId(r.get(0)?), r.get::<_, String>(1)?))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+    pub async fn sources_of_host(
+        &self,
+        host: &HostId,
+    ) -> Result<Vec<(SourceId, String)>, StoreError> {
+        let mut rows = self
+            .catalog
+            .query(
+                "SELECT id, locator FROM sources WHERE host = ?1",
+                params![host.as_str()],
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push((SourceId(row.get(0)?), row.get::<String>(1)?));
+        }
+        Ok(out)
     }
 
     /// Remove a source's catalog row. Call `delete_fragments_of` first so the
-    /// Lance rows can be cleared by id; the row deletion itself cascades any
+    /// search rows can be cleared by id; the row deletion itself cascades any
     /// fragments that remain.
-    pub fn delete_source(&self, source: SourceId) -> Result<(), StoreError> {
-        self.conn()
-            .execute("DELETE FROM sources WHERE id = ?1", params![source.0])?;
+    pub async fn delete_source(&self, source: SourceId) -> Result<(), StoreError> {
+        self.catalog
+            .execute("DELETE FROM sources WHERE id = ?1", params![source.0])
+            .await?;
         Ok(())
     }
 
     /// Drop entity fragments no relation touches anymore — the consequence of
     /// source deletions, rebuilds that no longer mention them, and disabling
     /// entity extraction. Returns the dropped fragment ids so the caller can
-    /// clear the Lance rows; the registry rows cascade.
-    pub fn gc_entities(&self) -> Result<Vec<i64>, StoreError> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT id FROM fragments WHERE source IS NULL
-               AND NOT EXISTS (SELECT 1 FROM relations
-                               WHERE from_fragment = fragments.id OR to_fragment = fragments.id)",
-        )?;
-        let ids: Vec<i64> = stmt
-            .query_map([], |r| r.get(0))?
-            .collect::<Result<_, _>>()?;
+    /// clear the search rows; the registry rows cascade.
+    pub async fn gc_entities(&self) -> Result<Vec<i64>, StoreError> {
+        let mut rows = self
+            .catalog
+            .query(
+                "SELECT id FROM fragments WHERE source IS NULL
+                   AND NOT EXISTS (SELECT 1 FROM relations
+                                   WHERE from_fragment = fragments.id OR to_fragment = fragments.id)",
+                (),
+            )
+            .await?;
+        let mut ids: Vec<i64> = Vec::new();
+        while let Some(row) = rows.next().await? {
+            ids.push(row.get(0)?);
+        }
         for chunk in ids.chunks(DELETE_CHUNK) {
             let list = chunk
                 .iter()
                 .map(i64::to_string)
                 .collect::<Vec<_>>()
                 .join(",");
-            conn.execute(&format!("DELETE FROM fragments WHERE id IN ({list})"), [])?;
+            self.catalog
+                .execute(&format!("DELETE FROM fragments WHERE id IN ({list})"), ())
+                .await?;
         }
         Ok(ids)
     }
 
-    pub fn set_root_fragment(
+    pub async fn set_root_fragment(
         &self,
         source: SourceId,
         fragment: FragmentId,
     ) -> Result<(), StoreError> {
-        self.conn().execute(
-            "UPDATE sources SET root_fragment = ?1 WHERE id = ?2",
-            params![fragment.0, source.0],
-        )?;
+        self.catalog
+            .execute(
+                "UPDATE sources SET root_fragment = ?1 WHERE id = ?2",
+                params![fragment.0, source.0],
+            )
+            .await?;
         Ok(())
     }
 
-    pub fn source(&self, id: SourceId) -> Result<Option<StoredSource>, StoreError> {
-        let conn = self.conn();
-        conn.query_row(
-            &format!("SELECT {SOURCE_COLUMNS} FROM sources WHERE id = ?1"),
-            params![id.0],
-            row_to_source,
-        )
-        .optional()
-        .map_err(StoreError::from)
+    pub async fn source(&self, id: SourceId) -> Result<Option<StoredSource>, StoreError> {
+        let row = self
+            .first_row(
+                &format!("SELECT {SOURCE_COLUMNS} FROM sources WHERE id = ?1"),
+                params![id.0],
+            )
+            .await?;
+        row.map(|r| row_to_source(&r)).transpose()
     }
 
-    pub fn source_by_address(&self, address: &Address) -> Result<Option<StoredSource>, StoreError> {
-        let conn = self.conn();
-        conn.query_row(
-            &format!("SELECT {SOURCE_COLUMNS} FROM sources WHERE host = ?1 AND locator = ?2"),
-            params![address.host.as_str(), address.locator.as_str()],
-            row_to_source,
-        )
-        .optional()
-        .map_err(StoreError::from)
+    pub async fn source_by_address(
+        &self,
+        address: &Address,
+    ) -> Result<Option<StoredSource>, StoreError> {
+        let row = self
+            .first_row(
+                &format!("SELECT {SOURCE_COLUMNS} FROM sources WHERE host = ?1 AND locator = ?2"),
+                params![address.host.as_str(), address.locator.as_str()],
+            )
+            .await?;
+        row.map(|r| row_to_source(&r)).transpose()
     }
 
     // ------------------------------------------------------------------
@@ -440,74 +458,89 @@ impl IndexStore {
     // ------------------------------------------------------------------
 
     /// Drop a source's fragments (relations cascade). Returns the dropped
-    /// fragment ids so the caller can clear the Lance rows too. Entity
+    /// fragment ids so the caller can clear the search rows too. Entity
     /// fragments survive — only their mention edges into this source go.
-    pub fn delete_fragments_of(&self, source: SourceId) -> Result<Vec<i64>, StoreError> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare("SELECT id FROM fragments WHERE source = ?1")?;
-        let ids: Vec<i64> = stmt
-            .query_map(params![source.0], |r| r.get(0))?
-            .collect::<Result<_, _>>()?;
-        conn.execute("DELETE FROM fragments WHERE source = ?1", params![source.0])?;
+    pub async fn delete_fragments_of(&self, source: SourceId) -> Result<Vec<i64>, StoreError> {
+        let mut rows = self
+            .catalog
+            .query(
+                "SELECT id FROM fragments WHERE source = ?1",
+                params![source.0],
+            )
+            .await?;
+        let mut ids: Vec<i64> = Vec::new();
+        while let Some(row) = rows.next().await? {
+            ids.push(row.get(0)?);
+        }
+        self.catalog
+            .execute("DELETE FROM fragments WHERE source = ?1", params![source.0])
+            .await?;
         Ok(ids)
     }
 
-    pub fn insert_fragment(
+    pub async fn insert_fragment(
         &self,
         source: Option<SourceId>,
         fragment: &NewFragment,
     ) -> Result<FragmentId, StoreError> {
         let (unit, start, end) = extent_columns(fragment.extent);
-        let id: i64 = self.conn().query_row(
-            "INSERT INTO fragments (source, mimetype, text, extent_unit, extent_start, extent_end)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6) RETURNING id",
-            params![
-                source.map(|s| s.0),
-                fragment.mimetype.to_string(),
-                fragment.text,
-                unit,
-                start,
-                end,
-            ],
-            |r| r.get(0),
-        )?;
-        Ok(FragmentId(id))
+        let row = self
+            .first_row(
+                "INSERT INTO fragments (source, mimetype, text, extent_unit, extent_start, extent_end)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6) RETURNING id",
+                params![
+                    source.map(|s| s.0),
+                    fragment.mimetype.to_string(),
+                    fragment.text.as_deref(),
+                    unit,
+                    start,
+                    end,
+                ],
+            )
+            .await?
+            .ok_or_else(|| StoreError::Corrupt(0, "fragment insert returned no id".into()))?;
+        Ok(FragmentId(row.get(0)?))
     }
 
-    pub fn insert_relation(&self, relation: &Relation) -> Result<(), StoreError> {
-        self.conn().execute(
-            "INSERT OR IGNORE INTO relations (from_fragment, kind, to_fragment) VALUES (?1, ?2, ?3)",
-            params![relation.from.0, relation.kind.as_str(), relation.to.0],
-        )?;
+    pub async fn insert_relation(&self, relation: &Relation) -> Result<(), StoreError> {
+        self.catalog
+            .execute(
+                "INSERT OR IGNORE INTO relations (from_fragment, kind, to_fragment) VALUES (?1, ?2, ?3)",
+                params![relation.from.0, relation.kind.as_str(), relation.to.0],
+            )
+            .await?;
         Ok(())
     }
 
-    pub fn fragment(&self, id: FragmentId) -> Result<Option<StoredFragment>, StoreError> {
-        let conn = self.conn();
-        conn.query_row(
-            &format!("SELECT {FRAGMENT_COLUMNS} FROM fragments WHERE id = ?1"),
-            params![id.0],
-            row_to_fragment,
-        )
-        .optional()
-        .map_err(StoreError::from)
+    pub async fn fragment(&self, id: FragmentId) -> Result<Option<StoredFragment>, StoreError> {
+        let row = self
+            .first_row(
+                &format!("SELECT {FRAGMENT_COLUMNS} FROM fragments WHERE id = ?1"),
+                params![id.0],
+            )
+            .await?;
+        row.map(|r| row_to_fragment(&r)).transpose()
     }
 
-    pub fn fragments_of(&self, source: SourceId) -> Result<Vec<StoredFragment>, StoreError> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(&format!(
-            "SELECT {FRAGMENT_COLUMNS} FROM fragments WHERE source = ?1 ORDER BY id"
-        ))?;
-        let rows = stmt
-            .query_map(params![source.0], row_to_fragment)?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+    pub async fn fragments_of(&self, source: SourceId) -> Result<Vec<StoredFragment>, StoreError> {
+        let mut rows = self
+            .catalog
+            .query(
+                &format!("SELECT {FRAGMENT_COLUMNS} FROM fragments WHERE source = ?1 ORDER BY id"),
+                params![source.0],
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push(row_to_fragment(&row)?);
+        }
+        Ok(out)
     }
 
-    pub fn fragments(&self, ids: &[FragmentId]) -> Result<Vec<StoredFragment>, StoreError> {
+    pub async fn fragments(&self, ids: &[FragmentId]) -> Result<Vec<StoredFragment>, StoreError> {
         let mut out = Vec::with_capacity(ids.len());
         for id in ids {
-            if let Some(f) = self.fragment(*id)? {
+            if let Some(f) = self.fragment(*id).await? {
                 out.push(f);
             }
         }
@@ -516,17 +549,20 @@ impl IndexStore {
 
     /// The whole relation graph. Personal-scale indexes keep this cheap; the
     /// Finder's propagation wants all edges anyway.
-    pub fn all_relations(&self) -> Result<Vec<Relation>, StoreError> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare("SELECT from_fragment, kind, to_fragment FROM relations")?;
-        let rows = stmt
-            .query_map([], row_to_relation)?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+    pub async fn all_relations(&self) -> Result<Vec<Relation>, StoreError> {
+        let mut rows = self
+            .catalog
+            .query("SELECT from_fragment, kind, to_fragment FROM relations", ())
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push(row_to_relation(&row)?);
+        }
+        Ok(out)
     }
 
     /// Every relation with either endpoint in `ids`.
-    pub fn relations_touching(&self, ids: &[FragmentId]) -> Result<Vec<Relation>, StoreError> {
+    pub async fn relations_touching(&self, ids: &[FragmentId]) -> Result<Vec<Relation>, StoreError> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -536,92 +572,108 @@ impl IndexStore {
             .map(|f| f.0.to_string())
             .collect::<Vec<_>>()
             .join(",");
-        let conn = self.conn();
-        let mut stmt = conn.prepare(&format!(
-            "SELECT from_fragment, kind, to_fragment FROM relations
-             WHERE from_fragment IN ({list}) OR to_fragment IN ({list})"
-        ))?;
-        let rows = stmt
-            .query_map([], row_to_relation)?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+        let mut rows = self
+            .catalog
+            .query(
+                &format!(
+                    "SELECT from_fragment, kind, to_fragment FROM relations
+                     WHERE from_fragment IN ({list}) OR to_fragment IN ({list})"
+                ),
+                (),
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push(row_to_relation(&row)?);
+        }
+        Ok(out)
     }
 
     /// Which source each fragment belongs to (entity fragments absent).
-    pub fn sources_of_fragments(
+    pub async fn sources_of_fragments(
         &self,
         ids: &[FragmentId],
     ) -> Result<HashMap<FragmentId, SourceId>, StoreError> {
         let mut map = HashMap::with_capacity(ids.len());
-        let conn = self.conn();
-        let mut stmt = conn.prepare("SELECT source FROM fragments WHERE id = ?1")?;
         for id in ids {
-            let source: Option<Option<i64>> = stmt
-                .query_row(params![id.0], |r| r.get(0))
-                .optional()?;
-            if let Some(Some(s)) = source {
-                map.insert(*id, SourceId(s));
+            let row = self
+                .first_row("SELECT source FROM fragments WHERE id = ?1", params![id.0])
+                .await?;
+            if let Some(row) = row {
+                let source: Option<i64> = row.get(0)?;
+                if let Some(s) = source {
+                    map.insert(*id, SourceId(s));
+                }
             }
         }
         Ok(map)
     }
 
     /// The mandatory summary for a source, if the index has built one.
-    pub fn summary_of(&self, source: SourceId) -> Result<Option<String>, StoreError> {
-        let conn = self.conn();
-        conn.query_row(
-            "SELECT f.text FROM fragments f
-             JOIN relations r ON r.from_fragment = f.id AND r.kind = 'derived-from'
-             JOIN sources s ON r.to_fragment = s.root_fragment
-             WHERE s.id = ?1 AND f.mimetype LIKE 'text/x-inseam-summary%'
-             LIMIT 1",
-            params![source.0],
-            |r| r.get::<_, Option<String>>(0),
-        )
-        .optional()
-        .map_err(StoreError::from)
-        .map(|o| o.flatten())
+    pub async fn summary_of(&self, source: SourceId) -> Result<Option<String>, StoreError> {
+        let row = self
+            .first_row(
+                "SELECT f.text FROM fragments f
+                 JOIN relations r ON r.from_fragment = f.id AND r.kind = 'derived-from'
+                 JOIN sources s ON r.to_fragment = s.root_fragment
+                 WHERE s.id = ?1 AND f.mimetype LIKE 'text/x-inseam-summary%'
+                 LIMIT 1",
+                params![source.0],
+            )
+            .await?;
+        match row {
+            None => Ok(None),
+            Some(row) => Ok(row.get::<Option<String>>(0)?),
+        }
     }
 
     // ------------------------------------------------------------------
     // Entity registry
     // ------------------------------------------------------------------
 
-    pub fn entity_fragment(&self, key: &str) -> Result<Option<FragmentId>, StoreError> {
-        let conn = self.conn();
-        conn.query_row(
-            "SELECT fragment FROM entities WHERE key = ?1",
-            params![key],
-            |r| r.get::<_, i64>(0).map(FragmentId),
-        )
-        .optional()
-        .map_err(StoreError::from)
+    pub async fn entity_fragment(&self, key: &str) -> Result<Option<FragmentId>, StoreError> {
+        let row = self
+            .first_row("SELECT fragment FROM entities WHERE key = ?1", params![key])
+            .await?;
+        match row {
+            None => Ok(None),
+            Some(row) => Ok(Some(FragmentId(row.get(0)?))),
+        }
     }
 
-    pub fn register_entity(&self, key: &str, fragment: FragmentId) -> Result<(), StoreError> {
-        self.conn().execute(
-            "INSERT OR IGNORE INTO entities (key, fragment) VALUES (?1, ?2)",
-            params![key, fragment.0],
-        )?;
+    pub async fn register_entity(&self, key: &str, fragment: FragmentId) -> Result<(), StoreError> {
+        self.catalog
+            .execute(
+                "INSERT OR IGNORE INTO entities (key, fragment) VALUES (?1, ?2)",
+                params![key, fragment.0],
+            )
+            .await?;
         Ok(())
     }
 
-    pub fn stats(&self) -> Result<StoreStats, StoreError> {
-        let conn = self.conn();
-        let one = |sql: &str| -> Result<u64, rusqlite::Error> {
-            conn.query_row(sql, [], |r| r.get::<_, i64>(0)).map(|n| n as u64)
-        };
+    pub async fn stats(&self) -> Result<StoreStats, StoreError> {
         Ok(StoreStats {
-            sources: one("SELECT COUNT(*) FROM sources")?,
-            indexed_sources: one("SELECT COUNT(*) FROM sources WHERE indexed = 1")?,
-            fragments: one("SELECT COUNT(*) FROM fragments")?,
-            relations: one("SELECT COUNT(*) FROM relations")?,
-            entities: one("SELECT COUNT(*) FROM entities")?,
+            sources: self.count_of("SELECT COUNT(*) FROM sources").await?,
+            indexed_sources: self
+                .count_of("SELECT COUNT(*) FROM sources WHERE indexed = 1")
+                .await?,
+            fragments: self.count_of("SELECT COUNT(*) FROM fragments").await?,
+            relations: self.count_of("SELECT COUNT(*) FROM relations").await?,
+            entities: self.count_of("SELECT COUNT(*) FROM entities").await?,
         })
     }
 
+    async fn count_of(&self, sql: &str) -> Result<u64, StoreError> {
+        let row = self
+            .first_row(sql, ())
+            .await?
+            .ok_or_else(|| StoreError::Corrupt(0, "COUNT(*) returned no row".into()))?;
+        let count: i64 = row.get(0)?;
+        Ok(u64::try_from(count).expect("row counts are non-negative"))
+    }
+
     // ------------------------------------------------------------------
-    // Search surfaces (Lance)
+    // Search surfaces (libSQL)
     // ------------------------------------------------------------------
 
     /// Vector width of the bound surface; 0 when no vectors (or none bound).
@@ -649,35 +701,26 @@ impl IndexStore {
         }
         let surface = self.surface()?;
         let dims = surface.dims;
-        let schema = lance_schema(dims);
-        let ids = Int64Array::from_iter_values(rows.iter().map(|r| r.fragment.0));
-        let sources = Int64Array::from(
-            rows.iter()
-                .map(|r| r.source.map(|s| s.0))
-                .collect::<Vec<_>>(),
-        );
-        let texts = StringArray::from(rows.iter().map(|r| r.text.as_str()).collect::<Vec<_>>());
-        let mut columns: Vec<arrow_array::ArrayRef> =
-            vec![Arc::new(ids), Arc::new(sources), Arc::new(texts)];
-        if dims > 0 {
-            let mut builder = FixedSizeListBuilder::new(Float32Builder::new(), dims as i32);
-            for row in rows {
-                match &row.vector {
-                    Some(v) => {
-                        builder.values().append_slice(v);
-                        builder.append(true);
-                    }
-                    None => {
-                        builder.values().append_slice(&vec![0.0; dims]);
-                        builder.append(false);
-                    }
-                }
+        let tx = surface.conn.transaction().await?;
+        for row in rows {
+            if let Some(vector) = &row.vector {
+                assert_eq!(vector.len(), dims, "search row vector matches declared dims");
             }
-            columns.push(Arc::new(builder.finish()));
+            let source = match row.source {
+                Some(s) => libsql::Value::Integer(s.0),
+                None => libsql::Value::Null,
+            };
+            let vector = match &row.vector {
+                Some(v) if dims > 0 => libsql::Value::Blob(vector_blob(v)),
+                _ => libsql::Value::Null,
+            };
+            tx.execute(
+                "INSERT INTO search_rows (id, source, text, vector) VALUES (?1, ?2, ?3, ?4)",
+                libsql::params![row.fragment.0, source, row.text.as_str(), vector],
+            )
+            .await?;
         }
-        let batch = RecordBatch::try_new(schema, columns)
-            .expect("search rows match the lance schema by construction");
-        surface.table.clone().add(batch).execute().await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -685,29 +728,29 @@ impl IndexStore {
         if ids.is_empty() {
             return Ok(());
         }
-        let table = self.table()?;
+        let surface = self.surface()?;
         for chunk in ids.chunks(DELETE_CHUNK) {
             let list = chunk
                 .iter()
                 .map(i64::to_string)
                 .collect::<Vec<_>>()
                 .join(",");
-            table.delete(format!("id IN ({list})").as_str()).await?;
+            surface
+                .conn
+                .execute(&format!("DELETE FROM search_rows WHERE id IN ({list})"), ())
+                .await?;
         }
         Ok(())
     }
 
-    /// (Re)build the full-text index over fragment text. Called after index
-    /// runs so appended rows are always covered.
+    /// Compact the full-text index. FTS5 stays transactionally in sync with
+    /// `search_rows` through triggers, so this is maintenance, not a rebuild:
+    /// it merges the incremental b-trees appended since the last index run.
     pub async fn rebuild_fts(&self) -> Result<(), StoreError> {
-        let table = self.table()?;
-        if table.count_rows(None).await? == 0 {
-            return Ok(());
-        }
-        table
-            .create_index(&["text"], Index::FTS(FtsIndexBuilder::default()))
-            .replace(true)
-            .execute()
+        let surface = self.surface()?;
+        surface
+            .conn
+            .execute("INSERT INTO search_fts (search_fts) VALUES ('optimize')", ())
             .await?;
         Ok(())
     }
@@ -715,26 +758,27 @@ impl IndexStore {
     /// Full-text seed search: fragment ids with BM25 scores, best first.
     pub async fn search_fts(&self, query: &str, k: usize) -> Result<Vec<(i64, f32)>, StoreError> {
         self.refuse_while_reembed_pending()?;
-        let cleaned = sanitize_fts_query(query);
-        let table = self.table()?;
-        if cleaned.is_empty() || table.count_rows(None).await? == 0 {
+        let surface = self.surface()?;
+        let matcher = fts_match_expression(query);
+        if matcher.is_empty() {
             return Ok(Vec::new());
         }
-        let fts = FullTextSearchQuery::new(cleaned)
-            .with_column("text".to_string())
-            .map_err(lancedb::Error::from)?;
-        let batches: Vec<RecordBatch> = table
-            .query()
-            .full_text_search(fts)
-            .limit(k)
-            .execute()
-            .await?
-            .try_collect()
+        let rows = surface
+            .conn
+            .query(
+                "SELECT rowid, bm25(search_fts) FROM search_fts
+                 WHERE search_fts MATCH ?1 ORDER BY bm25(search_fts) LIMIT ?2",
+                libsql::params![matcher, bounded_limit(k)],
+            )
             .await?;
-        collect_scored(&batches, "_score")
+        // FTS5's bm25() is lower-is-better and negative; negate so callers
+        // get the same higher-is-better score shape BM25 seeds always had.
+        collect_scored(rows, |raw| -raw).await
     }
 
     /// Vector seed search: fragment ids with cosine distances, best first.
+    /// An exact scan by design — see `design/runtime.md` for when DiskANN
+    /// (`libsql_vector_idx`) earns its place.
     pub async fn search_vector(
         &self,
         vector: &[f32],
@@ -742,25 +786,32 @@ impl IndexStore {
     ) -> Result<Vec<(i64, f32)>, StoreError> {
         self.refuse_while_reembed_pending()?;
         let surface = self.surface()?;
-        let table = surface.table.clone();
-        if surface.dims == 0 || table.count_rows(None).await? == 0 {
+        if surface.dims == 0 {
             return Ok(Vec::new());
         }
-        let batches: Vec<RecordBatch> = table
-            .query()
-            .nearest_to(vector)?
-            .column("vector")
-            .distance_type(DistanceType::Cosine)
-            .limit(k)
-            .execute()
-            .await?
-            .try_collect()
+        assert_eq!(vector.len(), surface.dims, "query vector matches declared dims");
+        let rows = surface
+            .conn
+            .query(
+                "SELECT id, vector_distance_cos(vector, ?1) AS distance FROM search_rows
+                 WHERE vector IS NOT NULL ORDER BY distance LIMIT ?2",
+                libsql::params![libsql::Value::Blob(vector_blob(vector)), bounded_limit(k)],
+            )
             .await?;
-        collect_scored(&batches, "_distance")
+        collect_scored(rows, |raw| raw).await
     }
 
     pub async fn search_rows_count(&self) -> Result<usize, StoreError> {
-        Ok(self.table()?.count_rows(None).await?)
+        let surface = self.surface()?;
+        let mut rows = surface
+            .conn
+            .query("SELECT COUNT(*) FROM search_rows", ())
+            .await?;
+        let row = rows.next().await?.ok_or_else(|| {
+            StoreError::Corrupt(0, "COUNT(*) returned no row".into())
+        })?;
+        let count: i64 = row.get(0)?;
+        Ok(usize::try_from(count).expect("row counts are non-negative"))
     }
 
     // ------------------------------------------------------------------
@@ -796,23 +847,25 @@ impl IndexStore {
     /// Every text-bearing fragment, for re-populating the search table from
     /// the catalog: `(fragment, source, text)`. Exactly the rows the indexer
     /// would have buffered when it built each subtree.
-    pub fn reembed_targets(
+    pub async fn reembed_targets(
         &self,
     ) -> Result<Vec<(FragmentId, Option<SourceId>, String)>, StoreError> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT id, source, text FROM fragments WHERE text IS NOT NULL AND TRIM(text) != ''",
-        )?;
-        let rows = stmt
-            .query_map([], |r| {
-                Ok((
-                    FragmentId(r.get(0)?),
-                    r.get::<_, Option<i64>>(1)?.map(SourceId),
-                    r.get::<_, String>(2)?,
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+        let mut rows = self
+            .catalog
+            .query(
+                "SELECT id, source, text FROM fragments WHERE text IS NOT NULL AND TRIM(text) != ''",
+                (),
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push((
+                FragmentId(row.get(0)?),
+                row.get::<Option<i64>>(1)?.map(SourceId),
+                row.get::<String>(2)?,
+            ));
+        }
+        Ok(out)
     }
 
     /// Recreate the search table empty under the declared identity's
@@ -820,21 +873,19 @@ impl IndexStore {
     /// refusing until [`Self::finish_reembed`].
     pub async fn begin_reembed(&self) -> Result<(), StoreError> {
         let surface = self.surface()?;
-        match surface.conn.drop_table(LANCE_TABLE, &[]).await {
-            Ok(()) | Err(lancedb::Error::TableNotFound { .. }) => {}
-            Err(e) => return Err(e.into()),
-        }
-        let table = surface
+        surface
             .conn
-            .create_empty_table(LANCE_TABLE, lance_schema(surface.dims))
-            .execute()
+            .execute_batch(
+                "DROP TRIGGER IF EXISTS search_rows_after_insert;
+                 DROP TRIGGER IF EXISTS search_rows_after_delete;
+                 DROP TABLE IF EXISTS search_fts;
+                 DROP TABLE IF EXISTS search_rows;",
+            )
             .await?;
-        *self.surface.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(SearchSurface {
-            conn: surface.conn.clone(),
-            table,
-            dims: surface.dims,
-            model: surface.model.clone(),
-        }));
+        surface
+            .conn
+            .execute_batch(&search_schema_sql(surface.dims))
+            .await?;
         Ok(())
     }
 
@@ -842,9 +893,9 @@ impl IndexStore {
     /// with and lift the search refusal. Interrupted migrations never reach
     /// this, so the next declaration detects the mismatch again and redoes
     /// the pass.
-    pub fn finish_reembed(&self) -> Result<(), StoreError> {
+    pub async fn finish_reembed(&self) -> Result<(), StoreError> {
         let (model, dims) = self.embedding_identity().ok_or(StoreError::NoSearchSurface)?;
-        set_embedding_meta(&self.conn(), dims, &model)?;
+        set_embedding_meta(&self.catalog, dims, &model).await?;
         *self.reembed_from.lock().unwrap_or_else(|e| e.into_inner()) = None;
         Ok(())
     }
@@ -854,52 +905,63 @@ impl IndexStore {
     // mismatch, never migrated)
     // ------------------------------------------------------------------
 
-    pub(crate) fn state_open_namespace(&self, ns: &str, version: &str) -> Result<(), StoreError> {
-        let conn = self.conn();
-        let stored: Option<String> = conn
-            .query_row(
+    pub(crate) async fn state_open_namespace(
+        &self,
+        ns: &str,
+        version: &str,
+    ) -> Result<(), StoreError> {
+        let stored = self
+            .first_row(
                 "SELECT version FROM plugin_state_meta WHERE namespace = ?1",
                 params![ns],
-                |r| r.get(0),
             )
-            .optional()?;
+            .await?
+            .map(|row| row.get::<String>(0))
+            .transpose()?;
         if stored.as_deref() != Some(version) {
             if stored.is_some() {
                 tracing::info!(namespace = ns, "plugin state version changed; discarding");
             }
-            conn.execute("DELETE FROM plugin_state WHERE namespace = ?1", params![ns])?;
-            conn.execute(
-                "INSERT OR REPLACE INTO plugin_state_meta (namespace, version) VALUES (?1, ?2)",
-                params![ns, version],
-            )?;
+            self.catalog
+                .execute("DELETE FROM plugin_state WHERE namespace = ?1", params![ns])
+                .await?;
+            self.catalog
+                .execute(
+                    "INSERT OR REPLACE INTO plugin_state_meta (namespace, version) VALUES (?1, ?2)",
+                    params![ns, version],
+                )
+                .await?;
         }
         Ok(())
     }
 
-    pub(crate) fn state_get(&self, ns: &str, key: &str) -> Result<Option<String>, StoreError> {
-        self.conn()
-            .query_row(
-                "SELECT value FROM plugin_state WHERE namespace = ?1 AND key = ?2",
-                params![ns, key],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(StoreError::from)
+    pub(crate) async fn state_get(&self, ns: &str, key: &str) -> Result<Option<String>, StoreError> {
+        self.first_row(
+            "SELECT value FROM plugin_state WHERE namespace = ?1 AND key = ?2",
+            params![ns, key],
+        )
+        .await?
+        .map(|row| row.get::<String>(0).map_err(StoreError::from))
+        .transpose()
     }
 
-    pub(crate) fn state_put(&self, ns: &str, key: &str, value: &str) -> Result<(), StoreError> {
-        self.conn().execute(
-            "INSERT OR REPLACE INTO plugin_state (namespace, key, value) VALUES (?1, ?2, ?3)",
-            params![ns, key, value],
-        )?;
+    pub(crate) async fn state_put(&self, ns: &str, key: &str, value: &str) -> Result<(), StoreError> {
+        self.catalog
+            .execute(
+                "INSERT OR REPLACE INTO plugin_state (namespace, key, value) VALUES (?1, ?2, ?3)",
+                params![ns, key, value],
+            )
+            .await?;
         Ok(())
     }
 
-    pub(crate) fn state_delete(&self, ns: &str, key: &str) -> Result<(), StoreError> {
-        self.conn().execute(
-            "DELETE FROM plugin_state WHERE namespace = ?1 AND key = ?2",
-            params![ns, key],
-        )?;
+    pub(crate) async fn state_delete(&self, ns: &str, key: &str) -> Result<(), StoreError> {
+        self.catalog
+            .execute(
+                "DELETE FROM plugin_state WHERE namespace = ?1 AND key = ?2",
+                params![ns, key],
+            )
+            .await?;
         Ok(())
     }
 }
@@ -916,15 +978,18 @@ impl std::fmt::Debug for IndexStore {
 /// than the current one drops every table and recreates them: the catalog is
 /// re-derived by the next sweep's enumeration and everything else is derived
 /// data by design (`design/kernel.md`).
-fn converge_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
-    let stored: Option<String> = conn
-        .query_row(
-            "SELECT value FROM meta WHERE key = 'schema_version'",
-            [],
-            |r| r.get(0),
-        )
-        .optional()
-        .unwrap_or(None);
+async fn converge_schema(conn: &libsql::Connection) -> Result<(), StoreError> {
+    let stored: Option<String> = match conn
+        .query("SELECT value FROM meta WHERE key = 'schema_version'", ())
+        .await
+    {
+        Ok(mut rows) => match rows.next().await {
+            Ok(Some(row)) => row.get(0).ok(),
+            _ => None,
+        },
+        // A fresh database has no meta table yet; that is the None case.
+        Err(_) => None,
+    };
     if stored.as_deref().is_some_and(|v| v != SCHEMA_VERSION) {
         tracing::warn!(
             from = stored.as_deref().unwrap_or("?"),
@@ -939,7 +1004,8 @@ fn converge_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
              DROP TABLE IF EXISTS plugin_state;
              DROP TABLE IF EXISTS plugin_state_meta;
              DROP TABLE IF EXISTS meta;",
-        )?;
+        )
+        .await?;
     }
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS meta (
@@ -997,103 +1063,140 @@ fn converge_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
            value TEXT NOT NULL,
            PRIMARY KEY (namespace, key)
          ) WITHOUT ROWID;",
-    )?;
+    )
+    .await?;
     conn.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
         params![SCHEMA_VERSION],
-    )?;
+    )
+    .await?;
     Ok(())
 }
 
 /// The embedding identity the index was built with, if one is recorded.
-fn read_embedding_meta(conn: &Connection) -> Result<Option<(String, usize)>, StoreError> {
-    let stored: Option<(String, String)> = conn
-        .query_row(
+async fn read_embedding_meta(
+    conn: &libsql::Connection,
+) -> Result<Option<(String, usize)>, StoreError> {
+    let mut rows = conn
+        .query(
             "SELECT
                (SELECT value FROM meta WHERE key = 'embedding_model'),
                (SELECT value FROM meta WHERE key = 'embedding_dims')",
-            [],
-            |r| {
-                Ok(match (r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?) {
-                    (Some(m), Some(d)) => Some((m, d)),
-                    _ => None,
-                })
-            },
+            (),
         )
-        .optional()?
-        .flatten();
-    Ok(stored.map(|(model, dims)| {
-        let dims: usize = dims.parse().unwrap_or(0);
-        (model, dims)
-    }))
+        .await?;
+    let Some(row) = rows.next().await? else {
+        return Ok(None);
+    };
+    let model: Option<String> = row.get(0)?;
+    let dims: Option<String> = row.get(1)?;
+    match (model, dims) {
+        (Some(model), Some(dims)) => Ok(Some((model, dims.parse().unwrap_or(0)))),
+        _ => Ok(None),
+    }
 }
 
-fn set_embedding_meta(conn: &Connection, dims: usize, model: &str) -> Result<(), StoreError> {
+async fn set_embedding_meta(
+    conn: &libsql::Connection,
+    dims: usize,
+    model: &str,
+) -> Result<(), StoreError> {
     conn.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('embedding_model', ?1)",
         params![model],
-    )?;
+    )
+    .await?;
     conn.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('embedding_dims', ?1)",
         params![dims.to_string()],
-    )?;
+    )
+    .await?;
     Ok(())
 }
 
-fn lance_schema(dims: usize) -> SchemaRef {
-    let mut fields = vec![
-        Field::new("id", DataType::Int64, false),
-        Field::new("source", DataType::Int64, true),
-        Field::new("text", DataType::Utf8, false),
-    ];
-    if dims > 0 {
-        fields.push(Field::new(
-            "vector",
-            DataType::FixedSizeList(
-                Arc::new(Field::new("item", DataType::Float32, true)),
-                dims as i32,
-            ),
-            true,
-        ));
-    }
-    Arc::new(Schema::new(fields))
+/// The search database schema. The FTS5 table is external-content over
+/// `search_rows`, kept in sync by triggers so inserts and deletes never
+/// leave the two out of step — the pair to `rebuild_fts` only compacting.
+/// The vector column exists only under an embedding identity with dims;
+/// at zero dims the surface is FTS-only.
+fn search_schema_sql(dims: usize) -> String {
+    let vector_column = if dims > 0 {
+        format!(",\n           vector F32_BLOB({dims})")
+    } else {
+        String::new()
+    };
+    format!(
+        "CREATE TABLE IF NOT EXISTS search_rows (
+           id INTEGER PRIMARY KEY,
+           source INTEGER,
+           text TEXT NOT NULL{vector_column}
+         );
+         CREATE VIRTUAL TABLE IF NOT EXISTS search_fts
+           USING fts5(text, content='search_rows', content_rowid='id');
+         CREATE TRIGGER IF NOT EXISTS search_rows_after_insert
+           AFTER INSERT ON search_rows BEGIN
+             INSERT INTO search_fts (rowid, text) VALUES (new.id, new.text);
+           END;
+         CREATE TRIGGER IF NOT EXISTS search_rows_after_delete
+           AFTER DELETE ON search_rows BEGIN
+             INSERT INTO search_fts (search_fts, rowid, text)
+               VALUES ('delete', old.id, old.text);
+           END;"
+    )
 }
 
-fn collect_scored(batches: &[RecordBatch], score_column: &str) -> Result<Vec<(i64, f32)>, StoreError> {
+/// An embedding as SQLite stores it: the raw little-endian `f32` bytes an
+/// `F32_BLOB` column holds and the vector functions read.
+fn vector_blob(vector: &[f32]) -> Vec<u8> {
+    vector.iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+
+/// A caller's `k` as a LIMIT parameter. Seed searches ask for tens of rows;
+/// anything that does not fit an `i64` is a programmer error.
+fn bounded_limit(k: usize) -> i64 {
+    i64::try_from(k).expect("search limits fit in i64")
+}
+
+/// Drain `(id, score)` rows, applying `shape` to the raw SQL double so both
+/// search paths hand back the same higher-is-better / lower-is-better shapes
+/// they always had.
+async fn collect_scored(
+    mut rows: libsql::Rows,
+    shape: fn(f64) -> f64,
+) -> Result<Vec<(i64, f32)>, StoreError> {
     let mut out = Vec::new();
-    for batch in batches {
-        let ids = batch
-            .column_by_name("id")
-            .and_then(|c| c.as_any().downcast_ref::<Int64Array>())
-            .ok_or_else(|| StoreError::Corrupt(0, "lance batch missing id column".into()))?;
-        let scores = batch
-            .column_by_name(score_column)
-            .and_then(|c| c.as_any().downcast_ref::<arrow_array::Float32Array>())
-            .ok_or_else(|| {
-                StoreError::Corrupt(0, format!("lance batch missing {score_column} column"))
-            })?;
-        for i in 0..batch.num_rows() {
-            out.push((ids.value(i), scores.value(i)));
-        }
+    while let Some(row) = rows.next().await? {
+        let id: i64 = row.get(0)?;
+        let raw: f64 = row.get(1)?;
+        // Scores narrow to f32 at the API boundary, as they always have;
+        // callers only consume rank order and coarse magnitudes.
+        #[expect(clippy::cast_possible_truncation, reason = "deliberate score narrowing")]
+        out.push((id, shape(raw) as f32));
     }
     Ok(out)
 }
 
-/// Keep letters, digits and spaces: the seed query goes to a match query, and
-/// tantivy syntax characters in user text would otherwise error or skew it.
-fn sanitize_fts_query(q: &str) -> String {
+/// User text into an FTS5 MATCH expression. Keep letters, digits and spaces
+/// — FTS5 syntax characters in user text would otherwise error or skew the
+/// query — then quote each token (so bare AND/OR/NOT stay terms) and join
+/// with OR: seeds want recall, and RRF fusion downweights weak matches.
+fn fts_match_expression(q: &str) -> String {
     let cleaned: String = q
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { ' ' })
         .collect();
-    cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
+    cleaned
+        .split_whitespace()
+        .map(|token| format!("\"{token}\""))
+        .collect::<Vec<_>>()
+        .join(" OR ")
 }
 
 const SOURCE_COLUMNS: &str =
     "id, host, locator, source_type, content_type, len_unit, len, created, modified, observed, \
      hint, properties, root_fragment";
 
-fn row_to_source(r: &rusqlite::Row<'_>) -> rusqlite::Result<StoredSource> {
+fn row_to_source(r: &libsql::Row) -> Result<StoredSource, StoreError> {
     let id: i64 = r.get(0)?;
     let host: String = r.get(1)?;
     let locator: String = r.get(2)?;
@@ -1105,9 +1208,10 @@ fn row_to_source(r: &rusqlite::Row<'_>) -> rusqlite::Result<StoredSource> {
         HostId::new(host).map_err(|e| corrupt(id, e))?,
         Locator::new(locator).map_err(|e| corrupt(id, e))?,
     );
+    let len = u64::try_from(len).unwrap_or(0);
     let length = match len_unit.as_str() {
-        "lines" => ContentLength::Lines(len as u64),
-        _ => ContentLength::Bytes(len as u64),
+        "lines" => ContentLength::Lines(len),
+        _ => ContentLength::Bytes(len),
     };
     Ok(StoredSource {
         id: SourceId(id),
@@ -1116,53 +1220,48 @@ fn row_to_source(r: &rusqlite::Row<'_>) -> rusqlite::Result<StoredSource> {
             source_type: r.get(3)?,
             content_type: Mimetype::parse(&content_type).map_err(|e| corrupt(id, e))?,
             length,
-            created: r.get::<_, Option<i64>>(7)?.map(Timestamp),
-            modified: r.get::<_, Option<i64>>(8)?.map(Timestamp),
+            created: r.get::<Option<i64>>(7)?.map(Timestamp),
+            modified: r.get::<Option<i64>>(8)?.map(Timestamp),
             observed: Timestamp(r.get(9)?),
             hint: r.get(10)?,
             properties: serde_json::from_str::<Vec<Property>>(&properties)
                 .map_err(|e| corrupt(id, e))?,
         },
-        root_fragment: r.get::<_, Option<i64>>(12)?.map(FragmentId),
+        root_fragment: r.get::<Option<i64>>(12)?.map(FragmentId),
     })
 }
 
 const FRAGMENT_COLUMNS: &str = "id, source, mimetype, text, extent_unit, extent_start, extent_end";
 
-fn row_to_fragment(r: &rusqlite::Row<'_>) -> rusqlite::Result<StoredFragment> {
+fn row_to_fragment(r: &libsql::Row) -> Result<StoredFragment, StoreError> {
     let id: i64 = r.get(0)?;
     let mimetype: String = r.get(2)?;
     let extent = match (
-        r.get::<_, Option<String>>(4)?,
-        r.get::<_, Option<i64>>(5)?,
-        r.get::<_, Option<i64>>(6)?,
+        r.get::<Option<String>>(4)?,
+        r.get::<Option<i64>>(5)?,
+        r.get::<Option<i64>>(6)?,
     ) {
-        (Some(unit), Some(start), Some(end)) => Some(match unit.as_str() {
-            "lines" => Extent::Lines {
-                start: start as u64,
-                end: end as u64,
-            },
-            "millis" => Extent::Millis {
-                start: start as u64,
-                end: end as u64,
-            },
-            _ => Extent::Bytes {
-                start: start as u64,
-                end: end as u64,
-            },
-        }),
+        (Some(unit), Some(start), Some(end)) => {
+            let start = u64::try_from(start).unwrap_or(0);
+            let end = u64::try_from(end).unwrap_or(0);
+            Some(match unit.as_str() {
+                "lines" => Extent::Lines { start, end },
+                "millis" => Extent::Millis { start, end },
+                _ => Extent::Bytes { start, end },
+            })
+        }
         _ => None,
     };
     Ok(StoredFragment {
         id: FragmentId(id),
-        source: r.get::<_, Option<i64>>(1)?.map(SourceId),
+        source: r.get::<Option<i64>>(1)?.map(SourceId),
         mimetype: Mimetype::parse(&mimetype).map_err(|e| corrupt(id, e))?,
         text: r.get(3)?,
         extent,
     })
 }
 
-fn row_to_relation(r: &rusqlite::Row<'_>) -> rusqlite::Result<Relation> {
+fn row_to_relation(r: &libsql::Row) -> Result<Relation, StoreError> {
     let from: i64 = r.get(0)?;
     let kind: String = r.get(1)?;
     let to: i64 = r.get(2)?;
@@ -1173,12 +1272,8 @@ fn row_to_relation(r: &rusqlite::Row<'_>) -> rusqlite::Result<Relation> {
     })
 }
 
-fn corrupt(id: i64, err: impl std::fmt::Display) -> rusqlite::Error {
-    rusqlite::Error::FromSqlConversionFailure(
-        id as usize,
-        rusqlite::types::Type::Text,
-        format!("{err}").into(),
-    )
+fn corrupt(id: i64, err: impl std::fmt::Display) -> StoreError {
+    StoreError::Corrupt(id, format!("{err}"))
 }
 
 fn extent_columns(extent: Option<Extent>) -> (Option<&'static str>, Option<i64>, Option<i64>) {
@@ -1226,10 +1321,13 @@ mod tests {
         let a = addr("inseam://fs-test/tmp/note.md");
         let env = envelope(100, 10);
 
-        assert!(s.index_meta(&a).expect("ok").is_none(), "unknown source");
-        let sid = s.upsert_source(&a, &env, 10).expect("upserts");
+        assert!(
+            s.index_meta(&a).await.expect("ok").is_none(),
+            "unknown source"
+        );
+        let sid = s.upsert_source(&a, &env, 10).await.expect("upserts");
         // Not yet marked indexed: an interrupted run must read as dirty.
-        let meta = s.index_meta(&a).expect("ok").expect("present");
+        let meta = s.index_meta(&a).await.expect("ok").expect("present");
         assert!(!meta.indexed);
         assert_eq!(meta.raw_bytes, 10);
 
@@ -1243,20 +1341,22 @@ mod tests {
                 is_root: false,
             },
         ];
-        s.mark_indexed(sid, Some(("stamp-a", &inventory))).expect("marks");
-        let meta = s.index_meta(&a).expect("ok").expect("present");
+        s.mark_indexed(sid, Some(("stamp-a", &inventory)))
+            .await
+            .expect("marks");
+        let meta = s.index_meta(&a).await.expect("ok").expect("present");
         assert!(meta.indexed);
         assert_eq!(meta.modified, env.modified);
         assert_eq!(meta.shape_stamp.as_deref(), Some("stamp-a"));
         assert_eq!(meta.mimetypes, inventory);
 
         // Catalog-only rows carry no stamp or inventory.
-        s.mark_indexed(sid, None).expect("marks catalog-only");
-        let meta = s.index_meta(&a).expect("ok").expect("present");
+        s.mark_indexed(sid, None).await.expect("marks catalog-only");
+        let meta = s.index_meta(&a).await.expect("ok").expect("present");
         assert_eq!(meta.shape_stamp, None);
         assert!(meta.mimetypes.is_empty());
 
-        let stored = s.source_by_address(&a).expect("ok").expect("present");
+        let stored = s.source_by_address(&a).await.expect("ok").expect("present");
         assert_eq!(stored.id, sid);
         assert_eq!(stored.envelope.hint.as_deref(), Some("note.md"));
     }
@@ -1266,7 +1366,10 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let s = store(dir.path()).await;
         let a = addr("inseam://fs-test/tmp/note.md");
-        let sid = s.upsert_source(&a, &envelope(1, 10), 10).expect("upserts");
+        let sid = s
+            .upsert_source(&a, &envelope(1, 10), 10)
+            .await
+            .expect("upserts");
 
         let root = s
             .insert_fragment(
@@ -1277,8 +1380,9 @@ mod tests {
                     extent: Some(Extent::lines(1, 10)),
                 },
             )
+            .await
             .expect("inserts");
-        s.set_root_fragment(sid, root).expect("sets root");
+        s.set_root_fragment(sid, root).await.expect("sets root");
         let section = s
             .insert_fragment(
                 Some(sid),
@@ -1288,6 +1392,7 @@ mod tests {
                     extent: Some(Extent::lines(1, 2)),
                 },
             )
+            .await
             .expect("inserts");
         let summary = s
             .insert_fragment(
@@ -1298,29 +1403,32 @@ mod tests {
                     extent: None,
                 },
             )
+            .await
             .expect("inserts");
         s.insert_relation(&RelationKind::Contains.edge(root, section))
+            .await
             .expect("relates");
         s.insert_relation(&RelationKind::DerivedFrom.edge(root, summary))
+            .await
             .expect("relates");
 
         assert_eq!(
-            s.summary_of(sid).expect("ok").as_deref(),
+            s.summary_of(sid).await.expect("ok").as_deref(),
             Some("Notes about the kitchen budget.")
         );
-        let frags = s.fragments_of(sid).expect("ok");
+        let frags = s.fragments_of(sid).await.expect("ok");
         assert_eq!(frags.len(), 3);
         assert_eq!(frags[1].text.as_deref(), Some("# Kitchen\nbudget notes"));
         assert_eq!(frags[1].extent, Some(Extent::lines(1, 2)));
 
-        let rels = s.relations_touching(&[section]).expect("ok");
+        let rels = s.relations_touching(&[section]).await.expect("ok");
         assert_eq!(rels.len(), 1);
         assert_eq!(rels[0].kind, RelationKind::Contains);
 
         // Deleting the source's fragments cascades relations and reports ids.
-        let dropped = s.delete_fragments_of(sid).expect("deletes");
+        let dropped = s.delete_fragments_of(sid).await.expect("deletes");
         assert_eq!(dropped.len(), 3);
-        assert!(s.all_relations().expect("ok").is_empty());
+        assert!(s.all_relations().await.expect("ok").is_empty());
     }
 
     #[tokio::test]
@@ -1430,7 +1538,7 @@ mod tests {
         }])
         .await
         .expect("adds under new dims");
-        s.finish_reembed().expect("records the new config");
+        s.finish_reembed().await.expect("records the new config");
         s.rebuild_fts().await.expect("indexes");
         assert!(!s.reembed_pending());
         let hits = s.search_fts("kitchen", 5).await.expect("searches again");
@@ -1465,7 +1573,10 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let s = store(dir.path()).await;
         let a = addr("inseam://fs-test/tmp/note.md");
-        let sid = s.upsert_source(&a, &envelope(1, 10), 10).expect("upserts");
+        let sid = s
+            .upsert_source(&a, &envelope(1, 10), 10)
+            .await
+            .expect("upserts");
         let root = s
             .insert_fragment(
                 Some(sid),
@@ -1475,8 +1586,9 @@ mod tests {
                     extent: None,
                 },
             )
+            .await
             .expect("inserts");
-        let entity = |name: &str| {
+        async fn entity(s: &IndexStore, name: &str) -> FragmentId {
             s.insert_fragment(
                 None,
                 &NewFragment {
@@ -1485,26 +1597,35 @@ mod tests {
                     extent: None,
                 },
             )
+            .await
             .expect("inserts")
-        };
-        let mentioned = entity("Greg");
-        let orphan = entity("Nobody");
-        s.register_entity("person:greg", mentioned).expect("registers");
-        s.register_entity("person:nobody", orphan).expect("registers");
+        }
+        let mentioned = entity(&s, "Greg").await;
+        let orphan = entity(&s, "Nobody").await;
+        s.register_entity("person:greg", mentioned)
+            .await
+            .expect("registers");
+        s.register_entity("person:nobody", orphan)
+            .await
+            .expect("registers");
         s.insert_relation(&RelationKind::Mentions.edge(root, mentioned))
+            .await
             .expect("relates");
 
-        let dropped = s.gc_entities().expect("gcs");
+        let dropped = s.gc_entities().await.expect("gcs");
         assert_eq!(dropped, vec![orphan.0]);
-        assert!(s.fragment(mentioned).expect("ok").is_some());
-        assert!(s.fragment(orphan).expect("ok").is_none());
+        assert!(s.fragment(mentioned).await.expect("ok").is_some());
+        assert!(s.fragment(orphan).await.expect("ok").is_none());
         // The registry row cascaded with the fragment.
-        assert_eq!(s.entity_fragment("person:nobody").expect("ok"), None);
-        assert_eq!(s.entity_fragment("person:greg").expect("ok"), Some(mentioned));
+        assert_eq!(s.entity_fragment("person:nobody").await.expect("ok"), None);
+        assert_eq!(
+            s.entity_fragment("person:greg").await.expect("ok"),
+            Some(mentioned)
+        );
 
         // Deleting the source orphans the survivor; the next GC takes it.
-        s.delete_fragments_of(sid).expect("deletes");
-        let dropped = s.gc_entities().expect("gcs");
+        s.delete_fragments_of(sid).await.expect("deletes");
+        let dropped = s.gc_entities().await.expect("gcs");
         assert_eq!(dropped, vec![mentioned.0]);
     }
 
@@ -1521,14 +1642,15 @@ mod tests {
                     extent: None,
                 },
             )
+            .await
             .expect("inserts");
-        s.register_entity("person:greg hunt", e).expect("registers");
+        s.register_entity("person:greg hunt", e).await.expect("registers");
         assert_eq!(
-            s.entity_fragment("person:greg hunt").expect("ok"),
+            s.entity_fragment("person:greg hunt").await.expect("ok"),
             Some(e)
         );
-        assert_eq!(s.entity_fragment("person:unknown").expect("ok"), None);
-        let f = s.fragment(e).expect("ok").expect("present");
+        assert_eq!(s.entity_fragment("person:unknown").await.expect("ok"), None);
+        let f = s.fragment(e).await.expect("ok").expect("present");
         assert!(f.source.is_none());
         assert_eq!(f.mimetype.param("kind"), Some("person"));
     }

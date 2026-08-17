@@ -1,8 +1,8 @@
 # Index Storage
 
-Two layers under the node's data dir, owned entirely by the kernel ([../architecture/kernel.md](../architecture/kernel.md)) — no plugin ever changes the schema, and there are no data migrations anywhere: a schema-version bump drops and recreates the tables, and the next sweep rebuilds them from the source listing.
+Two databases under the node's data dir, both libSQL, owned entirely by the kernel ([../architecture/kernel.md](../architecture/kernel.md)) — no plugin ever changes the schema, and there are no data migrations anywhere: a schema-version bump drops and recreates the tables, and the next sweep rebuilds them from the source listing.
 
-## SQLite: source of truth (`catalog.sqlite3`)
+## Catalog: source of truth (`catalog.sqlite3`)
 
 - `sources` — the catalog: address (host + locator), envelope columns, `raw_bytes` for change detection, `root_fragment`, an `indexed` flag, and the two shape records ([maintenance.md](maintenance.md)): `shape_stamp` (fingerprint of the transforms that built it) and `mimetypes` (the subtree's mimetype inventory). Both NULL for catalog-only rows.
 - `fragments` — the graph's vertices: mimetype, text, extent. `source` is NULL only for entity fragments, which are shared across the whole index.
@@ -11,11 +11,11 @@ Two layers under the node's data dir, owned entirely by the kernel ([../architec
 - `plugin_state` / `plugin_state_meta` — the kernel's `state` service: per-plugin namespaced key-value, declared with a version; a version mismatch discards the namespace (the wasm host keeps its release-cooldown first-seen clocks here).
 - `meta` — schema version (3) plus the embedding identity the index was built with.
 
-## LanceDB: derived search tables (`lance/`)
+## Search: derived search surface (`search.sqlite3`)
 
-The search surface is tied to whichever embedder is mounted: when the embedder plugin starts, it declares its identity (`model`, `dimensions`) and the Lance table opens under it; with no embedder mounted, searches refuse with instructions. If the declared identity differs from the recorded one, an **in-place re-embed** is queued — vectors rebuilt from the SQLite text, graph untouched.
+The search surface is tied to whichever embedder is mounted: when the embedder plugin starts, it declares its identity (`model`, `dimensions`) and the search database opens under it; with no embedder mounted, searches refuse with instructions. If the declared identity differs from the recorded one, an **in-place re-embed** is queued — vectors rebuilt from the catalog's text, graph untouched.
 
-One `fragments` table holds every text-bearing fragment: `id`, `source`, `text`, and a nullable `vector` column (omitted at 0 dimensions). Two search paths: full-text (tantivy-backed FTS, rebuilt after every index run) and vector nearest-k by cosine distance. Lance rows are purely derived: delete `lance/`, run `inseam index <dir> --rebuild`, and they come back.
+One `search_rows` table holds every text-bearing fragment: `id`, `source`, `text`, and a vector column (`F32_BLOB`, omitted at 0 dimensions). Two search paths: full-text (FTS5, kept in sync by triggers and ranked by BM25) and vector nearest-k by cosine distance (`vector_distance_cos`, an exact scan). Search rows are purely derived: delete `search.sqlite3`, run `inseam index <dir> --rebuild`, and they come back.
 
 ## Idempotency and change detection
 

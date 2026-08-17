@@ -46,14 +46,14 @@ async fn vanished_sources_are_removed_and_their_entities_collected() {
         .expect("connection declares its host")
         .to_string();
     let host_id = inseam_kernel::address::HostId::new(host).expect("valid");
-    let sources = store.sources_of_host(&host_id).expect("ok");
+    let sources = store.sources_of_host(&host_id).await.expect("ok");
     let (doomed_sid, _) = sources
         .iter()
         .find(|(_, locator)| locator.ends_with("doomed.md"))
         .cloned()
         .expect("doomed source cataloged");
     let root = store
-        .source(doomed_sid)
+        .source(doomed_sid).await
         .expect("ok")
         .expect("present")
         .root_fragment
@@ -66,13 +66,13 @@ async fn vanished_sources_are_removed_and_their_entities_collected() {
                 text: Some("Xylophone".into()),
                 extent: None,
             },
-        )
+        ).await
         .expect("inserts");
     store
-        .register_entity("instrument:xylophone", entity)
+        .register_entity("instrument:xylophone", entity).await
         .expect("registers");
     store
-        .insert_relation(&RelationKind::Mentions.edge(root, entity))
+        .insert_relation(&RelationKind::Mentions.edge(root, entity)).await
         .expect("relates");
 
     std::fs::remove_file(&doomed).expect("removes");

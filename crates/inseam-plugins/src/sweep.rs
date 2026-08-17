@@ -196,7 +196,7 @@ impl Sweep for SweepService {
         let mut pending: Vec<PendingRow> = Vec::new();
 
         for source in &sources {
-            let meta = self.store.index_meta(&source.address)?;
+            let meta = self.store.index_meta(&source.address).await?;
             let dirty = match &meta {
                 None => true,
                 Some(m) => {
@@ -222,7 +222,7 @@ impl Sweep for SweepService {
                 // evicts what a looser scope already built.
                 if meta.is_none() {
                     self.store
-                        .upsert_source(&source.address, &source.envelope, source.raw_bytes)?;
+                        .upsert_source(&source.address, &source.envelope, source.raw_bytes).await?;
                 }
                 report.skipped_cutoff += 1;
                 continue;
@@ -238,8 +238,8 @@ impl Sweep for SweepService {
                 // dirty and is deep-indexed once a later run has budget.
                 let sid = self
                     .store
-                    .upsert_source(&source.address, &source.envelope, source.raw_bytes)?;
-                self.store.mark_indexed(sid, None)?;
+                    .upsert_source(&source.address, &source.envelope, source.raw_bytes).await?;
+                self.store.mark_indexed(sid, None).await?;
                 report.catalog_only += 1;
                 continue;
             }
@@ -261,7 +261,7 @@ impl Sweep for SweepService {
         self.flush(&mut pending, &mut report).await?;
         self.reconcile_vanished(&request.root, &sources, &mut report)
             .await?;
-        let orphaned = self.store.gc_entities()?;
+        let orphaned = self.store.gc_entities().await?;
         self.store.delete_search_rows(&orphaned).await?;
         report.entities_removed = orphaned.len();
         self.store.rebuild_fts().await?;
@@ -346,8 +346,8 @@ impl SweepService {
 
         let sid = self
             .store
-            .upsert_source(&source.address, &envelope, source.raw_bytes)?;
-        let old = self.store.delete_fragments_of(sid)?;
+            .upsert_source(&source.address, &envelope, source.raw_bytes).await?;
+        let old = self.store.delete_fragments_of(sid).await?;
         self.store.delete_search_rows(&old).await?;
 
         let root_extent = match envelope.length {
@@ -361,8 +361,8 @@ impl SweepService {
                 text: None,
                 extent: Some(root_extent),
             },
-        )?;
-        self.store.set_root_fragment(sid, root)?;
+        ).await?;
+        self.store.set_root_fragment(sid, root).await?;
         report.fragments += 1;
 
         let mut fragment_budget = self.config.max_fragments_per_source;
@@ -459,17 +459,18 @@ impl SweepService {
                     &mut queue,
                     &mut inventory,
                     &mut inventory_seen,
-                )?;
+                ).await?;
                 entities.extend(out.entities);
             }
         }
 
         if !entities.is_empty() {
-            self.wire_entities(root, entities, &texted, report, pending)?;
+            self.wire_entities(root, entities, &texted, report, pending)
+                .await?;
         }
 
         let stamp = expected_stamp(registrations, &inventory, sweep_shape);
-        self.store.mark_indexed(sid, Some((&stamp, &inventory)))?;
+        self.store.mark_indexed(sid, Some((&stamp, &inventory))).await?;
         tracing::debug!(address = %source.address, "indexed");
         Ok(())
     }
@@ -478,7 +479,7 @@ impl SweepService {
     /// fragments for embedding and entity attachment, extending the mimetype
     /// inventory, and enqueueing emitted fragments for chained claims.
     #[allow(clippy::too_many_arguments)]
-    fn plant(
+    async fn plant(
         &self,
         sid: SourceId,
         parent: FragmentId,
@@ -492,9 +493,9 @@ impl SweepService {
         inventory_seen: &mut HashSet<(String, bool)>,
     ) -> Result<(), SeamError> {
         for sprout in sprouts {
-            let id = self.store.insert_fragment(Some(sid), &sprout.fragment)?;
+            let id = self.store.insert_fragment(Some(sid), &sprout.fragment).await?;
             self.store
-                .insert_relation(&sprout.relation.edge(parent, id))?;
+                .insert_relation(&sprout.relation.edge(parent, id)).await?;
             report.fragments += 1;
             report.relations += 1;
             let essence = sprout.fragment.mimetype.essence().to_string();
@@ -531,7 +532,9 @@ impl SweepService {
                     depth: parent_depth + 1,
                 });
             }
-            self.plant(
+            // Recursion is bounded by the sprout tree the transform
+            // emitted; boxing breaks the async future cycle.
+            Box::pin(self.plant(
                 sid,
                 id,
                 parent_depth + 1,
@@ -542,7 +545,8 @@ impl SweepService {
                 queue,
                 inventory,
                 inventory_seen,
-            )?;
+            ))
+            .await?;
         }
         Ok(())
     }
@@ -550,7 +554,7 @@ impl SweepService {
     /// Deduplicate extracted entities through the index-wide registry and
     /// wire `mentions` relations to the fragments whose text references
     /// them. This stays sweep-side: a transform cannot know fragment ids.
-    fn wire_entities(
+    async fn wire_entities(
         &self,
         root: FragmentId,
         extracted: Vec<ExtractedEntity>,
@@ -560,7 +564,7 @@ impl SweepService {
     ) -> Result<(), SeamError> {
         for entity in extracted {
             let key = entity.key();
-            let fragment = match self.store.entity_fragment(&key)? {
+            let fragment = match self.store.entity_fragment(&key).await? {
                 Some(f) => f,
                 None => {
                     let f = self.store.insert_fragment(
@@ -570,8 +574,8 @@ impl SweepService {
                             text: Some(entity.name.clone()),
                             extent: None,
                         },
-                    )?;
-                    self.store.register_entity(&key, f)?;
+                    ).await?;
+                    self.store.register_entity(&key, f).await?;
                     report.fragments += 1;
                     pending.push(PendingRow {
                         fragment: f,
@@ -588,14 +592,14 @@ impl SweepService {
             for (fid, ftext) in texted {
                 if ftext.to_lowercase().contains(&needle) {
                     self.store
-                        .insert_relation(&RelationKind::Mentions.edge(*fid, fragment))?;
+                        .insert_relation(&RelationKind::Mentions.edge(*fid, fragment)).await?;
                     report.relations += 1;
                     mentioned = true;
                 }
             }
             if !mentioned {
                 self.store
-                    .insert_relation(&RelationKind::Mentions.edge(root, fragment))?;
+                    .insert_relation(&RelationKind::Mentions.edge(root, fragment)).await?;
                 report.relations += 1;
             }
             report.entities_seen += 1;
@@ -619,14 +623,14 @@ impl SweepService {
         };
         let seen: HashSet<&str> = seen.iter().map(|s| s.address.locator.as_str()).collect();
         let child_prefix = format!("{prefix}/");
-        for (sid, locator) in self.store.sources_of_host(self.connection.host())? {
+        for (sid, locator) in self.store.sources_of_host(self.connection.host()).await? {
             let under_root = locator == prefix || locator.starts_with(&child_prefix);
             if !under_root || seen.contains(locator.as_str()) {
                 continue;
             }
-            let old = self.store.delete_fragments_of(sid)?;
+            let old = self.store.delete_fragments_of(sid).await?;
             self.store.delete_search_rows(&old).await?;
-            self.store.delete_source(sid)?;
+            self.store.delete_source(sid).await?;
             report.removed += 1;
             tracing::debug!(locator, "removed vanished source");
         }
@@ -637,7 +641,7 @@ impl SweepService {
     /// text comes from SQLite, so no transform re-runs and no LLM spend —
     /// vectors are the only thing rebuilt.
     async fn reembed(&self, report: &mut IndexReport) -> Result<(), SeamError> {
-        let targets = self.store.reembed_targets()?;
+        let targets = self.store.reembed_targets().await?;
         report.reembedded = targets.len();
         self.store.begin_reembed().await?;
         let mut pending: Vec<PendingRow> = Vec::new();
@@ -652,7 +656,7 @@ impl SweepService {
             }
         }
         self.flush(&mut pending, report).await?;
-        self.store.finish_reembed()?;
+        self.store.finish_reembed().await?;
         tracing::info!(rows = report.reembedded, "re-embedded search index");
         Ok(())
     }

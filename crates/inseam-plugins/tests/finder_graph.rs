@@ -49,7 +49,7 @@ async fn seed_source(
 ) -> (SourceId, FragmentId) {
     let a = addr(name);
     let sid = store
-        .upsert_source(&a, &envelope(name), 100)
+        .upsert_source(&a, &envelope(name), 100).await
         .expect("upserts");
     let root = store
         .insert_fragment(
@@ -59,9 +59,9 @@ async fn seed_source(
                 text: None,
                 extent: Some(Extent::lines(1, 10)),
             },
-        )
+        ).await
         .expect("root");
-    store.set_root_fragment(sid, root).expect("sets root");
+    store.set_root_fragment(sid, root).await.expect("sets root");
     let section = store
         .insert_fragment(
             Some(sid),
@@ -70,10 +70,10 @@ async fn seed_source(
                 text: Some(body.to_string()),
                 extent: Some(Extent::lines(1, 10)),
             },
-        )
+        ).await
         .expect("section");
     store
-        .insert_relation(&RelationKind::Contains.edge(root, section))
+        .insert_relation(&RelationKind::Contains.edge(root, section)).await
         .expect("relates");
     let vector = embedder.embed(&[body]).await.expect("embeds").remove(0);
     store
@@ -85,7 +85,7 @@ async fn seed_source(
         }])
         .await
         .expect("adds row");
-    store.mark_indexed(sid, Some(("test-stamp", &[]))).expect("marks");
+    store.mark_indexed(sid, Some(("test-stamp", &[]))).await.expect("marks");
     (sid, section)
 }
 
@@ -129,10 +129,10 @@ async fn relational_relevance_beats_flat_similarity() {
                 text: Some("Kitchen Reno".to_string()),
                 extent: None,
             },
-        )
+        ).await
         .expect("entity");
     store
-        .register_entity("project:kitchen reno", entity)
+        .register_entity("project:kitchen reno", entity).await
         .expect("registers");
     let entity_vec = embedder
         .embed(&["Kitchen Reno"])
@@ -149,10 +149,10 @@ async fn relational_relevance_beats_flat_similarity() {
         .await
         .expect("adds entity row");
     store
-        .insert_relation(&RelationKind::Mentions.edge(b_section, entity))
+        .insert_relation(&RelationKind::Mentions.edge(b_section, entity)).await
         .expect("relates");
     store
-        .insert_relation(&RelationKind::Mentions.edge(a_section, entity))
+        .insert_relation(&RelationKind::Mentions.edge(a_section, entity)).await
         .expect("relates");
     store.rebuild_fts().await.expect("fts");
 

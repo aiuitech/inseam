@@ -23,19 +23,14 @@ inseam-conformance = { path = "crates/inseam-conformance" }
 inseam-wasm-host = { path = "crates/inseam-wasm-host" }
 
 anyhow = "1.0.104"
-arrow-array = "58"
-arrow-schema = "58"
 async-trait = "0.1.89"
 clap = { version = "4.6.6", features = ["derive", "env"] }
 dirs = "6.0.0"
-futures = "0.3.33"
 gethostname = "1.1.0"
-lance-index = "9.0.0"
-lancedb = "0.33.0"
+libsql = { version = "0.9.30", default-features = false, features = ["core"] }
 mime_guess = "2.0.5"
 pulldown-cmark = "0.13.4"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
-rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.10.9"
@@ -53,8 +48,8 @@ wasmtime-wasi = { version = "38", default-features = false, features = ["p2"] }
 proptest = "1.11.0"
 tempfile = "3.27.0"
 
-# Debuginfo dominates target/ on this tree: 520 crates (lance, datafusion,
-# wasmtime) statically linked into every test binary. Dependency crates get
+# Debuginfo dominates target/ on this tree: hundreds of crates (wasmtime and
+# friends) statically linked into every test binary. Dependency crates get
 # none; workspace crates keep file/line tables, which is what backtraces and
 # panic locations actually read. Set `debug = true` here when a step-debugging
 # session needs locals and types.

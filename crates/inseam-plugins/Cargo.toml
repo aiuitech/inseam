@@ -8,7 +8,6 @@ inseam-kernel.workspace = true
 inseam-seams.workspace = true
 
 async-trait.workspace = true
-futures.workspace = true
 gethostname.workspace = true
 mime_guess.workspace = true
 pulldown-cmark.workspace = true

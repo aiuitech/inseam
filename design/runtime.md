@@ -12,26 +12,31 @@ The repo is a Cargo workspace shaped like the architecture: the **kernel crate**
 
 The FFI boundary is deliberately thin: opaque node handle, blocking calls (the handle owns its tokio runtime), JSON responses reusing the exact serde views the operations layer already defines. No second protocol to design — the C ABI is just another transport adapter over `node-api.md` operations. "Single binary" remains true per artifact: each distribution is one self-contained binary embedding the whole node; nothing is a client to a separate core process. App crates hold only transport/UI concerns (argument parsing, env loading, logging setup, platform bindings) — anything two apps would both need belongs in a plugin or the kernel.
 
-## Index storage: LanceDB
+## Index storage: libSQL
 
-The discovery index is built on **LanceDB** (embedded, via the native Rust crate):
+The derived search surface is **libSQL** (Turso's production SQLite fork, embedded via the native Rust crate with local-only features):
 
-- Hybrid **full-text + vector** search in one store — exactly the index shape discovery calls for.
+- Hybrid **full-text + vector** search in one embedded store: FTS5 for keyword seeds, native vector columns (`F32_BLOB`) with cosine distance for semantic seeds — exactly the index shape discovery calls for. DiskANN indexes (`libsql_vector_idx` / `vector_top_k`) are available in the same engine the day flat scans stop being fast enough; today's scale doesn't need them (the LanceDB era never built an ANN index either — every query was a flat scan).
 - **Embedded**, no server process — matches "a node is one binary" and works on small devices.
-- **Object-store backend** — the same tables run on local disk for devices and on **S3** for large hosted nodes.
+- **Tiny dependency surface** — one bundled C library, replacing LanceDB's arrow/datafusion tree (~520 crates that dominated build times, `target/` size, and binary footprint while we used a fraction of them).
 
-The catalog itself (addresses, envelopes, properties — the source of truth) is **SQLite**, settled when the storage layer was built: one transactional store holds the catalog *and* the semantic graph (fragments + relations + entity registry), with Lance strictly the derived search surface (vectors + FTS over text-bearing fragments). Lance data is rebuildable from SQLite + fetches at any time; the embedding model/dimensions an index was built with are recorded and guarded at open.
+The catalog (addresses, envelopes, properties — the source of truth), the semantic graph (fragments + relations + entity registry), and plugin state live in the same engine: **one libSQL engine, two database files**. `catalog.sqlite3` is the transactional source of truth; `search.sqlite3` is strictly derived — rebuildable from the catalog at any time, with the embedding model/dimensions an index was built with recorded and guarded at open. Two files is deliberate: the catalog is the candidate for future replication ([address-sync](address-sync.md)), while fragments and vectors are per-node and never sync ([indexing](indexing.md)) — separate files keep that boundary physical.
+
+One engine is not just tidiness — it is forced. The catalog was rusqlite (vanilla SQLite, bundled) when the search surface moved to libSQL, and the two cannot coexist in one binary: both bundle a C library exporting the same `sqlite3_*` symbols, the linker keeps one copy, and whichever library initializes second trips over the other's global state at runtime. The catalog therefore moved onto libSQL in the same change (its API went async with it — the kernel is async throughout, so the cascade stopped at a handful of call sites).
 
 ### Known risks
 
-- LanceDB's Rust API is the native layer but less documented than the Python surface; FTS feature coverage (phrase queries, tokenizers) needs verification against our needs early.
-- S3-backed tables have optimistic-concurrency constraints; fine while each index has a single writing node, which matches the per-node index design.
+- FTS5's BM25 replaces tantivy's; ranking differs in the tail. The finder only consumes rank order (RRF fusion), so this is contained by design.
+- Vector search is an exact scan (parity with the LanceDB usage, which never built an ANN index). The day it shows up in a profile, DiskANN (`libsql_vector_idx`) is one `CREATE INDEX` away in the same engine.
 
 ## Paths not taken
 
 - **Go / TypeScript core.** Weaker wasmtime story (Go) or heavy runtime + packaging pain (TS); Rust wins on embedding, binary distribution, and index performance.
-- **SQLite + sqlite-vec for the index.** Simplest possible stack, viable fallback, but weaker at scale for hybrid search and no object-store story.
+- **LanceDB** (the original choice, replaced August 2026). Chosen for hybrid search and an object-store backend; in practice we used a flat cosine scan plus FTS — no ANN index, no S3 — while paying for the full arrow/datafusion stack in compile time and binary size. The object-store story lost its pull once [indexing](indexing.md) settled on query fan-out over remote indexes.
+- **Turso Database** (the from-scratch Rust rewrite of SQLite, successor to libSQL). Still beta as of August 2026 — beta storage engines fail the safety-first goal. It is the natural upgrade path from libSQL; revisit at 1.0-stable.
+- **SQLite + sqlite-vec for the index.** Viable fallback, but brute-force-only vectors behind a loadable extension; libSQL ships vectors natively with a DiskANN growth path.
 - **Server-based search engines (Qdrant, Meilisearch, Elasticsearch).** A separate server process per node contradicts the single-binary node and small-device targets.
+- **Turso sync for the search database.** Embedded-replica sync needs a sync server (Turso Cloud or self-hosted) — a standing external dependency against the single-binary node — and replicating the search database is index shipping, which [discovery](discovery.md) already rejected: indexes are per-node, and reach comes from query fan-out. libSQL keeps the mechanism available if a plugin-level index-shipping experiment ever earns its place; it is not a core concept.
 
 ## Open questions
 

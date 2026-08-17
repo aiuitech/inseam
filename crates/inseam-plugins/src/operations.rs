@@ -81,9 +81,9 @@ pub struct OperationsService {
 }
 
 impl OperationsService {
-    fn source_at(&self, address: &Address) -> Result<StoredSource, SeamError> {
+    async fn source_at(&self, address: &Address) -> Result<StoredSource, SeamError> {
         self.store
-            .source_by_address(address)?
+            .source_by_address(address).await?
             .ok_or_else(|| SeamError::UnknownSource(address.clone()))
     }
 
@@ -122,29 +122,29 @@ impl Operations for OperationsService {
 
     async fn expand(&self, request: ExpandRequest) -> Result<ExpandResponse, SeamError> {
         self.guard("expand")?;
-        let source = self.source_at(&request.address)?;
-        let expansion = self.finder.expand(&source)?;
+        let source = self.source_at(&request.address).await?;
+        let expansion = self.finder.expand(&source).await?;
         let mut sources_cache: std::collections::HashMap<_, Address> = Default::default();
-        let neighbors = expansion
-            .neighbors
-            .iter()
-            .map(|f| {
-                let address = f.source.and_then(|sid| {
-                    if let Some(a) = sources_cache.get(&sid) {
-                        return Some(a.clone());
+        let mut neighbors = Vec::with_capacity(expansion.neighbors.len());
+        for f in &expansion.neighbors {
+            let mut address = None;
+            if let Some(sid) = f.source {
+                match sources_cache.get(&sid) {
+                    Some(a) => address = Some(a.clone()),
+                    None => {
+                        address = self.store.source(sid).await.ok().flatten().map(|s| s.address);
+                        if let Some(a) = &address {
+                            sources_cache.insert(sid, a.clone());
+                        }
                     }
-                    let a = self.store.source(sid).ok().flatten().map(|s| s.address);
-                    if let Some(a) = &a {
-                        sources_cache.insert(sid, a.clone());
-                    }
-                    a
-                });
-                fragment_view(f, address)
-            })
-            .collect();
+                }
+            }
+            neighbors.push(fragment_view(f, address));
+        }
+        let neighbors = neighbors;
         Ok(ExpandResponse {
             address: source.address.clone(),
-            summary: self.store.summary_of(source.id)?,
+            summary: self.store.summary_of(source.id).await?,
             fragments: expansion
                 .fragments
                 .iter()
@@ -157,7 +157,7 @@ impl Operations for OperationsService {
 
     async fn scan(&self, request: ScanRequest) -> Result<ScanResponse, SeamError> {
         self.guard("scan")?;
-        let source = self.source_at(&request.address)?;
+        let source = self.source_at(&request.address).await?;
         let (start, end) = (request.start.max(1), request.end.max(request.start));
         if source.envelope.content_type.is_indexable_text() {
             let text = self
@@ -175,7 +175,7 @@ impl Operations for OperationsService {
         }
         // Scanning media means reading lines of its text descendants — the
         // transcript case. Pick the largest text fragment as the stand-in.
-        let fragments = self.store.fragments_of(source.id)?;
+        let fragments = self.store.fragments_of(source.id).await?;
         let best = fragments
             .iter()
             .filter(|f| !f.mimetype.is_summary())
@@ -198,7 +198,7 @@ impl Operations for OperationsService {
 
     async fn fetch(&self, request: FetchRequest) -> Result<FetchResponse, SeamError> {
         self.guard("fetch")?;
-        let source = self.source_at(&request.address)?;
+        let source = self.source_at(&request.address).await?;
         if !source.envelope.content_type.is_indexable_text() {
             return Err(SeamError::BinaryFetch(
                 source.address,
@@ -224,7 +224,7 @@ impl Operations for OperationsService {
     }
 
     async fn status(&self) -> Result<StatusReport, SeamError> {
-        let stats = self.store.stats()?;
+        let stats = self.store.stats().await?;
         let search_rows = self.store.search_rows_count().await.unwrap_or(0);
         let identity = self.store.embedding_identity();
         Ok(StatusReport {
