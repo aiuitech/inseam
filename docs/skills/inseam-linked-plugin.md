@@ -17,9 +17,8 @@ the neighbors, don't guess.
   `docs/architecture/kernel.md` — the five declarations every plugin is
   (name, config, inject, provide, apply).
 - `crates/inseam-seams` — the seam definitions consumers depend on.
-- `crates/inseam-plugins/src/` — pick the closest neighbor as your
-  template: `transforms/` for a transform, `embedder.rs` or `finder.rs`
-  for a provider.
+- `crates/inseam-plugins/src/` — the first-party set. Pick the closest
+  neighbor to what you're building as your template.
 
 ### Procedure
 
@@ -41,5 +40,5 @@ the neighbors, don't guess.
    (`cargo install --path crates/inseam-cli`), then verify live:
    `inseam plugins` shows the fiber and its effects; an end-to-end
    `inseam index` + `inseam query` proves it earns its keep.
-6. Document: a row in `docs/plugins/linked.md`, the crate `//!` doc block,
-   then `cargo xtask docs`.
+6. Document: update `docs/plugins/linked.md` and the crate `//!` doc
+   block, then `cargo xtask docs`.

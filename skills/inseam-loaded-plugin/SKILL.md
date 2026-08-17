@@ -15,28 +15,27 @@ map, and the Plugins section for depth beyond this page.
 
 ## The contract
 
-One loaded seam exists today: `transform` — turn a claimed source into
-fragments. It is a WIT world:
+Each loaded seam is a WIT world. <https://docs.inseam.io/plugins/loaded>
+names the seams the bridge mounts and everything it enforces; each seam's
+rendered WIT reference sits alongside it in the Plugins section, and the
+raw `.wit` files to generate bindings from live at
+<https://github.com/aiuitech/inseam/tree/main/crates/inseam-wasm-host/wit>.
 
-- Reference: <https://docs.inseam.io/plugins/transform-plugin-wit>
-- The `.wit` itself, to generate bindings from:
-  <https://github.com/aiuitech/inseam/raw/main/crates/inseam-wasm-host/wit/transform.wit>
+Rules that hold on every seam — design around them:
 
-Design around what the bridge enforces
-(<https://docs.inseam.io/plugins/loaded>):
-
-- You export `claims()` and `apply()`. Effective claims = manifest claims
-  ∩ exported claims — keep the two lists consistent or the plugin never
-  runs.
-- Host imports (`log`, `llm-complete`, `llm-describe-image`,
-  `source-bytes`) are manifest-gated; an ungranted call returns `Err`.
+- Effective claims = manifest claims ∩ exported claims — keep the two
+  lists consistent or the plugin never runs.
+- Host imports are manifest-gated; an ungranted call returns `Err`. Your
+  seam's WIT reference lists what it may import.
 - **Degrade, never gate**: on withheld capability or unusable input,
-  return `Ok` with zero fragments. Never panic; an `Err` from `apply` is
-  logged and produces nothing.
+  return `Ok` with empty output. Never panic; an `Err` from your apply
+  entry point is logged and produces nothing.
 - A fresh instance per call: no state, no caching, no counting — the host
   meters your LLM budget.
-- A fragment's `parent` indexes an earlier fragment in your own output;
-  never emit `text/x-inseam-*` mimetypes (the bridge drops them).
+- Output is hygiene-checked; the seam's docs say what the bridge drops or
+  rewrites (e.g. on the transform seam, a fragment's `parent` must index
+  an earlier fragment in your own output, and `text/x-inseam-*` mimetypes
+  are dropped).
 
 ## Shape
 
@@ -54,7 +53,7 @@ Manifest:
 ```toml
 name = "<name>"
 version = "0.1.0"
-seam = "transform"
+seam = "transform"       # the seam this plugin binds
 claims = ["image/png"]   # must overlap claims()
 roots_only = true
 kind = "enrichment"      # or "structural"
