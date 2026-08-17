@@ -18,6 +18,8 @@ Every plugin is the same five declarations — name, config, inject, provide, ap
 | `sweep` | `sweep` | store, connection, transforms, embedder, llm? | the reconciling sweep ([indexing/maintenance.md](../indexing/maintenance.md)) |
 | `operations` | `operations` | store, connection, finder, sweep | the transport-neutral node API ([finder/operations.md](../finder/operations.md)) |
 
+The agent skill at `skills/inseam-linked-plugin/SKILL.md` is the authoring guide for this tier ([../skills/inseam-linked-plugin.md](../skills/inseam-linked-plugin.md)); it assumes a source checkout, since a linked plugin is a build input.
+
 Discipline notes:
 
 - Trusted doesn't mean undisciplined: the injections are the only reach a plugin has, so its manifest is an auditable list of what it can touch. Reaching for an undeclared service fails the fiber.
