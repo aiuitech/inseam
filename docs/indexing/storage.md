@@ -17,6 +17,8 @@ The search surface is tied to whichever embedder is mounted: when the embedder p
 
 The `search_rows` table holds every text-bearing fragment: `id`, `source`, `text`, and a vector column (`F32_BLOB`, omitted at 0 dimensions); `search_fts` is an external-content FTS5 index over it, kept in sync by triggers. Two search paths: full-text ranked by BM25, and vector nearest-k by cosine distance (`vector_distance_cos`, an exact scan). Search rows are purely derived: `inseam index <dir> --rebuild` reconstructs them from the catalog at any time.
 
+Deletes are transactional across both table groups: dropping a source, its fragments, or a garbage-collected entity removes the matching search rows in the same transaction, so a crash can never leave search rows pointing at fragments the catalog no longer has. (The other direction — fragments written but not yet searchable — is healed by the sweep: `indexed` is marked only after a source's rows land.)
+
 ## Idempotency and change detection
 
 A source is skipped only when its `modified` timestamp and byte size match the catalog, its last run completed (`indexed = 1`, set only after the full subtree is stored), **and** its stored shape stamp matches what the currently mounted transforms would produce for its stored inventory. So interrupted runs, config changes, and transform mounts/unmounts re-index exactly the affected sources on the next sweep. Entity fragments survive source rebuilds; an entity left with no relations is cleaned up at the end of the sweep.

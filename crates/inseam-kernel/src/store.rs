@@ -372,23 +372,32 @@ impl IndexStore {
         Ok(out)
     }
 
-    /// Remove a source's catalog row. Call `delete_fragments_of` first so the
-    /// search rows can be cleared by id; the row deletion itself cascades any
-    /// fragments that remain.
+    /// Remove a source and everything derived from it in one transaction:
+    /// its search rows, its catalog row, and — through the foreign-key
+    /// cascades — its fragments and their relations. A crash can never leave
+    /// search rows pointing at fragments the catalog no longer has.
     pub async fn delete_source(&self, source: SourceId) -> Result<(), StoreError> {
-        self.catalog
-            .execute("DELETE FROM sources WHERE id = ?1", params![source.0])
+        let tx = self.catalog.transaction().await?;
+        if search_tables_exist(&tx).await? {
+            tx.execute(
+                "DELETE FROM search_rows WHERE source = ?1",
+                params![source.0],
+            )
             .await?;
+        }
+        tx.execute("DELETE FROM sources WHERE id = ?1", params![source.0])
+            .await?;
+        tx.commit().await?;
         Ok(())
     }
 
     /// Drop entity fragments no relation touches anymore — the consequence of
     /// source deletions, rebuilds that no longer mention them, and disabling
-    /// entity extraction. Returns the dropped fragment ids so the caller can
-    /// clear the search rows; the registry rows cascade.
+    /// entity extraction. Their search rows go in the same transaction; the
+    /// registry rows cascade. Returns the dropped fragment ids.
     pub async fn gc_entities(&self) -> Result<Vec<i64>, StoreError> {
-        let mut rows = self
-            .catalog
+        let tx = self.catalog.transaction().await?;
+        let mut rows = tx
             .query(
                 "SELECT id FROM fragments WHERE source IS NULL
                    AND NOT EXISTS (SELECT 1 FROM relations
@@ -400,16 +409,21 @@ impl IndexStore {
         while let Some(row) = rows.next().await? {
             ids.push(row.get(0)?);
         }
+        let purge_search = search_tables_exist(&tx).await?;
         for chunk in ids.chunks(DELETE_CHUNK) {
             let list = chunk
                 .iter()
                 .map(i64::to_string)
                 .collect::<Vec<_>>()
                 .join(",");
-            self.catalog
-                .execute(&format!("DELETE FROM fragments WHERE id IN ({list})"), ())
+            if purge_search {
+                tx.execute(&format!("DELETE FROM search_rows WHERE id IN ({list})"), ())
+                    .await?;
+            }
+            tx.execute(&format!("DELETE FROM fragments WHERE id IN ({list})"), ())
                 .await?;
         }
+        tx.commit().await?;
         Ok(ids)
     }
 
@@ -454,25 +468,23 @@ impl IndexStore {
     // Graph
     // ------------------------------------------------------------------
 
-    /// Drop a source's fragments (relations cascade). Returns the dropped
-    /// fragment ids so the caller can clear the search rows too. Entity
-    /// fragments survive — only their mention edges into this source go.
-    pub async fn delete_fragments_of(&self, source: SourceId) -> Result<Vec<i64>, StoreError> {
-        let mut rows = self
-            .catalog
-            .query(
-                "SELECT id FROM fragments WHERE source = ?1",
+    /// Drop a source's fragments and their derived search rows in one
+    /// transaction (relations cascade) — a crash can never leave search rows
+    /// pointing at fragments the catalog no longer has. Entity fragments
+    /// survive — only their mention edges into this source go.
+    pub async fn delete_fragments_of(&self, source: SourceId) -> Result<(), StoreError> {
+        let tx = self.catalog.transaction().await?;
+        if search_tables_exist(&tx).await? {
+            tx.execute(
+                "DELETE FROM search_rows WHERE source = ?1",
                 params![source.0],
             )
             .await?;
-        let mut ids: Vec<i64> = Vec::new();
-        while let Some(row) = rows.next().await? {
-            ids.push(row.get(0)?);
         }
-        self.catalog
-            .execute("DELETE FROM fragments WHERE source = ?1", params![source.0])
+        tx.execute("DELETE FROM fragments WHERE source = ?1", params![source.0])
             .await?;
-        Ok(ids)
+        tx.commit().await?;
+        Ok(())
     }
 
     pub async fn insert_fragment(
@@ -718,24 +730,6 @@ impl IndexStore {
             .await?;
         }
         tx.commit().await?;
-        Ok(())
-    }
-
-    pub async fn delete_search_rows(&self, ids: &[i64]) -> Result<(), StoreError> {
-        if ids.is_empty() {
-            return Ok(());
-        }
-        self.surface()?;
-        for chunk in ids.chunks(DELETE_CHUNK) {
-            let list = chunk
-                .iter()
-                .map(i64::to_string)
-                .collect::<Vec<_>>()
-                .join(",");
-            self.catalog
-                .execute(&format!("DELETE FROM search_rows WHERE id IN ({list})"), ())
-                .await?;
-        }
         Ok(())
     }
 
@@ -1132,6 +1126,19 @@ fn search_schema_sql(dims: usize) -> String {
     )
 }
 
+/// Whether the derived search tables exist yet — they appear when an
+/// embedder first declares an identity, so the transactional catalog deletes
+/// purge search rows only once there are search tables to purge from.
+async fn search_tables_exist(conn: &libsql::Connection) -> Result<bool, StoreError> {
+    let mut rows = conn
+        .query(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'search_rows'",
+            (),
+        )
+        .await?;
+    Ok(rows.next().await?.is_some())
+}
+
 /// An embedding as SQLite stores it: the raw little-endian `f32` bytes an
 /// `F32_BLOB` column holds and the vector functions read.
 fn vector_blob(vector: &[f32]) -> Vec<u8> {
@@ -1412,9 +1419,9 @@ mod tests {
         assert_eq!(rels.len(), 1);
         assert_eq!(rels[0].kind, RelationKind::Contains);
 
-        // Deleting the source's fragments cascades relations and reports ids.
-        let dropped = s.delete_fragments_of(sid).await.expect("deletes");
-        assert_eq!(dropped.len(), 3);
+        // Deleting the source's fragments cascades relations.
+        s.delete_fragments_of(sid).await.expect("deletes");
+        assert!(s.fragments_of(sid).await.expect("ok").is_empty());
         assert!(s.all_relations().await.expect("ok").is_empty());
     }
 
@@ -1474,10 +1481,14 @@ mod tests {
         let hits = s.search_fts("moodboard", 10).await.expect("searches");
         assert_eq!(hits.first().map(|(id, _)| *id), Some(9));
 
-        s.delete_search_rows(&[1, 3]).await.expect("deletes");
+        // Deleting a source's fragments drops its search rows in the same
+        // transaction; rows of other sources (and the source-less row 3)
+        // stay searchable.
+        s.delete_fragments_of(SourceId(1)).await.expect("deletes");
         let hits = s.search_fts("renovation", 10).await.expect("searches");
         let ids: Vec<i64> = hits.iter().map(|(id, _)| *id).collect();
-        assert!(!ids.contains(&1) && !ids.contains(&3), "got {ids:?}");
+        assert!(!ids.contains(&1), "got {ids:?}");
+        assert!(ids.contains(&3), "got {ids:?}");
     }
 
     #[tokio::test]
@@ -1598,11 +1609,34 @@ mod tests {
         s.insert_relation(&RelationKind::Mentions.edge(root, mentioned))
             .await
             .expect("relates");
+        // Entity fragments carry search rows too; GC must purge the orphan's
+        // row in the same transaction it drops the fragment.
+        s.add_search_rows(&[
+            SearchRow {
+                fragment: mentioned,
+                source: None,
+                text: "Greg".into(),
+                vector: None,
+            },
+            SearchRow {
+                fragment: orphan,
+                source: None,
+                text: "Nobody".into(),
+                vector: None,
+            },
+        ])
+        .await
+        .expect("adds");
+        s.rebuild_fts().await.expect("indexes");
 
         let dropped = s.gc_entities().await.expect("gcs");
         assert_eq!(dropped, vec![orphan.0]);
         assert!(s.fragment(mentioned).await.expect("ok").is_some());
         assert!(s.fragment(orphan).await.expect("ok").is_none());
+        let hits = s.search_fts("Nobody", 5).await.expect("searches");
+        assert!(hits.is_empty(), "orphan search row purged, got {hits:?}");
+        let hits = s.search_fts("Greg", 5).await.expect("searches");
+        assert_eq!(hits.first().map(|(id, _)| *id), Some(mentioned.0));
         // The registry row cascaded with the fragment.
         assert_eq!(s.entity_fragment("person:nobody").await.expect("ok"), None);
         assert_eq!(

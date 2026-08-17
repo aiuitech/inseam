@@ -262,7 +262,6 @@ impl Sweep for SweepService {
         self.reconcile_vanished(&request.root, &sources, &mut report)
             .await?;
         let orphaned = self.store.gc_entities().await?;
-        self.store.delete_search_rows(&orphaned).await?;
         report.entities_removed = orphaned.len();
         self.store.rebuild_fts().await?;
         for (entry, meter) in meters {
@@ -347,8 +346,7 @@ impl SweepService {
         let sid = self
             .store
             .upsert_source(&source.address, &envelope, source.raw_bytes).await?;
-        let old = self.store.delete_fragments_of(sid).await?;
-        self.store.delete_search_rows(&old).await?;
+        self.store.delete_fragments_of(sid).await?;
 
         let root_extent = match envelope.length {
             ContentLength::Lines(n) => Extent::Lines { start: 1, end: n.max(1) },
@@ -628,8 +626,6 @@ impl SweepService {
             if !under_root || seen.contains(locator.as_str()) {
                 continue;
             }
-            let old = self.store.delete_fragments_of(sid).await?;
-            self.store.delete_search_rows(&old).await?;
             self.store.delete_source(sid).await?;
             report.removed += 1;
             tracing::debug!(locator, "removed vanished source");
