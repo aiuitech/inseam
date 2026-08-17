@@ -49,7 +49,7 @@ cooldown_days = 7      # wait period before a newly seen plugin version activate
 # admission = "enforce"  # validation on first sighting: enforce | warn | off
 ```
 
-Secrets never live in the composition or the store: the `llm` entry names an environment variable (`api_key_env`), nothing more.
+Secrets never live in the composition or the store: the `llm` entry names an environment variable (`api_key_env`), nothing more. The CLI reads that variable from your shell; the macOS app has no shell environment, so its Settings screen stores the value in your login Keychain and exports it into the process environment at node open ([architecture/macos-app.md](architecture/macos-app.md)). The app's Settings also edits this same `composition.toml`, so CLI and app stay one node with one config.
 
 ## What a config change costs
 

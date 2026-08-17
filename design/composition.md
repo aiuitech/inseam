@@ -44,6 +44,7 @@ Composition edits apply transactionally per entry: config-only changes update th
 
 - **Patch semantics: whole-config replacement per id.** A patch entry's `config` replaces the target's wholesale; `plugin` and `disabled` override when present; unknown ids append (and a patch that targets nothing *and* names no plugin is a loud error). `extends` sugar can come later without breaking files.
 - **Loaded-plugin installation state**: the composition entry holds the artifact ref; the trust bookkeeping (first-seen clock per content hash, approved capability summary) lives in the wasm host's versioned state namespace — discardable, re-derivable, never synced.
+- **GUI secret storage: the platform keychain feeds the same env indirection.** A GUI app has no shell environment, so the `key_env` pattern would strand it. Rather than adding a second secret channel to core, the app stores name→value pairs in the OS keychain and exports them into its own process environment before node open — core keeps exactly one rule (secrets arrive as environment variables the composition names), and each transport supplies the environment its platform makes natural: the shell for the CLI, the keychain for the app.
 
 ## Open questions
 

@@ -6,6 +6,10 @@ struct CoreError: LocalizedError {
     let message: String
     var errorDescription: String? { message }
 
+    init(message: String) {
+        self.message = message
+    }
+
     /// Consume and free an error string the core allocated.
     init(taking pointer: UnsafeMutablePointer<CChar>?) {
         if let pointer {
@@ -20,7 +24,7 @@ struct CoreError: LocalizedError {
 /// Swift face of one open node: owns the FFI handle for its lifetime.
 /// FFI calls block, so callers run them off the main thread.
 final class CoreNode {
-    private let handle: OpaquePointer
+    private var handle: OpaquePointer?
 
     static func coreVersion() -> String {
         guard let pointer = inseam_version() else { return "unknown" }
@@ -36,18 +40,30 @@ final class CoreNode {
         self.handle = handle
     }
 
+    /// Free the node — the kernel unwinds every fiber. Idempotent, and it
+    /// blocks on kernel shutdown, so call it off the main thread. Closing
+    /// explicitly lets a reopen release the data dir before the next boot.
+    func close() {
+        if let handle {
+            inseam_node_free(handle)
+        }
+        handle = nil
+    }
+
     deinit {
-        inseam_node_free(handle)
+        close()
     }
 
     func query(_ text: String, limit: UInt32 = 8) throws -> QueryResponse {
-        try decode(QueryResponse.self) { error in
+        guard let handle else { throw CoreError(message: "node is closed") }
+        return try decode(QueryResponse.self) { error in
             inseam_node_query(handle, text, limit, &error)
         }
     }
 
     func indexDirectory(_ dir: URL, rebuild: Bool = false) throws -> IndexReport {
-        try decode(IndexReport.self) { error in
+        guard let handle else { throw CoreError(message: "node is closed") }
+        return try decode(IndexReport.self) { error in
             inseam_node_index_dir(handle, dir.path, rebuild, &error)
         }
     }

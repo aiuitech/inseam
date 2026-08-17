@@ -7,6 +7,7 @@ final class AppModel: ObservableObject {
     @Published var status = "opening node…"
     @Published var results: [QueryResult] = []
     @Published var busy = false
+    @Published private(set) var nodeOpen = false
 
     let coreVersion = CoreNode.coreVersion()
     let dataDir: URL
@@ -19,12 +20,28 @@ final class AppModel: ObservableObject {
         dataDir = base.appendingPathComponent("inseam")
     }
 
+    var compositionURL: URL {
+        dataDir.appendingPathComponent("composition.toml")
+    }
+
+    /// Open the node, closing any previous one first — Settings saves call
+    /// this again, so a reopen must release the data dir before the next
+    /// boot. Keychain secrets export into the environment before open so
+    /// `key_env`-style config fields resolve.
     func openNode() {
+        let old = node
+        node = nil
+        nodeOpen = false
+        results = []
+        status = "opening node…"
         let dataDir = dataDir
         run("node open") { [weak self] in
+            old?.close()
+            try SecretStore.exportIntoEnvironment()
             let node = try CoreNode(dataDir: dataDir)
             return {
                 self?.node = node
+                self?.nodeOpen = true
                 self?.status = "node open · data dir \(dataDir.path)"
             }
         }
@@ -44,7 +61,10 @@ final class AppModel: ObservableObject {
     }
 
     func indexFolder() {
-        guard let node else { return }
+        guard let node else {
+            status = "node is not open — check Settings (⌘,)"
+            return
+        }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -85,7 +105,7 @@ final class AppModel: ObservableObject {
 }
 
 struct ContentView: View {
-    @StateObject private var model = AppModel()
+    @EnvironmentObject private var model: AppModel
     @State private var queryText = ""
 
     var body: some View {
@@ -98,6 +118,10 @@ struct ContentView: View {
                 if model.busy { ProgressView().controlSize(.small) }
                 Button("Index Folder…") { model.indexFolder() }
                     .disabled(model.busy)
+                SettingsLink {
+                    Image(systemName: "gearshape")
+                }
+                .help("Settings (⌘,): composition and secrets")
             }
 
             TextField("Search your data…", text: $queryText)
@@ -111,6 +135,12 @@ struct ContentView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
+                if !model.nodeOpen && !model.busy {
+                    Text("Open Settings (⌘,) to edit the composition or add an API key.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
                 Spacer()
             } else {
                 List(model.results) { result in

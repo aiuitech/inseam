@@ -21,8 +21,16 @@ Conventions: calls that can fail take `char **error_out` (null return + owned me
 A SwiftPM package, no Xcode project:
 
 - `Sources/CInseamFFI/module.modulemap` — system-library target exposing the FFI header and linking `inseam_ffi`.
-- `Sources/Inseam/InseamCore.swift` — `CoreNode`: RAII wrapper over the handle, JSON decoding into Swift structs (snake_case converted).
+- `Sources/Inseam/InseamCore.swift` — `CoreNode`: RAII wrapper over the handle (with explicit `close()` so Settings can reopen), JSON decoding into Swift structs (snake_case converted).
 - `Sources/Inseam/ContentView.swift` — the UI: open node on launch (data dir `~/Library/Application Support/inseam`, shared with the CLI), Index Folder… button, query field, results list.
+- `Sources/Inseam/SettingsView.swift` — the Settings scene (⌘,): a Composition tab and a Secrets tab.
+- `Sources/Inseam/Secrets.swift` — `SecretStore`, the Keychain wrapper behind the Secrets tab.
+
+## Configuration and secrets
+
+Settings is file-first, like VS Code: the Composition tab is a plain TOML editor over `<data-dir>/composition.toml` — the same file the CLI layers, documented in [configuration.md](../configuration.md) — so hand edits and GUI edits are the same thing. Saving writes the file and reopens the node.
+
+Secrets follow the composition design ([design/composition.md](../../design/composition.md)): the file never holds them; plugin configs name environment variables (`api_key_env`-style). The CLI gets those variables from your shell, but a GUI app launched from Finder has no shell environment — so the Secrets tab stores name→value pairs in your login Keychain (service `app.inseam.secrets`), and the app exports each one with `setenv` just before every node open. Adding or removing a secret reopens the node so plugins re-resolve their keys.
 
 ## Building
 
