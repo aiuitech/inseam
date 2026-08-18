@@ -8,6 +8,9 @@ final class AppModel: ObservableObject {
     @Published var results: [QueryResult] = []
     @Published var busy = false
     @Published private(set) var nodeOpen = false
+    /// Human-readable lines describing parked composition entries — empty
+    /// when the node is fully settled.
+    @Published private(set) var parkedWarnings: [String] = []
 
     let coreVersion = CoreNode.coreVersion()
     let dataDir: URL
@@ -32,6 +35,7 @@ final class AppModel: ObservableObject {
         let old = node
         node = nil
         nodeOpen = false
+        parkedWarnings = []
         results = []
         status = "opening node…"
         let dataDir = dataDir
@@ -39,12 +43,30 @@ final class AppModel: ObservableObject {
             old?.close()
             try SecretStore.exportIntoEnvironment()
             let node = try CoreNode(dataDir: dataDir)
+            let warnings = Self.parkedWarnings(in: try node.health())
             return {
                 self?.node = node
                 self?.nodeOpen = true
-                self?.status = "node open · data dir \(dataDir.path)"
+                self?.parkedWarnings = warnings
+                self?.status = warnings.isEmpty
+                    ? "node open · data dir \(dataDir.path)"
+                    : "node open, but some entries are parked:"
             }
         }
+    }
+
+    /// Failed entries with their errors, then one line naming everything
+    /// waiting on them.
+    private static func parkedWarnings(in health: [FiberHealth]) -> [String] {
+        var lines: [String] = []
+        for entry in health where entry.state == "failed" {
+            lines.append("\(entry.id): \(entry.error ?? "failed")")
+        }
+        let pending = health.filter { $0.state == "pending" }.map(\.id)
+        if !pending.isEmpty {
+            lines.append("parked with it: \(pending.joined(separator: ", "))")
+        }
+        return lines
     }
 
     func query(_ text: String) {
@@ -135,11 +157,18 @@ struct ContentView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
-                if !model.nodeOpen && !model.busy {
+                ForEach(model.parkedWarnings, id: \.self) { warning in
+                    Text(warning)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
+                if (!model.nodeOpen || !model.parkedWarnings.isEmpty) && !model.busy {
                     Text("Open Settings (⌘,) to edit the composition or add an API key.")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                         .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, 4)
                 }
                 Spacer()
             } else {

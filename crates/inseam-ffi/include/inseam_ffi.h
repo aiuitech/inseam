@@ -46,6 +46,11 @@ char *inseam_node_index_dir(const InseamNode *node,
                             bool rebuild,
                             char **error_out);
 
+/* Per-entry health as a JSON array of {id, plugin, state, error, missing}.
+ * state is "active" | "pending" | "failed"; error is set only for failed
+ * entries and missing only for pending ones. */
+char *inseam_node_health(const InseamNode *node, char **error_out);
+
 /* Free a string returned by this library. NULL is a no-op. */
 void inseam_string_free(char *s);
 

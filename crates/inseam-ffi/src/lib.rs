@@ -19,7 +19,7 @@ use std::ffi::{c_char, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use inseam_kernel::substrate::{Composition, Kernel, SubstrateError};
+use inseam_kernel::substrate::{Composition, FiberState, Kernel, SubstrateError};
 use inseam_seams::operations::{IndexRequest, Operations, QueryRequest, OPERATIONS};
 use tokio::runtime::Runtime;
 
@@ -72,11 +72,15 @@ plugin = "operations"
 "#;
 
 /// An open node: the runtime, the kernel (owning fibers and effects until
-/// free), and the operations handle requests go through.
+/// free), and the operations handle requests go through. `operations` is
+/// None while the entries beneath it are parked (a missing API key, say):
+/// the node still opens so the app can show what's parked and why, and
+/// operation calls fail with that explanation until a config or secret
+/// change reopens the node settled.
 pub struct InseamNode {
     runtime: Runtime,
     kernel: Kernel,
-    operations: Arc<dyn Operations>,
+    operations: Option<Arc<dyn Operations>>,
 }
 
 /// The core library version as a fresh C string.
@@ -148,11 +152,14 @@ pub unsafe extern "C" fn inseam_node_query(
     let Some(text) = (unsafe { arg_str(text) }) else {
         return fail(error_out, "query text must be a valid UTF-8 C string");
     };
+    let Some(operations) = handle.operations.as_ref() else {
+        return fail(error_out, &unsettled_message(&handle.kernel));
+    };
     let request = QueryRequest {
         text: text.to_owned(),
         limit: limit as usize,
     };
-    let response = handle.runtime.block_on(handle.operations.query(request));
+    let response = handle.runtime.block_on(operations.query(request));
     json_result(response, error_out)
 }
 
@@ -176,11 +183,63 @@ pub unsafe extern "C" fn inseam_node_index_dir(
     let Some(dir) = (unsafe { arg_str(dir) }) else {
         return fail(error_out, "dir must be a valid UTF-8 C string");
     };
-    let report = handle.runtime.block_on(handle.operations.index(IndexRequest {
+    let Some(operations) = handle.operations.as_ref() else {
+        return fail(error_out, &unsettled_message(&handle.kernel));
+    };
+    let report = handle.runtime.block_on(operations.index(IndexRequest {
         root: dir.to_string(),
         rebuild,
     }));
     json_result(report, error_out)
+}
+
+/// Per-entry health for status surfaces, as a JSON array of
+/// `{id, plugin, state, error, missing}` — `state` is `active`, `pending`,
+/// or `failed`; `error` is set only for failed entries and `missing` only
+/// for pending ones. An app renders this as "what is parked and why".
+///
+/// # Safety
+/// `node` must be a live handle from `inseam_node_open`; `error_out` null
+/// or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn inseam_node_health(
+    node: *const InseamNode,
+    error_out: *mut *mut c_char,
+) -> *mut c_char {
+    // SAFETY: caller contract above.
+    let Some(handle) = (unsafe { node.as_ref() }) else {
+        return fail(error_out, "node handle is null");
+    };
+    let entries: Vec<FiberHealth> = handle
+        .kernel
+        .fibers()
+        .into_iter()
+        .map(|fiber| {
+            let (state, error) = match fiber.state {
+                FiberState::Active => ("active", None),
+                FiberState::Pending => ("pending", None),
+                FiberState::Failed(error) => ("failed", Some(error)),
+            };
+            FiberHealth {
+                id: fiber.id,
+                plugin: fiber.plugin,
+                state,
+                error,
+                missing: fiber.missing,
+            }
+        })
+        .collect();
+    json_result(Ok::<_, SubstrateError>(entries), error_out)
+}
+
+/// One entry of the health report `inseam_node_health` serializes.
+#[derive(serde::Serialize)]
+struct FiberHealth {
+    id: String,
+    plugin: String,
+    state: &'static str,
+    error: Option<String>,
+    missing: Vec<String>,
 }
 
 /// Free a string returned by this library. Null is a no-op.
@@ -219,16 +278,43 @@ fn open_node(data_dir: &Path, composition_path: Option<&Path>) -> Result<InseamN
     match runtime.block_on(kernel.reconcile(&composition)) {
         Ok(()) => {}
         // Loud but not fatal: an app can open a node whose llm entry failed
-        // (no key) and still browse; operations-needing calls error below.
+        // (no key) — parked entries are contained, `inseam_node_health`
+        // says what and why, and operation calls error with the same story.
         Err(e @ SubstrateError::Unsettled { .. }) => eprintln!("inseam: warning: {e}"),
         Err(e) => return Err(e.to_string()),
     }
-    let operations = kernel.service(&OPERATIONS).map_err(|e| e.to_string())?;
+    let operations = kernel.service(&OPERATIONS).ok();
     Ok(InseamNode {
         runtime,
         kernel,
         operations,
     })
+}
+
+/// The explanation an operation call returns while `operations` is parked:
+/// every failed entry with its error, then every pending entry with the
+/// service keys it waits on.
+fn unsettled_message(kernel: &Kernel) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for fiber in kernel.fibers() {
+        match fiber.state {
+            FiberState::Failed(error) => {
+                lines.push(format!("`{}` failed: {}", fiber.id, error));
+            }
+            FiberState::Pending => {
+                lines.push(format!(
+                    "`{}` is waiting on `{}`",
+                    fiber.id,
+                    fiber.missing.join("`, `")
+                ));
+            }
+            FiberState::Active => {}
+        }
+    }
+    // Reaching here requires the operations lookup to have failed, and a
+    // settled tree always binds it; assert the message carries substance.
+    assert!(!lines.is_empty(), "operations missing but every fiber active");
+    format!("node is not fully settled: {}", lines.join("; "))
 }
 
 /// Borrow a nullable C string as `&str`; `None` for null or non-UTF-8.
@@ -336,6 +422,48 @@ mod tests {
         assert!(!response.is_null(), "query on an empty index succeeds");
         let json = take_string(response);
         assert!(json.contains("\"results\""));
+
+        // SAFETY: freeing the node exactly once.
+        unsafe { inseam_node_free(node) };
+    }
+
+    #[test]
+    fn missing_api_key_parks_entries_but_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        // Point the llm entry at a variable that is certainly unset, so the
+        // default endpoint embedder (and everything above it) parks.
+        std::fs::write(
+            dir.path().join("composition.toml"),
+            r#"
+            [[entry]]
+            id = "llm"
+            [entry.config]
+            api_key_env = "INSEAM_TEST_KEY_THAT_IS_NOT_SET"
+            "#,
+        )
+        .unwrap();
+        let data_dir = CString::new(dir.path().to_str().unwrap()).unwrap();
+        let mut err: *mut c_char = std::ptr::null_mut();
+        // SAFETY: valid C strings and a writable error slot.
+        let node = unsafe {
+            inseam_node_open(data_dir.as_ptr(), std::ptr::null(), &mut err)
+        };
+        assert!(!node.is_null(), "the node opens with entries parked");
+
+        // SAFETY: live node, writable error slot.
+        let health = unsafe { inseam_node_health(node, &mut err) };
+        let health_json = take_string(health);
+        assert!(health_json.contains("\"state\":\"failed\""));
+        assert!(health_json.contains("INSEAM_TEST_KEY_THAT_IS_NOT_SET"));
+        assert!(health_json.contains("\"state\":\"pending\""));
+
+        let text = CString::new("anything").unwrap();
+        // SAFETY: live node, valid strings, writable error slot.
+        let response = unsafe { inseam_node_query(node, text.as_ptr(), 5, &mut err) };
+        assert!(response.is_null(), "operations are parked, not silently empty");
+        let message = take_string(err);
+        assert!(message.contains("not fully settled"), "got: {message}");
+        assert!(message.contains("`llm` failed"), "got: {message}");
 
         // SAFETY: freeing the node exactly once.
         unsafe { inseam_node_free(node) };

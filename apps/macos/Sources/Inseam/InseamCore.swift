@@ -54,6 +54,15 @@ final class CoreNode {
         close()
     }
 
+    /// Per-entry fiber health: which composition entries are active, and
+    /// which are parked (failed, or pending on a failed one's services).
+    func health() throws -> [FiberHealth] {
+        guard let handle else { throw CoreError(message: "node is closed") }
+        return try decode([FiberHealth].self) { error in
+            inseam_node_health(handle, &error)
+        }
+    }
+
     func query(_ text: String, limit: UInt32 = 8) throws -> QueryResponse {
         guard let handle else { throw CoreError(message: "node is closed") }
         return try decode(QueryResponse.self) { error in
@@ -103,6 +112,14 @@ struct EnvelopeView: Decodable {
     let created: String?
     let modified: String?
     let title: String?
+}
+
+struct FiberHealth: Decodable, Identifiable {
+    let id: String
+    let plugin: String
+    let state: String
+    let error: String?
+    let missing: [String]
 }
 
 struct IndexReport: Decodable {
