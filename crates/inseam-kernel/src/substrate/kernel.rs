@@ -384,6 +384,19 @@ impl Kernel {
                         .collect(),
                     _ => Vec::new(),
                 },
+                // The snapshot re-checks the environment the plugin's own
+                // apply reads (pair assertions: the declaration and the
+                // failure must agree). Active fibers resolved their
+                // secrets, so only parked ones report them.
+                missing_secrets: match f.state {
+                    FiberState::Active => Vec::new(),
+                    FiberState::Pending | FiberState::Failed(_) => f
+                        .plugin
+                        .secrets()
+                        .into_iter()
+                        .filter(|need| std::env::var(&need.env).is_err())
+                        .collect(),
+                },
             })
             .collect()
     }

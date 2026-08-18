@@ -28,6 +28,11 @@ the neighbors, don't guess.
    reaching for an undeclared service fails the fiber. Transforms never do
    I/O or touch the `llm` seam directly; they use the granted, metered
    handle the sweep passes in and fall back gracefully when it refuses.
+   If your config names a secret environment variable
+   (`api_key_env`-style), implement `Plugin::secrets()` with the variable
+   and an owner-facing sentence on why it's needed — status surfaces show
+   it verbatim when the value is missing (`llm_endpoint.rs` is the
+   template).
 3. Register the factory in `factories()` in
    `crates/inseam-plugins/src/lib.rs` (or via
    `Distribution::with_factories` in a custom distribution).

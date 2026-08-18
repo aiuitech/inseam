@@ -62,6 +62,25 @@ impl Manifest {
 pub trait Plugin: Send + Sync + 'static {
     fn manifest(&self) -> Manifest;
     async fn apply(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError>;
+
+    /// Secrets this configured instance reads from the environment, each
+    /// with the reason a UI shows when asking the owner to provide it.
+    /// Declared per instance, not in the static manifest, because the
+    /// variable name comes from config (`api_key_env`-style). Declaring is
+    /// advisory — `apply` still fails loudly when the value is absent; the
+    /// declaration is what lets status surfaces explain instead of just
+    /// reporting the failure.
+    fn secrets(&self) -> Vec<SecretNeed> {
+        Vec::new()
+    }
+}
+
+/// One environment-variable secret a configured plugin needs, and why —
+/// `purpose` is owner-facing prose a settings UI can print verbatim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretNeed {
+    pub env: String,
+    pub purpose: String,
 }
 
 /// Builds plugin instances for composition entries naming this plugin.

@@ -14,6 +14,6 @@ pub use events::{EventBus, Guard, Next, Notify, Subscription, Verdict, Waterfall
 pub use fiber::{EntryId, FiberState, FiberView};
 pub use kernel::{config_digest, fnv1a, Kernel, STATE, STORE};
 pub use plugin::{
-    parse_config, ApplyCx, Inject, Manifest, Plugin, PluginFactory, SchemeFactory,
+    parse_config, ApplyCx, Inject, Manifest, Plugin, PluginFactory, SchemeFactory, SecretNeed,
 };
 pub use service::{Facts, ServiceKey};

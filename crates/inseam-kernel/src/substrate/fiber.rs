@@ -3,7 +3,7 @@
 //! activates when everything it requires is provided, unloads when something
 //! it requires withdraws, and failure lands the fiber alone.
 
-use super::plugin::{Effect, Plugin};
+use super::plugin::{Effect, Plugin, SecretNeed};
 
 /// Stable identity of a composition entry; the reconciler's diffing key.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -66,4 +66,7 @@ pub struct FiberView {
     /// now" as a query, not archaeology.
     pub effects: Vec<String>,
     pub missing: Vec<String>,
+    /// Declared secrets currently absent from the environment — for a
+    /// non-active fiber, the "enter this to enable" story a UI renders.
+    pub missing_secrets: Vec<SecretNeed>,
 }

@@ -120,6 +120,16 @@ struct FiberHealth: Decodable, Identifiable {
     let state: String
     let error: String?
     let missing: [String]
+    let missingSecrets: [SecretNeed]
+}
+
+/// A secret a parked entry declared: the environment variable to set and
+/// the owner-facing reason to set it — prose the UI shows verbatim.
+struct SecretNeed: Decodable, Identifiable, Equatable {
+    let env: String
+    let purpose: String
+
+    var id: String { env }
 }
 
 struct IndexReport: Decodable {

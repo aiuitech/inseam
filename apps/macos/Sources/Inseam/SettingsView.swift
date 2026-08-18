@@ -29,13 +29,24 @@ private let compositionTemplate = """
 /// `composition.toml` — the same file the CLI layers — and the Secrets tab
 /// manages the Keychain items exported as environment variables at node
 /// open. Saving either side reopens the node so changes take effect.
+/// The Settings tabs; the main window steers here (an "Add API Key…"
+/// button lands on the Secrets tab) via the shared model.
+enum SettingsTab: Hashable {
+    case composition
+    case secrets
+}
+
 struct SettingsView: View {
+    @EnvironmentObject private var model: AppModel
+
     var body: some View {
-        TabView {
+        TabView(selection: $model.settingsTab) {
             CompositionSettingsTab()
                 .tabItem { Label("Composition", systemImage: "doc.text") }
+                .tag(SettingsTab.composition)
             SecretsSettingsTab()
                 .tabItem { Label("Secrets", systemImage: "key") }
+                .tag(SettingsTab.secrets)
         }
         .frame(width: 640, height: 440)
     }
@@ -148,7 +159,15 @@ struct SecretsSettingsTab: View {
                 .foregroundStyle(.secondary)
         }
         .padding()
-        .onAppear { refresh() }
+        .onAppear {
+            refresh()
+            // The main window may have sent the user here to satisfy a
+            // declared need — pre-fill that variable's name.
+            if let suggested = model.suggestedSecretName {
+                newName = suggested
+                model.suggestedSecretName = nil
+            }
+        }
     }
 
     private func refresh() {

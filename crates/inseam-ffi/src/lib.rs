@@ -226,6 +226,14 @@ pub unsafe extern "C" fn inseam_node_health(
                 state,
                 error,
                 missing: fiber.missing,
+                missing_secrets: fiber
+                    .missing_secrets
+                    .into_iter()
+                    .map(|need| SecretNeedHealth {
+                        env: need.env,
+                        purpose: need.purpose,
+                    })
+                    .collect(),
             }
         })
         .collect();
@@ -240,6 +248,15 @@ struct FiberHealth {
     state: &'static str,
     error: Option<String>,
     missing: Vec<String>,
+    missing_secrets: Vec<SecretNeedHealth>,
+}
+
+/// A declared-but-absent secret in the health report: the environment
+/// variable to set and the owner-facing reason to set it.
+#[derive(serde::Serialize)]
+struct SecretNeedHealth {
+    env: String,
+    purpose: String,
 }
 
 /// Free a string returned by this library. Null is a no-op.
@@ -454,8 +471,10 @@ mod tests {
         let health = unsafe { inseam_node_health(node, &mut err) };
         let health_json = take_string(health);
         assert!(health_json.contains("\"state\":\"failed\""));
-        assert!(health_json.contains("INSEAM_TEST_KEY_THAT_IS_NOT_SET"));
         assert!(health_json.contains("\"state\":\"pending\""));
+        // The declared secret need surfaces with its owner-facing reason.
+        assert!(health_json.contains("\"env\":\"INSEAM_TEST_KEY_THAT_IS_NOT_SET\""));
+        assert!(health_json.contains("unlocks the language model"));
 
         let text = CString::new("anything").unwrap();
         // SAFETY: live node, valid strings, writable error slot.

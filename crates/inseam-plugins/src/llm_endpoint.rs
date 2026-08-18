@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, Facts, Inject, Manifest, Plugin, PluginError,
+    parse_config, ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, SecretNeed,
 };
 use inseam_kernel::text::truncate_chars;
 use inseam_seams::llm::{self, ChatMessage, ChatRequest, Llm, ModelInfo, LLM};
@@ -96,6 +96,30 @@ impl Plugin for LlmEndpoint {
         cx.provide(&LLM, Arc::new(client) as Arc<dyn Llm>, facts)?;
         Ok(())
     }
+
+    fn secrets(&self) -> Vec<SecretNeed> {
+        vec![SecretNeed {
+            env: self.config.api_key_env.clone(),
+            purpose: format!(
+                "An API key for {} unlocks the language model that powers \
+                 search embeddings, summaries, and entity extraction — \
+                 indexing and search stay paused without it.",
+                endpoint_host(&self.config.base_url)
+            ),
+        }]
+    }
+}
+
+/// The host part of the endpoint URL, for owner-facing prose — the scheme
+/// and path would only add noise to a settings screen.
+fn endpoint_host(base_url: &str) -> &str {
+    let without_scheme = match base_url.split_once("://") {
+        Some((_, rest)) => rest,
+        None => base_url,
+    };
+    // Provably infallible: split always yields at least one element.
+    #[allow(clippy::expect_used)]
+    without_scheme.split('/').next().expect("split yields at least one element")
 }
 
 /// API key newtype so the secret never lands in logs via Debug.
@@ -362,6 +386,16 @@ fn base64_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secrets_declare_the_configured_env_with_a_host_purpose() {
+        let plugin = LlmEndpoint::from_config(&toml::Table::new()).unwrap();
+        let needs = plugin.secrets();
+        assert_eq!(needs.len(), 1);
+        assert_eq!(needs[0].env, "OPENROUTER_API_KEY");
+        assert!(needs[0].purpose.contains("openrouter.ai"));
+        assert!(!needs[0].purpose.contains("https://"));
+    }
 
     #[test]
     fn api_key_debug_is_redacted() {

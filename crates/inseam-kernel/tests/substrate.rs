@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use inseam_kernel::substrate::{
     ApplyCx, Composition, Facts, FiberState, Inject, Kernel, Manifest, Plugin, PluginError,
-    PluginFactory, ServiceKey, SubstrateError,
+    PluginFactory, ServiceKey,
 };
 
 // A tiny test seam: a greeter service and plugins around it.

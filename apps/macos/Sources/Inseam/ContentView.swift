@@ -11,6 +11,17 @@ final class AppModel: ObservableObject {
     /// Human-readable lines describing parked composition entries — empty
     /// when the node is fully settled.
     @Published private(set) var parkedWarnings: [String] = []
+    /// Secrets parked entries declared as needed, deduplicated by variable
+    /// name — when nonempty the UI asks for these instead of showing the
+    /// raw parked warnings.
+    @Published private(set) var neededSecrets: [SecretNeed] = []
+    /// Ids of every non-active composition entry.
+    @Published private(set) var parkedEntries: [String] = []
+    /// Which Settings tab is showing; the "Add API Key…" button steers it.
+    @Published var settingsTab: SettingsTab = .composition
+    /// Variable name the Secrets tab pre-fills, set when the main window
+    /// sends the user there to satisfy a declared need.
+    @Published var suggestedSecretName: String?
 
     let coreVersion = CoreNode.coreVersion()
     let dataDir: URL
@@ -36,6 +47,8 @@ final class AppModel: ObservableObject {
         node = nil
         nodeOpen = false
         parkedWarnings = []
+        neededSecrets = []
+        parkedEntries = []
         results = []
         status = "opening node…"
         let dataDir = dataDir
@@ -43,14 +56,25 @@ final class AppModel: ObservableObject {
             old?.close()
             try SecretStore.exportIntoEnvironment()
             let node = try CoreNode(dataDir: dataDir)
-            let warnings = Self.parkedWarnings(in: try node.health())
+            let health = try node.health()
+            let parked = health.filter { $0.state != "active" }
+            var seen = Set<String>()
+            let needs = parked.flatMap(\.missingSecrets)
+                .filter { seen.insert($0.env).inserted }
+            let warnings = Self.parkedWarnings(in: health)
             return {
                 self?.node = node
                 self?.nodeOpen = true
+                self?.parkedEntries = parked.map(\.id)
+                self?.neededSecrets = needs
                 self?.parkedWarnings = warnings
-                self?.status = warnings.isEmpty
-                    ? "node open · data dir \(dataDir.path)"
-                    : "node open, but some entries are parked:"
+                if !needs.isEmpty {
+                    self?.status = "node open — an API key is needed"
+                } else if !warnings.isEmpty {
+                    self?.status = "node open, but some entries are parked:"
+                } else {
+                    self?.status = "node open · data dir \(dataDir.path)"
+                }
             }
         }
     }
@@ -126,6 +150,43 @@ final class AppModel: ObservableObject {
     }
 }
 
+/// The empty-state prompt for declared-but-missing secrets: each need's
+/// purpose in plain language, one button to the pre-filled Secrets tab,
+/// and a quiet line naming what stays paused meanwhile.
+struct SecretPromptView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ForEach(model.neededSecrets) { need in
+                VStack(spacing: 4) {
+                    Text(need.env)
+                        .font(.callout.monospaced().bold())
+                    Text(need.purpose)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: 440)
+            }
+            Button("Add API Key…") {
+                model.suggestedSecretName = model.neededSecrets.first?.env
+                model.settingsTab = .secrets
+                openSettings()
+            }
+            if !model.parkedEntries.isEmpty {
+                Text("Paused meanwhile: \(model.parkedEntries.joined(separator: ", "))")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.top, 6)
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
     @State private var queryText = ""
@@ -157,18 +218,22 @@ struct ContentView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
-                ForEach(model.parkedWarnings, id: \.self) { warning in
-                    Text(warning)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                }
-                if (!model.nodeOpen || !model.parkedWarnings.isEmpty) && !model.busy {
-                    Text("Open Settings (⌘,) to edit the composition or add an API key.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.top, 4)
+                if !model.neededSecrets.isEmpty {
+                    SecretPromptView()
+                } else {
+                    ForEach(model.parkedWarnings, id: \.self) { warning in
+                        Text(warning)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                    if (!model.nodeOpen || !model.parkedWarnings.isEmpty) && !model.busy {
+                        Text("Open Settings (⌘,) to edit the composition or add an API key.")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 4)
+                    }
                 }
                 Spacer()
             } else {

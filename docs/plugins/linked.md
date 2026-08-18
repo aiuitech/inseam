@@ -2,12 +2,12 @@
 
 The trusted tier ([design/plugins.md](../../design/plugins.md)), named for how the code arrives: **linked** into the binary at build time, where [loaded plugins](loaded.md) mount from artifacts at runtime. Rust, statically compiled, turned on by the composition. `crates/inseam-plugins` ships the first-party set; a distribution registers the factories it links (`inseam_plugins::factories()`) with `Kernel::boot`, and a custom distribution compiles additional linked plugins in from source ([distributions.md](distributions.md)).
 
-Every plugin is the same five declarations — name, config, inject, provide, apply ([../architecture/kernel.md](../architecture/kernel.md)). What each first-party plugin does:
+Every plugin is the same five declarations — name, config, inject, provide, apply ([../architecture/kernel.md](../architecture/kernel.md)) — plus an optional sixth, `secrets()`: a plugin whose config names a secret environment variable declares it with an owner-facing reason, so a settings UI can ask for the key in plain language instead of surfacing the apply failure. What each first-party plugin does:
 
 | Plugin | Provides | Injects | Role |
 | --- | --- | --- | --- |
 | `connection-fs` | `connection` | — | the local filesystem host ([indexing/filesystem-host.md](../indexing/filesystem-host.md)) |
-| `llm-endpoint` | `llm` | — | OpenAI-compatible client; declares `transform_model`/`agent_model` as facts. Fails loudly (and alone) when its key env var is unset |
+| `llm-endpoint` | `llm` | — | OpenAI-compatible client; declares `transform_model`/`agent_model` as facts. Fails loudly (and alone) when its key env var is unset, and declares that need via `Plugin::secrets()` so status surfaces can say why the key matters |
 | `embedder` | `embedder` | store, llm? | endpoint / hashed / none; declares the embedding identity to the store, which opens the search surface under it |
 | `transforms` | `transforms` | — | the registry transform plugins sign up with |
 | `transform-markdown` | — | transforms | splits markdown by its heading structure |
