@@ -48,8 +48,6 @@ pub enum SubstrateError {
     MissingService { key: String },
     #[error("service `{key}` is bound to a different type than the consumer expects")]
     WrongServiceType { key: String },
-    #[error("entry `{entry}` failed to apply: {source}")]
-    ApplyFailed { entry: String, source: PluginError },
     #[error(
         "composition cannot settle; entries are waiting on services nothing provides:\n{}",
         .waiting.iter().map(|(e, keys)| format!("  {e}: missing {}", keys.join(", ")))

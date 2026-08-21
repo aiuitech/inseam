@@ -7,6 +7,11 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Most entries one composition may hold, groups and leaves together — far
+/// above any real node, present so every walk over the tree has a bound.
+/// `usize` because it bounds `Vec` lengths.
+pub const ENTRY_COUNT_MAX: usize = 1024;
+
 #[derive(Debug, Error)]
 pub enum CompositionError {
     #[error("could not read composition `{path}`: {source}")]
@@ -25,6 +30,8 @@ pub enum CompositionError {
     DuplicateInLayer(String),
     #[error("entry `{0}` patches nothing and names no plugin")]
     PatchWithoutTarget(String),
+    #[error("composition has more than {ENTRY_COUNT_MAX} entries")]
+    TooManyEntries,
 }
 
 /// One entry: a plugin mounted with a config. Groups are ordinary entries
@@ -40,8 +47,10 @@ pub struct Entry {
     pub plugin: Option<String>,
     #[serde(default, skip_serializing_if = "toml::Table::is_empty")]
     pub config: toml::Table,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub disabled: bool,
+    /// Mount toggle. Optional so a patch can leave it alone: a config-only
+    /// patch must not re-enable an entry its base layer disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub entries: Vec<Entry>,
 }
@@ -58,6 +67,10 @@ impl Entry {
     pub fn with_config(mut self, config: toml::Table) -> Self {
         self.config = config;
         self
+    }
+
+    pub fn is_disabled(&self) -> bool {
+        self.disabled == Some(true)
     }
 }
 
@@ -88,96 +101,158 @@ impl Composition {
         Self::parse(&raw, &path.display().to_string())
     }
 
+    /// Every entry has an id, ids are unique across the whole tree, and the
+    /// tree is within bounds.
     fn validate(&self) -> Result<(), CompositionError> {
-        fn walk(entries: &[Entry], seen: &mut std::collections::HashSet<String>) -> Result<(), CompositionError> {
-            for e in entries {
-                if e.id.is_empty() {
-                    return Err(CompositionError::MissingId);
-                }
-                if !seen.insert(e.id.clone()) {
-                    return Err(CompositionError::DuplicateInLayer(e.id.clone()));
-                }
-                walk(&e.entries, seen)?;
+        let mut seen = std::collections::HashSet::new();
+        for entry in walk(&self.entries, |_| false)? {
+            if entry.id.is_empty() {
+                return Err(CompositionError::MissingId);
             }
-            Ok(())
+            if !seen.insert(entry.id.as_str()) {
+                return Err(CompositionError::DuplicateInLayer(entry.id.clone()));
+            }
         }
-        walk(&self.entries, &mut std::collections::HashSet::new())
+        Ok(())
     }
 
     /// Patch this composition with a later layer, by entry id. Semantics are
     /// whole-entry replacement of `config` (simple over clever, per the
     /// design's open-question resolution); `disabled` and `plugin` override
-    /// when present; unmatched ids append as new entries.
+    /// when present; unmatched ids append as new entries — at the top level
+    /// for the overlay's own entries, under the matched parent for nested
+    /// ones.
     pub fn layered(mut self, over: Composition) -> Result<Composition, CompositionError> {
-        for patch in over.entries {
-            Self::apply_patch(&mut self.entries, patch)?;
+        // Worklist of (patch, path of the entry list an unmatched patch
+        // appends to). Iterative and bounded, like every tree walk here.
+        let mut pending: Vec<(Entry, Vec<usize>)> = over
+            .entries
+            .into_iter()
+            .rev()
+            .map(|patch| (patch, Vec::new()))
+            .collect();
+        let mut applied: usize = 0;
+        while let Some((patch, append_at)) = pending.pop() {
+            applied += 1;
+            if applied > ENTRY_COUNT_MAX {
+                return Err(CompositionError::TooManyEntries);
+            }
+            match path_of(&self.entries, &patch.id)? {
+                Some(path) => {
+                    let target = entry_at_mut(&mut self.entries, &path);
+                    if let Some(plugin) = patch.plugin {
+                        target.plugin = Some(plugin);
+                    }
+                    if !patch.config.is_empty() {
+                        target.config = patch.config;
+                    }
+                    if let Some(disabled) = patch.disabled {
+                        target.disabled = Some(disabled);
+                    }
+                    pending.extend(
+                        patch
+                            .entries
+                            .into_iter()
+                            .rev()
+                            .map(|child| (child, path.clone())),
+                    );
+                }
+                None => {
+                    if patch.plugin.is_none() {
+                        return Err(CompositionError::PatchWithoutTarget(patch.id));
+                    }
+                    entries_at_mut(&mut self.entries, &append_at).push(patch);
+                }
+            }
         }
         self.validate()?;
         Ok(self)
-    }
-
-    fn apply_patch(entries: &mut Vec<Entry>, patch: Entry) -> Result<(), CompositionError> {
-        fn find<'a>(entries: &'a mut Vec<Entry>, id: &str) -> Option<&'a mut Entry> {
-            for e in entries.iter_mut() {
-                if e.id == id {
-                    return Some(e);
-                }
-                if let Some(hit) = find(&mut e.entries, id) {
-                    return Some(hit);
-                }
-            }
-            None
-        }
-        match find(entries, &patch.id) {
-            Some(target) => {
-                if let Some(plugin) = patch.plugin {
-                    target.plugin = Some(plugin);
-                }
-                if !patch.config.is_empty() {
-                    target.config = patch.config;
-                }
-                target.disabled = patch.disabled;
-                for child in patch.entries {
-                    Self::apply_patch(&mut target.entries, child)?;
-                }
-                Ok(())
-            }
-            None => {
-                if patch.plugin.is_none() {
-                    return Err(CompositionError::PatchWithoutTarget(patch.id));
-                }
-                entries.push(patch);
-                Ok(())
-            }
-        }
     }
 
     /// Flatten the tree into mountable entries: groups dissolve, a disabled
     /// entry prunes its whole subtree. Entries without a plugin ref are pure
     /// groups and mount nothing themselves.
     pub fn resolved(&self) -> Vec<Entry> {
-        fn walk(entries: &[Entry], out: &mut Vec<Entry>) {
-            for e in entries {
-                if e.disabled {
-                    continue;
-                }
-                if e.plugin.is_some() {
-                    out.push(Entry {
-                        entries: Vec::new(),
-                        ..e.clone()
-                    });
-                }
-                walk(&e.entries, out);
-            }
-        }
-        let mut out = Vec::new();
-        walk(&self.entries, &mut out);
-        out
+        // Every construction path (`parse`, `load`, `layered`) validated the
+        // bound; an oversized hand-built tree is a programmer error.
+        walk(&self.entries, Entry::is_disabled)
+            .expect("a composition is validated before it is resolved")
+            .into_iter()
+            .filter(|e| e.plugin.is_some())
+            .map(|e| Entry {
+                entries: Vec::new(),
+                ..e.clone()
+            })
+            .collect()
     }
 
     pub fn to_toml(&self) -> String {
         toml::to_string_pretty(self).unwrap_or_default()
     }
+}
+
+/// Pre-order walk of an entry tree, without recursion: an explicit stack,
+/// bounded by [`ENTRY_COUNT_MAX`]. An entry `prune` accepts is skipped along
+/// with its whole subtree.
+fn walk(
+    entries: &[Entry],
+    prune: impl Fn(&Entry) -> bool,
+) -> Result<Vec<&Entry>, CompositionError> {
+    let mut out: Vec<&Entry> = Vec::new();
+    let mut stack: Vec<&Entry> = entries.iter().rev().collect();
+    while let Some(entry) = stack.pop() {
+        if prune(entry) {
+            continue;
+        }
+        if out.len() >= ENTRY_COUNT_MAX {
+            return Err(CompositionError::TooManyEntries);
+        }
+        out.push(entry);
+        stack.extend(entry.entries.iter().rev());
+    }
+    Ok(out)
+}
+
+/// The index path (child indices, root first) of the entry with `id`,
+/// anywhere in the tree.
+fn path_of(entries: &[Entry], id: &str) -> Result<Option<Vec<usize>>, CompositionError> {
+    let mut stack: Vec<(&Entry, Vec<usize>)> = entries
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(index, entry)| (entry, vec![index]))
+        .collect();
+    let mut visited: usize = 0;
+    while let Some((entry, path)) = stack.pop() {
+        visited += 1;
+        if visited > ENTRY_COUNT_MAX {
+            return Err(CompositionError::TooManyEntries);
+        }
+        if entry.id == id {
+            return Ok(Some(path));
+        }
+        for (index, child) in entry.entries.iter().enumerate().rev() {
+            let mut child_path = path.clone();
+            child_path.push(index);
+            stack.push((child, child_path));
+        }
+    }
+    Ok(None)
+}
+
+/// The entry list at `path` — the root list for the empty path, otherwise
+/// the children of the entry the path names.
+fn entries_at_mut<'a>(entries: &'a mut Vec<Entry>, path: &[usize]) -> &'a mut Vec<Entry> {
+    let mut current = entries;
+    for index in path {
+        current = &mut current[*index].entries;
+    }
+    current
+}
+
+fn entry_at_mut<'a>(entries: &'a mut Vec<Entry>, path: &[usize]) -> &'a mut Entry {
+    let (last, parents) = path.split_last().expect("a path names at least one entry");
+    &mut entries_at_mut(entries, parents)[*last]
 }
 
 #[cfg(test)]
@@ -202,6 +277,11 @@ mod tests {
             [[entry.entries]]
             id = "entities"
             plugin = "transform-entities"
+
+            [[entry]]
+            id = "parked"
+            plugin = "ocr"
+            disabled = true
             "#,
             "base",
         )
@@ -216,6 +296,15 @@ mod tests {
         )
         .expect_err("duplicate ids refuse");
         assert!(matches!(err, CompositionError::DuplicateInLayer(id) if id == "a"));
+    }
+
+    #[test]
+    fn rejects_oversized_trees() {
+        let text: String = (0..=ENTRY_COUNT_MAX)
+            .map(|i| format!("[[entry]]\nid = \"e{i}\"\nplugin = \"x\"\n"))
+            .collect();
+        let err = Composition::parse(&text, "big").expect_err("too many entries refuse");
+        assert!(matches!(err, CompositionError::TooManyEntries));
     }
 
     #[test]
@@ -246,11 +335,48 @@ mod tests {
     }
 
     #[test]
+    fn nested_patches_append_under_their_parent() {
+        let over = Composition::parse(
+            r#"
+            [[entry]]
+            id = "extras"
+            [[entry.entries]]
+            id = "links"
+            plugin = "transform-links"
+            "#,
+            "over",
+        )
+        .expect("overlay parses");
+        let layered = base().layered(over).expect("layers");
+        let extras = layered.entries.iter().find(|e| e.id == "extras").expect("group kept");
+        let ids: Vec<&str> = extras.entries.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["entities", "links"]);
+    }
+
+    #[test]
     fn disabling_a_group_prunes_its_subtree() {
         let over = Composition::parse("[[entry]]\nid = \"extras\"\ndisabled = true", "over")
             .expect("parses");
         let layered = base().layered(over).expect("layers");
         assert!(layered.resolved().iter().all(|e| e.id != "entities"));
+    }
+
+    #[test]
+    fn config_only_patch_keeps_the_base_disabled_flag() {
+        let over = Composition::parse(
+            "[[entry]]\nid = \"parked\"\n[entry.config]\nlang = \"eng\"",
+            "over",
+        )
+        .expect("parses");
+        let layered = base().layered(over).expect("layers");
+        assert!(
+            layered.resolved().iter().all(|e| e.id != "parked"),
+            "a patch that says nothing about `disabled` leaves it alone"
+        );
+        let enable = Composition::parse("[[entry]]\nid = \"parked\"\ndisabled = false", "over")
+            .expect("parses");
+        let layered = base().layered(enable).expect("layers");
+        assert!(layered.resolved().iter().any(|e| e.id == "parked"));
     }
 
     #[test]

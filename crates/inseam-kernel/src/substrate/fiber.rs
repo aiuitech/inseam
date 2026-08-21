@@ -23,10 +23,12 @@ impl std::fmt::Display for EntryId {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FiberState {
-    /// Waiting for required injections; the payload names what's missing.
+    /// Mounted but not running: waiting for required injections, or
+    /// unloaded and awaiting the next settle. `FiberView::missing` names
+    /// what a pending fiber waits on.
     Pending,
     Active,
-    /// `apply` or construction failed; contained to this fiber.
+    /// `apply` failed; contained to this fiber, with the reason.
     Failed(String),
 }
 

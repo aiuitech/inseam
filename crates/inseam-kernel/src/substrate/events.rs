@@ -45,13 +45,15 @@ impl Verdict {
 type NotifyFn<E> = Arc<dyn Fn(&E) + Send + Sync>;
 type GuardFn<E> = Arc<dyn Fn(&E) -> Verdict + Send + Sync>;
 type WaterfallFn<E> = Arc<dyn Fn(&E, Next<'_, E>) -> <E as Waterfall>::Decision + Send + Sync>;
+/// The built-in behavior at the bottom of a waterfall.
+type BaseFn<'a, E> = Box<dyn FnOnce(&E) -> <E as Waterfall>::Decision + 'a>;
 
 /// The inward continuation a waterfall listener holds. Consuming it runs the
 /// remaining listeners and finally the built-in behavior; not consuming it
 /// means the listener's return value *is* the decision.
 pub struct Next<'a, E: Waterfall> {
     rest: &'a [(u64, WaterfallFn<E>)],
-    base: Box<dyn FnOnce(&E) -> E::Decision + 'a>,
+    base: BaseFn<'a, E>,
 }
 
 impl<E: Waterfall> Next<'_, E> {
@@ -83,20 +85,22 @@ impl Drop for Subscription {
     }
 }
 
+/// One event type's listeners: `(id, erased listener)`. The erasure is per
+/// listener only — every event type's list has this same shape, so the map
+/// holds the lists directly.
+type Listeners = Vec<(u64, Box<dyn Any + Send + Sync>)>;
+
 #[derive(Default)]
 pub(crate) struct EventBusInner {
-    /// Per event type: erased `Vec<(id, listener)>`.
-    listeners: Mutex<HashMap<TypeId, Box<dyn Any + Send>>>,
+    listeners: Mutex<HashMap<TypeId, Listeners>>,
     next_id: AtomicU64,
 }
 
 impl EventBusInner {
     fn remove(&self, event: TypeId, id: u64) {
         let mut map = self.listeners.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(list) = map.get_mut(&event)
-            && let Some(v) = list.downcast_mut::<Vec<(u64, Box<dyn Any + Send + Sync>)>>()
-        {
-            v.retain(|(i, _)| *i != id);
+        if let Some(list) = map.get_mut(&event) {
+            list.retain(|(i, _)| *i != id);
         }
     }
 }
@@ -119,12 +123,9 @@ impl EventBus {
             .listeners
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let erased: Box<dyn Any + Send + Sync> = Box::new(listener);
         map.entry(event)
-            .or_insert_with(|| Box::new(Vec::<(u64, Box<dyn Any + Send + Sync>)>::new()))
-            .downcast_mut::<Vec<(u64, Box<dyn Any + Send + Sync>)>>()
-            .expect("listener vec shape is fixed per event type")
-            .push((id, erased));
+            .or_default()
+            .push((id, Box::new(listener)));
         Subscription {
             bus: Arc::clone(&self.inner),
             event,
@@ -139,16 +140,10 @@ impl EventBus {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         map.get(&event)
-            .and_then(|erased| {
-                erased
-                    .downcast_ref::<Vec<(u64, Box<dyn Any + Send + Sync>)>>()
-                    .map(|v| {
-                        v.iter()
-                            .filter_map(|(id, l)| {
-                                l.downcast_ref::<L>().map(|l| (*id, l.clone()))
-                            })
-                            .collect()
-                    })
+            .map(|list| {
+                list.iter()
+                    .filter_map(|(id, l)| l.downcast_ref::<L>().map(|l| (*id, l.clone())))
+                    .collect()
             })
             .unwrap_or_default()
     }

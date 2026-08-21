@@ -71,17 +71,35 @@ impl Facts {
     }
 }
 
-/// One live binding: the providing entry, the erased `Arc<T>` handle, and the
+/// Who bound a service: the kernel itself (`store`, `state`) or a fiber. A
+/// variant rather than a reserved entry id, so no composition entry can ever
+/// collide with — and unload — the kernel's own bindings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Provider {
+    Kernel,
+    Fiber(EntryId),
+}
+
+impl std::fmt::Display for Provider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Kernel => f.write_str("kernel"),
+            Self::Fiber(id) => f.write_str(id.as_str()),
+        }
+    }
+}
+
+/// One live binding: the provider, the erased `Arc<T>` handle, and the
 /// provider's declared facts.
 pub(crate) struct Binding {
-    pub provider: EntryId,
+    pub provider: Provider,
     handle: Box<dyn Any + Send + Sync>,
     pub facts: Facts,
 }
 
 impl Binding {
     pub fn new<T: ?Sized + Send + Sync + 'static>(
-        provider: EntryId,
+        provider: Provider,
         handle: Arc<T>,
         facts: Facts,
     ) -> Self {

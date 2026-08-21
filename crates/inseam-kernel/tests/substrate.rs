@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use inseam_kernel::substrate::{
     ApplyCx, Composition, Facts, FiberState, Inject, Kernel, Manifest, Plugin, PluginError,
-    PluginFactory, ServiceKey,
+    PluginFactory, ServiceKey, SubstrateError,
 };
 
 // A tiny test seam: a greeter service and plugins around it.
@@ -132,6 +132,98 @@ impl Plugin for SneakyPlugin {
     }
 }
 
+/// A second seam, so tests can build dependency shapes between two keys.
+trait Echo: Send + Sync {
+    fn echo(&self) -> String;
+}
+
+const ECHO: ServiceKey<dyn Echo> = ServiceKey::new("echo");
+
+struct FixedEcho;
+
+impl Echo for FixedEcho {
+    fn echo(&self) -> String {
+        "echo".to_string()
+    }
+}
+
+/// Injects `greeter` optionally and journals whether it was there.
+struct OptionalConsumerPlugin {
+    journal: Journal,
+}
+
+#[async_trait::async_trait]
+impl Plugin for OptionalConsumerPlugin {
+    fn manifest(&self) -> Manifest {
+        static INJECT: &[Inject] = &[Inject::optional("greeter")];
+        Manifest {
+            name: "optional-consumer",
+            inject: INJECT,
+            provides: &[],
+        }
+    }
+
+    async fn apply(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
+        let heard = match cx.try_get(&GREETER)? {
+            Some(greeter) => greeter.greet(),
+            None => "nothing".to_string(),
+        };
+        self.journal
+            .lock()
+            .unwrap()
+            .push(format!("optional heard: {heard}"));
+        Ok(())
+    }
+}
+
+/// Provides `greeter` and optionally injects `echo` — one half of a
+/// provide-cycle with [`EchoProviderPlugin`].
+struct CyclicGreeterPlugin;
+
+#[async_trait::async_trait]
+impl Plugin for CyclicGreeterPlugin {
+    fn manifest(&self) -> Manifest {
+        static INJECT: &[Inject] = &[Inject::optional("echo")];
+        Manifest {
+            name: "cyclic-greeter",
+            inject: INJECT,
+            provides: &["greeter"],
+        }
+    }
+
+    async fn apply(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
+        let greeting = match cx.try_get(&ECHO)? {
+            Some(echo) => format!("cyclic with {}", echo.echo()),
+            None => "cyclic".to_string(),
+        };
+        cx.provide(
+            &GREETER,
+            Arc::new(FixedGreeter(greeting)) as Arc<dyn Greeter>,
+            Facts::new(),
+        )
+    }
+}
+
+/// Requires `greeter` and provides `echo` — the other half of the cycle.
+struct EchoProviderPlugin;
+
+#[async_trait::async_trait]
+impl Plugin for EchoProviderPlugin {
+    fn manifest(&self) -> Manifest {
+        static INJECT: &[Inject] = &[Inject::required("greeter")];
+        Manifest {
+            name: "echo-provider",
+            inject: INJECT,
+            provides: &["echo"],
+        }
+    }
+
+    async fn apply(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
+        let _ = cx.get(&GREETER)?;
+        cx.provide(&ECHO, Arc::new(FixedEcho) as Arc<dyn Echo>, Facts::new())
+    }
+}
+
 struct TestFactory {
     name: &'static str,
     journal: Journal,
@@ -159,13 +251,26 @@ impl PluginFactory for TestFactory {
             }),
             "failer" => Box::new(FailingPlugin),
             "sneaky" => Box::new(SneakyPlugin),
+            "optional-consumer" => Box::new(OptionalConsumerPlugin {
+                journal: Arc::clone(&self.journal),
+            }),
+            "cyclic-greeter" => Box::new(CyclicGreeterPlugin),
+            "echo-provider" => Box::new(EchoProviderPlugin),
             other => return Err(PluginError::new(format!("unknown test plugin {other}"))),
         })
     }
 }
 
 fn factories(journal: &Journal) -> Vec<Arc<dyn PluginFactory>> {
-    ["greeter-provider", "greeter-consumer", "failer", "sneaky"]
+    [
+        "greeter-provider",
+        "greeter-consumer",
+        "failer",
+        "sneaky",
+        "optional-consumer",
+        "cyclic-greeter",
+        "echo-provider",
+    ]
         .into_iter()
         .map(|name| {
             Arc::new(TestFactory {
@@ -216,6 +321,106 @@ async fn activation_is_reactive_not_ordered() {
         .fibers()
         .iter()
         .all(|f| f.state == FiberState::Active));
+}
+
+#[tokio::test]
+async fn optional_dependency_appearing_restarts_its_consumer() {
+    let journal: Journal = Default::default();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut kernel = kernel(&journal, dir.path()).await;
+    // The optional consumer is listed first, so it activates before the
+    // provider exists; the provider's arrival must restart it.
+    kernel
+        .reconcile(&composition(
+            r#"
+            [[entry]]
+            id = "o"
+            plugin = "optional-consumer"
+
+            [[entry]]
+            id = "p"
+            plugin = "greeter-provider"
+            [entry.config]
+            greeting = "late"
+            "#,
+        ))
+        .await
+        .expect("settles");
+    let log = journal.lock().unwrap().clone();
+    assert_eq!(
+        log.iter().filter(|l| l.starts_with("optional heard")).cloned().collect::<Vec<_>>(),
+        vec!["optional heard: nothing".to_string(), "optional heard: late".to_string()],
+        "{log:?}"
+    );
+    assert!(kernel.fibers().iter().all(|f| f.state == FiberState::Active));
+}
+
+#[tokio::test]
+async fn provide_cycle_is_contained_as_a_fiber_failure() {
+    let journal: Journal = Default::default();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut kernel = kernel(&journal, dir.path()).await;
+    // `a` provides greeter and optionally wants echo; `b` needs greeter and
+    // provides echo. Each appearance restarts the other: a genuine cycle.
+    // It must end as a contained, named failure — never a hang or a crash.
+    let err = kernel
+        .reconcile(&composition(
+            r#"
+            [[entry]]
+            id = "a"
+            plugin = "cyclic-greeter"
+
+            [[entry]]
+            id = "b"
+            plugin = "echo-provider"
+            "#,
+        ))
+        .await
+        .expect_err("the cycle cannot settle");
+    assert!(matches!(err, SubstrateError::Unsettled { .. }), "{err}");
+    let fibers = kernel.fibers();
+    let a = fibers.iter().find(|f| f.id == "a").expect("present");
+    let FiberState::Failed(reason) = &a.state else {
+        panic!("the cycling fiber fails alone, got {:?}", a.state);
+    };
+    assert!(reason.contains("cycle"), "{reason}");
+    let b = fibers.iter().find(|f| f.id == "b").expect("present");
+    assert_eq!(b.state, FiberState::Pending);
+    assert_eq!(b.missing, vec!["greeter".to_string()]);
+    assert!(kernel.providers().iter().all(|(k, _)| k == "store" || k == "state"));
+}
+
+#[tokio::test]
+async fn shutdown_unwinds_everything_consumers_first() {
+    let journal: Journal = Default::default();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut kernel = kernel(&journal, dir.path()).await;
+    kernel
+        .reconcile(&composition(
+            r#"
+            [[entry]]
+            id = "c"
+            plugin = "greeter-consumer"
+
+            [[entry]]
+            id = "p"
+            plugin = "greeter-provider"
+            "#,
+        ))
+        .await
+        .expect("settles");
+    journal.lock().unwrap().clear();
+    kernel.shutdown().await;
+    let log = journal.lock().unwrap().clone();
+    assert_eq!(
+        log,
+        vec![
+            "consumer down, still heard: hello".to_string(),
+            "provider p down".to_string(),
+        ]
+    );
+    assert!(kernel.fibers().is_empty());
+    assert!(kernel.providers().iter().all(|(k, _)| k == "store" || k == "state"));
 }
 
 #[tokio::test]

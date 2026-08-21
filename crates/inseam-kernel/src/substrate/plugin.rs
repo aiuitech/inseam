@@ -11,7 +11,7 @@ use serde::de::DeserializeOwned;
 use super::error::{PluginError, SubstrateError};
 use super::events::{EventBus, Subscription};
 use super::fiber::EntryId;
-use super::service::{Binding, Facts, ServiceKey};
+use super::service::{Binding, Facts, Provider, ServiceKey};
 
 /// One injected key. `required: false` marks a dependency the plugin can run
 /// without (it branches at apply time).
@@ -206,14 +206,14 @@ impl ApplyCx<'_> {
             return Err(PluginError(
                 SubstrateError::ProvideConflict {
                     key: key.name().to_string(),
-                    holder: existing.provider.as_str().to_string(),
+                    holder: existing.provider.to_string(),
                 }
                 .to_string(),
             ));
         }
         self.bindings.insert(
             key.name().to_string(),
-            Binding::new(self.entry.clone(), implementation, facts),
+            Binding::new(Provider::Fiber(self.entry.clone()), implementation, facts),
         );
         self.effects.push(Effect {
             label: format!("provide {}", key.name()),

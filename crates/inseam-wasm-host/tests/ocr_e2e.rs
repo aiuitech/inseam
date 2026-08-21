@@ -252,7 +252,7 @@ async fn loaded_ocr_transcribes_images_through_the_seam() {
     // claims-aware invalidation covers the loaded tier identically.
     let mut without = composition(&artifact, "");
     if let Some(e) = without.entries.iter_mut().find(|e| e.id == "ocr") {
-        e.disabled = true;
+        e.disabled = Some(true);
     }
     kernel.reconcile(&without).await.expect("settles");
     let ops = kernel.service(&OPERATIONS).expect("operations");
