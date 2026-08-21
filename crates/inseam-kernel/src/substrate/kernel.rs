@@ -97,8 +97,8 @@ impl Kernel {
     }
 
     /// The mounted provider's facts for a key.
-    pub fn facts(&self, key: &str) -> Option<&Facts> {
-        self.bindings.get(key).map(|b| &b.facts)
+    pub fn facts<T: ?Sized + 'static>(&self, key: &ServiceKey<T>) -> Option<&Facts> {
+        self.bindings.get(key.name()).map(|b| &b.facts)
     }
 
     /// Reconcile the running fiber tree against `composition`. Edits apply

@@ -12,9 +12,9 @@
 //! embedding identity the mounted embedder declares; a changed identity pends
 //! an in-place re-embed instead of refusing to open.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Mutex, MutexGuard};
 
 use libsql::params;
 use thiserror::Error;
@@ -26,8 +26,9 @@ use crate::fragment::{
 use crate::subtree::{PlanNode, SubtreePlan};
 
 const SCHEMA_VERSION: &str = "5";
-/// Ids per DELETE predicate; keeps the SQL bounded.
-const DELETE_CHUNK: usize = 400;
+/// Ids per `IN (...)` predicate: every id-list query and delete is issued in
+/// chunks of this many, so no caller can build unbounded SQL.
+const ID_LIST_CHUNK: usize = 400;
 
 /// Drops the derived search tables (and their sync triggers) — the inverse
 /// of [`search_schema_sql`], used by re-embeds and the schema converge.
@@ -58,6 +59,11 @@ pub enum StoreError {
     },
     #[error("no embedder has declared a search surface; mount an embedder plugin first")]
     NoSearchSurface,
+    #[error(
+        "vector has {actual} dimensions, the declared search surface has {expected}; \
+         the embedder's declaration and its output disagree"
+    )]
+    DimensionMismatch { expected: usize, actual: usize },
     #[error("stored row {0} is corrupt: {1}")]
     Corrupt(i64, String),
 }
@@ -203,22 +209,30 @@ impl KeyedFragment {
 /// The live search surface: the embedding identity the search tables are
 /// bound to once an embedder declares it. The tables themselves live in the
 /// one store database alongside the catalog.
+#[derive(Clone)]
 struct SearchSurface {
     dims: usize,
     model: String,
+}
+
+/// What the store knows about its search surface, under one lock so the two
+/// facts are never observed out of step.
+#[derive(Default)]
+struct SearchState {
+    /// `None` until an embedder plugin declares the embedding identity; the
+    /// search surface belongs to that identity, not to the store's opening.
+    surface: Option<SearchSurface>,
+    /// `Some((model, dims))` the index was embedded with when that differs
+    /// from the declared identity: search refuses until an index run
+    /// re-embeds (`design/index-maintenance.md`).
+    reembed_from: Option<(String, usize)>,
 }
 
 pub struct IndexStore {
     #[expect(dead_code, reason = "keeps the database handle alive for its connections")]
     db: libsql::Database,
     catalog: libsql::Connection,
-    /// `None` until an embedder plugin declares the embedding identity; the
-    /// search surface belongs to that identity, not to the store's opening.
-    surface: Mutex<Option<Arc<SearchSurface>>>,
-    /// `Some((model, dims))` the index was embedded with when that differs
-    /// from the declared identity: search refuses until an index run
-    /// re-embeds (`design/index-maintenance.md`).
-    reembed_from: Mutex<Option<(String, usize)>>,
+    search: Mutex<SearchState>,
     /// Serializes every write. One libSQL connection carries one open
     /// transaction at a time, so two tasks writing concurrently — the sweep's
     /// subtree landing and its embedding landing, say — would interleave
@@ -254,8 +268,7 @@ impl IndexStore {
         Ok(Self {
             db,
             catalog,
-            surface: Mutex::new(None),
-            reembed_from: Mutex::new(None),
+            search: Mutex::new(SearchState::default()),
             write_lock: tokio::sync::Mutex::new(()),
         })
     }
@@ -264,6 +277,12 @@ impl IndexStore {
     /// whole statement or transaction.
     async fn write(&self) -> tokio::sync::MutexGuard<'_, ()> {
         self.write_lock.lock().await
+    }
+
+    /// The search state, for a short synchronous read or update. A poisoned
+    /// lock is recovered: the state is plain data, never left half-written.
+    fn search(&self) -> MutexGuard<'_, SearchState> {
+        self.search.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Bind the search surface to the mounted embedder's identity. Called by
@@ -290,26 +309,23 @@ impl IndexStore {
         // identity in place: searches refuse while the re-embed is pending,
         // and `begin_reembed` recreates them under the new dimensions.
         self.catalog.execute_batch(&search_schema_sql(dims)).await?;
-        *self.surface.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(SearchSurface {
+        let mut search = self.search();
+        search.surface = Some(SearchSurface {
             dims,
             model: model.to_string(),
-        }));
-        *self.reembed_from.lock().unwrap_or_else(|e| e.into_inner()) = pending;
+        });
+        search.reembed_from = pending;
         Ok(())
     }
 
     /// Withdraw the search surface (the embedder unmounted). Catalog and
     /// graph stay serviceable; searches refuse until a new declaration.
     pub fn withdraw_embedding(&self) {
-        *self.surface.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.search().surface = None;
     }
 
-    fn surface(&self) -> Result<Arc<SearchSurface>, StoreError> {
-        self.surface
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-            .ok_or(StoreError::NoSearchSurface)
+    fn surface(&self) -> Result<SearchSurface, StoreError> {
+        self.search().surface.clone().ok_or(StoreError::NoSearchSurface)
     }
 
     // ------------------------------------------------------------------
@@ -650,8 +666,10 @@ async fn insert_search_rows_in(
     dims: usize,
 ) -> Result<(), StoreError> {
     for row in rows {
+        // An embedder whose output disagrees with its declaration is a
+        // plugin fault, reported to the caller — never a crash of the node.
         if let Some(vector) = &row.vector {
-            assert_eq!(vector.len(), dims, "search row vector matches declared dims");
+            check_dimensions(dims, vector)?;
         }
         let source = match row.source {
             Some(s) => libsql::Value::Integer(s.0),
@@ -695,7 +713,7 @@ impl IndexStore {
     /// source deletions, rebuilds that no longer anchor them, and unmounting
     /// the plugin that emitted them. Their search rows go in the same
     /// transaction; the registry rows cascade. Returns the dropped ids.
-    pub async fn gc_keyed_fragments(&self) -> Result<Vec<i64>, StoreError> {
+    pub async fn gc_keyed_fragments(&self) -> Result<Vec<FragmentId>, StoreError> {
         let _write = self.write().await;
         let tx = self.catalog.transaction().await?;
         let mut rows = tx
@@ -706,17 +724,13 @@ impl IndexStore {
                 (),
             )
             .await?;
-        let mut ids: Vec<i64> = Vec::new();
+        let mut ids: Vec<FragmentId> = Vec::new();
         while let Some(row) = rows.next().await? {
-            ids.push(row.get(0)?);
+            ids.push(FragmentId(row.get(0)?));
         }
         let purge_search = search_tables_exist(&tx).await?;
-        for chunk in ids.chunks(DELETE_CHUNK) {
-            let list = chunk
-                .iter()
-                .map(i64::to_string)
-                .collect::<Vec<_>>()
-                .join(",");
+        for chunk in ids.chunks(ID_LIST_CHUNK) {
+            let list = id_list(chunk);
             if purge_search {
                 tx.execute(&format!("DELETE FROM search_rows WHERE id IN ({list})"), ())
                     .await?;
@@ -824,11 +838,24 @@ impl IndexStore {
         Ok(out)
     }
 
+    /// The fragments with these ids — one per distinct id that exists, in id
+    /// order within each chunk of [`ID_LIST_CHUNK`]. One query per chunk, not
+    /// one per id.
     pub async fn fragments(&self, ids: &[FragmentId]) -> Result<Vec<StoredFragment>, StoreError> {
         let mut out = Vec::with_capacity(ids.len());
-        for id in ids {
-            if let Some(f) = self.fragment(*id).await? {
-                out.push(f);
+        for chunk in ids.chunks(ID_LIST_CHUNK) {
+            let mut rows = self
+                .catalog
+                .query(
+                    &format!(
+                        "SELECT {FRAGMENT_COLUMNS} FROM fragments WHERE id IN ({}) ORDER BY id",
+                        id_list(chunk)
+                    ),
+                    (),
+                )
+                .await?;
+            while let Some(row) = rows.next().await? {
+                out.push(row_to_fragment(&row)?);
             }
         }
         Ok(out)
@@ -848,30 +875,29 @@ impl IndexStore {
         Ok(out)
     }
 
-    /// Every relation with either endpoint in `ids`.
+    /// Every relation with either endpoint in `ids`, each once.
     pub async fn relations_touching(&self, ids: &[FragmentId]) -> Result<Vec<Relation>, StoreError> {
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        // Numeric ids joined directly: no injection surface, bounded by caller.
-        let list = ids
-            .iter()
-            .map(|f| f.0.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
-        let mut rows = self
-            .catalog
-            .query(
-                &format!(
-                    "SELECT from_fragment, kind, to_fragment FROM relations
-                     WHERE from_fragment IN ({list}) OR to_fragment IN ({list})"
-                ),
-                (),
-            )
-            .await?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next().await? {
-            out.push(row_to_relation(&row)?);
+        let mut out: Vec<Relation> = Vec::new();
+        // A relation touching ids in two different chunks arrives twice.
+        let mut seen: HashSet<Relation> = HashSet::new();
+        for chunk in ids.chunks(ID_LIST_CHUNK) {
+            let list = id_list(chunk);
+            let mut rows = self
+                .catalog
+                .query(
+                    &format!(
+                        "SELECT from_fragment, kind, to_fragment FROM relations
+                         WHERE from_fragment IN ({list}) OR to_fragment IN ({list})"
+                    ),
+                    (),
+                )
+                .await?;
+            while let Some(row) = rows.next().await? {
+                let relation = row_to_relation(&row)?;
+                if seen.insert(relation.clone()) {
+                    out.push(relation);
+                }
+            }
         }
         Ok(out)
     }
@@ -882,15 +908,19 @@ impl IndexStore {
         ids: &[FragmentId],
     ) -> Result<HashMap<FragmentId, SourceId>, StoreError> {
         let mut map = HashMap::with_capacity(ids.len());
-        for id in ids {
-            let row = self
-                .first_row("SELECT source FROM fragments WHERE id = ?1", params![id.0])
+        for chunk in ids.chunks(ID_LIST_CHUNK) {
+            let mut rows = self
+                .catalog
+                .query(
+                    &format!(
+                        "SELECT id, source FROM fragments WHERE id IN ({}) AND source IS NOT NULL",
+                        id_list(chunk)
+                    ),
+                    (),
+                )
                 .await?;
-            if let Some(row) = row {
-                let source: Option<i64> = row.get(0)?;
-                if let Some(s) = source {
-                    map.insert(*id, SourceId(s));
-                }
+            while let Some(row) = rows.next().await? {
+                map.insert(FragmentId(row.get(0)?), SourceId(row.get(1)?));
             }
         }
         Ok(map)
@@ -902,12 +932,18 @@ impl IndexStore {
             .first_row(
                 // The root `derives` its summary: input -> output, like
                 // every relation.
+                // The summary type exactly, or with parameters after `;` —
+                // never a longer type that merely shares the prefix.
                 "SELECT f.text FROM fragments f
                  JOIN relations r ON r.to_fragment = f.id AND r.kind = ?2
                  JOIN sources s ON r.from_fragment = s.root_fragment
-                 WHERE s.id = ?1 AND f.mimetype LIKE 'text/x-inseam-summary%'
+                 WHERE s.id = ?1 AND (f.mimetype = ?3 OR f.mimetype LIKE ?3 || ';%')
                  LIMIT 1",
-                params![source.0, RelationKind::derives().as_str()],
+                params![
+                    source.0,
+                    RelationKind::derives().as_str(),
+                    Mimetype::summary().to_string()
+                ],
             )
             .await?;
         match row {
@@ -977,19 +1013,13 @@ impl IndexStore {
 
     /// Vector width of the bound surface; 0 when no vectors (or none bound).
     pub fn dimensions(&self) -> usize {
-        self.surface
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-            .map(|s| s.dims)
-            .unwrap_or(0)
+        self.search().surface.as_ref().map_or(0, |s| s.dims)
     }
 
     /// The embedding identity the search surface is bound to, if any.
     pub fn embedding_identity(&self) -> Option<(String, usize)> {
-        self.surface
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+        self.search()
+            .surface
             .as_ref()
             .map(|s| (s.model.clone(), s.dims))
     }
@@ -1019,7 +1049,11 @@ impl IndexStore {
     }
 
     /// Full-text seed search: fragment ids with BM25 scores, best first.
-    pub async fn search_fts(&self, query: &str, k: usize) -> Result<Vec<(i64, f32)>, StoreError> {
+    pub async fn search_fts(
+        &self,
+        query: &str,
+        k: usize,
+    ) -> Result<Vec<(FragmentId, f32)>, StoreError> {
         self.refuse_while_reembed_pending()?;
         self.surface()?;
         let matcher = fts_match_expression(query);
@@ -1046,13 +1080,13 @@ impl IndexStore {
         &self,
         vector: &[f32],
         k: usize,
-    ) -> Result<Vec<(i64, f32)>, StoreError> {
+    ) -> Result<Vec<(FragmentId, f32)>, StoreError> {
         self.refuse_while_reembed_pending()?;
         let surface = self.surface()?;
         if surface.dims == 0 {
             return Ok(Vec::new());
         }
-        assert_eq!(vector.len(), surface.dims, "query vector matches declared dims");
+        check_dimensions(surface.dims, vector)?;
         let rows = self
             .catalog
             .query(
@@ -1084,19 +1118,19 @@ impl IndexStore {
     /// Whether the index was embedded under a different identity than the
     /// mounted embedder declares and awaits an index run to re-embed.
     pub fn reembed_pending(&self) -> bool {
-        self.reembed_from
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_some()
+        self.search().reembed_from.is_some()
     }
 
     fn refuse_while_reembed_pending(&self) -> Result<(), StoreError> {
-        let pending = self.reembed_from.lock().unwrap_or_else(|e| e.into_inner());
-        match pending.as_ref() {
+        let search = self.search();
+        match search.reembed_from.as_ref() {
             None => Ok(()),
             Some((stored_model, stored_dims)) => {
-                let (declared_model, declared_dims) =
-                    self.embedding_identity().unwrap_or_default();
+                let (declared_model, declared_dims) = search
+                    .surface
+                    .as_ref()
+                    .map(|s| (s.model.clone(), s.dims))
+                    .unwrap_or_default();
                 Err(StoreError::ReembedRequired {
                     stored_model: stored_model.clone(),
                     stored_dims: *stored_dims,
@@ -1152,7 +1186,7 @@ impl IndexStore {
         let _write = self.write().await;
         let (model, dims) = self.embedding_identity().ok_or(StoreError::NoSearchSurface)?;
         set_embedding_meta(&self.catalog, dims, &model).await?;
-        *self.reembed_from.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.search().reembed_from = None;
         Ok(())
     }
 
@@ -1256,75 +1290,9 @@ async fn converge_schema(conn: &libsql::Connection) -> Result<(), StoreError> {
             "store schema version changed; dropping derived tables for rebuild"
         );
         conn.execute_batch(SEARCH_SCHEMA_DROP_SQL).await?;
-        conn.execute_batch(
-            "DROP TABLE IF EXISTS relations;
-             DROP TABLE IF EXISTS keyed_fragments;
-             DROP TABLE IF EXISTS fragments;
-             DROP TABLE IF EXISTS sources;
-             DROP TABLE IF EXISTS plugin_state;
-             DROP TABLE IF EXISTS plugin_state_meta;
-             DROP TABLE IF EXISTS meta;",
-        )
-        .await?;
+        conn.execute_batch(CATALOG_SCHEMA_DROP_SQL).await?;
     }
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS meta (
-           key TEXT PRIMARY KEY,
-           value TEXT NOT NULL
-         );
-         CREATE TABLE IF NOT EXISTS sources (
-           id INTEGER PRIMARY KEY,
-           host TEXT NOT NULL,
-           locator TEXT NOT NULL,
-           source_type TEXT NOT NULL,
-           content_type TEXT NOT NULL,
-           len_unit TEXT NOT NULL,
-           len INTEGER NOT NULL,
-           created INTEGER,
-           modified INTEGER,
-           observed INTEGER NOT NULL,
-           hint TEXT,
-           properties TEXT NOT NULL DEFAULT '[]',
-           raw_bytes INTEGER NOT NULL DEFAULT 0,
-           root_fragment INTEGER,
-           indexed INTEGER NOT NULL DEFAULT 0,
-           shape_stamp TEXT,
-           mimetypes TEXT,
-           UNIQUE (host, locator)
-         );
-         CREATE TABLE IF NOT EXISTS fragments (
-           id INTEGER PRIMARY KEY,
-           source INTEGER REFERENCES sources(id) ON DELETE CASCADE,
-           mimetype TEXT NOT NULL,
-           text TEXT,
-           extent_unit TEXT,
-           extent_start INTEGER,
-           extent_end INTEGER
-         );
-         CREATE INDEX IF NOT EXISTS fragments_by_source ON fragments(source);
-         CREATE TABLE IF NOT EXISTS relations (
-           from_fragment INTEGER NOT NULL REFERENCES fragments(id) ON DELETE CASCADE,
-           kind TEXT NOT NULL,
-           to_fragment INTEGER NOT NULL REFERENCES fragments(id) ON DELETE CASCADE,
-           PRIMARY KEY (from_fragment, kind, to_fragment)
-         ) WITHOUT ROWID;
-         CREATE INDEX IF NOT EXISTS relations_by_to ON relations(to_fragment);
-         CREATE TABLE IF NOT EXISTS keyed_fragments (
-           key TEXT PRIMARY KEY,
-           fragment INTEGER NOT NULL REFERENCES fragments(id) ON DELETE CASCADE
-         );
-         CREATE TABLE IF NOT EXISTS plugin_state_meta (
-           namespace TEXT PRIMARY KEY,
-           version TEXT NOT NULL
-         );
-         CREATE TABLE IF NOT EXISTS plugin_state (
-           namespace TEXT NOT NULL,
-           key TEXT NOT NULL,
-           value TEXT NOT NULL,
-           PRIMARY KEY (namespace, key)
-         ) WITHOUT ROWID;",
-    )
-    .await?;
+    conn.execute_batch(CATALOG_SCHEMA_SQL).await?;
     conn.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
         params![SCHEMA_VERSION],
@@ -1332,6 +1300,72 @@ async fn converge_schema(conn: &libsql::Connection) -> Result<(), StoreError> {
     .await?;
     Ok(())
 }
+
+/// The catalog tables: the source of truth the search tables derive from.
+const CATALOG_SCHEMA_SQL: &str = "CREATE TABLE IF NOT EXISTS meta (
+       key TEXT PRIMARY KEY,
+       value TEXT NOT NULL
+     );
+     CREATE TABLE IF NOT EXISTS sources (
+       id INTEGER PRIMARY KEY,
+       host TEXT NOT NULL,
+       locator TEXT NOT NULL,
+       source_type TEXT NOT NULL,
+       content_type TEXT NOT NULL,
+       len_unit TEXT NOT NULL,
+       len INTEGER NOT NULL,
+       created INTEGER,
+       modified INTEGER,
+       observed INTEGER NOT NULL,
+       hint TEXT,
+       properties TEXT NOT NULL DEFAULT '[]',
+       raw_bytes INTEGER NOT NULL DEFAULT 0,
+       root_fragment INTEGER,
+       indexed INTEGER NOT NULL DEFAULT 0,
+       shape_stamp TEXT,
+       mimetypes TEXT,
+       UNIQUE (host, locator)
+     );
+     CREATE TABLE IF NOT EXISTS fragments (
+       id INTEGER PRIMARY KEY,
+       source INTEGER REFERENCES sources(id) ON DELETE CASCADE,
+       mimetype TEXT NOT NULL,
+       text TEXT,
+       extent_unit TEXT,
+       extent_start INTEGER,
+       extent_end INTEGER
+     );
+     CREATE INDEX IF NOT EXISTS fragments_by_source ON fragments(source);
+     CREATE TABLE IF NOT EXISTS relations (
+       from_fragment INTEGER NOT NULL REFERENCES fragments(id) ON DELETE CASCADE,
+       kind TEXT NOT NULL,
+       to_fragment INTEGER NOT NULL REFERENCES fragments(id) ON DELETE CASCADE,
+       PRIMARY KEY (from_fragment, kind, to_fragment)
+     ) WITHOUT ROWID;
+     CREATE INDEX IF NOT EXISTS relations_by_to ON relations(to_fragment);
+     CREATE TABLE IF NOT EXISTS keyed_fragments (
+       key TEXT PRIMARY KEY,
+       fragment INTEGER NOT NULL REFERENCES fragments(id) ON DELETE CASCADE
+     );
+     CREATE TABLE IF NOT EXISTS plugin_state_meta (
+       namespace TEXT PRIMARY KEY,
+       version TEXT NOT NULL
+     );
+     CREATE TABLE IF NOT EXISTS plugin_state (
+       namespace TEXT NOT NULL,
+       key TEXT NOT NULL,
+       value TEXT NOT NULL,
+       PRIMARY KEY (namespace, key)
+     ) WITHOUT ROWID;";
+
+/// The inverse of [`CATALOG_SCHEMA_SQL`], children before parents.
+const CATALOG_SCHEMA_DROP_SQL: &str = "DROP TABLE IF EXISTS relations;
+     DROP TABLE IF EXISTS keyed_fragments;
+     DROP TABLE IF EXISTS fragments;
+     DROP TABLE IF EXISTS sources;
+     DROP TABLE IF EXISTS plugin_state;
+     DROP TABLE IF EXISTS plugin_state_meta;
+     DROP TABLE IF EXISTS meta;";
 
 /// The embedding identity the index was built with, if one is recorded.
 async fn read_embedding_meta(
@@ -1428,6 +1462,30 @@ fn vector_blob(vector: &[f32]) -> Vec<u8> {
     vector.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 
+/// A vector's width against the declared surface — checked on the way in
+/// (`insert_search_rows_in`) and on the way out (`search_vector`), so the
+/// two ends of the surface agree with each other.
+fn check_dimensions(expected: usize, vector: &[f32]) -> Result<(), StoreError> {
+    if vector.len() == expected {
+        Ok(())
+    } else {
+        Err(StoreError::DimensionMismatch {
+            expected,
+            actual: vector.len(),
+        })
+    }
+}
+
+/// Fragment ids as an `IN (...)` body. Numeric, so there is no injection
+/// surface; callers pass at most [`ID_LIST_CHUNK`] at a time.
+fn id_list(ids: &[FragmentId]) -> String {
+    assert!(ids.len() <= ID_LIST_CHUNK, "id lists are issued in chunks");
+    ids.iter()
+        .map(|f| f.0.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// A caller's `k` as a LIMIT parameter. Seed searches ask for tens of rows;
 /// anything that does not fit an `i64` is a programmer error.
 fn bounded_limit(k: usize) -> i64 {
@@ -1440,7 +1498,7 @@ fn bounded_limit(k: usize) -> i64 {
 async fn collect_scored(
     mut rows: libsql::Rows,
     shape: fn(f64) -> f64,
-) -> Result<Vec<(i64, f32)>, StoreError> {
+) -> Result<Vec<(FragmentId, f32)>, StoreError> {
     let mut out = Vec::new();
     while let Some(row) = rows.next().await? {
         let id: i64 = row.get(0)?;
@@ -1448,7 +1506,7 @@ async fn collect_scored(
         // Scores narrow to f32 at the API boundary, as they always have;
         // callers only consume rank order and coarse magnitudes.
         #[expect(clippy::cast_possible_truncation, reason = "deliberate score narrowing")]
-        out.push((id, shape(raw) as f32));
+        out.push((FragmentId(id), shape(raw) as f32));
     }
     Ok(out)
 }
@@ -1583,14 +1641,19 @@ fn fragment_params(source: Option<SourceId>, fragment: &NewFragment) -> impl lib
 }
 
 fn extent_columns(extent: Option<Extent>) -> (Option<&'static str>, Option<i64>, Option<i64>) {
-    match extent {
-        None => (None, None, None),
-        Some(Extent::Lines { start, end }) => (Some("lines"), Some(start as i64), Some(end as i64)),
-        Some(Extent::Bytes { start, end }) => (Some("bytes"), Some(start as i64), Some(end as i64)),
-        Some(Extent::Millis { start, end }) => {
-            (Some("millis"), Some(start as i64), Some(end as i64))
-        }
-    }
+    let (unit, start, end) = match extent {
+        None => return (None, None, None),
+        Some(Extent::Lines { start, end }) => ("lines", start, end),
+        Some(Extent::Bytes { start, end }) => ("bytes", start, end),
+        Some(Extent::Millis { start, end }) => ("millis", start, end),
+    };
+    (Some(unit), Some(extent_bound(start)), Some(extent_bound(end)))
+}
+
+/// An extent bound as the INTEGER column holds it; a bound past `i64::MAX`
+/// is clamped, like `raw_bytes`, rather than wrapped.
+fn extent_bound(bound: u64) -> i64 {
+    i64::try_from(bound).unwrap_or(i64::MAX)
 }
 
 #[cfg(test)]
@@ -1772,12 +1835,12 @@ mod tests {
         s.rebuild_fts().await.expect("indexes");
 
         let hits = s.search_fts("renovation", 10).await.expect("searches");
-        let ids: Vec<i64> = hits.iter().map(|(id, _)| *id).collect();
-        assert!(ids.contains(&1) && ids.contains(&3), "got {ids:?}");
-        assert!(!ids.contains(&2));
+        let ids: Vec<FragmentId> = hits.iter().map(|(id, _)| *id).collect();
+        assert!(ids.contains(&FragmentId(1)) && ids.contains(&FragmentId(3)), "got {ids:?}");
+        assert!(!ids.contains(&FragmentId(2)));
 
         let near = s.search_vector(&unit(0), 2).await.expect("searches");
-        assert_eq!(near[0].0, 1);
+        assert_eq!(near[0].0, FragmentId(1));
         assert!(near[0].1 < near[1].1, "cosine distance orders results");
 
         // Appending after the FTS index exists must still be searchable.
@@ -1791,16 +1854,16 @@ mod tests {
         .expect("adds");
         s.rebuild_fts().await.expect("reindexes");
         let hits = s.search_fts("moodboard", 10).await.expect("searches");
-        assert_eq!(hits.first().map(|(id, _)| *id), Some(9));
+        assert_eq!(hits.first().map(|(id, _)| *id), Some(FragmentId(9)));
 
         // Deleting a source's fragments drops its search rows in the same
         // transaction; rows of other sources (and the source-less row 3)
         // stay searchable.
         s.delete_fragments_of(SourceId(1)).await.expect("deletes");
         let hits = s.search_fts("renovation", 10).await.expect("searches");
-        let ids: Vec<i64> = hits.iter().map(|(id, _)| *id).collect();
-        assert!(!ids.contains(&1), "got {ids:?}");
-        assert!(ids.contains(&3), "got {ids:?}");
+        let ids: Vec<FragmentId> = hits.iter().map(|(id, _)| *id).collect();
+        assert!(!ids.contains(&FragmentId(1)), "got {ids:?}");
+        assert!(ids.contains(&FragmentId(3)), "got {ids:?}");
     }
 
     #[tokio::test]
@@ -1852,13 +1915,72 @@ mod tests {
         s.rebuild_fts().await.expect("indexes");
         assert!(!s.reembed_pending());
         let hits = s.search_fts("kitchen", 5).await.expect("searches again");
-        assert_eq!(hits.first().map(|(id, _)| *id), Some(1));
+        assert_eq!(hits.first().map(|(id, _)| *id), Some(FragmentId(1)));
 
         // A fresh open + declaration under the new identity is clean.
         drop(s);
         let s = IndexStore::open(dir.path()).await.expect("opens");
         s.declare_embedding("other-model", 16).await.expect("declares");
         assert!(!s.reembed_pending());
+    }
+
+    #[tokio::test]
+    async fn vector_width_disagreeing_with_the_declaration_is_an_error_not_a_crash() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        let row = SearchRow {
+            fragment: FragmentId(1),
+            source: None,
+            text: "x".into(),
+            vector: Some(vec![1.0; 3]),
+        };
+        assert!(matches!(
+            s.add_search_rows(&[row]).await,
+            Err(StoreError::DimensionMismatch {
+                expected: 8,
+                actual: 3
+            })
+        ));
+        assert_eq!(s.search_rows_count().await.expect("ok"), 0, "the batch rolled back");
+        assert!(matches!(
+            s.search_vector(&[0.0; 3], 5).await,
+            Err(StoreError::DimensionMismatch {
+                expected: 8,
+                actual: 3
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn id_list_reads_span_chunks_without_duplicates() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        let sid = s
+            .upsert_source(&addr("inseam://fs-test/tmp/note.md"), &envelope(1, 10), 10)
+            .await
+            .expect("upserts");
+        let plain = |t: &str| NewFragment {
+            mimetype: Mimetype::text_plain(),
+            text: Some(t.to_string()),
+            extent: None,
+        };
+        let a = s.insert_fragment(sid, &plain("a")).await.expect("inserts");
+        let b = s.insert_fragment(sid, &plain("b")).await.expect("inserts");
+        s.insert_relation(&Relation::new(a, RelationKind::contains(), b))
+            .await
+            .expect("relates");
+        // `a` lands in the first chunk and `b` in the second: the one
+        // relation touches both and must come back exactly once.
+        let mut ids = vec![a];
+        ids.extend((0..ID_LIST_CHUNK).map(|n| FragmentId(1_000_000 + i64::try_from(n).expect("fits"))));
+        ids.push(b);
+        let relations = s.relations_touching(&ids).await.expect("ok");
+        assert_eq!(relations, vec![Relation::new(a, RelationKind::contains(), b)]);
+        let fragments = s.fragments(&ids).await.expect("ok");
+        assert_eq!(fragments.iter().map(|f| f.id).collect::<Vec<_>>(), vec![a, b]);
+        let owners = s.sources_of_fragments(&ids).await.expect("ok");
+        assert_eq!(owners.len(), 2);
+        assert_eq!(owners.get(&b), Some(&sid));
     }
 
     #[tokio::test]
@@ -1938,13 +2060,13 @@ mod tests {
         s.rebuild_fts().await.expect("indexes");
 
         let dropped = s.gc_keyed_fragments().await.expect("gcs");
-        assert_eq!(dropped, vec![orphan.0]);
+        assert_eq!(dropped, vec![orphan]);
         assert!(s.fragment(mentioned).await.expect("ok").is_some());
         assert!(s.fragment(orphan).await.expect("ok").is_none());
         let hits = s.search_fts("Nobody", 5).await.expect("searches");
         assert!(hits.is_empty(), "orphan search row purged, got {hits:?}");
         let hits = s.search_fts("Greg", 5).await.expect("searches");
-        assert_eq!(hits.first().map(|(id, _)| *id), Some(mentioned.0));
+        assert_eq!(hits.first().map(|(id, _)| *id), Some(mentioned));
         // The registry row cascaded with the fragment.
         let nobody = FragmentKey::new("person:nobody").expect("valid key");
         let greg = FragmentKey::new("person:greg").expect("valid key");
@@ -1954,7 +2076,7 @@ mod tests {
         // Deleting the source orphans the survivor; the next GC takes it.
         s.delete_fragments_of(sid).await.expect("deletes");
         let dropped = s.gc_keyed_fragments().await.expect("gcs");
-        assert_eq!(dropped, vec![mentioned.0]);
+        assert_eq!(dropped, vec![mentioned]);
     }
 
     #[tokio::test]

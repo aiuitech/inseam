@@ -185,8 +185,8 @@ impl Finder for FinderService {
         vector.retain(|(_, distance)| f64::from(*distance) <= self.config.max_vector_distance);
 
         // Both lists arrive best-first; fusion cares only about rank.
-        let fts_ranked: Vec<i64> = fts.iter().map(|(id, _)| *id).collect();
-        let vec_ranked: Vec<i64> = vector.iter().map(|(id, _)| *id).collect();
+        let fts_ranked: Vec<i64> = fts.iter().map(|(id, _)| id.0).collect();
+        let vec_ranked: Vec<i64> = vector.iter().map(|(id, _)| id.0).collect();
         let seeds = rrf_fuse(&[&fts_ranked, &vec_ranked], self.config.rrf_k);
         if seeds.is_empty() {
             return Ok(Vec::new());

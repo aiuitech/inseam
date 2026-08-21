@@ -66,7 +66,7 @@ pub fn capabilities(kernel: &Kernel) {
     println!("Capabilities a manifest may request, and this node's status for each:\n");
     match kernel.service(&LLM) {
         Ok(_) => {
-            let facts = kernel.facts(LLM.name());
+            let facts = kernel.facts(&LLM);
             let fact = |key: &str| -> String {
                 facts
                     .and_then(|f| f.get(key))

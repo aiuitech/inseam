@@ -171,7 +171,7 @@ impl Plugin for SweepPlugin {
         let ignore = IgnoreSet::compile(&self.config.ignore)
             .map_err(|e| PluginError(e.to_string()))?; // and on a bad glob
         let transform_model = cx
-            .facts("llm")
+            .facts(&LLM)
             .and_then(|f| f.str(llm::facts::TRANSFORM_MODEL))
             .unwrap_or_default()
             .to_string();

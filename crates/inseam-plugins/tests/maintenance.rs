@@ -8,6 +8,7 @@
 mod common;
 
 use inseam_kernel::fragment::{FragmentKey, Mimetype, NewFragment, Relation, RelationKind};
+use inseam_seams::connection::CONNECTION;
 use inseam_seams::operations::{IndexRequest, QueryRequest};
 
 async fn index(
@@ -41,7 +42,7 @@ async fn vanished_sources_are_removed_and_their_entities_collected() {
     // through the kernel store).
     let store = kernel.store();
     let host = kernel
-        .facts("connection")
+        .facts(&CONNECTION)
         .and_then(|f| f.str("host"))
         .expect("connection declares its host")
         .to_string();

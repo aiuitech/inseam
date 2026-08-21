@@ -7,6 +7,7 @@
 mod common;
 
 use inseam_kernel::fragment::FragmentId;
+use inseam_seams::connection::CONNECTION;
 use inseam_seams::operations::IndexRequest;
 
 fn write_corpus(dir: &std::path::Path) {
@@ -34,7 +35,7 @@ fn write_corpus(dir: &std::path::Path) {
 async fn graph_signature(kernel: &inseam_kernel::substrate::Kernel) -> Vec<(i64, String, String, Option<String>)> {
     let store = kernel.store();
     let host = kernel
-        .facts("connection")
+        .facts(&CONNECTION)
         .and_then(|f| f.str("host"))
         .expect("host fact")
         .to_string();

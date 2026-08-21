@@ -177,12 +177,13 @@ impl ApplyCx<'_> {
         }
     }
 
-    /// The mounted provider's capability facts for a key, if any.
-    pub fn facts(&self, key: &str) -> Option<&Facts> {
-        if !self.manifest.injects(key) {
+    /// The mounted provider's capability facts for a key, if any. Facts are
+    /// part of the seam, so they are visible only for declared injections.
+    pub fn facts<T: ?Sized + 'static>(&self, key: &ServiceKey<T>) -> Option<&Facts> {
+        if !self.manifest.injects(key.name()) {
             return None;
         }
-        self.bindings.get(key).map(|b| &b.facts)
+        self.bindings.get(key.name()).map(|b| &b.facts)
     }
 
     /// Bind an implementation to a service key. The binding is an effect:

@@ -463,7 +463,7 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
             let model = model
                 .or_else(|| {
                     kernel
-                        .facts("llm")
+                        .facts(&LLM)
                         .and_then(|f| f.str(llm::facts::AGENT_MODEL))
                         .map(str::to_string)
                 })

@@ -165,9 +165,11 @@ pub struct Timestamp(pub i64);
 
 impl From<SystemTime> for Timestamp {
     fn from(t: SystemTime) -> Self {
+        // Seconds since (or before) the epoch always fit: `i64` covers
+        // ±292 billion years, so the saturation is a formality.
         match t.duration_since(UNIX_EPOCH) {
-            Ok(d) => Self(d.as_secs() as i64),
-            Err(e) => Self(-(e.duration().as_secs() as i64)),
+            Ok(d) => Self(i64::try_from(d.as_secs()).unwrap_or(i64::MAX)),
+            Err(e) => Self(i64::try_from(e.duration().as_secs()).map_or(i64::MIN, |s| -s)),
         }
     }
 }
