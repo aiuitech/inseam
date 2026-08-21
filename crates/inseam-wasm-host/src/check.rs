@@ -506,6 +506,113 @@ pub async fn check_artifact(artifact: &Path) -> CheckReport {
     report
 }
 
+// ---------------------------------------------------------------------------
+// One-off application: the authoring loop's "what does it emit for THIS file"
+// ---------------------------------------------------------------------------
+
+/// One ad-hoc input for [`try_artifact`]: a real file's mimetype, text, and
+/// bytes, with the LLM canned exactly as in golden checks.
+#[derive(Debug, Clone, Default)]
+pub struct TryInput {
+    pub mimetype: String,
+    pub is_root: bool,
+    pub text: Option<String>,
+    pub bytes: Option<Vec<u8>>,
+    /// The canned LLM reply; `None` = the LLM refuses.
+    pub llm_returns: Option<String>,
+}
+
+/// What one application produced, plus anything the bridge silently
+/// attenuated on the way in (so "why didn't it get my bytes" is answered
+/// in the same breath).
+#[derive(Debug, Clone, Default)]
+pub struct TryOutcome {
+    pub fragments: Vec<TriedFragment>,
+    pub notes: Vec<String>,
+    /// The plugin returned `Err` (tolerated, degraded to empty output).
+    pub plugin_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TriedFragment {
+    pub parent: Option<u32>,
+    pub mimetype: String,
+    pub relation: String,
+    pub text: Option<String>,
+}
+
+/// Apply an artifact once, through the same bridge and fake capabilities
+/// the harness uses, and report what came out. Errors are the cases where
+/// nothing could run at all (unreadable manifest, a component that will not
+/// compile, a trap); a plugin that ran and returned `Err` is an outcome.
+pub async fn try_artifact(artifact: &Path, input: TryInput) -> Result<TryOutcome, String> {
+    let manifest_path = artifact.with_extension("manifest.toml");
+    let manifest: ArtifactManifest = std::fs::read_to_string(&manifest_path)
+        .map_err(|e| format!("cannot read {}: {e}", manifest_path.display()))
+        .and_then(|raw| {
+            toml::from_str(&raw).map_err(|e| format!("{}: {e}", manifest_path.display()))
+        })?;
+    let engine = new_engine();
+    let component = Component::from_file(&engine, artifact)
+        .map_err(|e| format!("component does not compile: {e}"))?;
+    let linker = build_linker(&engine).map_err(|e| format!("bridge linker: {e}"))?;
+    let fuel = WasmEntryConfig::default().fuel;
+
+    let mut notes = Vec::new();
+    let bytes = match input.bytes {
+        Some(b) if manifest.capabilities.source_bytes => Some(b),
+        Some(_) => {
+            notes.push("bytes withheld: the manifest does not request `source_bytes`".into());
+            None
+        }
+        None => None,
+    };
+    let llm: Option<Arc<dyn GrantedLlm>> = if manifest.capabilities.llm {
+        Some(Arc::new(CannedLlm(input.llm_returns.clone())))
+    } else {
+        if input.llm_returns.is_some() {
+            notes.push("llm withheld: the manifest does not request `llm`".into());
+        }
+        None
+    };
+    let essence = input.mimetype.split(';').next().unwrap_or_default().to_string();
+    if !manifest.claims.iter().any(|p| pattern_matches(p, &essence)) {
+        notes.push(format!(
+            "`{essence}` is outside the manifest claims {:?}: in production this plugin would \
+             never see it",
+            manifest.claims
+        ));
+    }
+    let verdict = raw_apply(
+        &engine, &component, &linker,
+        Invocation::new(manifest.name.clone(), llm, bytes),
+        fuel,
+        &synthetic_envelope(&input.mimetype),
+        &input.mimetype,
+        input.is_root,
+        input.text.as_deref(),
+    )
+    .await;
+    let (fragments, plugin_error) = match verdict {
+        ApplyVerdict::Output(f) => (f, None),
+        ApplyVerdict::PluginErr(e) => (Vec::new(), Some(e)),
+        ApplyVerdict::Trap(t) => return Err(format!("trapped: {t}")),
+    };
+    Ok(TryOutcome {
+        fragments: fragments
+            .into_iter()
+            .map(|f| TriedFragment {
+                parent: f.parent,
+                mimetype: f.mimetype,
+                relation: f.relation,
+                text: f.text,
+            })
+            .collect(),
+        notes,
+        plugin_error,
+    })
+}
+
 async fn run_golden(
     engine: &Engine,
     component: &Component,

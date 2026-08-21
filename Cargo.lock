@@ -1305,6 +1305,7 @@ dependencies = [
  "anyhow",
  "clap",
  "dirs",
+ "inseam-conformance",
  "inseam-kernel",
  "inseam-plugins",
  "inseam-seams",

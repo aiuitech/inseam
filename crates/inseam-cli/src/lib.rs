@@ -16,6 +16,8 @@ use std::sync::Arc;
 use anyhow::{bail, Context};
 use clap::{Parser, Subcommand};
 
+mod authoring;
+
 use inseam_kernel::substrate::{Composition, FiberState, Kernel, SubstrateError};
 use inseam_plugins::agent::{run_agent, AgentEvent};
 use inseam_seams::llm::{self, ModelInfo, LLM};
@@ -190,7 +192,19 @@ enum Command {
     Status,
     /// The plugin tree: every fiber, its state, and its live effects.
     Plugins,
-    /// Loaded plugin artifacts: validate, install.
+    /// The seams that accept loaded plugins and their contract; --wit prints
+    /// the WIT world to generate bindings from.
+    Seams {
+        #[arg(long)]
+        wit: bool,
+    },
+    /// What a plugin manifest may request, and whether this node can grant
+    /// each right now (the live answer to "will my plugin degrade here?").
+    Capabilities,
+    /// Which transforms on this node claim a mimetype or a file — what a new
+    /// plugin would sit beside, or duplicate.
+    Claims { target: String },
+    /// Loaded plugin artifacts: scaffold, validate, try, mount, install.
     Plugin {
         #[command(subcommand)]
         command: PluginCommand,
@@ -205,6 +219,45 @@ enum Command {
 
 #[derive(Subcommand)]
 enum PluginCommand {
+    /// Scaffold a new loaded plugin: manifest, golden checks in the mandatory
+    /// shape (red until the plugin does what it says), a degrading Rust
+    /// stub, the WIT, and READMEs. Needs no network and no source tree.
+    New {
+        name: String,
+        /// Mimetypes the plugin claims (essences or `type/*`).
+        #[arg(long, value_delimiter = ',', required = true)]
+        claims: Vec<String>,
+        #[arg(long, default_value = "transform")]
+        seam: String,
+        /// Parent directory for the new `<name>/` folder.
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Apply an artifact to one real file through the harness bridge (canned
+    /// LLM, fake capabilities) and print what it emits; --as-check prints the
+    /// observed output as a golden check to paste and tighten.
+    Try {
+        artifact: PathBuf,
+        file: PathBuf,
+        /// Override the detected mimetype.
+        #[arg(long)]
+        mimetype: Option<String>,
+        /// The canned LLM reply; absent = the LLM refuses.
+        #[arg(long)]
+        llm_returns: Option<String>,
+        /// Apply as a non-root fragment instead of a source root.
+        #[arg(long)]
+        not_root: bool,
+        #[arg(long)]
+        as_check: bool,
+    },
+    /// Append a local artifact to this node's composition (`wasm:<path>`),
+    /// id defaulting to the artifact's stem.
+    Mount {
+        artifact: PathBuf,
+        #[arg(long)]
+        id: Option<String>,
+    },
     /// Run the conformance harness against a .wasm artifact: static checks,
     /// a real bridge mount, the hostile-input contract battery, and the
     /// plugin's own golden checks (<artifact>.checks.toml). Exits nonzero
@@ -263,14 +316,42 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 }
             }
             PluginCommand::Install { name, registry } => {
-                let composition_path = cli
-                    .composition
-                    .clone()
-                    .unwrap_or_else(|| data_dir.join("composition.toml"));
+                let composition_path = composition_path_of(&cli, &data_dir);
                 registry::install(name, registry.as_deref(), &data_dir, &composition_path)
                     .await?;
             }
+            PluginCommand::New { name, claims, seam, dir } => {
+                let root = authoring::plugin_new(&authoring::Scaffold {
+                    name,
+                    seam,
+                    claims,
+                    dir,
+                })?;
+                authoring::print_scaffold_next_steps(&root, name);
+            }
+            PluginCommand::Try { artifact, file, mimetype, llm_returns, not_root, as_check } => {
+                authoring::plugin_try(
+                    &authoring::TryRequest {
+                        artifact,
+                        file,
+                        mimetype: mimetype.as_deref(),
+                        llm_returns: llm_returns.as_deref(),
+                        not_root: *not_root,
+                    },
+                    *as_check,
+                )
+                .await?;
+            }
+            PluginCommand::Mount { artifact, id } => {
+                let composition_path = composition_path_of(&cli, &data_dir);
+                authoring::plugin_mount(artifact, id.as_deref(), &composition_path)?;
+            }
         }
+        return Ok(());
+    }
+    // `seams` is a question about the contract, not the node: no boot.
+    if let Command::Seams { wit } = &cli.command {
+        authoring::seams(*wit);
         return Ok(());
     }
 
@@ -480,10 +561,21 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 }
             }
         }
-        Command::Config { .. } | Command::Plugin { .. } => unreachable!("handled before boot"),
+        Command::Capabilities => authoring::capabilities(&kernel),
+        Command::Claims { target } => authoring::claims(&kernel, &target)?,
+        Command::Config { .. } | Command::Plugin { .. } | Command::Seams { .. } => {
+            unreachable!("handled before boot")
+        }
     }
     kernel.shutdown().await;
     Ok(())
+}
+
+/// The node's composition overlay: `--composition`, else `<data-dir>/composition.toml`.
+fn composition_path_of(cli: &Cli, data_dir: &std::path::Path) -> PathBuf {
+    cli.composition
+        .clone()
+        .unwrap_or_else(|| data_dir.join("composition.toml"))
 }
 
 fn load_composition(

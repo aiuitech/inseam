@@ -50,7 +50,14 @@ wasmtime::component::bindgen!({
 
 mod check;
 
-pub use check::{check_artifact, fixture_files, CheckItem, CheckReport, Outcome, Phase};
+pub use check::{
+    check_artifact, fixture_files, try_artifact, CheckItem, CheckReport, Outcome, Phase,
+    TriedFragment, TryInput, TryOutcome,
+};
+
+/// The transform seam's WIT world, embedded so the CLI can hand it to an
+/// author (`inseam seams --wit`) without a source checkout or a network.
+pub const TRANSFORM_WIT: &str = include_str!("../wit/transform.wit");
 
 use inseam::plugin::host::Host as HostImports;
 

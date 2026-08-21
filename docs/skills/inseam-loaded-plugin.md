@@ -7,12 +7,15 @@
 ## Authoring a loaded inseam plugin
 
 A loaded plugin is three files: a WASM component, a manifest, and golden
-checks. You need the `inseam` CLI (self-documenting — `inseam plugin
-check --help`) and any toolchain that emits WASM components (Rust on
-`wasm32-wasip2`, componentize-py, ComponentizeJS/jco, TinyGo). Do not
-assume the inseam source tree exists; everything else is online at
-<https://docs.inseam.io> — fetch <https://docs.inseam.io/llms.txt> for the
-map, and the Plugins section for depth beyond this page.
+checks. You need the `inseam` CLI and a toolchain that emits WASM
+components (Rust on `wasm32-wasip2` — `rustup target add wasm32-wasip2` —
+or componentize-py, ComponentizeJS/jco, TinyGo). You do **not** need the
+inseam source tree or the network: **the CLI is the authoring
+companion** — the node you are extending describes its own contract,
+capabilities, and current plugins, scaffolds the plugin, runs it against
+real files, validates it, and mounts it. Every `inseam <command> --help`
+is current for the binary you have. <https://docs.inseam.io> (and
+<https://docs.inseam.io/llms.txt>) has depth beyond this page.
 
 **The loop is test-driven and the tests are mandatory.** A plugin with no
 golden checks, or with checks that prove nothing, fails `inseam plugin
@@ -21,54 +24,68 @@ admission. Write the checks first: they are the specification you build
 to, the guardrail that tells you when you're done, and the proof that
 ships with the plugin.
 
+### The companion commands
+
+| Question | Command |
+| --- | --- |
+| Which seams take loaded plugins, under what contract? | `inseam seams` — and `inseam seams --wit > wit/transform.wit` for bindings |
+| What may my manifest request, and will *this* node grant it? | `inseam capabilities` |
+| Who already handles this input on this node? | `inseam claims <mimetype\|path>` |
+| Start a plugin that is red for the right reason | `inseam plugin new <name> --claims a/b,c/*` |
+| What does my artifact emit for this real file? | `inseam plugin try <name>.wasm <file> [--llm-returns "…"] [--as-check]` |
+| Is it fit to ship? | `inseam plugin check <name>.wasm` |
+| Put it in this node's composition | `inseam plugin mount $PWD/<name>.wasm` |
+| Is it running, and doing what I meant? | `inseam plugins`, `inseam index <dir>`, `inseam status`, `inseam query "…"`, `inseam expand <address>` |
+
 ### The contract
 
-Each loaded seam is a WIT world. <https://docs.inseam.io/plugins/loaded>
-names the seams the bridge mounts and everything it enforces; each seam's
-rendered WIT reference sits alongside it in the Plugins section, and the
-raw `.wit` files to generate bindings from live at
-<https://github.com/aiuitech/inseam/tree/main/crates/inseam-wasm-host/wit>.
-
+Each loaded seam is a WIT world; `inseam seams` prints the summary and
+`--wit` the world itself (the same file as
+<https://github.com/aiuitech/inseam/tree/main/crates/inseam-wasm-host/wit>).
 Rules that hold on every seam — design around them:
 
 - Effective claims = manifest claims ∩ exported claims — keep the two
   lists consistent or the plugin never runs.
-- Host imports are manifest-gated; an ungranted call returns `Err`. Your
-  seam's WIT reference lists what it may import.
+- Host imports are manifest-gated; an ungranted call returns `Err`.
+  `inseam capabilities` lists the imports, the manifest key that grants
+  each, and whether this node can honor it right now — a plugin whose
+  capability the node cannot grant mounts fine and runs its degrade path.
 - **Degrade, never gate**: on withheld capability or unusable input,
   return `Ok` with empty output. Never panic; an `Err` from your apply
   entry point is logged and produces nothing.
 - A fresh instance per call: no state, no caching, no counting — the host
   meters your LLM budget.
-- Output is hygiene-checked; the seam's docs say what the bridge drops or
-  rewrites (e.g. on the transform seam, a fragment's `parent` must index
-  an earlier fragment in your own output, and inseam-defined mimetypes
-  are refused).
+- Output is hygiene-checked: on the transform seam a fragment's `parent`
+  must index an earlier fragment in your own output, relations are from a
+  fixed set, and inseam-defined mimetypes are refused.
 
 ### Shape
 
+`inseam plugin new <name> --claims <mimetypes>` writes all of this:
+
 ```
 <name>/
-  <name>.wasm            # the component
   <name>.manifest.toml   # what an owner reviews; the bridge enforces it
-  <name>.checks.toml     # golden checks — write these FIRST
-  fixtures/              # tiny byte fixtures the checks reference
-    README.md            # what each fixture is and why — required
+  <name>.checks.toml     # golden checks, pre-shaped to the mandatory coverage
+  src/lib.rs             # a Rust stub that degrades everywhere (any language works)
+  wit/transform.wit      # the contract, embedded from your binary
+  fixtures/README.md     # what each fixture is and why — required
   README.md              # what it does, what it needs, the mount snippet
 ```
 
-Manifest:
+Manifest (request the MINIMUM you use; widening later triggers a
+re-approval gate):
 
 ```toml
 name = "<name>"
 version = "0.1.0"
-seam = "transform"       # the seam this plugin binds
+seam = "transform"
 claims = ["image/png"]   # must overlap claims()
 roots_only = true
 kind = "enrichment"      # or "structural"
 
-[capabilities]           # request the MINIMUM you use — widening
-llm = true               # capabilities later triggers a re-approval gate
+[capabilities]
+llm = true
 source_bytes = true
 llm_call_budget = 25
 ```
@@ -78,12 +95,20 @@ llm_call_budget = 25
 Work in this order. Each step names the command that tells you whether it
 worked; run it, read the report, then move on.
 
+#### 0. Look before you build
+
+```sh
+inseam claims <a file you intend to handle>   # who claims it today; complement, don't duplicate
+inseam capabilities                           # what this node grants: an LLM? which model?
+inseam plugin new <name> --claims <mimetype,…>
+```
+
 #### 1. State the claim as checks (red)
 
-Before any code, write `<name>.checks.toml`: what the plugin promises, as
-input → expected output shape. Full schema:
+Open `<name>.checks.toml` and replace every `REPLACE`: what the plugin
+promises, as input → expected output shape. Schema:
 <https://docs.inseam.io/plugins/validation>. The harness enforces a
-minimum coverage, and so should you:
+minimum coverage, already shaped for you:
 
 - **One check that proves the claim** — a substantive expectation
   (`fragment_contains`, `relation`, or `mimetype`), not just "something
@@ -98,118 +123,87 @@ minimum coverage, and so should you:
   "doesn't crash"; your checks cover "does what it says".
 
 Each check's `mimetype` must fall inside your manifest's claims, or the
-harness fails it — a check for a mimetype you never claimed would never run
-in production. The LLM is always canned during checks (`llm_returns` is
-the verbatim reply; absent means it refuses), so checks prove plumbing and
-shape, never model quality — write `llm_returns` as the kind of reply your
-prompt asks for, and assert on how your code shapes it.
+harness fails it. The LLM is always canned during checks (`llm_returns`
+is the verbatim reply; absent means it refuses), so checks prove plumbing
+and shape, never model quality — write `llm_returns` as the kind of reply
+your prompt asks for, and assert on how your code shapes it.
 
 Fixtures (`bytes_file`) live in `fixtures/`, relative to the checks file,
 and must be **tiny and well-formed** — the smallest valid PNG, a
-three-line CSV. Every fixture gets a row in `fixtures/README.md` saying
-what it is and why it exists: the harness's LLM is fake and the component
-is sandboxed, so fixture *content* never matters, only that the bytes
-reach the plugin and come back shaped right. Fixtures are downloaded by
-every installing node; size is a cost multiplied across nodes.
+three-line CSV. Every fixture gets a row in `fixtures/README.md`: the
+harness's LLM is fake and the component is sandboxed, so fixture *content*
+never matters, only that bytes reach the plugin and come back shaped
+right. Every installing node downloads them; size is a cost multiplied
+across nodes.
 
-Example — an OCR plugin's complete minimum:
+#### 2. Build the stub and watch it fail
 
-```toml
-[[check]]
-name = "transcribes image text through the granted vision llm"
-mimetype = "image/png"
-bytes_file = "fixtures/pixel.png"
-llm_returns = "GARAGE SALE SATURDAY 9AM"
-
-[check.expect]
-fragment_contains = "GARAGE SALE"
-relation = "transcribes"
-mimetype = "text/plain"
-
-[[check]]
-name = "emits nothing when the llm is withheld"
-mimetype = "image/png"
-bytes_file = "fixtures/pixel.png"
-
-[check.expect]
-min_fragments = 0
-max_fragments = 0
-```
-
-#### 2. Write the manifest, scaffold the component, build, and watch it fail
-
-Write the manifest. Scaffold a component whose apply entry point returns
-`Ok` with empty output (Rust: `crate-type = ["cdylib"]` + `wit-bindgen`,
-then `cargo build --release --target wasm32-wasip2` — that target emits a
-component directly). Then run the gate:
+Set the manifest's capabilities to what you will call, build, and run the
+gate:
 
 ```sh
-inseam plugin check <name>/<name>.wasm
+cargo build --release --target wasm32-wasip2 && cp target/wasm32-wasip2/release/<name>.wasm <name>.wasm
+inseam plugin check <name>.wasm
 ```
 
-Expect `FAIL`. Read the report top to bottom: `static`, `mount`, and
-`contract` should already be `ok` (the scaffold degrades everywhere); the
-positive golden check fails with what it wanted and what actually came
-out, e.g. `no fragment carries relation "transcribes"; got 0
-fragment(s)`. That line is your to-do list. If `mount` fails instead, fix
-the toolchain and claims before touching behavior — the effective-claims
+Expect `FAIL`, and read why: `static`, `mount`, `contract`, and
+`mandatory coverage` are `ok` (the scaffold degrades everywhere); your
+positive check fails with what it wanted and what actually came out —
+`…; got 0 fragment(s)`. That line is your to-do list. If `mount` fails
+instead, fix toolchain and claims before behavior — the effective-claims
 line must match your intent (empty means manifest and `claims()`
 disagree). The first run cold-compiles wasmtime — minutes, not a hang.
 
-#### 3. Implement until green
+#### 3. Implement until green, watching real output as you go
 
-Implement the smallest code that turns the failing check green, rerun the
-same command, repeat. Every failing golden line prints the expectation it
-missed and a one-line account of the output (`got 2 fragment(s)
-[text/plain contains "…"]`), so you can see the gap without adding
-logging. When a new behavior needs code, add its check first and watch it
-fail before writing the code.
-
-A `contract` failure means a code path traps instead of degrading; hunt
-the `unwrap`/`expect`/indexing. A `mandatory
-coverage` failure means your checks don't yet prove the claim or pin the
-degrade path — go back to step 1. Warnings are worth reading: a
-non-deterministic output or an `Err` return is allowed but will cost
-every node that mounts you.
-
-Done when:
+Implement the smallest code that turns the failing check green; rerun;
+repeat. Between runs, look at what the plugin actually does to a real
+file:
 
 ```sh
-inseam plugin check <name>/<name>.wasm   # ends `PASS`, claims line as intended
+inseam plugin try <name>.wasm <file> [--llm-returns "a reply like your prompt asks for"]
 ```
 
-This is the exact harness registry CI runs at publish and every node runs
-at install-time admission. Never hand off a failing plugin — admission on
-the user's node refuses the mount, naming the failing check.
+It applies the artifact once through the same bridge the harness uses —
+detected mimetype, text if the type is text, bytes on offer, canned LLM —
+and prints every fragment (mimetype, relation, parent, text), plus notes
+when the bridge withheld something (`bytes withheld: the manifest does
+not request source_bytes`). When the output looks right, `--as-check`
+prints it as a `[[check]]` to paste into the checks file and tighten: the
+fastest route from "I saw it work" to "it is tested".
+
+Every failing golden line prints the expectation it missed and a one-line
+account of the output, so you never need to add logging. A `contract`
+failure means a code path traps instead of degrading — hunt the
+`unwrap`/`expect`/indexing. A `mandatory coverage` failure means the
+checks don't yet prove the claim or pin the degrade path — back to step 1.
+Warnings are worth reading: non-deterministic output or an `Err` return is
+allowed but costs every node that mounts you.
+
+Done when `inseam plugin check <name>.wasm` ends `PASS` with the claims
+line as intended. This is the exact harness registry CI runs at publish
+and every node runs at install-time admission; never hand off a failing
+plugin — admission refuses the mount, naming the failing check.
 
 #### 4. Prove it live
 
-Checks prove shape against canned capabilities; the last step is the real
-node. Mount the artifact in a scratch node and index something it claims:
-
 ```sh
-export INSEAM_DATA_DIR=$(mktemp -d)                 # a throwaway node
-inseam config                                       # see the composition you are patching
-cat >> "$INSEAM_DATA_DIR/composition.toml" <<EOF
-[[entry]]
-id = "<name>"
-plugin = "wasm:$PWD/<name>/<name>.wasm"
-EOF
-inseam config --resolved                            # your entry appears, layered over the base
-inseam plugins                                      # fiber `<name>` is Active, with its effects listed
-inseam index <dir-with-files-you-claim>             # the sweep applies you to each root
-inseam status                                       # fragment counts moved
-inseam query "<words your plugin should surface>"   # your fragments rank
-inseam expand <address-from-the-query>              # see the fragments you hung off the source
+export INSEAM_DATA_DIR=$(mktemp -d)          # a throwaway node (omit to use your real one)
+inseam plugin mount $PWD/<name>.wasm         # appends the entry; --id to name it
+inseam plugins                               # fiber `<name>` active, effects listed
+inseam index <dir-with-files-you-claim>      # the sweep applies you to each root
+inseam status                                # fragment counts moved
+inseam query "<words your plugin should surface>"
+inseam expand <address-from-the-query>       # the fragments you hung off the source
 ```
 
-If `inseam plugins` shows the fiber `Failed`, the reason names the gate
+If `inseam plugins` shows the fiber `failed`, the reason names the gate
 (admission with the failing check, a claims mismatch, a cooldown) — fix
-and re-run the loop from step 3. If the fiber is `Active` but `inseam
-expand` shows nothing from you, your effective claims don't cover the
-files you indexed, or the node's LLM is unconfigured and you degrade
-(check `inseam status` and the entry's capabilities). `inseam
-<command> --help` documents every flag.
+and re-run from step 3. If it is `active` but `inseam expand` shows
+nothing from you, your effective claims don't cover the files you indexed
+(`inseam claims <file>` shows who does), or the node withholds a
+capability and you degrade (`inseam capabilities`). To unmount, delete the
+entry from `composition.toml` (`inseam config` prints it).
 
 ### Hand off
 
@@ -223,5 +217,5 @@ id = "<name>"
 plugin = "wasm:<path>/<name>.wasm"
 ```
 
-in the node's composition (`inseam config` prints it), or distribute
-through a registry and `inseam plugin install`.
+(`inseam plugin mount` writes exactly this), or distribute through a
+registry and `inseam plugin install`.

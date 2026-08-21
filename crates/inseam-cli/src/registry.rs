@@ -216,7 +216,7 @@ pub async fn install(
 
 /// Append the entry to the node's composition. Appending text (rather than
 /// re-serializing) keeps the user's file exactly as they wrote it.
-fn mount(name: &str, artifact: &Path, composition_path: &Path) -> anyhow::Result<()> {
+pub(crate) fn mount(name: &str, artifact: &Path, composition_path: &Path) -> anyhow::Result<()> {
     let existing = match std::fs::read_to_string(composition_path) {
         Ok(raw) => raw,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),

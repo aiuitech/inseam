@@ -28,6 +28,10 @@ Write them first and build to them.
 - `crates/inseam-plugins/src/` — the first-party set. Pick the closest
   neighbor to what you're building as your template, and read its
   `.checks.toml` beside it.
+- The running node: `inseam claims <mimetype|path>` shows which transforms
+  already claim an input (complement, don't duplicate); `inseam
+  capabilities` shows what the node grants (an LLM? which model?), i.e.
+  which path of your transform runs here.
 
 ### The TDD loop
 

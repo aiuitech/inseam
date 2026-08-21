@@ -25,8 +25,9 @@ plugins/
 ```
 
 Authoring is skill-driven: `skills/inseam-loaded-plugin` walks an
-agent (or a person) through the whole loop, ending in a green
-`inseam plugin check`.
+agent (or a person) through the whole loop with the CLI as companion
+(`inseam plugin new` → `try` → `check` → `mount`;
+`docs/plugins/authoring-cli.md`), ending in a green `inseam plugin check`.
 
 ## The test dataset: checks, fixtures, and the harness's built-ins
 
