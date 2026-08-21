@@ -1,0 +1,407 @@
+//! Planning one source's subtree: read its content, apply the registered
+//! transforms recursively — every claimant of a fragment concurrently, the
+//! emitted fragments in turn until nothing claims the output — and describe
+//! the result as a [`SubtreePlan`] the store lands in one transaction.
+//!
+//! Planning touches no store: it is the parallel half of the sweep
+//! (`design/indexing.md`), and many planners run at once because transforms
+//! — LLM calls above all — are where indexing spends its time.
+
+use std::collections::{HashSet, VecDeque};
+use std::sync::Arc;
+
+use futures_util::future::join_all;
+
+use inseam_kernel::address::{ContentLength, Envelope};
+use inseam_kernel::fragment::{Extent, Mimetype, NewFragment, Sprout};
+use inseam_kernel::store::InventoryEntry;
+use inseam_kernel::subtree::{PlanNode, PlannedFragment, PlannedKeyed, Shape, SubtreePlan};
+use inseam_seams::connection::{Connection, EnumeratedSource};
+use inseam_seams::text::{count_lines, is_indexable_text};
+use inseam_seams::transforms::{
+    participating, prune, shape_stamp, Anchor, DecomposeBudget, KeyedSprout, Registration,
+    TransformCtx, TransformOutput,
+};
+use inseam_seams::SeamError;
+
+use super::grant::Grantor;
+
+/// The sweep's decomposition dials (shape tier), as the planner enforces
+/// them over every transform's output.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct PlanLimits {
+    pub(super) max_depth: usize,
+    pub(super) max_fragments_per_source: usize,
+    pub(super) max_content_bytes: u64,
+}
+
+/// What planning one source produced besides the plan: the counts the
+/// run report tallies.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(super) struct PlanStats {
+    pub(super) llm_summaries: usize,
+    pub(super) extractive_summaries: usize,
+    pub(super) envelope_summaries: usize,
+}
+
+pub(super) struct Planned {
+    pub(super) plan: SubtreePlan,
+    pub(super) stats: PlanStats,
+}
+
+/// Everything a planner needs, shared across the run's concurrent planners.
+pub(super) struct Planner {
+    pub(super) connection: Arc<dyn Connection>,
+    pub(super) registrations: Vec<Arc<Registration>>,
+    pub(super) grantor: Arc<Grantor>,
+    pub(super) sweep_shape: String,
+    pub(super) limits: PlanLimits,
+}
+
+impl Planner {
+    /// Build one source's plan by recursive transform application:
+    /// registered claimants over the root, then over every emitted fragment,
+    /// until nothing claims the output (`design/indexing.md`).
+    pub(super) async fn plan(&self, source: &EnumeratedSource) -> Result<Planned, SeamError> {
+        let read = self.read_source(source).await?;
+        let mut build = SubtreeBuild::new(&read, self.limits);
+        // Every queued item is the root or a planted fragment, so the queue
+        // never outgrows the fragment cap.
+        let iterations_max = self.limits.max_fragments_per_source + 1;
+        let mut iterations: usize = 0;
+        while let Some(item) = build.queue.pop_front() {
+            iterations += 1;
+            assert!(iterations <= iterations_max, "work queue is bounded by the fragment cap");
+            // Derived understanding is never source content: transforms must
+            // not re-decompose `text/x-inseam-*` fragments, whatever they claim.
+            if item.mimetype.is_inseam_defined() {
+                continue;
+            }
+            let outputs = self.apply_claimants(&read, &item).await;
+            for (registration, output) in outputs {
+                build.absorb(&item, registration, output);
+            }
+        }
+        let stamp = expected_stamp(&self.registrations, &build.inventory, &self.sweep_shape);
+        let planned = build.finish(read, stamp);
+        assert!(planned.plan.is_well_ordered(), "planner emits parents before children");
+        Ok(planned)
+    }
+
+    /// Read what the transforms may see: the text for indexable text
+    /// sources within the size cap, the raw bytes only when a byte-wanting
+    /// transform claims the root.
+    async fn read_source(&self, source: &EnumeratedSource) -> Result<SourceRead, SeamError> {
+        let is_texty = is_indexable_text(&source.envelope.content_type);
+        let within_size = source.raw_bytes <= self.limits.max_content_bytes;
+        let content: Option<String> = if is_texty && within_size {
+            Some(self.connection.read_text(&source.address).await?)
+        } else {
+            None
+        };
+        let wants_bytes = self.registrations.iter().any(|r| {
+            r.transform.wants_bytes() && r.transform.claims(&source.envelope.content_type, true)
+        });
+        let bytes: Option<Vec<u8>> = if wants_bytes && within_size {
+            Some(self.connection.read_bytes(&source.address).await?)
+        } else {
+            None
+        };
+        let mut envelope = source.envelope.clone();
+        if let Some(text) = &content {
+            envelope.length = ContentLength::Lines(count_lines(text));
+        }
+        Ok(SourceRead {
+            source: source.clone(),
+            envelope,
+            content,
+            bytes,
+        })
+    }
+
+    /// Apply every registration claiming `item` — concurrently, since
+    /// claimants are independent of one another (an LLM summary and an
+    /// entity extraction of the same fragment overlap in flight) — and
+    /// return the outputs in registration order, which keeps budgets and
+    /// planting deterministic.
+    async fn apply_claimants<'a>(
+        &'a self,
+        read: &SourceRead,
+        item: &WorkItem,
+    ) -> Vec<(&'a Arc<Registration>, TransformOutput)> {
+        let claimants: Vec<&Arc<Registration>> = self
+            .registrations
+            .iter()
+            .filter(|r| r.transform.claims(&item.mimetype, item.is_root))
+            .collect();
+        let applications = claimants.iter().map(|registration| {
+            let ctx = TransformCtx {
+                envelope: &read.envelope,
+                mimetype: &item.mimetype,
+                is_root: item.is_root,
+                text: item.text.as_deref(),
+                bytes: if item.is_root && registration.transform.wants_bytes() {
+                    read.bytes.as_deref()
+                } else {
+                    None
+                },
+                llm: self.grantor.grant(registration),
+            };
+            registration.transform.apply(ctx)
+        });
+        let outputs = join_all(applications).await;
+        assert_eq!(outputs.len(), claimants.len());
+        claimants.into_iter().zip(outputs).collect()
+    }
+}
+
+/// A source as read for planning.
+struct SourceRead {
+    source: EnumeratedSource,
+    /// The envelope with its length upgraded to lines when text was read.
+    envelope: Envelope,
+    content: Option<String>,
+    bytes: Option<Vec<u8>>,
+}
+
+/// A fragment awaiting transform application: the root, or an emitted
+/// fragment re-entering as a non-root for chained claims.
+struct WorkItem {
+    node: PlanNode,
+    mimetype: Mimetype,
+    is_root: bool,
+    text: Option<String>,
+    depth: usize,
+}
+
+/// The plan under construction.
+struct SubtreeBuild {
+    limits: PlanLimits,
+    root_mimetype: Mimetype,
+    fragments: Vec<PlannedFragment>,
+    /// Keyed sprouts wait until the whole subtree is planted, so text
+    /// anchors can see every fragment; each remembers its input.
+    keyed: Vec<(PlanNode, KeyedSprout)>,
+    /// Text-bearing source-content fragments: the anchor sites for keyed
+    /// sprouts. Derived understanding (summaries) is searchable but never an
+    /// anchor.
+    texted: Vec<(PlanNode, String)>,
+    inventory: Vec<InventoryEntry>,
+    inventory_seen: HashSet<(String, bool)>,
+    queue: VecDeque<WorkItem>,
+    fragment_budget: usize,
+    stats: PlanStats,
+}
+
+impl SubtreeBuild {
+    fn new(read: &SourceRead, limits: PlanLimits) -> Self {
+        let root_mimetype = read.envelope.content_type.clone();
+        let essence = root_mimetype.essence().to_string();
+        Self {
+            limits,
+            root_mimetype: root_mimetype.clone(),
+            fragments: Vec::new(),
+            keyed: Vec::new(),
+            texted: Vec::new(),
+            inventory: vec![InventoryEntry {
+                mimetype: essence.clone(),
+                is_root: true,
+            }],
+            inventory_seen: HashSet::from([(essence, true)]),
+            queue: VecDeque::from([WorkItem {
+                node: PlanNode::Root,
+                mimetype: root_mimetype,
+                is_root: true,
+                text: read.content.clone(),
+                depth: 0,
+            }]),
+            fragment_budget: limits.max_fragments_per_source,
+            stats: PlanStats::default(),
+        }
+    }
+
+    /// Take one transform's output for `item`: tally summaries, prune to the
+    /// remaining budget, plant the sprout forest, and hold the keyed sprouts.
+    fn absorb(&mut self, item: &WorkItem, registration: &Registration, output: TransformOutput) {
+        for sprout in &output.sprouts {
+            if sprout.fragment.mimetype.is_summary() {
+                match sprout.fragment.mimetype.param("via") {
+                    Some("llm") => self.stats.llm_summaries += 1,
+                    Some("envelope") => self.stats.envelope_summaries += 1,
+                    _ => self.stats.extractive_summaries += 1,
+                }
+            }
+        }
+        let sprouts = prune(
+            output.sprouts,
+            DecomposeBudget {
+                max_depth: self.limits.max_depth.saturating_sub(item.depth).max(1),
+                max_fragments: self.fragment_budget,
+            },
+        );
+        let planted: usize = sprouts.iter().map(Sprout::count).sum();
+        assert!(planted <= self.fragment_budget, "prune respects the fragment budget");
+        self.fragment_budget -= planted;
+        self.plant(item.node, item.depth, sprouts, planted);
+        self.keyed
+            .extend(output.keyed.into_iter().map(|k| (item.node, k)));
+        tracing::trace!(transform = %registration.name, planted, "absorbed");
+    }
+
+    /// Plant a sprout forest under `parent`, depth-first in emitted order:
+    /// each sprout becomes a planned fragment, extends the inventory, is
+    /// collected as an anchor site when it carries source text, and re-enters
+    /// the queue for chained claims.
+    fn plant(&mut self, parent: PlanNode, parent_depth: usize, sprouts: Vec<Sprout>, planted: usize) {
+        // Explicit stack, children pushed in reverse so they pop in order;
+        // bounded by the forest size `prune` already enforced.
+        let mut stack: Vec<(PlanNode, usize, Sprout)> = Vec::with_capacity(planted);
+        stack.extend(sprouts.into_iter().rev().map(|s| (parent, parent_depth, s)));
+        let mut popped: usize = 0;
+        while let Some((parent, parent_depth, sprout)) = stack.pop() {
+            popped += 1;
+            assert!(popped <= planted, "planting visits each pruned sprout once");
+            let Sprout {
+                fragment,
+                relation,
+                children,
+            } = sprout;
+            let node = self.push_fragment(parent, relation, fragment, parent_depth + 1);
+            stack.extend(children.into_iter().rev().map(|c| (node, parent_depth + 1, c)));
+        }
+        assert_eq!(popped, planted);
+    }
+
+    fn push_fragment(
+        &mut self,
+        parent: PlanNode,
+        relation: inseam_kernel::fragment::RelationKind,
+        fragment: NewFragment,
+        depth: usize,
+    ) -> PlanNode {
+        let index = u32::try_from(self.fragments.len()).expect("fragment cap fits u32");
+        let node = PlanNode::Fragment(index);
+        let essence = fragment.mimetype.essence().to_string();
+        if self.inventory_seen.insert((essence.clone(), false)) {
+            self.inventory.push(InventoryEntry {
+                mimetype: essence,
+                is_root: false,
+            });
+        }
+        let is_derived = fragment.mimetype.is_inseam_defined();
+        if let Some(text) = &fragment.text
+            && !text.trim().is_empty()
+            && !is_derived
+        {
+            self.texted.push((node, text.clone()));
+        }
+        // Chained transforms: emitted fragments re-enter claiming as
+        // non-roots. Depth rides along so recursion stays bounded.
+        if !is_derived && depth < self.limits.max_depth {
+            self.queue.push_back(WorkItem {
+                node,
+                mimetype: fragment.mimetype.clone(),
+                is_root: false,
+                text: fragment.text.clone(),
+                depth,
+            });
+        }
+        self.fragments.push(PlannedFragment {
+            parent,
+            relation,
+            fragment,
+        });
+        node
+    }
+
+    fn finish(self, read: SourceRead, stamp: String) -> Planned {
+        let keyed: Vec<PlannedKeyed> = self
+            .keyed
+            .into_iter()
+            .map(|(input, sprout)| {
+                let anchors = anchors_for(&sprout.anchor, input, &self.texted);
+                assert!(!anchors.is_empty(), "every keyed sprout anchors somewhere");
+                PlannedKeyed {
+                    key: sprout.key,
+                    fragment: sprout.fragment,
+                    relation: sprout.relation,
+                    anchors,
+                }
+            })
+            .collect();
+        let root_extent = match read.envelope.length {
+            ContentLength::Lines(n) => Extent::Lines {
+                start: 1,
+                end: n.max(1),
+            },
+            ContentLength::Bytes(n) => Extent::Bytes { start: 0, end: n },
+        };
+        Planned {
+            plan: SubtreePlan {
+                address: read.source.address,
+                envelope: read.envelope,
+                raw_bytes: read.source.raw_bytes,
+                root: NewFragment {
+                    mimetype: self.root_mimetype,
+                    text: None,
+                    extent: Some(root_extent),
+                },
+                fragments: self.fragments,
+                keyed,
+                shape: Shape {
+                    stamp,
+                    inventory: self.inventory,
+                },
+            },
+            stats: self.stats,
+        }
+    }
+}
+
+/// The stamp the current registrations would produce for a subtree with this
+/// inventory: participating transforms + the sweep's own shape fingerprint.
+pub(super) fn expected_stamp(
+    registrations: &[Arc<Registration>],
+    inventory: &[InventoryEntry],
+    sweep_shape: &str,
+) -> String {
+    let participants = participating(registrations, inventory);
+    format!("{}+{}", shape_stamp(&participants), sweep_shape)
+}
+
+/// The fragments a keyed sprout's anchor resolves to within one source:
+/// the input fragment, or every text-bearing source-content fragment whose
+/// text contains the needle (case-insensitive), falling back to the input
+/// when none does — so an emission is never silently dropped.
+fn anchors_for(anchor: &Anchor, input: PlanNode, texted: &[(PlanNode, String)]) -> Vec<PlanNode> {
+    match anchor {
+        Anchor::Input => vec![input],
+        Anchor::TextContaining(needle) => {
+            let needle = needle.to_lowercase();
+            let hits: Vec<PlanNode> = texted
+                .iter()
+                .filter(|(_, text)| text.to_lowercase().contains(&needle))
+                .map(|(node, _)| *node)
+                .collect();
+            if hits.is_empty() { vec![input] } else { hits }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_anchors_fall_back_to_the_input() {
+        let texted = vec![
+            (PlanNode::Fragment(0), "Greg went home".to_string()),
+            (PlanNode::Fragment(1), "nothing here".to_string()),
+        ];
+        let hits = anchors_for(&Anchor::TextContaining("greg".into()), PlanNode::Root, &texted);
+        assert_eq!(hits, vec![PlanNode::Fragment(0)]);
+        let none = anchors_for(&Anchor::TextContaining("zed".into()), PlanNode::Root, &texted);
+        assert_eq!(none, vec![PlanNode::Root]);
+        assert_eq!(anchors_for(&Anchor::Input, PlanNode::Fragment(1), &texted), vec![PlanNode::Fragment(1)]);
+    }
+}

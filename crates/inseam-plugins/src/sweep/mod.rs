@@ -11,42 +11,49 @@
 //! exactly the sources whose mimetype inventory intersects the change —
 //! dirtiness stays discovered, never triggered.
 //!
-//! Transform applications recurse: a transform claiming an emitted mimetype
-//! (the loaded tier's normal shape) is applied to the emitted fragment in
-//! the same rebuild, so chains resolve in one pass.
-
+//! The run is a pipeline: dirty sources are **planned** concurrently
+//! ([`plan`] — transforms are the slow part, so `concurrency` of them run at
+//! once, each claimant of a fragment in flight together), each plan is
+//! **landed** in one store transaction in enumeration order (deterministic
+//! ids), and its search rows flow to the **embedding stage** ([`embed`]),
+//! which embeds batches concurrently and lands them in order with the
+//! `indexed` marks they complete.
 
 pub mod ignore;
 
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicUsize, Ordering};
+mod embed;
+mod grant;
+mod plan;
+
+use std::collections::HashSet;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
+use futures_util::stream::{self, StreamExt};
 use serde::Deserialize;
 
-use inseam_kernel::address::ContentLength;
 use inseam_kernel::address::Timestamp;
-use inseam_kernel::fragment::{Extent, FragmentId, Mimetype, NewFragment, Relation, Sprout};
-use inseam_kernel::store::{IndexStore, InventoryEntry, KeyedFragment, SearchRow, SourceId};
+use inseam_kernel::store::{
+    CatalogEntry, CatalogMark, IndexStore, KeyedFragment, SourceCompletion, SubtreeWritten,
+};
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError, Verdict, STORE,
+    parse_config, ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError, STORE,
 };
 use inseam_seams::connection::{Connection, EnumeratedSource, CONNECTION};
-use inseam_seams::embedder::{Embedder, EMBEDDER};
-use inseam_seams::llm::{self, ChatMessage, ChatRequest, Llm, LlmCall, LLM};
-use inseam_seams::sweep::{IndexReport, Sweep, SweepRequest, SWEEP};
-use inseam_seams::transforms::{
-    participating, shape_stamp, Anchor, DecomposeBudget, GrantedLlm, KeyedSprout, Registration,
-    TransformCtx, Transforms, TRANSFORMS,
-};
 use inseam_seams::dates::parse_ymd_epoch;
-use inseam_seams::text::{count_lines, is_indexable_text};
+use inseam_seams::embedder::{Embedder, EMBEDDER};
+use inseam_seams::llm::{self, Llm, LLM};
+use inseam_seams::sweep::{IndexReport, Sweep, SweepRequest, SWEEP};
+use inseam_seams::transforms::{Registration, Transforms, TRANSFORMS};
 use inseam_seams::SeamError;
 
+use embed::{EmbedStage, PendingRow, RowBuffer};
+use grant::{Grantor, RunMeters};
 use ignore::{IgnoreRule, IgnoreSet};
+use plan::{expected_stamp, PlanLimits, Planned, Planner};
 
-/// Search rows buffered before an embed+write flush.
-const FLUSH_AT: usize = 128;
+/// Catalog-only rows per transaction.
+const CATALOG_CHUNK: usize = 1_000;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -54,6 +61,10 @@ pub struct SweepConfig {
     /// Sources to deep-index per run; the rest still enter the catalog.
     /// 0 means unlimited. (Run-metering tier: bounds a run, not the shape.)
     pub max_sources: usize,
+    /// Sources planned at once — transform applications (LLM calls above
+    /// all) in flight together. Run-metering tier: a throughput dial, never
+    /// a shape one.
+    pub concurrency: NonZeroUsize,
     /// Fragment cap per source (shape tier).
     pub max_fragments_per_source: usize,
     /// Decomposition depth cap (shape tier).
@@ -75,6 +86,7 @@ impl Default for SweepConfig {
     fn default() -> Self {
         Self {
             max_sources: 0,
+            concurrency: NonZeroUsize::new(8).expect("8 is non-zero"),
             max_fragments_per_source: 400,
             max_depth: 6,
             max_content_bytes: 2_000_000,
@@ -93,6 +105,14 @@ impl SweepConfig {
             "sweep-v1|depth={}|fragments={}|content_bytes={}",
             self.max_depth, self.max_fragments_per_source, self.max_content_bytes
         )
+    }
+
+    fn limits(&self) -> PlanLimits {
+        PlanLimits {
+            max_depth: self.max_depth,
+            max_fragments_per_source: self.max_fragments_per_source,
+            max_content_bytes: self.max_content_bytes,
+        }
     }
 
     fn cutoff(&self) -> Result<Option<Timestamp>, PluginError> {
@@ -216,83 +236,35 @@ impl Sweep for SweepService {
         let registrations = self.stamped_registrations();
         let sweep_shape = self.config.shape_fingerprint();
 
-        let mut meters: HashMap<String, RunMeter> = HashMap::new();
-        let mut pending: Vec<PendingRow> = Vec::new();
-
-        for source in &sources {
-            let meta = self.store.index_meta(&source.address).await?;
-            let dirty = match &meta {
-                None => true,
-                Some(m) => {
-                    let content_changed =
-                        m.modified != source.envelope.modified || m.raw_bytes != source.raw_bytes;
-                    let shape_stale = match &m.shape_stamp {
-                        // Catalog-only rows carry no stamp and stay dirty.
-                        None => true,
-                        Some(stored) => {
-                            let expected = expected_stamp(&registrations, &m.mimetypes, &sweep_shape);
-                            *stored != expected
-                        }
-                    };
-                    !m.indexed || content_changed || shape_stale
-                }
-            };
-
-            if let (Some(cutoff), Some(modified)) = (cutoff, source.envelope.modified)
-                && modified < cutoff
-            {
-                // Catalog newly seen out-of-horizon sources so the map is
-                // complete; leave known ones alone — scope shrinkage never
-                // evicts what a looser scope already built.
-                if meta.is_none() {
-                    self.store
-                        .upsert_source(&source.address, &source.envelope, source.raw_bytes).await?;
-                }
-                report.skipped_cutoff += 1;
-                continue;
-            }
-            if !dirty && !request.rebuild {
-                report.unchanged += 1;
-                continue;
-            }
-            let deep_budget_left =
-                self.config.max_sources == 0 || report.indexed < self.config.max_sources;
-            if !deep_budget_left {
-                // Catalog-only: no stamp is recorded, so the source stays
-                // dirty and is deep-indexed once a later run has budget.
-                let sid = self
-                    .store
-                    .upsert_source(&source.address, &source.envelope, source.raw_bytes).await?;
-                self.store.mark_indexed(sid, None).await?;
-                report.catalog_only += 1;
-                continue;
-            }
-            self.index_source(
-                source,
-                &registrations,
-                &sweep_shape,
-                &mut meters,
-                &mut report,
-                &mut pending,
-            )
+        let decisions = self
+            .decide(&sources, cutoff, &registrations, &sweep_shape, request.rebuild, &mut report)
             .await?;
-            report.indexed += 1;
-            if pending.len() >= FLUSH_AT {
-                self.flush(&mut pending, &mut report).await?;
-            }
+        for chunk in decisions.catalog.chunks(CATALOG_CHUNK) {
+            self.store.catalog_sources(chunk).await?;
         }
 
-        self.flush(&mut pending, &mut report).await?;
+        let grantor = Arc::new(Grantor {
+            llm: self.llm.clone(),
+            model: self.transform_model.clone(),
+            bus: self.bus.clone(),
+            meters: RunMeters::for_registrations(&registrations),
+        });
+        let planner = Arc::new(Planner {
+            connection: Arc::clone(&self.connection),
+            registrations,
+            grantor: Arc::clone(&grantor),
+            sweep_shape,
+            limits: self.config.limits(),
+        });
+        self.index_deep(decisions.deep, planner, &mut report).await?;
+
         self.reconcile_vanished(&request.root, &sources, &mut report)
             .await?;
         let orphaned = self.store.gc_keyed_fragments().await?;
         report.keyed_removed = orphaned.len();
         self.store.rebuild_fts().await?;
-        for (entry, meter) in meters {
-            let calls = meter.calls.load(Ordering::Relaxed);
-            if calls > 0 {
-                report.llm_calls.insert(entry, calls);
-            }
+        for (entry, calls) in grantor.meters.calls_by_entry() {
+            report.llm_calls.insert(entry.to_string(), calls);
         }
         if let Some(llm) = &self.llm {
             report.spent = llm.spent();
@@ -301,10 +273,12 @@ impl Sweep for SweepService {
     }
 }
 
-/// Per-transform, per-run LLM metering shared with the granted handles.
-struct RunMeter {
-    calls: Arc<AtomicUsize>,
-    budget: usize,
+/// What the dirtiness pass decided: rows that enter the catalog without a
+/// subtree, and the sources to deep-index this run, both in enumeration
+/// order.
+struct Decisions<'a> {
+    catalog: Vec<CatalogEntry<'a>>,
+    deep: Vec<EnumeratedSource>,
 }
 
 impl SweepService {
@@ -332,286 +306,117 @@ impl SweepService {
             .collect()
     }
 
-    /// Build one source's subtree by recursive transform application:
-    /// registered claimants over the root, then over every emitted fragment,
-    /// until nothing claims the output (`design/indexing.md`). The source is
-    /// marked indexed — with its stamp and inventory — only once everything
-    /// is stored.
-    async fn index_source(
+    /// The dirtiness pass (`design/index-maintenance.md`): per source, is it
+    /// past the cutoff, unchanged, past this run's deep budget, or to be
+    /// rebuilt? Reads only; the writes it decides on are batched by the
+    /// caller.
+    async fn decide<'a>(
         &self,
-        source: &EnumeratedSource,
+        sources: &'a [EnumeratedSource],
+        cutoff: Option<Timestamp>,
         registrations: &[Arc<Registration>],
         sweep_shape: &str,
-        meters: &mut HashMap<String, RunMeter>,
+        rebuild: bool,
         report: &mut IndexReport,
-        pending: &mut Vec<PendingRow>,
-    ) -> Result<(), SeamError> {
-        let is_texty = is_indexable_text(&source.envelope.content_type);
-        let within_size = source.raw_bytes <= self.config.max_content_bytes;
-        let content: Option<String> = if is_texty && within_size {
-            Some(self.connection.read_text(&source.address).await?)
-        } else {
-            None
+    ) -> Result<Decisions<'a>, SeamError> {
+        let mut decisions = Decisions {
+            catalog: Vec::new(),
+            deep: Vec::new(),
         };
-        let wants_bytes = registrations
-            .iter()
-            .any(|r| r.transform.wants_bytes() && r.transform.claims(&source.envelope.content_type, true));
-        let bytes: Option<Vec<u8>> = if wants_bytes && within_size {
-            Some(self.connection.read_bytes(&source.address).await?)
-        } else {
-            None
-        };
+        for source in sources {
+            let meta = self.store.index_meta(&source.address).await?;
+            let dirty = match &meta {
+                None => true,
+                Some(m) => {
+                    let content_changed =
+                        m.modified != source.envelope.modified || m.raw_bytes != source.raw_bytes;
+                    let shape_stale = match &m.shape_stamp {
+                        // Catalog-only rows carry no stamp and stay dirty.
+                        None => true,
+                        Some(stored) => {
+                            let expected = expected_stamp(registrations, &m.mimetypes, sweep_shape);
+                            *stored != expected
+                        }
+                    };
+                    !m.indexed || content_changed || shape_stale
+                }
+            };
+            let entry = |mark: CatalogMark| CatalogEntry {
+                address: &source.address,
+                envelope: &source.envelope,
+                raw_bytes: source.raw_bytes,
+                mark,
+            };
 
-        let mut envelope = source.envelope.clone();
-        if let Some(text) = &content {
-            envelope.length = ContentLength::Lines(count_lines(text));
-        }
-
-        let sid = self
-            .store
-            .upsert_source(&source.address, &envelope, source.raw_bytes).await?;
-        self.store.delete_fragments_of(sid).await?;
-
-        let root_extent = match envelope.length {
-            ContentLength::Lines(n) => Extent::Lines { start: 1, end: n.max(1) },
-            ContentLength::Bytes(n) => Extent::Bytes { start: 0, end: n },
-        };
-        let root = self.store.insert_fragment(
-            sid,
-            &NewFragment {
-                mimetype: envelope.content_type.clone(),
-                text: None,
-                extent: Some(root_extent),
-            },
-        ).await?;
-        self.store.set_root_fragment(sid, root).await?;
-        report.fragments += 1;
-
-        let mut fragment_budget = self.config.max_fragments_per_source;
-        let mut texted: Vec<(FragmentId, String)> = Vec::new();
-        // Keyed sprouts wait until the whole subtree is planted, so text
-        // anchors can see every fragment; each remembers its input.
-        let mut keyed: Vec<(FragmentId, KeyedSprout)> = Vec::new();
-        let mut inventory: Vec<InventoryEntry> = vec![InventoryEntry {
-            mimetype: envelope.content_type.essence().to_string(),
-            is_root: true,
-        }];
-        let mut inventory_seen: HashSet<(String, bool)> =
-            HashSet::from([(envelope.content_type.essence().to_string(), true)]);
-
-        let mut queue: VecDeque<WorkItem> = VecDeque::from([WorkItem {
-            fragment: root,
-            mimetype: envelope.content_type.clone(),
-            is_root: true,
-            text: content.clone(),
-            depth: 0,
-        }]);
-
-        while let Some(item) = queue.pop_front() {
-            // Derived understanding is never source content: transforms must
-            // not re-decompose `text/x-inseam-*` fragments, whatever they claim.
-            if item.mimetype.is_inseam_defined() {
+            if let (Some(cutoff), Some(modified)) = (cutoff, source.envelope.modified)
+                && modified < cutoff
+            {
+                // Catalog newly seen out-of-horizon sources so the map is
+                // complete; leave known ones alone — scope shrinkage never
+                // evicts what a looser scope already built.
+                if meta.is_none() {
+                    decisions.catalog.push(entry(CatalogMark::Seen));
+                }
+                report.skipped_cutoff += 1;
                 continue;
             }
-            for registration in registrations {
-                if !registration.transform.claims(&item.mimetype, item.is_root) {
-                    continue;
-                }
-                let meter = meters
-                    .entry(registration.entry_id.clone())
-                    .or_insert_with(|| RunMeter {
-                        calls: Arc::new(AtomicUsize::new(0)),
-                        budget: registration.llm_call_budget,
-                    });
-                // Capability mediation: the LLM handle is granted only while
-                // the transform's per-run budget lasts; withheld, the
-                // transform falls back or emits nothing. Every call also
-                // passes the seam-level LlmCall guard.
-                let granted: Option<Arc<MeteredLlm>> = match &self.llm {
-                    Some(llm) if meter.calls.load(Ordering::Relaxed) < meter.budget => {
-                        Some(Arc::new(MeteredLlm {
-                            llm: Arc::clone(llm),
-                            model: self.transform_model.clone(),
-                            consumer: registration.entry_id.clone(),
-                            calls: Arc::clone(&meter.calls),
-                            budget: meter.budget,
-                            bus: self.bus.clone(),
-                        }))
-                    }
-                    _ => None,
-                };
-                let ctx = TransformCtx {
-                    envelope: &envelope,
-                    mimetype: &item.mimetype,
-                    is_root: item.is_root,
-                    text: item.text.as_deref(),
-                    bytes: if item.is_root && registration.transform.wants_bytes() {
-                        bytes.as_deref()
-                    } else {
-                        None
-                    },
-                    llm: granted.clone().map(|g| g as Arc<dyn GrantedLlm>),
-                };
-                let out = registration.transform.apply(ctx).await;
-
-                for sprout in &out.sprouts {
-                    if sprout.fragment.mimetype.is_summary() {
-                        match sprout.fragment.mimetype.param("via") {
-                            Some("llm") => report.llm_summaries += 1,
-                            Some("envelope") => report.envelope_summaries += 1,
-                            _ => report.extractive_summaries += 1,
-                        }
-                    }
-                }
-                let sprouts = inseam_seams::transforms::prune(
-                    out.sprouts,
-                    DecomposeBudget {
-                        max_depth: self.config.max_depth.saturating_sub(item.depth).max(1),
-                        max_fragments: fragment_budget,
-                    },
-                );
-                let planted: usize = sprouts.iter().map(Sprout::count).sum();
-                fragment_budget = fragment_budget.saturating_sub(planted);
-                self.plant(
-                    sid,
-                    item.fragment,
-                    item.depth,
-                    sprouts,
-                    report,
-                    pending,
-                    &mut texted,
-                    &mut queue,
-                    &mut inventory,
-                    &mut inventory_seen,
-                ).await?;
-                keyed.extend(out.keyed.into_iter().map(|k| (item.fragment, k)));
+            if !dirty && !rebuild {
+                report.unchanged += 1;
+                continue;
             }
+            let deep_budget_left =
+                self.config.max_sources == 0 || decisions.deep.len() < self.config.max_sources;
+            if !deep_budget_left {
+                // Catalog-only: no stamp is recorded, so the source stays
+                // dirty and is deep-indexed once a later run has budget.
+                decisions.catalog.push(entry(CatalogMark::CatalogOnly));
+                report.catalog_only += 1;
+                continue;
+            }
+            decisions.deep.push(source.clone());
         }
-
-        if !keyed.is_empty() {
-            self.plant_keyed(keyed, &texted, report, pending).await?;
-        }
-
-        let stamp = expected_stamp(registrations, &inventory, sweep_shape);
-        self.store.mark_indexed(sid, Some((&stamp, &inventory))).await?;
-        tracing::debug!(address = %source.address, "indexed");
-        Ok(())
+        Ok(decisions)
     }
 
-    /// Persist a sprout forest under `parent`, collecting text-bearing
-    /// fragments for embedding and keyed-sprout anchoring, extending the
-    /// mimetype inventory, and enqueueing emitted fragments for chained
-    /// claims.
-    #[allow(clippy::too_many_arguments)]
-    async fn plant(
+    /// The deep-index pipeline: plan `concurrency` sources at once, land each
+    /// plan in enumeration order, and stream its search rows to the
+    /// embedding stage. One source's failure fails the run, as before — and
+    /// aborts the planners still in flight, so no LLM spend outlives the
+    /// error.
+    async fn index_deep(
         &self,
-        sid: SourceId,
-        parent: FragmentId,
-        parent_depth: usize,
-        sprouts: Vec<Sprout>,
+        deep: Vec<EnumeratedSource>,
+        planner: Arc<Planner>,
         report: &mut IndexReport,
-        pending: &mut Vec<PendingRow>,
-        texted: &mut Vec<(FragmentId, String)>,
-        queue: &mut VecDeque<WorkItem>,
-        inventory: &mut Vec<InventoryEntry>,
-        inventory_seen: &mut HashSet<(String, bool)>,
     ) -> Result<(), SeamError> {
-        for sprout in sprouts {
-            let id = self.store.insert_fragment(sid, &sprout.fragment).await?;
-            self.store
-                .insert_relation(&Relation::new(parent, sprout.relation.clone(), id)).await?;
-            report.fragments += 1;
-            report.relations += 1;
-            let essence = sprout.fragment.mimetype.essence().to_string();
-            if inventory_seen.insert((essence.clone(), false)) {
-                inventory.push(InventoryEntry {
-                    mimetype: essence,
-                    is_root: false,
-                });
+        let stage = EmbedStage::start(Arc::clone(&self.embedder), Arc::clone(&self.store));
+        let mut buffer = RowBuffer::default();
+        let planned = stream::iter(deep)
+            .map(|source| {
+                let planner = Arc::clone(&planner);
+                Spawned(tokio::spawn(async move { planner.plan(&source).await }))
+            })
+            .buffered(self.config.concurrency.get());
+        futures_util::pin_mut!(planned);
+        while let Some(joined) = planned.next().await {
+            let planned = joined??;
+            let written = self.store.write_subtree(&planned.plan).await?;
+            tracing::debug!(address = %planned.plan.address, "indexed");
+            tally(report, &planned, &written);
+            buffer.push_rows(search_rows_of(&planned, &written));
+            buffer.push_completion(SourceCompletion {
+                source: written.source,
+                stamp: planned.plan.shape.stamp,
+                inventory: planned.plan.shape.inventory,
+            });
+            for batch in buffer.drain_ready() {
+                stage.submit(batch).await?;
             }
-            if let Some(text) = &sprout.fragment.text
-                && !text.trim().is_empty()
-            {
-                pending.push(PendingRow {
-                    fragment: id,
-                    source: Some(sid),
-                    text: text.clone(),
-                });
-                // Derived understanding (summaries) is searchable but not an
-                // anchor site: keyed sprouts anchor to source content only.
-                if !sprout.fragment.mimetype.is_inseam_defined() {
-                    texted.push((id, text.clone()));
-                }
-            }
-            // Chained transforms: emitted fragments re-enter claiming as
-            // non-roots. Depth rides along so recursion stays bounded.
-            if !sprout.fragment.mimetype.is_inseam_defined()
-                && parent_depth + 1 < self.config.max_depth
-            {
-                queue.push_back(WorkItem {
-                    fragment: id,
-                    mimetype: sprout.fragment.mimetype.clone(),
-                    is_root: false,
-                    text: sprout.fragment.text.clone(),
-                    depth: parent_depth + 1,
-                });
-            }
-            // Recursion is bounded by the sprout tree the transform
-            // emitted; boxing breaks the async future cycle.
-            Box::pin(self.plant(
-                sid,
-                id,
-                parent_depth + 1,
-                sprout.children,
-                report,
-                pending,
-                texted,
-                queue,
-                inventory,
-                inventory_seen,
-            ))
-            .await?;
         }
-        Ok(())
-    }
-
-    /// Resolve keyed sprouts: get-or-create each index-wide fragment under
-    /// its key, then anchor it into this source with the emitter's relation
-    /// kind — at the input fragment, or at every source-content fragment
-    /// whose text contains the anchor needle (falling back to the input).
-    /// This stays sweep-side: a transform cannot know fragment ids.
-    async fn plant_keyed(
-        &self,
-        keyed: Vec<(FragmentId, KeyedSprout)>,
-        texted: &[(FragmentId, String)],
-        report: &mut IndexReport,
-        pending: &mut Vec<PendingRow>,
-    ) -> Result<(), SeamError> {
-        for (input, sprout) in keyed {
-            let resolved = self.store.keyed_fragment(&sprout.key, &sprout.fragment).await?;
-            let fragment = resolved.id();
-            if let KeyedFragment::Created(_) = resolved {
-                report.fragments += 1;
-                if let Some(text) = &sprout.fragment.text
-                    && !text.trim().is_empty()
-                {
-                    pending.push(PendingRow {
-                        fragment,
-                        source: None,
-                        text: text.clone(),
-                    });
-                }
-            }
-            let anchors = anchors_for(&sprout.anchor, input, texted);
-            assert!(!anchors.is_empty(), "every keyed sprout anchors somewhere");
-            for anchor in anchors {
-                self.store
-                    .insert_relation(&Relation::new(anchor, sprout.relation.clone(), fragment))
-                    .await?;
-                report.relations += 1;
-            }
-            report.keyed_anchored += 1;
+        for batch in buffer.drain_all() {
+            stage.submit(batch).await?;
         }
+        report.embedded += stage.finish().await?;
         Ok(())
     }
 
@@ -645,163 +450,114 @@ impl SweepService {
 
     /// Re-populate the search table under the declared embedding identity:
     /// text comes from SQLite, so no transform re-runs and no LLM spend —
-    /// vectors are the only thing rebuilt.
+    /// vectors are the only thing rebuilt, through the same embedding stage
+    /// an index run uses.
     async fn reembed(&self, report: &mut IndexReport) -> Result<(), SeamError> {
         let targets = self.store.reembed_targets().await?;
         report.reembedded = targets.len();
         self.store.begin_reembed().await?;
-        let mut pending: Vec<PendingRow> = Vec::new();
+        let stage = EmbedStage::start(Arc::clone(&self.embedder), Arc::clone(&self.store));
+        let mut buffer = RowBuffer::default();
         for (fragment, source, text) in targets {
-            pending.push(PendingRow {
+            buffer.push_rows([PendingRow {
                 fragment,
                 source,
                 text,
-            });
-            if pending.len() >= FLUSH_AT {
-                self.flush(&mut pending, report).await?;
+            }]);
+            for batch in buffer.drain_ready() {
+                stage.submit(batch).await?;
             }
         }
-        self.flush(&mut pending, report).await?;
+        for batch in buffer.drain_all() {
+            stage.submit(batch).await?;
+        }
+        report.embedded += stage.finish().await?;
         self.store.finish_reembed().await?;
         tracing::info!(rows = report.reembedded, "re-embedded search index");
         Ok(())
     }
+}
 
-    /// Embed buffered rows and land them in the search table.
-    async fn flush(
-        &self,
-        pending: &mut Vec<PendingRow>,
-        report: &mut IndexReport,
-    ) -> Result<(), SeamError> {
-        if pending.is_empty() {
-            return Ok(());
-        }
-        let rows = std::mem::take(pending);
-        let vectors: Vec<Option<Vec<f32>>> = if self.embedder.dimensions().is_some() {
-            let texts: Vec<&str> = rows.iter().map(|r| r.text.as_str()).collect();
-            match self.embedder.embed(&texts).await {
-                Ok(vs) => {
-                    report.embedded += vs.len();
-                    vs.into_iter().map(Some).collect()
-                }
-                Err(e) => {
-                    tracing::warn!("embedding failed; rows stay text-searchable only: {e}");
-                    vec![None; rows.len()]
-                }
-            }
-        } else {
-            vec![None; rows.len()]
-        };
-        let search_rows: Vec<SearchRow> = rows
-            .into_iter()
-            .zip(vectors)
-            .map(|(row, vector)| SearchRow {
-                fragment: row.fragment,
-                source: row.source,
-                text: row.text,
-                vector,
-            })
-            .collect();
-        self.store.add_search_rows(&search_rows).await?;
-        Ok(())
+/// Fold one landed plan into the run report.
+fn tally(report: &mut IndexReport, planned: &Planned, written: &SubtreeWritten) {
+    let created_keyed = written
+        .keyed
+        .iter()
+        .filter(|k| matches!(k, KeyedFragment::Created(_)))
+        .count();
+    let anchors: usize = planned.plan.keyed.iter().map(|k| k.anchors.len()).sum();
+    report.indexed += 1;
+    report.fragments += planned.plan.fragment_count() + created_keyed;
+    report.relations += planned.plan.fragments.len() + anchors;
+    report.keyed_anchored += planned.plan.keyed.len();
+    report.llm_summaries += planned.stats.llm_summaries;
+    report.extractive_summaries += planned.stats.extractive_summaries;
+    report.envelope_summaries += planned.stats.envelope_summaries;
+}
+
+/// The search rows a landed plan contributes: every text-bearing planned
+/// fragment, plus the keyed fragments this plan created (an existing keyed
+/// fragment already has its row).
+fn search_rows_of(planned: &Planned, written: &SubtreeWritten) -> Vec<PendingRow> {
+    let fragments = planned
+        .plan
+        .fragments
+        .iter()
+        .zip(&written.fragments)
+        .filter_map(|(p, id)| {
+            p.fragment
+                .text
+                .as_ref()
+                .filter(|t| !t.trim().is_empty())
+                .map(|t| PendingRow {
+                    fragment: *id,
+                    source: Some(written.source),
+                    text: t.clone(),
+                })
+        });
+    let keyed = planned
+        .plan
+        .keyed
+        .iter()
+        .zip(&written.keyed)
+        .filter_map(|(p, resolved)| match resolved {
+            KeyedFragment::Created(id) => p
+                .fragment
+                .text
+                .as_ref()
+                .filter(|t| !t.trim().is_empty())
+                .map(|t| PendingRow {
+                    fragment: *id,
+                    source: None,
+                    text: t.clone(),
+                }),
+            KeyedFragment::Existing(_) => None,
+        });
+    let mut rows: Vec<PendingRow> = fragments.chain(keyed).collect();
+    rows.shrink_to_fit();
+    rows
+}
+
+/// A spawned task whose handle aborts it on drop — so dropping the planning
+/// stream on an error cancels the planners still in flight instead of
+/// letting them finish (and spend) unobserved.
+struct Spawned<T>(tokio::task::JoinHandle<T>);
+
+impl<T> Drop for Spawned<T> {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
 
-/// The stamp the current registrations would produce for a subtree with this
-/// inventory: participating transforms + the sweep's own shape fingerprint.
-fn expected_stamp(
-    registrations: &[Arc<Registration>],
-    inventory: &[InventoryEntry],
-    sweep_shape: &str,
-) -> String {
-    let participants = participating(registrations, inventory);
-    format!("{}+{}", shape_stamp(&participants), sweep_shape)
-}
+impl<T> std::future::Future for Spawned<T> {
+    type Output = Result<T, SeamError>;
 
-struct WorkItem {
-    fragment: FragmentId,
-    mimetype: Mimetype,
-    is_root: bool,
-    text: Option<String>,
-    depth: usize,
-}
-
-struct PendingRow {
-    fragment: FragmentId,
-    source: Option<SourceId>,
-    text: String,
-}
-
-/// The narrowed LLM capability granted to one transform for one run:
-/// mechanical call counting against the per-run budget, plus the seam-level
-/// [`LlmCall`] guard — a denial from any policy listener refuses the call.
-struct MeteredLlm {
-    llm: Arc<dyn Llm>,
-    model: String,
-    consumer: String,
-    calls: Arc<AtomicUsize>,
-    budget: usize,
-    bus: EventBus,
-}
-
-impl MeteredLlm {
-    fn charge(&self) -> Result<(), SeamError> {
-        if self.calls.load(Ordering::Relaxed) >= self.budget {
-            return Err(SeamError::Refused(format!(
-                "llm budget for `{}` is spent this run",
-                self.consumer
-            )));
-        }
-        if let Verdict::Deny(reason) = self.bus.check(&LlmCall {
-            consumer: self.consumer.clone(),
-        }) {
-            return Err(SeamError::Refused(reason));
-        }
-        self.calls.fetch_add(1, Ordering::Relaxed);
-        Ok(())
-    }
-}
-
-#[async_trait::async_trait]
-impl GrantedLlm for MeteredLlm {
-    async fn complete(&self, system: &str, user: &str) -> Result<String, SeamError> {
-        self.charge()?;
-        let request = ChatRequest::new(
-            self.model.clone(),
-            vec![ChatMessage::system(system), ChatMessage::user(user)],
-        );
-        let reply = self.llm.chat(&request).await?;
-        Ok(reply.content.unwrap_or_default())
-    }
-
-    async fn describe_image(
-        &self,
-        prompt: &str,
-        mimetype: &str,
-        image: &[u8],
-    ) -> Result<String, SeamError> {
-        self.charge()?;
-        self.llm
-            .describe_image(&self.model, prompt, mimetype, image)
-            .await
-    }
-}
-
-/// The fragments a keyed sprout's anchor resolves to within one source:
-/// the input fragment, or every text-bearing source-content fragment whose
-/// text contains the needle (case-insensitive), falling back to the input
-/// when none does — so an emission is never silently dropped.
-fn anchors_for(anchor: &Anchor, input: FragmentId, texted: &[(FragmentId, String)]) -> Vec<FragmentId> {
-    match anchor {
-        Anchor::Input => vec![input],
-        Anchor::TextContaining(needle) => {
-            let needle = needle.to_lowercase();
-            let hits: Vec<FragmentId> = texted
-                .iter()
-                .filter(|(_, text)| text.to_lowercase().contains(&needle))
-                .map(|(id, _)| *id)
-                .collect();
-            if hits.is_empty() { vec![input] } else { hits }
-        }
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        std::pin::Pin::new(&mut self.0)
+            .poll(cx)
+            .map(|joined| joined.map_err(|e| SeamError::failed(format!("planner task failed: {e}"))))
     }
 }

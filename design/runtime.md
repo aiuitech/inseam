@@ -24,6 +24,8 @@ Everything lives in **one libSQL database file** (`catalog.sqlite3`): the catalo
 
 One engine is not just tidiness — it is forced. The catalog was rusqlite (vanilla SQLite, bundled) when the search surface moved to libSQL, and the two cannot coexist in one binary: both bundle a C library exporting the same `sqlite3_*` symbols, the linker keeps one copy, and whichever library initializes second trips over the other's global state at runtime. The catalog therefore moved onto libSQL in the same change (its API went async with it — the kernel is async throughout, so the cascade stopped at a handful of call sites), and the briefly separate `search.sqlite3` file was folded into the catalog database right after.
 
+The database runs WAL with `synchronous = NORMAL`, and every write goes through one store-level write lock. NORMAL drops the per-commit fsync (a power cut can lose the last commits, never corrupt the file) — acceptable because every table is derived or re-derivable and the sweep's `indexed` mark is written only when a source's rows are all in place, so lost commits are re-indexed, not silently missing. The write lock is what makes one connection safe under the sweep's concurrent stages: a libSQL connection carries one open transaction, and two tasks writing through it would interleave statements into each other's transactions.
+
 ### Known risks
 
 - FTS5's BM25 replaces tantivy's; ranking differs in the tail. The finder only consumes rank order (RRF fusion), so this is contained by design.

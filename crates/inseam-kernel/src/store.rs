@@ -23,6 +23,7 @@ use crate::address::{Address, ContentLength, Envelope, HostId, Locator, Property
 use crate::fragment::{
     Extent, FragmentId, FragmentKey, Mimetype, NewFragment, Relation, RelationKind,
 };
+use crate::subtree::{PlanNode, SubtreePlan};
 
 const SCHEMA_VERSION: &str = "5";
 /// Ids per DELETE predicate; keeps the SQL bounded.
@@ -120,6 +121,60 @@ pub struct SearchRow {
     pub vector: Option<Vec<f32>>,
 }
 
+/// What the store assigned when it landed a [`SubtreePlan`]: the source's
+/// id, its root, and the ids of the planned fragments and keyed fragments,
+/// each by plan position.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubtreeWritten {
+    pub source: SourceId,
+    pub root: FragmentId,
+    /// `fragments[i]` is the id of the plan's `i`th fragment.
+    pub fragments: Vec<FragmentId>,
+    /// `keyed[i]` resolves the plan's `i`th keyed sprout.
+    pub keyed: Vec<KeyedFragment>,
+}
+
+impl SubtreeWritten {
+    pub fn id_of(&self, node: PlanNode) -> FragmentId {
+        match node {
+            PlanNode::Root => self.root,
+            PlanNode::Fragment(n) => {
+                let index = usize::try_from(n).expect("plan positions fit usize");
+                self.fragments[index]
+            }
+        }
+    }
+}
+
+/// A source whose run has finished: its shape records, to be written with
+/// the `indexed` mark once its search rows have landed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceCompletion {
+    pub source: SourceId,
+    pub stamp: String,
+    pub inventory: Vec<InventoryEntry>,
+}
+
+/// How a source enters the catalog without a subtree
+/// (`design/index-maintenance.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CatalogMark {
+    /// Newly seen outside the cutoff: cataloged, not marked indexed.
+    Seen,
+    /// Past this run's deep-index budget: marked indexed without a shape,
+    /// which keeps it dirty for a later run with budget.
+    CatalogOnly,
+}
+
+/// One catalog-only write: a source the sweep saw but did not deep-index.
+#[derive(Debug, Clone)]
+pub struct CatalogEntry<'a> {
+    pub address: &'a Address,
+    pub envelope: &'a Envelope,
+    pub raw_bytes: u64,
+    pub mark: CatalogMark,
+}
+
 #[derive(Debug, Clone, Copy, Default, serde::Serialize)]
 pub struct StoreStats {
     pub sources: u64,
@@ -164,6 +219,12 @@ pub struct IndexStore {
     /// from the declared identity: search refuses until an index run
     /// re-embeds (`design/index-maintenance.md`).
     reembed_from: Mutex<Option<(String, usize)>>,
+    /// Serializes every write. One libSQL connection carries one open
+    /// transaction at a time, so two tasks writing concurrently — the sweep's
+    /// subtree landing and its embedding landing, say — would interleave
+    /// their statements into each other's transactions. Holding this across
+    /// each write keeps every write atomic on its own; reads stay free.
+    write_lock: tokio::sync::Mutex<()>,
 }
 
 impl IndexStore {
@@ -180,6 +241,14 @@ impl IndexStore {
             .await?;
         let catalog = db.connect()?;
         catalog.query("PRAGMA journal_mode = WAL", ()).await?;
+        // WAL + NORMAL: a commit appends to the log without an fsync; the
+        // log is synced at checkpoints. A power cut can lose the last
+        // commits but can never corrupt the file — and every table here is
+        // rebuildable (`design/kernel.md`), with the sweep re-indexing any
+        // source whose `indexed` mark did not survive. FULL would fsync per
+        // commit, which dominated index time before subtrees landed in one
+        // transaction each.
+        catalog.query("PRAGMA synchronous = NORMAL", ()).await?;
         catalog.query("PRAGMA foreign_keys = ON", ()).await?;
         converge_schema(&catalog).await?;
         Ok(Self {
@@ -187,7 +256,14 @@ impl IndexStore {
             catalog,
             surface: Mutex::new(None),
             reembed_from: Mutex::new(None),
+            write_lock: tokio::sync::Mutex::new(()),
         })
+    }
+
+    /// Take the write turn. Every mutating method holds the guard for its
+    /// whole statement or transaction.
+    async fn write(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.write_lock.lock().await
     }
 
     /// Bind the search surface to the mounted embedder's identity. Called by
@@ -195,6 +271,7 @@ impl IndexStore {
     /// the index was built under pends an in-place re-embed rather than
     /// refusing; searches refuse until an index run performs it.
     pub async fn declare_embedding(&self, model: &str, dims: usize) -> Result<(), StoreError> {
+        let _write = self.write().await;
         let stored = read_embedding_meta(&self.catalog).await?;
         let pending = match stored {
             None => {
@@ -293,10 +370,153 @@ impl IndexStore {
         envelope: &Envelope,
         raw_bytes: u64,
     ) -> Result<SourceId, StoreError> {
-        let properties = serde_json::to_string(&envelope.properties)
-            .expect("envelope properties serialize to JSON");
-        let row = self
-            .first_row(
+        let _write = self.write().await;
+        upsert_source_in(&self.catalog, address, envelope, raw_bytes).await
+    }
+
+    /// Confirm a source's index run completed. A deep-indexed source records
+    /// the shape stamp its subtree was built under plus the subtree's
+    /// mimetype inventory; a catalog-only source records neither, which is
+    /// exactly what makes it dirty again the moment budget or cutoff would
+    /// let it be deep-indexed.
+    pub async fn mark_indexed(
+        &self,
+        source: SourceId,
+        shape: Option<(&str, &[InventoryEntry])>,
+    ) -> Result<(), StoreError> {
+        let _write = self.write().await;
+        mark_indexed_in(&self.catalog, source, shape).await
+    }
+
+    /// Land a batch of sources that enter the catalog without a subtree —
+    /// seen past the cutoff, or past this run's deep-index budget — in one
+    /// transaction.
+    pub async fn catalog_sources(&self, entries: &[CatalogEntry<'_>]) -> Result<(), StoreError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let _write = self.write().await;
+        let tx = self.catalog.transaction().await?;
+        for entry in entries {
+            let sid = upsert_source_in(&tx, entry.address, entry.envelope, entry.raw_bytes).await?;
+            match entry.mark {
+                CatalogMark::Seen => {}
+                CatalogMark::CatalogOnly => mark_indexed_in(&tx, sid, None).await?,
+            }
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Land one source's planned subtree atomically: upsert the catalog row,
+    /// drop whatever subtree it had (and its search rows), insert the root
+    /// and every planned fragment and relation, resolve the keyed sprouts
+    /// (get-or-create under their keys, then anchor), all in one
+    /// transaction. The source is **not** marked indexed here — that waits
+    /// for its search rows ([`Self::land_search_rows`]), so a crash between
+    /// the two leaves it dirty rather than half-searchable.
+    pub async fn write_subtree(&self, plan: &SubtreePlan) -> Result<SubtreeWritten, StoreError> {
+        assert!(plan.is_well_ordered(), "a subtree plan names only earlier positions");
+        let _write = self.write().await;
+        let tx = self.catalog.transaction().await?;
+        let source = upsert_source_in(&tx, &plan.address, &plan.envelope, plan.raw_bytes).await?;
+        delete_fragments_of_in(&tx, source).await?;
+        let root = insert_fragment_in(&tx, Some(source), &plan.root).await?;
+        tx.execute(
+            "UPDATE sources SET root_fragment = ?1 WHERE id = ?2",
+            params![root.0, source.0],
+        )
+        .await?;
+        let mut written = SubtreeWritten {
+            source,
+            root,
+            fragments: Vec::with_capacity(plan.fragments.len()),
+            keyed: Vec::with_capacity(plan.keyed.len()),
+        };
+        for planned in &plan.fragments {
+            let parent = written.id_of(planned.parent);
+            let id = insert_fragment_in(&tx, Some(source), &planned.fragment).await?;
+            insert_relation_in(&tx, &Relation::new(parent, planned.relation.clone(), id)).await?;
+            written.fragments.push(id);
+        }
+        for planned in &plan.keyed {
+            let resolved = keyed_fragment_in(&tx, &planned.key, &planned.fragment).await?;
+            for anchor in &planned.anchors {
+                let from = written.id_of(*anchor);
+                insert_relation_in(&tx, &Relation::new(from, planned.relation.clone(), resolved.id()))
+                    .await?;
+            }
+            written.keyed.push(resolved);
+        }
+        tx.commit().await?;
+        assert_eq!(written.fragments.len(), plan.fragments.len());
+        assert_eq!(written.keyed.len(), plan.keyed.len());
+        Ok(written)
+    }
+
+    /// Land embedded search rows and, in the same transaction, mark the
+    /// sources whose every row is now searchable as indexed with their shape
+    /// records. Rows and marks commit together, so `indexed` is never true
+    /// for a source whose rows are missing.
+    pub async fn land_search_rows(
+        &self,
+        rows: &[SearchRow],
+        completed: &[SourceCompletion],
+    ) -> Result<(), StoreError> {
+        if rows.is_empty() && completed.is_empty() {
+            return Ok(());
+        }
+        let _write = self.write().await;
+        let tx = self.catalog.transaction().await?;
+        if !rows.is_empty() {
+            let dims = self.surface()?.dims;
+            insert_search_rows_in(&tx, rows, dims).await?;
+        }
+        for completion in completed {
+            mark_indexed_in(
+                &tx,
+                completion.source,
+                Some((&completion.stamp, &completion.inventory)),
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Every cataloged source of a host, as `(id, locator)` — the sweep's
+    /// deletion reconciliation diffs this against what enumeration saw.
+    pub async fn sources_of_host(
+        &self,
+        host: &HostId,
+    ) -> Result<Vec<(SourceId, String)>, StoreError> {
+        let mut rows = self
+            .catalog
+            .query(
+                "SELECT id, locator FROM sources WHERE host = ?1",
+                params![host.as_str()],
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push((SourceId(row.get(0)?), row.get::<String>(1)?));
+        }
+        Ok(out)
+    }
+}
+
+/// Write a source's envelope into the catalog, clearing its indexed mark
+/// until it is confirmed again.
+async fn upsert_source_in(
+    conn: &libsql::Connection,
+    address: &Address,
+    envelope: &Envelope,
+    raw_bytes: u64,
+) -> Result<SourceId, StoreError> {
+    let properties = serde_json::to_string(&envelope.properties)
+        .expect("envelope properties serialize to JSON");
+    let id = drain_single_i64(
+        conn.query(
                 "INSERT INTO sources
                    (host, locator, source_type, content_type, len_unit, len,
                     created, modified, observed, hint, properties, raw_bytes, indexed)
@@ -329,65 +549,134 @@ impl IndexStore {
                     i64::try_from(raw_bytes).unwrap_or(i64::MAX),
                 ],
             )
-            .await?
-            .ok_or_else(|| StoreError::Corrupt(0, "source upsert returned no id".into()))?;
-        Ok(SourceId(row.get(0)?))
-    }
+            .await?,
+    )
+    .await?
+    .ok_or_else(|| StoreError::Corrupt(0, "source upsert returned no id".into()))?;
+    Ok(SourceId(id))
+}
 
-    /// Confirm a source's index run completed. A deep-indexed source records
-    /// the shape stamp its subtree was built under plus the subtree's
-    /// mimetype inventory; a catalog-only source records neither, which is
-    /// exactly what makes it dirty again the moment budget or cutoff would
-    /// let it be deep-indexed.
-    pub async fn mark_indexed(
-        &self,
-        source: SourceId,
-        shape: Option<(&str, &[InventoryEntry])>,
-    ) -> Result<(), StoreError> {
-        let (stamp, inventory) = match shape {
-            Some((stamp, inventory)) => (
-                Some(stamp),
-                Some(
-                    serde_json::to_string(inventory)
-                        .expect("inventory entries serialize to JSON"),
-                ),
-            ),
-            None => (None, None),
-        };
-        self.catalog
-            .execute(
-                "UPDATE sources SET indexed = 1, shape_stamp = ?2, mimetypes = ?3 WHERE id = ?1",
-                params![source.0, stamp, inventory],
-            )
-            .await?;
-        Ok(())
-    }
+/// Set a source's `indexed` mark, with its shape records (deep-indexed) or
+/// without (catalog-only).
+async fn mark_indexed_in(
+    conn: &libsql::Connection,
+    source: SourceId,
+    shape: Option<(&str, &[InventoryEntry])>,
+) -> Result<(), StoreError> {
+    let (stamp, inventory) = match shape {
+        Some((stamp, inventory)) => (
+            Some(stamp),
+            Some(serde_json::to_string(inventory).expect("inventory entries serialize to JSON")),
+        ),
+        None => (None, None),
+    };
+    conn.execute(
+        "UPDATE sources SET indexed = 1, shape_stamp = ?2, mimetypes = ?3 WHERE id = ?1",
+        params![source.0, stamp, inventory],
+    )
+    .await?;
+    Ok(())
+}
 
-    /// Every cataloged source of a host, as `(id, locator)` — the sweep's
-    /// deletion reconciliation diffs this against what enumeration saw.
-    pub async fn sources_of_host(
-        &self,
-        host: &HostId,
-    ) -> Result<Vec<(SourceId, String)>, StoreError> {
-        let mut rows = self
-            .catalog
-            .query(
-                "SELECT id, locator FROM sources WHERE host = ?1",
-                params![host.as_str()],
-            )
+/// Drop a source's fragments and their derived search rows (relations
+/// cascade). Keyed fragments survive — only their edges into this source go.
+async fn delete_fragments_of_in(conn: &libsql::Connection, source: SourceId) -> Result<(), StoreError> {
+    if search_tables_exist(conn).await? {
+        conn.execute("DELETE FROM search_rows WHERE source = ?1", params![source.0])
             .await?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next().await? {
-            out.push((SourceId(row.get(0)?), row.get::<String>(1)?));
+    }
+    conn.execute("DELETE FROM fragments WHERE source = ?1", params![source.0])
+        .await?;
+    Ok(())
+}
+
+/// Insert one fragment; `source` is `None` only for keyed fragments.
+async fn insert_fragment_in(
+    conn: &libsql::Connection,
+    source: Option<SourceId>,
+    fragment: &NewFragment,
+) -> Result<FragmentId, StoreError> {
+    // Single-row reads are drained, not peeked, so a surrounding
+    // transaction can commit afterwards.
+    let id = drain_single_i64(
+        conn.query(INSERT_FRAGMENT_SQL, fragment_params(source, fragment))
+            .await?,
+    )
+    .await?
+    .ok_or_else(|| StoreError::Corrupt(0, "fragment insert returned no id".into()))?;
+    Ok(FragmentId(id))
+}
+
+async fn insert_relation_in(conn: &libsql::Connection, relation: &Relation) -> Result<(), StoreError> {
+    conn.execute(
+        "INSERT OR IGNORE INTO relations (from_fragment, kind, to_fragment) VALUES (?1, ?2, ?3)",
+        params![relation.from.0, relation.kind.as_str(), relation.to.0],
+    )
+    .await?;
+    Ok(())
+}
+
+/// Get-or-create the fragment stored under `key`: the first emitter's
+/// `fragment` is what the index keeps, later emitters get the existing id.
+async fn keyed_fragment_in(
+    conn: &libsql::Connection,
+    key: &FragmentKey,
+    fragment: &NewFragment,
+) -> Result<KeyedFragment, StoreError> {
+    let existing = drain_single_i64(
+        conn.query(
+            "SELECT fragment FROM keyed_fragments WHERE key = ?1",
+            params![key.as_str()],
+        )
+        .await?,
+    )
+    .await?;
+    if let Some(id) = existing {
+        return Ok(KeyedFragment::Existing(FragmentId(id)));
+    }
+    let id = insert_fragment_in(conn, None, fragment).await?;
+    conn.execute(
+        "INSERT INTO keyed_fragments (key, fragment) VALUES (?1, ?2)",
+        params![key.as_str(), id.0],
+    )
+    .await?;
+    Ok(KeyedFragment::Created(id))
+}
+
+/// Insert search rows under a surface of `dims` dimensions.
+async fn insert_search_rows_in(
+    conn: &libsql::Connection,
+    rows: &[SearchRow],
+    dims: usize,
+) -> Result<(), StoreError> {
+    for row in rows {
+        if let Some(vector) = &row.vector {
+            assert_eq!(vector.len(), dims, "search row vector matches declared dims");
         }
-        Ok(out)
+        let source = match row.source {
+            Some(s) => libsql::Value::Integer(s.0),
+            None => libsql::Value::Null,
+        };
+        let vector = match &row.vector {
+            Some(v) if dims > 0 => libsql::Value::Blob(vector_blob(v)),
+            _ => libsql::Value::Null,
+        };
+        conn.execute(
+            "INSERT INTO search_rows (id, source, text, vector) VALUES (?1, ?2, ?3, ?4)",
+            libsql::params![row.fragment.0, source, row.text.as_str(), vector],
+        )
+        .await?;
     }
+    Ok(())
+}
 
+impl IndexStore {
     /// Remove a source and everything derived from it in one transaction:
     /// its search rows, its catalog row, and — through the foreign-key
     /// cascades — its fragments and their relations. A crash can never leave
     /// search rows pointing at fragments the catalog no longer has.
     pub async fn delete_source(&self, source: SourceId) -> Result<(), StoreError> {
+        let _write = self.write().await;
         let tx = self.catalog.transaction().await?;
         if search_tables_exist(&tx).await? {
             tx.execute(
@@ -407,6 +696,7 @@ impl IndexStore {
     /// the plugin that emitted them. Their search rows go in the same
     /// transaction; the registry rows cascade. Returns the dropped ids.
     pub async fn gc_keyed_fragments(&self) -> Result<Vec<i64>, StoreError> {
+        let _write = self.write().await;
         let tx = self.catalog.transaction().await?;
         let mut rows = tx
             .query(
@@ -443,6 +733,7 @@ impl IndexStore {
         source: SourceId,
         fragment: FragmentId,
     ) -> Result<(), StoreError> {
+        let _write = self.write().await;
         self.catalog
             .execute(
                 "UPDATE sources SET root_fragment = ?1 WHERE id = ?2",
@@ -484,16 +775,9 @@ impl IndexStore {
     /// pointing at fragments the catalog no longer has. Keyed fragments
     /// survive — only their edges into this source go.
     pub async fn delete_fragments_of(&self, source: SourceId) -> Result<(), StoreError> {
+        let _write = self.write().await;
         let tx = self.catalog.transaction().await?;
-        if search_tables_exist(&tx).await? {
-            tx.execute(
-                "DELETE FROM search_rows WHERE source = ?1",
-                params![source.0],
-            )
-            .await?;
-        }
-        tx.execute("DELETE FROM fragments WHERE source = ?1", params![source.0])
-            .await?;
+        delete_fragments_of_in(&tx, source).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -506,21 +790,13 @@ impl IndexStore {
         source: SourceId,
         fragment: &NewFragment,
     ) -> Result<FragmentId, StoreError> {
-        let row = self
-            .first_row(INSERT_FRAGMENT_SQL, fragment_params(Some(source), fragment))
-            .await?
-            .ok_or_else(|| StoreError::Corrupt(0, "fragment insert returned no id".into()))?;
-        Ok(FragmentId(row.get(0)?))
+        let _write = self.write().await;
+        insert_fragment_in(&self.catalog, Some(source), fragment).await
     }
 
     pub async fn insert_relation(&self, relation: &Relation) -> Result<(), StoreError> {
-        self.catalog
-            .execute(
-                "INSERT OR IGNORE INTO relations (from_fragment, kind, to_fragment) VALUES (?1, ?2, ?3)",
-                params![relation.from.0, relation.kind.as_str(), relation.to.0],
-            )
-            .await?;
-        Ok(())
+        let _write = self.write().await;
+        insert_relation_in(&self.catalog, relation).await
     }
 
     pub async fn fragment(&self, id: FragmentId) -> Result<Option<StoredFragment>, StoreError> {
@@ -667,35 +943,11 @@ impl IndexStore {
         key: &FragmentKey,
         fragment: &NewFragment,
     ) -> Result<KeyedFragment, StoreError> {
+        let _write = self.write().await;
         let tx = self.catalog.transaction().await?;
-        // Statements must run to completion before the transaction can
-        // commit, so both single-row reads are drained rather than peeked.
-        let existing = drain_single_i64(
-            tx.query(
-                "SELECT fragment FROM keyed_fragments WHERE key = ?1",
-                params![key.as_str()],
-            )
-            .await?,
-        )
-        .await?;
-        if let Some(id) = existing {
-            tx.commit().await?;
-            return Ok(KeyedFragment::Existing(FragmentId(id)));
-        }
-        let inserted = drain_single_i64(
-            tx.query(INSERT_FRAGMENT_SQL, fragment_params(None, fragment))
-                .await?,
-        )
-        .await?
-        .ok_or_else(|| StoreError::Corrupt(0, "fragment insert returned no id".into()))?;
-        let id = FragmentId(inserted);
-        tx.execute(
-            "INSERT INTO keyed_fragments (key, fragment) VALUES (?1, ?2)",
-            params![key.as_str(), id.0],
-        )
-        .await?;
+        let resolved = keyed_fragment_in(&tx, key, fragment).await?;
         tx.commit().await?;
-        Ok(KeyedFragment::Created(id))
+        Ok(resolved)
     }
 
     pub async fn stats(&self) -> Result<StoreStats, StoreError> {
@@ -746,27 +998,10 @@ impl IndexStore {
         if rows.is_empty() {
             return Ok(());
         }
-        let surface = self.surface()?;
-        let dims = surface.dims;
+        let _write = self.write().await;
+        let dims = self.surface()?.dims;
         let tx = self.catalog.transaction().await?;
-        for row in rows {
-            if let Some(vector) = &row.vector {
-                assert_eq!(vector.len(), dims, "search row vector matches declared dims");
-            }
-            let source = match row.source {
-                Some(s) => libsql::Value::Integer(s.0),
-                None => libsql::Value::Null,
-            };
-            let vector = match &row.vector {
-                Some(v) if dims > 0 => libsql::Value::Blob(vector_blob(v)),
-                _ => libsql::Value::Null,
-            };
-            tx.execute(
-                "INSERT INTO search_rows (id, source, text, vector) VALUES (?1, ?2, ?3, ?4)",
-                libsql::params![row.fragment.0, source, row.text.as_str(), vector],
-            )
-            .await?;
-        }
+        insert_search_rows_in(&tx, rows, dims).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -775,6 +1010,7 @@ impl IndexStore {
     /// `search_rows` through triggers, so this is maintenance, not a rebuild:
     /// it merges the incremental b-trees appended since the last index run.
     pub async fn rebuild_fts(&self) -> Result<(), StoreError> {
+        let _write = self.write().await;
         self.surface()?;
         self.catalog
             .execute("INSERT INTO search_fts (search_fts) VALUES ('optimize')", ())
@@ -899,6 +1135,7 @@ impl IndexStore {
     /// dimensions. The rows are re-added by the caller; searches keep
     /// refusing until [`Self::finish_reembed`].
     pub async fn begin_reembed(&self) -> Result<(), StoreError> {
+        let _write = self.write().await;
         let surface = self.surface()?;
         self.catalog.execute_batch(SEARCH_SCHEMA_DROP_SQL).await?;
         self.catalog
@@ -912,6 +1149,7 @@ impl IndexStore {
     /// this, so the next declaration detects the mismatch again and redoes
     /// the pass.
     pub async fn finish_reembed(&self) -> Result<(), StoreError> {
+        let _write = self.write().await;
         let (model, dims) = self.embedding_identity().ok_or(StoreError::NoSearchSurface)?;
         set_embedding_meta(&self.catalog, dims, &model).await?;
         *self.reembed_from.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -928,6 +1166,7 @@ impl IndexStore {
         ns: &str,
         version: &str,
     ) -> Result<(), StoreError> {
+        let _write = self.write().await;
         let stored = self
             .first_row(
                 "SELECT version FROM plugin_state_meta WHERE namespace = ?1",
@@ -964,6 +1203,7 @@ impl IndexStore {
     }
 
     pub(crate) async fn state_put(&self, ns: &str, key: &str, value: &str) -> Result<(), StoreError> {
+        let _write = self.write().await;
         self.catalog
             .execute(
                 "INSERT OR REPLACE INTO plugin_state (namespace, key, value) VALUES (?1, ?2, ?3)",
@@ -974,6 +1214,7 @@ impl IndexStore {
     }
 
     pub(crate) async fn state_delete(&self, ns: &str, key: &str) -> Result<(), StoreError> {
+        let _write = self.write().await;
         self.catalog
             .execute(
                 "DELETE FROM plugin_state WHERE namespace = ?1 AND key = ?2",
@@ -1150,6 +1391,10 @@ fn search_schema_sql(dims: usize) -> String {
            source INTEGER,
            text TEXT NOT NULL{vector_column}
          );
+         -- Subtree rebuilds and source deletions purge by source; without
+         -- this index each purge scans every (vector-wide) row, and a full
+         -- index run scans the table once per source.
+         CREATE INDEX IF NOT EXISTS search_rows_by_source ON search_rows(source);
          CREATE VIRTUAL TABLE IF NOT EXISTS search_fts
            USING fts5(text, content='search_rows', content_rowid='id');
          CREATE TRIGGER IF NOT EXISTS search_rows_after_insert
@@ -1735,5 +1980,161 @@ mod tests {
         assert!(f.source.is_none(), "keyed fragments belong to no source");
         assert_eq!(f.mimetype.param("kind"), Some("person"));
         assert_eq!(s.stats().await.expect("ok").keyed_fragments, 1);
+    }
+
+    fn plan_for(address: &str, texts: &[&str]) -> crate::subtree::SubtreePlan {
+        use crate::subtree::{PlanNode, PlannedFragment, Shape, SubtreePlan};
+        SubtreePlan {
+            address: addr(address),
+            envelope: envelope(100, 10),
+            raw_bytes: 10,
+            root: NewFragment {
+                mimetype: Mimetype::markdown(),
+                text: None,
+                extent: Some(Extent::lines(1, 3)),
+            },
+            fragments: texts
+                .iter()
+                .enumerate()
+                .map(|(i, t)| PlannedFragment {
+                    // A chain: each fragment hangs off the previous one.
+                    parent: if i == 0 {
+                        PlanNode::Root
+                    } else {
+                        PlanNode::Fragment(u32::try_from(i - 1).expect("small"))
+                    },
+                    relation: RelationKind::contains(),
+                    fragment: NewFragment {
+                        mimetype: Mimetype::text_plain(),
+                        text: Some((*t).to_string()),
+                        extent: None,
+                    },
+                })
+                .collect(),
+            keyed: Vec::new(),
+            shape: Shape {
+                stamp: "stamp-plan".into(),
+                inventory: vec![InventoryEntry {
+                    mimetype: "text/markdown".into(),
+                    is_root: true,
+                }],
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn write_subtree_lands_the_plan_atomically_and_indexed_waits_for_rows() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        let plan = plan_for("inseam://fs-test/tmp/plan.md", &["alpha", "beta"]);
+        let written = s.write_subtree(&plan).await.expect("writes");
+        assert_eq!(written.fragments.len(), 2);
+        let stored = s
+            .source(written.source).await
+            .expect("ok")
+            .expect("present");
+        assert_eq!(stored.root_fragment, Some(written.root));
+        let meta = s.index_meta(&plan.address).await.expect("ok").expect("present");
+        assert!(!meta.indexed, "indexed waits for the search rows to land");
+        let relations = s.relations_touching(&[written.fragments[1]]).await.expect("ok");
+        assert!(
+            relations.iter().any(|r| r.from == written.fragments[0] && r.to == written.fragments[1]),
+            "plan positions resolve to the inserted ids: {relations:?}"
+        );
+
+        let rows: Vec<SearchRow> = written
+            .fragments
+            .iter()
+            .zip(["alpha", "beta"])
+            .map(|(id, text)| SearchRow {
+                fragment: *id,
+                source: Some(written.source),
+                text: text.into(),
+                vector: Some(vec![0.5; 8]),
+            })
+            .collect();
+        s.land_search_rows(
+            &rows,
+            &[SourceCompletion {
+                source: written.source,
+                stamp: plan.shape.stamp.clone(),
+                inventory: plan.shape.inventory.clone(),
+            }],
+        )
+        .await
+        .expect("lands");
+        let meta = s.index_meta(&plan.address).await.expect("ok").expect("present");
+        assert!(meta.indexed);
+        assert_eq!(meta.shape_stamp.as_deref(), Some("stamp-plan"));
+        assert_eq!(s.search_rows_count().await.expect("ok"), 2);
+
+        // Rewriting the plan replaces the subtree: the old rows and fragments go.
+        let again = s.write_subtree(&plan_for("inseam://fs-test/tmp/plan.md", &["gamma"])).await.expect("rewrites");
+        assert_eq!(again.source, written.source);
+        assert_eq!(s.fragments_of(written.source).await.expect("ok").len(), 2, "root + gamma");
+        assert_eq!(s.search_rows_count().await.expect("ok"), 0);
+    }
+
+    #[tokio::test]
+    async fn write_subtree_resolves_keyed_sprouts_and_anchors() {
+        use crate::subtree::{PlanNode, PlannedKeyed};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        let mut plan = plan_for("inseam://fs-test/tmp/k.md", &["Greg was here", "nothing"]);
+        plan.keyed.push(PlannedKeyed {
+            key: FragmentKey::new("entity:person:greg").expect("valid"),
+            fragment: NewFragment {
+                mimetype: Mimetype::parse("text/x-test-entity;kind=person").expect("valid"),
+                text: Some("Greg".into()),
+                extent: None,
+            },
+            relation: RelationKind::new("mentions").expect("valid"),
+            anchors: vec![PlanNode::Fragment(0)],
+        });
+        let first = s.write_subtree(&plan).await.expect("writes");
+        let KeyedFragment::Created(entity) = first.keyed[0] else {
+            panic!("first sighting creates: {:?}", first.keyed);
+        };
+        let relations = s.relations_touching(&[entity]).await.expect("ok");
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0].from, first.fragments[0]);
+
+        // A second source naming the same key reuses the fragment.
+        let mut other = plan_for("inseam://fs-test/tmp/other.md", &["Greg again"]);
+        other.keyed = plan.keyed.clone();
+        let second = s.write_subtree(&other).await.expect("writes");
+        assert_eq!(second.keyed[0], KeyedFragment::Existing(entity));
+        assert_eq!(s.stats().await.expect("ok").keyed_fragments, 1);
+    }
+
+    #[tokio::test]
+    async fn catalog_sources_marks_by_kind_in_one_batch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        let seen = addr("inseam://fs-test/tmp/seen.md");
+        let only = addr("inseam://fs-test/tmp/only.md");
+        let env = envelope(100, 10);
+        s.catalog_sources(&[
+            CatalogEntry {
+                address: &seen,
+                envelope: &env,
+                raw_bytes: 10,
+                mark: CatalogMark::Seen,
+            },
+            CatalogEntry {
+                address: &only,
+                envelope: &env,
+                raw_bytes: 10,
+                mark: CatalogMark::CatalogOnly,
+            },
+        ])
+        .await
+        .expect("catalogs");
+        let seen_meta = s.index_meta(&seen).await.expect("ok").expect("present");
+        assert!(!seen_meta.indexed);
+        let only_meta = s.index_meta(&only).await.expect("ok").expect("present");
+        assert!(only_meta.indexed);
+        assert_eq!(only_meta.shape_stamp, None, "catalog-only rows carry no shape");
+        assert!(s.catalog_sources(&[]).await.is_ok(), "an empty batch is a no-op");
     }
 }

@@ -223,27 +223,14 @@ impl FsHost {
         }
         Ok(Path::new("/").join(rel))
     }
-}
 
-#[async_trait::async_trait]
-impl Connection for FsHost {
-    fn host(&self) -> &HostId {
-        &self.id
-    }
-
-    /// Walk a directory and emit every enumerable source: regular, non-empty
-    /// files the walk's ignore rules admit — hidden names, `.gitignore` and
-    /// `.inseamignore` files in the tree, and the configured patterns all
-    /// prune here, so an ignored file never becomes an address. Read-only;
-    /// symlinks are not followed.
-    async fn enumerate(&self, root: &str) -> Result<Vec<EnumeratedSource>, SeamError> {
-        let dir = Path::new(root)
-            .canonicalize()
-            .map_err(|e| SeamError::failed(format!("cannot enumerate {root}: {e}")))?;
+    /// The enumeration walk itself, synchronous: `enumerate` runs it on the
+    /// blocking pool.
+    fn walk_sources(&self, dir: &Path) -> Result<Vec<EnumeratedSource>, SeamError> {
         let observed = Timestamp::from(SystemTime::now());
         let mut sources = Vec::new();
         let patterns = self.walk.clone();
-        let walker = WalkBuilder::new(&dir)
+        let walker = WalkBuilder::new(dir)
             // Every filter stated explicitly: the crate's defaults are
             // tuned for ripgrep, not for us.
             .standard_filters(false)
@@ -294,6 +281,30 @@ impl Connection for FsHost {
         }
         Ok(sources)
     }
+}
+
+#[async_trait::async_trait]
+impl Connection for FsHost {
+    fn host(&self) -> &HostId {
+        &self.id
+    }
+
+    /// Walk a directory and emit every enumerable source: regular, non-empty
+    /// files the walk's ignore rules admit — hidden names, `.gitignore` and
+    /// `.inseamignore` files in the tree, and the configured patterns all
+    /// prune here, so an ignored file never becomes an address. Read-only;
+    /// symlinks are not followed.
+    async fn enumerate(&self, root: &str) -> Result<Vec<EnumeratedSource>, SeamError> {
+        let dir = Path::new(root)
+            .canonicalize()
+            .map_err(|e| SeamError::failed(format!("cannot enumerate {root}: {e}")))?;
+        // The walk is synchronous disk work; it runs on the blocking pool so
+        // it never stalls the runtime the sweep's pipeline lives on.
+        let host = FsHost::new(self.id.clone(), self.walk.clone());
+        tokio::task::spawn_blocking(move || host.walk_sources(&dir))
+            .await
+            .map_err(|e| SeamError::failed(format!("enumeration task failed: {e}")))?
+    }
 
     fn locator_prefix(&self, root: &str) -> Option<String> {
         let canonical = Path::new(root).canonicalize().ok()?;
@@ -302,7 +313,7 @@ impl Connection for FsHost {
 
     async fn read_text(&self, address: &Address) -> Result<String, SeamError> {
         let path = self.resolve(address)?;
-        read_text_at(&path)
+        read_text_at(&path).await
     }
 
     async fn read_lines(
@@ -312,19 +323,27 @@ impl Connection for FsHost {
         end: u64,
     ) -> Result<String, SeamError> {
         let path = self.resolve(address)?;
-        let text = read_text_at(&path)?;
+        let text = read_text_at(&path).await?;
         slice_lines(&text, start, end).map_err(SeamError::failed)
     }
 
     async fn read_bytes(&self, address: &Address) -> Result<Vec<u8>, SeamError> {
         let path = self.resolve(address)?;
-        std::fs::read(&path).map_err(|e| SeamError::failed(format!("read {}: {e}", path.display())))
+        read_bytes_at(&path).await
     }
 }
 
-fn read_text_at(path: &Path) -> Result<String, SeamError> {
-    let bytes = std::fs::read(path)
-        .map_err(|e| SeamError::failed(format!("read {}: {e}", path.display())))?;
+/// Reads go through the runtime's blocking pool: many planners read at once
+/// during a sweep, and a blocking read on a worker thread would stall the
+/// others' transforms.
+async fn read_bytes_at(path: &Path) -> Result<Vec<u8>, SeamError> {
+    tokio::fs::read(path)
+        .await
+        .map_err(|e| SeamError::failed(format!("read {}: {e}", path.display())))
+}
+
+async fn read_text_at(path: &Path) -> Result<String, SeamError> {
+    let bytes = read_bytes_at(path).await?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 

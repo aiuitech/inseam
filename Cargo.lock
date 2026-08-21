@@ -1366,6 +1366,7 @@ name = "inseam-plugins"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "futures-util",
  "gethostname",
  "globset",
  "ignore",

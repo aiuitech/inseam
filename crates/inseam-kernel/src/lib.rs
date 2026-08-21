@@ -18,3 +18,4 @@ pub mod fragment;
 pub mod state;
 pub mod store;
 pub mod substrate;
+pub mod subtree;

@@ -23,7 +23,7 @@ How merging works: when your entry matches a base entry's id, your `config` **re
 | `summarizer` | `transform-summarizer` | `target_chars` (400), `llm_call_budget` (500) |
 | `entities` | `transform-entities` | `max_per_source` (12), `llm_call_budget` (500) |
 | `finder` | `finder` | `seed_k`, `rrf_k`, `damping`, `iterations`, `epsilon`, `max_hints`, `max_vector_distance`, `[weights]` (`default` + `by_kind` by relation kind name) |
-| `sweep` | `sweep` | `max_sources` (0 = unlimited), `max_fragments_per_source` (400), `max_depth` (6), `max_content_bytes` (2 MB), `modified_after` (`YYYY-MM-DD`), `ignore` (rules over addresses and envelopes; [indexing/ignore.md](indexing/ignore.md)) |
+| `sweep` | `sweep` | `max_sources` (0 = unlimited), `concurrency` (8; sources planned at once — transform applications, LLM calls included, in flight together), `max_fragments_per_source` (400), `max_depth` (6), `max_content_bytes` (2 MB), `modified_after` (`YYYY-MM-DD`), `ignore` (rules over addresses and envelopes; [indexing/ignore.md](indexing/ignore.md)) |
 | `operations` | `operations` | — |
 
 Example `composition.toml` — an offline node with a loaded OCR plugin:
@@ -56,7 +56,7 @@ Secrets never live in the composition or the store: the `llm` entry names an env
 Which entry you change decides how much work the next `inseam index` does ([indexing/maintenance.md](indexing/maintenance.md)):
 
 - `finder` and the llm `agent_model` only affect query time — free.
-- Budgets (`max_sources`, `llm_call_budget`) only limit each run — free.
+- Budgets (`max_sources`, `llm_call_budget`) and the sweep's `concurrency` only shape each run — free.
 - Transform configs and the sweep's size/depth dials change what the index would build, so affected sources re-index.
 - The `embedder` entry re-computes vectors in place, without re-running transforms.
 - Mounting or unmounting a transform plugin re-indexes only the sources that plugin applies to.
