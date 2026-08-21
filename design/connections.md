@@ -16,6 +16,7 @@ Every connection specifies:
 - **Protocol** — how to speak: for node↔node, the inseam protocol over the iroh transport (below); for node→host, a service protocol supplied by a [plugin](plugins.md).
 - **Credentials** — OAuth grants, API keys, mutual keys between nodes. Held locally by the owning node, never synced.
 - **Capabilities** — what the edge supports: read-only vs. read-write, sync-capable (node↔node only) vs. fetch-only, enumeration support, and whether it offers a **change feed** (FSEvents, Gmail history API, …) that lets [index maintenance](index-maintenance.md) run targeted sweeps instead of full ones.
+- **Host-native exclusions** — the host's own vocabulary for what not to enumerate (`.gitignore` and path patterns for a filesystem; labels and queries for a mailbox), applied during enumeration so an excluded source never becomes an address ([ignore](ignore.md)).
 
 Capabilities of node→host connections are published network-wide as stewardship records in the [roster](roster.md), so routing knows which stewards can serve (and write to) which hosts. Credentials never leave the owning node; the roster carries the *fact* of the connection, never the means.
 

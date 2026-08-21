@@ -55,6 +55,8 @@ Tightening `cutoff.modified_after` or `budget.max_content_bytes` stops *future* 
 
 Out-of-cutoff sources are still *cataloged* (address + envelope, no fragments) when first seen, so the catalog stays a complete map of the host; already-indexed sources that fall behind a tightened cutoff are left entirely untouched.
 
+[Ignore](ignore.md) is the deliberate exception: an ignore rule is a membership statement, not a scope dial, so an ignored source is absent from the catalog and one indexed before a rule covered it is removed — by the vanished path above, since it has left enumeration.
+
 ## Paths not taken
 
 - **A file watcher in the core.** Change detection is host-specific; a core watcher would be the filesystem special case smuggled into the one place that must stay host-agnostic. Watchers are connection capabilities.

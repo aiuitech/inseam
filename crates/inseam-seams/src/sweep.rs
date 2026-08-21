@@ -27,6 +27,9 @@ pub trait Sweep: Send + Sync {
 #[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct IndexReport {
     pub sources_seen: usize,
+    /// Enumerated sources the host-agnostic ignore rules kept out
+    /// (`design/ignore.md`); they are not cataloged.
+    pub ignored: usize,
     pub indexed: usize,
     pub unchanged: usize,
     pub catalog_only: usize,
@@ -54,8 +57,13 @@ impl fmt::Display for IndexReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(
             f,
-            "{} sources seen: {} indexed, {} unchanged, {} catalog-only, {} past cutoff",
-            self.sources_seen, self.indexed, self.unchanged, self.catalog_only, self.skipped_cutoff
+            "{} sources seen: {} indexed, {} unchanged, {} catalog-only, {} past cutoff, {} ignored",
+            self.sources_seen,
+            self.indexed,
+            self.unchanged,
+            self.catalog_only,
+            self.skipped_cutoff,
+            self.ignored
         )?;
         writeln!(
             f,

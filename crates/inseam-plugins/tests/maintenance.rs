@@ -92,6 +92,89 @@ async fn vanished_sources_are_removed_and_their_entities_collected() {
 }
 
 #[tokio::test]
+async fn ignore_rules_evict_covered_sources_and_readmit_them_when_lifted() {
+    let corpus = tempfile::tempdir().expect("tempdir");
+    let data = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir(corpus.path().join("Archive")).expect("mkdir");
+    std::fs::write(corpus.path().join("Archive/old.md"), "# Old\n\nnotes about ocarinas\n")
+        .expect("writes");
+    std::fs::write(corpus.path().join("now.md"), "# Now\n\nnotes about banjos\n").expect("writes");
+
+    let mut kernel = common::boot(data.path(), "").await;
+    let report = index(common::ops(&kernel).as_ref(), corpus.path()).await;
+    assert_eq!(report.indexed, 2);
+    assert_eq!(report.ignored, 0);
+    assert_eq!(common::hits(common::ops(&kernel).as_ref(), "ocarinas").await, 1);
+
+    // Ignoring is membership: a rule that now covers an indexed source
+    // removes it on the next sweep — the catalog must not keep (or sync)
+    // what the owner said is not theirs to index.
+    common::reconcile(
+        &mut kernel,
+        r#"
+        [[entry]]
+        id = "sweep"
+        [[entry.config.ignore]]
+        locator = "**/Archive/**"
+        "#,
+    )
+    .await;
+    let report = index(common::ops(&kernel).as_ref(), corpus.path()).await;
+    assert_eq!(report.ignored, 1, "the archived note is kept out: {report}");
+    assert_eq!(report.removed, 1, "and its index subtree is gone");
+    assert_eq!(report.unchanged, 1);
+    assert_eq!(common::hits(common::ops(&kernel).as_ref(), "ocarinas").await, 0);
+    assert_eq!(common::hits(common::ops(&kernel).as_ref(), "banjos").await, 1);
+
+    // Lifting the rule readmits it as a new source — no tombstone, no
+    // special case.
+    common::reconcile(&mut kernel, "").await;
+    let report = index(common::ops(&kernel).as_ref(), corpus.path()).await;
+    assert_eq!(report.ignored, 0);
+    assert_eq!(report.indexed, 1);
+    assert_eq!(common::hits(common::ops(&kernel).as_ref(), "ocarinas").await, 1);
+}
+
+#[tokio::test]
+async fn a_malformed_ignore_rule_parks_the_sweep_entry() {
+    let data = tempfile::tempdir().expect("tempdir");
+    let mut kernel = common::boot(data.path(), "").await;
+    let base = inseam_kernel::substrate::Composition::parse(common::OFFLINE_BASE, "test base")
+        .expect("base parses");
+    let overlay = inseam_kernel::substrate::Composition::parse(
+        r#"
+        [[entry]]
+        id = "sweep"
+        [[entry.config.ignore]]
+        locator = "docs/[z-a]"
+        "#,
+        "test overlay",
+    )
+    .expect("overlay parses");
+    // A bad glob is a contained configuration error: the sweep entry fails
+    // (and its dependents wait), nothing else is touched, and the reconciler
+    // reports the unsettled pair — never a sweep that silently ignores nothing.
+    let outcome = kernel
+        .reconcile(&base.layered(overlay).expect("layers"))
+        .await;
+    assert!(
+        matches!(outcome, Err(inseam_kernel::substrate::SubstrateError::Unsettled { .. })),
+        "{outcome:?}"
+    );
+    let fibers = kernel.fibers();
+    let sweep = fibers.iter().find(|f| f.id == "sweep").expect("sweep entry exists");
+    match &sweep.state {
+        inseam_kernel::substrate::FiberState::Failed(reason) => {
+            assert!(reason.contains("ignore rule 0"), "names the rule: {reason}");
+            assert!(reason.contains("locator"), "names the field: {reason}");
+        }
+        other => panic!("sweep should be parked, was {other:?}"),
+    }
+    let fs = fibers.iter().find(|f| f.id == "fs").expect("fs entry exists");
+    assert_eq!(fs.state, inseam_kernel::substrate::FiberState::Active);
+}
+
+#[tokio::test]
 async fn shape_config_changes_reindex_and_query_time_changes_do_not() {
     let corpus = tempfile::tempdir().expect("tempdir");
     let data = tempfile::tempdir().expect("tempdir");

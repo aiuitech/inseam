@@ -25,6 +25,7 @@ use inseam_kernel::address::ContentLength;
 use inseam_kernel::dates::parse_ymd_epoch;
 use inseam_kernel::address::Timestamp;
 use inseam_kernel::fragment::{Extent, FragmentId, Mimetype, NewFragment, RelationKind, Sprout};
+use inseam_kernel::ignore::{IgnoreRule, IgnoreSet};
 use inseam_kernel::store::{IndexStore, InventoryEntry, SearchRow, SourceId};
 use inseam_kernel::substrate::{
     parse_config, ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError, Verdict, STORE,
@@ -59,6 +60,11 @@ pub struct SweepConfig {
     /// `YYYY-MM-DD`; sources last modified before this are cataloged but not
     /// indexed. Tightening never evicts what a looser scope already built.
     pub modified_after: Option<String>,
+    /// Host-agnostic ignore rules over addresses and envelopes
+    /// (`design/ignore.md`). Unlike the cutoff, ignoring is membership, not
+    /// scope: an ignored source is not cataloged, and one that was indexed
+    /// before a rule covered it is removed like a vanished source.
+    pub ignore: Vec<IgnoreRule>,
 }
 
 impl Default for SweepConfig {
@@ -69,6 +75,7 @@ impl Default for SweepConfig {
             max_depth: 6,
             max_content_bytes: 2_000_000,
             modified_after: None,
+            ignore: Vec::new(),
         }
     }
 }
@@ -137,6 +144,8 @@ impl Plugin for SweepPlugin {
 
     async fn apply(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
         self.config.cutoff()?; // fail on a bad date now, not mid-index
+        let ignore = IgnoreSet::compile(&self.config.ignore)
+            .map_err(|e| PluginError(e.to_string()))?; // and on a bad glob
         let transform_model = cx
             .facts("llm")
             .and_then(|f| f.str(llm::facts::TRANSFORM_MODEL))
@@ -151,6 +160,7 @@ impl Plugin for SweepPlugin {
             transform_model,
             bus: cx.bus().clone(),
             config: self.config.clone(),
+            ignore,
         };
         cx.provide(&SWEEP, Arc::new(service) as Arc<dyn Sweep>, Facts::new())?;
         Ok(())
@@ -166,6 +176,7 @@ pub struct SweepService {
     transform_model: String,
     bus: EventBus,
     config: SweepConfig,
+    ignore: IgnoreSet,
 }
 
 #[async_trait::async_trait]
@@ -183,8 +194,17 @@ impl Sweep for SweepService {
             self.reembed(&mut report).await?;
         }
 
-        let sources = self.connection.enumerate(&request.root).await?;
-        report.sources_seen = sources.len();
+        let enumerated = self.connection.enumerate(&request.root).await?;
+        report.sources_seen = enumerated.len();
+        // Ignored sources leave the run here, before cataloging and before
+        // vanished reconciliation — so a newly ignored source that was
+        // indexed earlier is removed by the same path a deleted file takes.
+        let sources: Vec<EnumeratedSource> = enumerated
+            .into_iter()
+            .filter(|s| !self.ignore.matches(&s.address, &s.envelope))
+            .collect();
+        report.ignored = report.sources_seen - sources.len();
+        assert!(report.ignored + sources.len() == report.sources_seen);
 
         // The registry snapshot, with LLM-hungry registrations' fingerprints
         // extended by the transform model (a model change reshapes their

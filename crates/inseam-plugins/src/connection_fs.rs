@@ -7,7 +7,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use walkdir::WalkDir;
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
+use ignore::WalkBuilder;
 
 use inseam_kernel::address::{Address, ContentLength, Envelope, HostId, Locator, Timestamp};
 use inseam_kernel::fragment::Mimetype;
@@ -18,12 +19,41 @@ use inseam_kernel::text::slice_lines;
 use inseam_seams::connection::{self, Connection, EnumeratedSource, CONNECTION};
 use inseam_seams::SeamError;
 
-#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct FsConnectionConfig {
     /// Override the derived `fs-<hostname>` host id (tests, containers).
     pub host_id: Option<String>,
+    /// Skip dot-named files and directories (the root the caller names is
+    /// never skipped).
+    pub skip_hidden: bool,
+    /// Honor `.gitignore` files and `.git/info/exclude` found in the tree,
+    /// whether or not the tree is a git repository. What git would not track
+    /// — build output, dependencies, `.env` files — is rarely what an index
+    /// should hold, so this is on by default.
+    pub gitignore: bool,
+    /// Patterns in gitignore syntax, anchored at the filesystem root: a
+    /// pattern without a slash matches a name at any depth (`node_modules/`),
+    /// one with a leading slash names an absolute path (`/Users/greg/Library/`),
+    /// and `!` re-includes. Host-native and prunes the walk — a matched
+    /// directory is never descended into.
+    pub ignore: Vec<String>,
 }
+
+impl Default for FsConnectionConfig {
+    fn default() -> Self {
+        Self {
+            host_id: None,
+            skip_hidden: true,
+            gitignore: true,
+            ignore: Vec::new(),
+        }
+    }
+}
+
+/// Per-directory ignore file honored regardless of `gitignore`: the way to
+/// keep a subtree out of inseam without touching git's view of it.
+pub const INSEAM_IGNORE_FILENAME: &str = ".inseamignore";
 
 /// The provider plugin.
 pub struct FsConnection {
@@ -62,17 +92,74 @@ impl Plugin for FsConnection {
     }
 
     async fn apply(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
-        let host = match &self.config.host_id {
-            Some(id) => FsHost::new(
-                HostId::new(id.clone()).map_err(|e| PluginError(e.to_string()))?,
-            ),
-            None => FsHost::local(),
+        let id = match &self.config.host_id {
+            Some(id) => HostId::new(id.clone()).map_err(|e| PluginError(e.to_string()))?,
+            None => FsHost::local_id(),
         };
+        let walk = WalkConfig::compile(&self.config).map_err(|e| PluginError(e.to_string()))?;
+        let host = FsHost::new(id, walk);
         let facts = Facts::new()
             .with(connection::facts::CHANGE_FEED, false)
             .with(connection::facts::HOST, host.id().as_str());
         cx.provide(&CONNECTION, Arc::new(host) as Arc<dyn Connection>, facts)?;
         Ok(())
+    }
+}
+
+/// The enumeration walk's ignore rules, compiled once from the entry config:
+/// which ignore files to honor and the configured patterns as a gitignore
+/// rooted at `/`, so a pattern reads like the absolute path it names.
+#[derive(Debug, Clone)]
+pub struct WalkConfig {
+    skip_hidden: bool,
+    gitignore: bool,
+    patterns: Gitignore,
+}
+
+impl WalkConfig {
+    pub fn compile(config: &FsConnectionConfig) -> Result<Self, SeamError> {
+        let mut builder = GitignoreBuilder::new("/");
+        for pattern in &config.ignore {
+            // gitignore files skip blank and comment lines silently; in a
+            // config list those are mistakes, and saying so beats ignoring
+            // nothing by accident.
+            let trimmed = pattern.trim();
+            if trimmed.is_empty() {
+                return Err(SeamError::failed("ignore pattern is empty"));
+            }
+            if trimmed.starts_with('#') {
+                return Err(SeamError::failed(format!(
+                    "ignore pattern `{pattern}` is a comment; patterns may not start with `#`"
+                )));
+            }
+            builder
+                .add_line(None, pattern)
+                .map_err(|e| SeamError::failed(format!("ignore pattern `{pattern}`: {e}")))?;
+        }
+        let patterns = builder
+            .build()
+            .map_err(|e| SeamError::failed(format!("ignore patterns: {e}")))?;
+        assert_eq!(
+            patterns.num_ignores() + patterns.num_whitelists(),
+            u64::try_from(config.ignore.len()).unwrap_or(u64::MAX),
+            "every configured pattern compiled"
+        );
+        Ok(Self {
+            skip_hidden: config.skip_hidden,
+            gitignore: config.gitignore,
+            patterns,
+        })
+    }
+
+    /// Today's default walk: hidden skipped, gitignore honored, no patterns.
+    pub fn standard() -> Self {
+        Self::compile(&FsConnectionConfig::default()).expect("the default config compiles")
+    }
+
+    /// Whether the configured patterns ignore `path`; a matched directory
+    /// prunes its whole subtree.
+    fn ignores(&self, path: &Path, is_dir: bool) -> bool {
+        self.patterns.matched(path, is_dir).is_ignore()
     }
 }
 
@@ -82,15 +169,16 @@ impl Plugin for FsConnection {
 #[derive(Debug, Clone)]
 pub struct FsHost {
     id: HostId,
+    walk: WalkConfig,
 }
 
 impl FsHost {
-    pub fn new(id: HostId) -> Self {
-        Self { id }
+    pub fn new(id: HostId, walk: WalkConfig) -> Self {
+        Self { id, walk }
     }
 
-    /// The host for this machine, identified as `fs-<hostname>`.
-    pub fn local() -> Self {
+    /// The host id for this machine: `fs-<hostname>`, sanitized.
+    pub fn local_id() -> HostId {
         let raw = gethostname::gethostname().to_string_lossy().to_lowercase();
         let mut cleaned: String = raw
             .chars()
@@ -99,9 +187,7 @@ impl FsHost {
         cleaned.truncate(48);
         let cleaned = cleaned.trim_matches('-');
         let id = if cleaned.is_empty() { "local" } else { cleaned };
-        Self {
-            id: HostId::new(format!("fs-{id}")).expect("sanitized host id is valid"),
-        }
+        HostId::new(format!("fs-{id}")).expect("sanitized host id is valid")
     }
 
     pub fn id(&self) -> &HostId {
@@ -145,20 +231,42 @@ impl Connection for FsHost {
         &self.id
     }
 
-    /// Walk a directory and emit every enumerable source: regular,
-    /// non-hidden, non-empty files. Read-only; symlinks are not followed.
+    /// Walk a directory and emit every enumerable source: regular, non-empty
+    /// files the walk's ignore rules admit — hidden names, `.gitignore` and
+    /// `.inseamignore` files in the tree, and the configured patterns all
+    /// prune here, so an ignored file never becomes an address. Read-only;
+    /// symlinks are not followed.
     async fn enumerate(&self, root: &str) -> Result<Vec<EnumeratedSource>, SeamError> {
         let dir = Path::new(root)
             .canonicalize()
             .map_err(|e| SeamError::failed(format!("cannot enumerate {root}: {e}")))?;
         let observed = Timestamp::from(SystemTime::now());
         let mut sources = Vec::new();
-        let walker = WalkDir::new(&dir).follow_links(false).into_iter();
-        // depth 0 is the root the caller named: never prune it, even when
-        // the directory itself is dot-named.
-        for entry in walker.filter_entry(|e| e.depth() == 0 || !is_hidden(e.file_name())) {
+        let patterns = self.walk.clone();
+        let walker = WalkBuilder::new(&dir)
+            // Every filter stated explicitly: the crate's defaults are
+            // tuned for ripgrep, not for us.
+            .standard_filters(false)
+            .hidden(self.walk.skip_hidden)
+            .git_ignore(self.walk.gitignore)
+            .git_exclude(self.walk.gitignore)
+            .git_global(false)
+            .ignore(false)
+            .require_git(false)
+            .parents(true)
+            .add_custom_ignore_filename(INSEAM_IGNORE_FILENAME)
+            .follow_links(false)
+            .filter_entry(move |e| {
+                // depth 0 is the root the caller named: never prune it, even
+                // when a pattern would.
+                let is_dir = e.file_type().is_some_and(|t| t.is_dir());
+                e.depth() == 0 || !patterns.ignores(e.path(), is_dir)
+            })
+            .build();
+        for entry in walker {
             let entry = entry.map_err(|e| SeamError::failed(format!("walk failed: {e}")))?;
-            if !entry.file_type().is_file() {
+            let is_file = entry.file_type().is_some_and(|t| t.is_file());
+            if !is_file {
                 continue;
             }
             let meta = entry.metadata().map_err(|e| {
@@ -220,10 +328,6 @@ fn read_text_at(path: &Path) -> Result<String, SeamError> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-fn is_hidden(name: &std::ffi::OsStr) -> bool {
-    name.to_str().is_some_and(|n| n.starts_with('.'))
-}
-
 /// Extensions that mime_guess maps poorly or not at all but that are plainly
 /// text for indexing purposes.
 const TEXT_EXTENSIONS: &[&str] = &[
@@ -253,7 +357,46 @@ mod tests {
     use super::*;
 
     fn host() -> FsHost {
-        FsHost::new(HostId::new("fs-test").expect("valid host id"))
+        FsHost::new(HostId::new("fs-test").expect("valid host id"), WalkConfig::standard())
+    }
+
+    fn host_with(config: FsConnectionConfig) -> FsHost {
+        let walk = WalkConfig::compile(&config).expect("config compiles");
+        FsHost::new(HostId::new("fs-test").expect("valid host id"), walk)
+    }
+
+    async fn names(host: &FsHost, dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = host
+            .enumerate(dir.to_str().expect("utf8"))
+            .await
+            .expect("enumerates")
+            .iter()
+            .map(|s| {
+                s.address
+                    .locator
+                    .as_str()
+                    .strip_prefix(
+                        dir.canonicalize()
+                            .expect("canonical")
+                            .to_str()
+                            .expect("utf8")
+                            .trim_start_matches('/'),
+                    )
+                    .expect("under root")
+                    .trim_start_matches('/')
+                    .to_string()
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn write(dir: &Path, rel: &str, body: &str) {
+        let path = dir.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("mkdir");
+        }
+        std::fs::write(path, body).expect("write");
     }
 
     #[test]
@@ -298,6 +441,113 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["note.md"]);
         assert_eq!(sources[0].envelope.content_type.essence(), "text/markdown");
+    }
+
+    #[tokio::test]
+    async fn gitignore_files_prune_the_walk_without_a_git_repository() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(dir.path(), ".gitignore", "target/\n*.log\n");
+        write(dir.path(), "src/main.rs", "fn main() {}\n");
+        write(dir.path(), "target/debug/app", "binary\n");
+        write(dir.path(), "build.log", "noise\n");
+        write(dir.path(), "sub/.gitignore", "secret.md\n");
+        write(dir.path(), "sub/secret.md", "# hush\n");
+        write(dir.path(), "sub/open.md", "# hello\n");
+
+        assert_eq!(
+            names(&host(), dir.path()).await,
+            vec!["src/main.rs", "sub/open.md"]
+        );
+        let config = FsConnectionConfig {
+            gitignore: false,
+            ..FsConnectionConfig::default()
+        };
+        assert_eq!(
+            names(&host_with(config), dir.path()).await,
+            vec!["build.log", "src/main.rs", "sub/open.md", "sub/secret.md", "target/debug/app"]
+        );
+    }
+
+    #[tokio::test]
+    async fn inseamignore_files_are_honored_even_with_gitignore_off() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(dir.path(), ".inseamignore", "drafts/\n");
+        write(dir.path(), "drafts/wip.md", "# wip\n");
+        write(dir.path(), "final.md", "# done\n");
+        let config = FsConnectionConfig {
+            gitignore: false,
+            ..FsConnectionConfig::default()
+        };
+        assert_eq!(names(&host_with(config), dir.path()).await, vec!["final.md"]);
+    }
+
+    #[tokio::test]
+    async fn configured_patterns_anchor_at_the_filesystem_root() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(dir.path(), "app/node_modules/left-pad/index.js", "x\n");
+        write(dir.path(), "app/src/index.js", "x\n");
+        write(dir.path(), "Archive/old.md", "# old\n");
+        write(dir.path(), "notes/Archive/keep.md", "# keep\n");
+        let canonical = dir.path().canonicalize().expect("canonical");
+        let config = FsConnectionConfig {
+            ignore: vec![
+                "node_modules/".into(),
+                format!("{}/Archive/", canonical.display()),
+            ],
+            ..FsConnectionConfig::default()
+        };
+        assert_eq!(
+            names(&host_with(config), dir.path()).await,
+            vec!["app/src/index.js", "notes/Archive/keep.md"]
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_patterns_support_reinclusion() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(dir.path(), "a.log", "x\n");
+        write(dir.path(), "important.log", "x\n");
+        let config = FsConnectionConfig {
+            ignore: vec!["*.log".into(), "!important.log".into()],
+            ..FsConnectionConfig::default()
+        };
+        assert_eq!(names(&host_with(config), dir.path()).await, vec!["important.log"]);
+    }
+
+    #[tokio::test]
+    async fn hidden_entries_are_indexed_when_skip_hidden_is_off() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(dir.path(), ".env", "SECRET=1\n");
+        write(dir.path(), "a.md", "# a\n");
+        let config = FsConnectionConfig {
+            skip_hidden: false,
+            ..FsConnectionConfig::default()
+        };
+        assert_eq!(names(&host_with(config), dir.path()).await, vec![".env", "a.md"]);
+    }
+
+    #[tokio::test]
+    async fn a_named_root_is_never_pruned_by_its_own_patterns() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let hidden = dir.path().join(".workspace");
+        write(&hidden, "a.md", "# a\n");
+        let canonical = hidden.canonicalize().expect("canonical");
+        let config = FsConnectionConfig {
+            ignore: vec![format!("{}/", canonical.display())],
+            ..FsConnectionConfig::default()
+        };
+        assert_eq!(names(&host_with(config), &hidden).await, vec!["a.md"]);
+    }
+
+    #[test]
+    fn rejects_malformed_empty_and_comment_patterns() {
+        for bad in ["docs/[z-a]", "", "   ", "# not a pattern"] {
+            let config = FsConnectionConfig {
+                ignore: vec![bad.into()],
+                ..FsConnectionConfig::default()
+            };
+            assert!(WalkConfig::compile(&config).is_err(), "`{bad}` must be refused");
+        }
     }
 
     #[test]

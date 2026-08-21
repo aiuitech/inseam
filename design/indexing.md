@@ -49,7 +49,7 @@ The same caches are what make the delete-and-rebuild maintenance model affordabl
 
 ## Configuration is composition
 
-Everything above is configured per node by its [composition](composition.md): which transform plugins are mounted and each one's config (summary lengths, entity budgets, recursion depth), which embedder provider runs, the sweep's cutoffs and budgets. A phone's composition: summarizer only, short summaries, envelope-derived text, tight cutoff. A cloud node's: every transform, link-following, entities, long summaries. Same machinery, different entries — the asymmetry [discovery](discovery.md) promises, with no profile mechanism separate from ordinary plugin config.
+Everything above is configured per node by its [composition](composition.md), including what is kept out of the index altogether ([ignore](ignore.md)): which transform plugins are mounted and each one's config (summary lengths, entity budgets, recursion depth), which embedder provider runs, the sweep's cutoffs and budgets. A phone's composition: summarizer only, short summaries, envelope-derived text, tight cutoff. A cloud node's: every transform, link-following, entities, long summaries. Same machinery, different entries — the asymmetry [discovery](discovery.md) promises, with no profile mechanism separate from ordinary plugin config.
 
 ## Storage
 

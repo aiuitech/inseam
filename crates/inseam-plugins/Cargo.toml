@@ -9,6 +9,7 @@ inseam-seams.workspace = true
 
 async-trait.workspace = true
 gethostname.workspace = true
+ignore.workspace = true
 mime_guess.workspace = true
 pulldown-cmark.workspace = true
 reqwest.workspace = true
@@ -18,7 +19,6 @@ thiserror.workspace = true
 tokio.workspace = true
 toml.workspace = true
 tracing.workspace = true
-walkdir.workspace = true
 
 [dev-dependencies]
 inseam-conformance.workspace = true

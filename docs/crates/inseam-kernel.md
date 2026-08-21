@@ -11,6 +11,7 @@ The inseam kernel (`design/kernel.md`): the smallest thing that makes
    and plugin state, with no data migrations anywhere, ever ([`store`]).
 
 Plus the vocabulary those two speak: addresses and envelopes
-([`address`]), fragments and relations ([`fragment`]). The kernel knows no
+([`address`]), fragments and relations ([`fragment`]), and the ignore
+rules that keep sources out of a node ([`ignore`]). The kernel knows no
 host, no file format, no ranking algorithm, no transport — those are all
 plugins on the seams `inseam-seams` defines.
