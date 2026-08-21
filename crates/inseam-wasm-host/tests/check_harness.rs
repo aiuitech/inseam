@@ -48,7 +48,8 @@ async fn ocr_passes_the_full_harness_including_its_golden_checks() {
         .iter()
         .filter(|i| i.phase == Phase::Golden)
         .collect();
-    assert_eq!(golden.len(), 2, "both golden checks ran: {}", report.render());
+    // The coverage gate, then both of the plugin's own checks.
+    assert_eq!(golden.len(), 3, "coverage gate + both golden checks ran: {}", report.render());
     assert!(report.render().contains("PASS"));
 }
 
@@ -71,6 +72,13 @@ async fn harness_fails_a_plugin_whose_golden_checks_lie() {
 
         [check.expect]
         fragment_contains = "TEXT THAT WILL NOT APPEAR"
+
+        [[check]]
+        name = "emits nothing when starved"
+        mimetype = "image/png"
+        [check.expect]
+        min_fragments = 0
+        max_fragments = 0
         "#,
     )
     .expect("writes broken checks");
@@ -88,6 +96,113 @@ async fn harness_fails_a_plugin_whose_golden_checks_lie() {
         .iter()
         .filter(|i| i.phase == Phase::Contract)
         .all(|i| !matches!(i.outcome, Outcome::Fail(_))));
+}
+
+fn golden_failures(report: &inseam_wasm_host::CheckReport) -> Vec<String> {
+    report
+        .items
+        .iter()
+        .filter(|i| i.phase == Phase::Golden)
+        .filter_map(|i| match &i.outcome {
+            Outcome::Fail(reason) => Some(format!("{}: {reason}", i.name)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn harness_fails_a_plugin_that_ships_no_golden_checks() {
+    let Some(dir) = ocr_dir() else {
+        eprintln!("skipping: plugins/ocr/ocr.wasm not built");
+        return;
+    };
+    let staged = tempfile::tempdir().expect("tempdir");
+    let artifact = stage(&dir, staged.path());
+    std::fs::remove_file(staged.path().join("ocr.checks.toml")).expect("removes checks");
+
+    let report = check_artifact(&artifact).await;
+    assert!(!report.passed());
+    let failures = golden_failures(&report);
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert!(failures[0].contains("golden checks are mandatory"), "{failures:?}");
+    // Everything before the golden phase still ran and still passed.
+    assert!(report
+        .items
+        .iter()
+        .filter(|i| i.phase != Phase::Golden)
+        .all(|i| !matches!(i.outcome, Outcome::Fail(_))));
+}
+
+#[tokio::test]
+async fn harness_fails_vacuous_golden_checks_naming_each_missing_requirement() {
+    let Some(dir) = ocr_dir() else {
+        eprintln!("skipping: plugins/ocr/ocr.wasm not built");
+        return;
+    };
+    let staged = tempfile::tempdir().expect("tempdir");
+    let artifact = stage(&dir, staged.path());
+    // Passes on its own — "something came out" — but proves nothing and
+    // never starves the plugin.
+    std::fs::write(
+        staged.path().join("ocr.checks.toml"),
+        r#"
+        [[check]]
+        name = "emits something"
+        mimetype = "image/png"
+        bytes_file = "fixtures/pixel.png"
+        llm_returns = "anything"
+        "#,
+    )
+    .expect("writes vacuous checks");
+
+    let report = check_artifact(&artifact).await;
+    assert!(!report.passed());
+    let failures = golden_failures(&report);
+    assert_eq!(failures.len(), 2, "{failures:?}");
+    assert!(failures[0].contains("mandatory coverage: no check proves the claim"), "{failures:?}");
+    assert!(failures[1].contains("mandatory coverage: no check pins the degrade path"), "{failures:?}");
+    // The vacuous check itself still ran and passed — the gate is about
+    // coverage, not about that check being wrong.
+    assert!(report
+        .items
+        .iter()
+        .any(|i| i.name == "emits something" && matches!(i.outcome, Outcome::Pass)));
+}
+
+#[tokio::test]
+async fn harness_fails_a_golden_check_for_an_unclaimed_mimetype() {
+    let Some(dir) = ocr_dir() else {
+        eprintln!("skipping: plugins/ocr/ocr.wasm not built");
+        return;
+    };
+    let staged = tempfile::tempdir().expect("tempdir");
+    let artifact = stage(&dir, staged.path());
+    std::fs::write(
+        staged.path().join("ocr.checks.toml"),
+        r#"
+        [[check]]
+        name = "transcribes a pdf it never claimed"
+        mimetype = "application/pdf"
+        bytes_file = "fixtures/pixel.png"
+        llm_returns = "TEXT"
+        [check.expect]
+        relation = "transcribes"
+
+        [[check]]
+        name = "emits nothing when starved"
+        mimetype = "image/png"
+        [check.expect]
+        min_fragments = 0
+        max_fragments = 0
+        "#,
+    )
+    .expect("writes checks");
+
+    let report = check_artifact(&artifact).await;
+    assert!(!report.passed());
+    let failures = golden_failures(&report);
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert!(failures[0].contains("outside the effective claims"), "{failures:?}");
 }
 
 async fn kernel_with(data_dir: &Path) -> Kernel {
@@ -132,7 +247,9 @@ async fn admission_refuses_a_failing_plugin_unless_overridden() {
     std::fs::write(
         staged.path().join("ocr.checks.toml"),
         "[[check]]\nname = \"impossible\"\nmimetype = \"image/png\"\n\
-         [check.expect]\nmin_fragments = 99\n",
+         [check.expect]\nmin_fragments = 99\nrelation = \"transcribes\"\n\
+         [[check]]\nname = \"starved\"\nmimetype = \"image/png\"\n\
+         [check.expect]\nmin_fragments = 0\nmax_fragments = 0\n",
     )
     .expect("writes failing checks");
 

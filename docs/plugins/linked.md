@@ -18,7 +18,7 @@ Every plugin is the same five declarations — name, config, inject, provide, ap
 | `sweep` | `sweep` | store, connection, transforms, embedder, llm? | the reconciling sweep ([indexing/maintenance.md](../indexing/maintenance.md)) |
 | `operations` | `operations` | store, connection, finder, sweep | the transport-neutral node API ([finder/operations.md](../finder/operations.md)) |
 
-The agent skill at `skills/inseam-linked-plugin/SKILL.md` is the authoring guide for this tier ([../skills/inseam-linked-plugin.md](../skills/inseam-linked-plugin.md)); it assumes a source checkout, since a linked plugin is a build input.
+The agent skill at `skills/inseam-linked-plugin/SKILL.md` is the authoring guide for this tier ([../skills/inseam-linked-plugin.md](../skills/inseam-linked-plugin.md)); it assumes a source checkout, since a linked plugin is a build input. Every linked transform ships its own golden checks beside its source (`crates/inseam-plugins/src/transforms/<name>.checks.toml`) — the same schema and coverage rule as a loaded plugin's, run by the conformance suite through the seam ([validation.md](validation.md)).
 
 Discipline notes:
 

@@ -24,18 +24,18 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use serde::Deserialize;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Engine, Store};
 
+use inseam_conformance::{ChecksFile, Emitted, EmittedFragment, GoldenCheck};
 use inseam_kernel::fragment::{Mimetype, RelationKind};
 use inseam_seams::transforms::GrantedLlm;
 use inseam_seams::SeamError;
 
 use crate::exports::inseam::plugin::transform::{ClaimSpec, Envelope, Fragment};
 use crate::{
-    build_linker, new_engine, patterns_overlap, ArtifactManifest, Invocation, TransformPlugin,
-    WasmEntryConfig,
+    build_linker, new_engine, pattern_matches, patterns_overlap, ArtifactManifest, Invocation,
+    TransformPlugin, WasmEntryConfig,
 };
 
 // ---------------------------------------------------------------------------
@@ -172,93 +172,33 @@ impl CheckReport {
 // ---------------------------------------------------------------------------
 // Golden checks: `<artifact>.checks.toml`
 // ---------------------------------------------------------------------------
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ChecksFile {
-    #[serde(default)]
-    check: Vec<GoldenCheck>,
-}
-
-/// One declarative check: an input the harness feeds through the real
-/// bridge, and the output shape the plugin promises for it.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct GoldenCheck {
-    name: String,
-    /// The claimed mimetype this application arrives as.
-    mimetype: String,
-    #[serde(default = "crate::default_true")]
-    is_root: bool,
-    /// Fragment text handed in; absent = content the node did not read.
-    #[serde(default)]
-    text: Option<String>,
-    /// Fixture handed to `source-bytes`, relative to the checks file.
-    #[serde(default)]
-    bytes_file: Option<PathBuf>,
-    /// What the granted LLM returns verbatim; absent = the LLM refuses,
-    /// which is how a check exercises the degrade path.
-    #[serde(default)]
-    llm_returns: Option<String>,
-    #[serde(default)]
-    expect: Expect,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct Expect {
-    /// Defaults to 1: a check asserts the plugin produces something unless
-    /// it says otherwise (`min_fragments = 0, max_fragments = 0` asserts
-    /// clean degradation).
-    min_fragments: Option<usize>,
-    max_fragments: Option<usize>,
-    /// At least one emitted fragment's text contains this.
-    fragment_contains: Option<String>,
-    /// At least one emitted fragment carries this relation.
-    relation: Option<String>,
-    /// At least one emitted fragment's mimetype starts with this.
-    mimetype: Option<String>,
-}
-
-impl Expect {
-    fn unmet(&self, fragments: &[Fragment]) -> Vec<String> {
-        let mut misses = Vec::new();
-        let min = self.min_fragments.unwrap_or(1);
-        if fragments.len() < min {
-            misses.push(format!("expected at least {min} fragment(s), got {}", fragments.len()));
-        }
-        if let Some(max) = self.max_fragments
-            && fragments.len() > max
-        {
-            misses.push(format!("expected at most {max} fragment(s), got {}", fragments.len()));
-        }
-        if let Some(needle) = &self.fragment_contains
-            && !fragments
-                .iter()
-                .any(|f| f.text.as_deref().is_some_and(|t| t.contains(needle)))
-        {
-            misses.push(format!("no fragment text contains {needle:?}"));
-        }
-        if let Some(relation) = &self.relation
-            && !fragments.iter().any(|f| &f.relation == relation)
-        {
-            misses.push(format!("no fragment carries relation {relation:?}"));
-        }
-        if let Some(prefix) = &self.mimetype
-            && !fragments.iter().any(|f| f.mimetype.starts_with(prefix.as_str()))
-        {
-            misses.push(format!("no fragment mimetype starts with {prefix:?}"));
-        }
-        misses
-    }
-}
+//
+// The schema, the expectation matcher, and the mandatory-coverage gate are
+// shared with the linked tier (`inseam_conformance::golden`) — one
+// definition of "what counts as a test" across both tiers.
 
 /// The fixture paths a checks file references (relative to itself) — what an
 /// installer must fetch alongside the checks file.
 pub fn fixture_files(checks_toml: &str) -> Vec<PathBuf> {
-    toml::from_str::<ChecksFile>(checks_toml)
-        .map(|f| f.check.into_iter().filter_map(|c| c.bytes_file).collect())
+    ChecksFile::parse(checks_toml)
+        .map(|f| f.fixture_files())
         .unwrap_or_default()
+}
+
+/// The wasm seam's output in the tier-neutral shape the golden matcher
+/// judges. The transform WIT seam emits fragments only, never entities.
+fn emitted_from_fragments(fragments: &[Fragment]) -> Emitted {
+    Emitted {
+        fragments: fragments
+            .iter()
+            .map(|f| EmittedFragment {
+                mimetype: f.mimetype.clone(),
+                relation: f.relation.clone(),
+                text: f.text.clone(),
+            })
+            .collect(),
+        entities: Vec::new(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -304,7 +244,7 @@ const SENTINEL: &str = "INSEAM CONFORMANCE SENTINEL";
 // The harness
 // ---------------------------------------------------------------------------
 
-/// Run every phase against an artifact on disk (manifest and optional
+/// Run every phase against an artifact on disk (manifest and mandatory
 /// checks file resolved beside it). Infallible by design: anything wrong
 /// lands as a `Fail` item in the report, not an error.
 pub async fn check_artifact(artifact: &Path) -> CheckReport {
@@ -521,19 +461,22 @@ pub async fn check_artifact(artifact: &Path) -> CheckReport {
     }
 
     // ---- golden -------------------------------------------------------------
+    // Golden checks are mandatory: a plugin that ships none, or ships ones
+    // that prove nothing, fails here — the same verdict admission enforces.
     let checks_path = artifact.with_extension("checks.toml");
     let Ok(raw_checks) = std::fs::read_to_string(&checks_path) else {
         report.push(
             Phase::Golden,
             "checks file",
-            Outcome::Warn(format!(
-                "no {} — the plugin ships no golden checks",
+            Outcome::Fail(format!(
+                "no {} — golden checks are mandatory; write them first \
+                 (docs/plugins/validation.md)",
                 checks_path.display()
             )),
         );
         return report;
     };
-    let checks: ChecksFile = match toml::from_str(&raw_checks) {
+    let checks = match ChecksFile::parse(&raw_checks) {
         Ok(c) => c,
         Err(e) => {
             report.push(
@@ -544,19 +487,21 @@ pub async fn check_artifact(artifact: &Path) -> CheckReport {
             return report;
         }
     };
-    if checks.check.is_empty() {
-        report.push(
-            Phase::Golden,
-            "checks file",
-            Outcome::Warn("checks file declares no checks".into()),
-        );
+    match checks.required_coverage() {
+        Ok(()) => report.push(Phase::Golden, "mandatory coverage", Outcome::Pass),
+        Err(unmet) => {
+            for reason in unmet {
+                report.push(Phase::Golden, "mandatory coverage", Outcome::Fail(reason));
+            }
+        }
     }
-    for check in checks.check {
+    for check in &checks.check {
         let outcome = run_golden(
-            &engine, &component, &linker, &manifest, fuel, &checks_path, &check,
+            &engine, &component, &linker, &manifest, fuel, &checks_path, check,
+            &report.effective_claims,
         )
         .await;
-        report.push(Phase::Golden, check.name, outcome);
+        report.push(Phase::Golden, check.name.clone(), outcome);
     }
     report
 }
@@ -569,36 +514,40 @@ async fn run_golden(
     fuel: u64,
     checks_path: &Path,
     check: &GoldenCheck,
+    effective_claims: &[String],
 ) -> Outcome {
     if check.llm_returns.is_some() && !manifest.capabilities.llm {
         return Outcome::Warn("llm_returns is inert: the manifest does not request `llm`".into());
     }
-    let bytes = match &check.bytes_file {
-        None => None,
-        Some(relative) => {
-            // Fixtures live beside the checks file; a path that climbs out
-            // of the plugin directory is refused, not resolved.
-            if relative.is_absolute()
-                || relative
-                    .components()
-                    .any(|c| !matches!(c, std::path::Component::Normal(_)))
-            {
-                return Outcome::Fail(format!(
-                    "bytes_file `{}` escapes the plugin directory",
-                    relative.display()
-                ));
+    if check.expect.entity.is_some() {
+        return Outcome::Fail(
+            "`entity` is not expressible on the transform WIT seam (it emits fragments only); \
+             assert the shape with `fragment_contains`/`relation`/`mimetype`"
+                .into(),
+        );
+    }
+    let essence = check.mimetype.split(';').next().unwrap_or_default();
+    let claimed = effective_claims
+        .iter()
+        .any(|pattern| pattern_matches(pattern, essence));
+    if !claimed {
+        return Outcome::Fail(format!(
+            "`{}` is outside the effective claims {:?}; this check would never run in production",
+            check.mimetype, effective_claims
+        ));
+    }
+    let bytes = match check.fixture_path(checks_path) {
+        Err(reason) => return Outcome::Fail(reason),
+        Ok(None) => None,
+        Ok(Some(path)) => match std::fs::read(&path) {
+            Ok(b) if manifest.capabilities.source_bytes => Some(b),
+            Ok(_) => {
+                return Outcome::Warn(
+                    "bytes_file is inert: the manifest does not request `source_bytes`".into(),
+                )
             }
-            let path = checks_path.parent().unwrap_or(Path::new(".")).join(relative);
-            match std::fs::read(&path) {
-                Ok(b) if manifest.capabilities.source_bytes => Some(b),
-                Ok(_) => {
-                    return Outcome::Warn(
-                        "bytes_file is inert: the manifest does not request `source_bytes`".into(),
-                    )
-                }
-                Err(e) => return Outcome::Fail(format!("fixture {}: {e}", path.display())),
-            }
-        }
+            Err(e) => return Outcome::Fail(format!("fixture {}: {e}", path.display())),
+        },
     };
     let llm: Option<Arc<dyn GrantedLlm>> = manifest
         .capabilities
@@ -619,11 +568,9 @@ async fn run_golden(
         ApplyVerdict::PluginErr(_) => Vec::new(),
         ApplyVerdict::Trap(t) => return Outcome::Fail(format!("trapped: {t}")),
     };
-    let misses = check.expect.unmet(&fragments);
-    if misses.is_empty() {
-        Outcome::Pass
-    } else {
-        Outcome::Fail(misses.join("; "))
+    match check.verdict(&emitted_from_fragments(&fragments)) {
+        Ok(()) => Outcome::Pass,
+        Err(reason) => Outcome::Fail(reason),
     }
 }
 
@@ -783,36 +730,6 @@ mod tests {
     }
 
     #[test]
-    fn expect_defaults_require_one_fragment() {
-        let expect = Expect::default();
-        assert!(expect.unmet(&[fragment("text/plain", "contains", Some("x"), None)]).is_empty());
-        assert_eq!(expect.unmet(&[]).len(), 1);
-    }
-
-    #[test]
-    fn expect_matches_contents_relation_and_mimetype() {
-        let expect: Expect = toml::from_str(
-            r#"
-            fragment_contains = "GARAGE"
-            relation = "transcribes"
-            mimetype = "text/plain"
-            "#,
-        )
-        .expect("parses");
-        let hit = [fragment("text/plain;via=ocr", "transcribes", Some("GARAGE SALE"), None)];
-        assert!(expect.unmet(&hit).is_empty());
-        let miss = [fragment("text/html", "contains", Some("nothing"), None)];
-        assert_eq!(expect.unmet(&miss).len(), 3);
-    }
-
-    #[test]
-    fn expect_zero_zero_asserts_clean_degradation() {
-        let expect: Expect = toml::from_str("min_fragments = 0\nmax_fragments = 0").expect("parses");
-        assert!(expect.unmet(&[]).is_empty());
-        assert!(!expect.unmet(&[fragment("text/plain", "contains", None, None)]).is_empty());
-    }
-
-    #[test]
     fn hygiene_rejects_forged_summaries_and_forward_parents() {
         let forged = [fragment("text/x-inseam-summary", "derived-from", Some("x"), None)];
         assert!(matches!(hygiene(&forged), Outcome::Fail(_)));
@@ -826,21 +743,6 @@ mod tests {
             fragment("text/plain", "contains", Some("b"), Some(0)),
         ];
         assert!(matches!(hygiene(&fine), Outcome::Pass));
-    }
-
-    #[test]
-    fn fixture_files_lists_bytes_fixtures() {
-        let toml = r#"
-            [[check]]
-            name = "a"
-            mimetype = "image/png"
-            bytes_file = "fixtures/pixel.png"
-
-            [[check]]
-            name = "b"
-            mimetype = "text/plain"
-        "#;
-        assert_eq!(fixture_files(toml), vec![PathBuf::from("fixtures/pixel.png")]);
     }
 
     #[test]

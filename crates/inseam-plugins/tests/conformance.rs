@@ -8,6 +8,8 @@
 
 mod common;
 
+use std::path::{Path, PathBuf};
+
 use inseam_seams::transforms::TRANSFORMS;
 
 /// Every linked plugin's minimal boot config. Adding a plugin to
@@ -25,6 +27,21 @@ fn conformance_config(name: &str) -> toml::Table {
         ),
     };
     toml::from_str(raw).expect("static conformance config parses")
+}
+
+/// Every linked transform's golden checks, keyed by registration name and
+/// kept beside the transform's source. A transform registered without an
+/// arm here panics the golden sweep with instructions — the linked tier's
+/// mirror of "no checks file, no admission".
+fn golden_checks_for(name: &str) -> Option<PathBuf> {
+    let file = match name {
+        "markdown" => "markdown.checks.toml",
+        "chunker" => "chunker.checks.toml",
+        "summarizer" => "summarizer.checks.toml",
+        "entity-extractor" => "entity-extractor.checks.toml",
+        _ => return None,
+    };
+    Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/transforms").join(file))
 }
 
 #[test]
@@ -49,4 +66,15 @@ async fn linked_transforms_claim_deterministically_and_survive_hostile_inputs() 
         registrations.len()
     );
     inseam_conformance::batter_transforms(&kernel, &[]).await;
+}
+
+#[tokio::test]
+async fn linked_transforms_pass_their_own_golden_checks() {
+    let data = tempfile::tempdir().expect("tempdir");
+    let kernel = common::boot(
+        data.path(),
+        "[[entry]]\nid = \"entities\"\nplugin = \"transform-entities\"\n",
+    )
+    .await;
+    inseam_conformance::golden_transforms(&kernel, &golden_checks_for).await;
 }

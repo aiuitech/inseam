@@ -1323,8 +1323,10 @@ dependencies = [
 name = "inseam-conformance"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "inseam-kernel",
  "inseam-seams",
+ "serde",
  "toml",
 ]
 
@@ -1399,6 +1401,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "inseam-conformance",
  "inseam-kernel",
  "inseam-plugins",
  "inseam-seams",

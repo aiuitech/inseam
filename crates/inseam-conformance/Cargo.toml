@@ -7,4 +7,6 @@ edition.workspace = true
 inseam-kernel.workspace = true
 inseam-seams.workspace = true
 
+async-trait.workspace = true
+serde.workspace = true
 toml.workspace = true

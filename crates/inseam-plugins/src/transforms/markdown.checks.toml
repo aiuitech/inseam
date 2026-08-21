@@ -1,0 +1,55 @@
+# Golden checks for the `markdown` linked transform (docs/plugins/validation.md),
+# run by the conformance suite through the transforms seam — the same schema
+# and judge as a loaded plugin's checks. Checks are data: an input, and the
+# output shape this transform promises for it.
+
+# The claim: a document decomposes along its own heading structure into
+# `contains`-related markdown sections.
+[[check]]
+name = "splits a document into its heading sections"
+mimetype = "text/markdown"
+text = """
+# Kitchen renovation
+
+Notes from the first planning session.
+
+## Budget
+
+Cabinets, counters, and labour.
+
+## Timeline
+
+Demolition in March; done by May.
+"""
+
+[check.expect]
+min_fragments = 3
+relation = "contains"
+mimetype = "text/markdown"
+fragment_contains = "Demolition in March"
+
+# Links inside a section become `text/uri-list` children hung off it with a
+# `links-to` relation, so the graph can follow them.
+[[check]]
+name = "hangs links off the section that contains them"
+mimetype = "text/markdown"
+text = """
+# Reading
+
+See the [renovation guide](https://example.com/renovation-guide) first.
+"""
+
+[check.expect]
+relation = "links-to"
+mimetype = "text/uri-list"
+fragment_contains = "https://example.com/renovation-guide"
+
+# The degrade path: content the node did not read decomposes into nothing —
+# never a placeholder section.
+[[check]]
+name = "emits nothing when the text is withheld"
+mimetype = "text/markdown"
+
+[check.expect]
+min_fragments = 0
+max_fragments = 0

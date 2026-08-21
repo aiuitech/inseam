@@ -12,3 +12,7 @@ that is compiled in rather than mounted.
 
 The functions panic with instructive messages — they are test assertions,
 meant to run inside `#[test]`/`#[tokio::test]`.
+
+`golden` is the checks-file schema both tiers share; `golden_transforms`
+runs a linked transform's own checks through the seam, the mirror of the
+golden phase of `inseam plugin check`.

@@ -41,10 +41,13 @@ Three layers of data exercise every plugin, from generic to specific
    the *contract* (degrade, never trap) with zero knowledge of the plugin.
 2. **Per-plugin golden checks** (`<name>.checks.toml`): declarative
    input → expected-output-shape cases, executed through the real bridge
-   with a canned LLM. They are the plugin's enforced tests: written first
-   during authoring, run by `inseam plugin check`, re-run by CI on merge,
-   and re-run by every installing node at admission. Because they are data,
-   not code, nothing in them needs to be trusted.
+   with a canned LLM. They are the plugin's enforced tests — **mandatory**:
+   a plugin with none, or with checks that neither prove its claim nor pin
+   its degrade path, fails the harness (`docs/plugins/validation.md` has
+   the coverage rule). Written first during authoring, run by `inseam
+   plugin check`, re-run by CI on merge, and re-run by every installing
+   node at admission. Because they are data, not code, nothing in them
+   needs to be trusted.
 3. **Fixture files** (`<name>/fixtures/`): the raw bytes golden checks hand
    to `source-bytes`. Every fixture directory carries its own `README.md`
    explaining each file and why it exists — fixtures accumulate fast as the
@@ -54,10 +57,13 @@ Three layers of data exercise every plugin, from generic to specific
    every `inseam plugin install`, so size is a cost multiplied across
    nodes.
 
-Linked-tier plugins are tested separately by the shared conformance harness (`crates/inseam-conformance`), whose workspace
-suite (`crates/inseam-plugins/tests/conformance.rs`), which sweeps every
-registered factory automatically — a linked plugin cannot be added without
-inheriting it.
+Linked-tier plugins are tested by the shared conformance harness
+(`crates/inseam-conformance`), whose workspace suite
+(`crates/inseam-plugins/tests/conformance.rs`) sweeps every registered
+factory automatically — the same hostile-input battery, and each
+transform's own golden checks (`crates/inseam-plugins/src/transforms/
+<name>.checks.toml`, same schema and coverage rule as here). A linked
+plugin cannot be added without inheriting both.
 
 ## Publishing and CI
 

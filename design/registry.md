@@ -51,7 +51,8 @@ Every version enters through a PR, and the merge gate
    diverge from the code a reviewer sees.
 2. **The conformance harness** — `inseam plugin check`: static manifest
    coherence, a real bridge mount, the hostile-input contract battery, and
-   the plugin's own golden checks. The *same harness* runs at authoring
+   the plugin's own golden checks — mandatory, and held to a coverage rule
+   ([plugins.md](plugins.md)). The *same harness* runs at authoring
    time (the skill's loop), in CI, and on every installing node at
    admission — passing once means passing everywhere, and a node never
    takes CI's word for it.

@@ -48,9 +48,16 @@ async fn linked_transforms_survive_hostile_inputs() {
     let kernel = /* boot with your factories + a composition activating them */;
     inseam_conformance::batter_transforms(&kernel, &[]).await;
 }
+
+#[tokio::test]
+async fn linked_transforms_pass_their_own_golden_checks() {
+    let kernel = /* same boot */;
+    // registration name -> path of its `<name>.checks.toml`; None panics with instructions
+    inseam_conformance::golden_transforms(&kernel, &|name| checks_path_for(name)).await;
+}
 ```
 
-`check_factories` is the build/manifest sweep with the enrollment gate (an unenrolled factory panics with instructions); `batter_transforms` is the same hostile-input battery loaded plugins face in `inseam plugin check` — consistent claims, text withheld/empty/garbage, never a granted LLM, degrade gracefully and never crash. The registry-specific steps (sha256 index, advisories, cooldown) don't apply here: those defend against untrusted download channels, and a source build has none.
+`check_factories` is the build/manifest sweep with the enrollment gate (an unenrolled factory panics with instructions); `batter_transforms` is the same hostile-input battery loaded plugins face in `inseam plugin check` — consistent claims, text withheld/empty/garbage, never a granted LLM, degrade gracefully and never crash; `golden_transforms` runs each transform's own mandatory golden checks through the seam, with the same schema, coverage rule, and judge as the loaded tier ([validation.md](validation.md)). The registry-specific steps (sha256 index, advisories, cooldown) don't apply here: those defend against untrusted download channels, and a source build has none.
 
 ## What this path is not
 

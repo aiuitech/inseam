@@ -1,0 +1,44 @@
+# Golden checks for the `summarizer` linked transform (docs/plugins/validation.md):
+# the mandatory summary, with a three-rung ladder — LLM, extractive, envelope —
+# recorded in the summary mimetype's `via` parameter.
+
+# The claim: with a granted LLM, the summary is the model's reply, marked
+# `via=llm` and `derived-from` its source.
+[[check]]
+name = "summarizes through the granted llm"
+mimetype = "text/plain"
+text = "Meeting notes: the kitchen renovation budget is approved; demolition starts in March."
+llm_returns = "Kitchen renovation budget approved; demolition in March."
+
+[check.expect]
+min_fragments = 1
+max_fragments = 1
+relation = "derived-from"
+mimetype = "text/x-inseam-summary;via=llm"
+fragment_contains = "demolition in March"
+
+# One rung down: when the LLM refuses (offline node, spent budget) the
+# summary is extractive — the content's own first words.
+[[check]]
+name = "falls back to an extractive summary when the llm refuses"
+mimetype = "text/plain"
+text = "Meeting notes: the kitchen renovation budget is approved; demolition starts in March."
+
+[check.expect]
+min_fragments = 1
+max_fragments = 1
+mimetype = "text/x-inseam-summary;via=extractive"
+fragment_contains = "kitchen renovation"
+
+# The bottom rung, the degrade path: with no content and no LLM there is
+# still exactly one summary, built from the envelope alone — every source
+# gets a summary, which is what makes it mandatory.
+[[check]]
+name = "summarizes from the envelope alone when starved"
+mimetype = "text/plain"
+
+[check.expect]
+min_fragments = 1
+max_fragments = 1
+relation = "derived-from"
+mimetype = "text/x-inseam-summary;via=envelope"
