@@ -20,7 +20,7 @@ Resolution refuses addresses for other hosts and any locator containing a parent
 - symlinks are not followed; empty files are skipped;
 - every remaining regular file becomes a source with an envelope: mimetype by extension (with a text fallback for code files), byte length, created/modified/observed timestamps, and the filename as the discovery hint.
 
-Text sources the indexer actually reads get their envelope length upgraded from bytes to lines — the unit `scan` and extents use. Binary and oversized sources stay byte-lengthed, with only their envelope recorded.
+Text sources the indexer actually reads get their envelope length upgraded from bytes to lines — the unit `scan` and extents use, and the same read fills the envelope's content digest (BLAKE3 over the raw bytes — the finder's cross-host dedup key). Binary and oversized sources stay byte-lengthed, with only their envelope recorded; a source whose content is never read carries no digest.
 
 ## Serving
 

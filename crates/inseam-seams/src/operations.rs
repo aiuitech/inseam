@@ -74,6 +74,11 @@ pub struct QueryResult {
     pub summary: Option<String>,
     pub envelope: EnvelopeView,
     pub hints: Vec<FragmentHint>,
+    /// Other copies of the same content (equal envelope content digests),
+    /// collapsed into this result; the caller picks its replica at fetch
+    /// time (`design/finder.md`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replicas: Vec<Address>,
 }
 
 /// Envelope fields rendered for clients: dates as `YYYY-MM-DD`, length with

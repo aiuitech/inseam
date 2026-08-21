@@ -25,7 +25,7 @@ use crate::fragment::{
 };
 use crate::subtree::{PlanNode, SubtreePlan};
 
-const SCHEMA_VERSION: &str = "5";
+const SCHEMA_VERSION: &str = "6";
 /// Ids per `IN (...)` predicate: every id-list query and delete is issued in
 /// chunks of this many, so no caller can build unbounded SQL.
 const ID_LIST_CHUNK: usize = 400;
@@ -535,8 +535,8 @@ async fn upsert_source_in(
         conn.query(
                 "INSERT INTO sources
                    (host, locator, source_type, content_type, len_unit, len,
-                    created, modified, observed, hint, properties, raw_bytes, indexed)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0)
+                    created, modified, observed, hint, properties, digest, raw_bytes, indexed)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0)
                  ON CONFLICT (host, locator) DO UPDATE SET
                    source_type = excluded.source_type,
                    content_type = excluded.content_type,
@@ -547,6 +547,7 @@ async fn upsert_source_in(
                    observed = excluded.observed,
                    hint = excluded.hint,
                    properties = excluded.properties,
+                   digest = excluded.digest,
                    raw_bytes = excluded.raw_bytes,
                    indexed = 0
                  RETURNING id",
@@ -562,6 +563,7 @@ async fn upsert_source_in(
                     envelope.observed.0,
                     envelope.hint.as_deref(),
                     properties,
+                    envelope.content_digest.map(|d| d.to_hex()),
                     i64::try_from(raw_bytes).unwrap_or(i64::MAX),
                 ],
             )
@@ -1319,6 +1321,7 @@ const CATALOG_SCHEMA_SQL: &str = "CREATE TABLE IF NOT EXISTS meta (
        observed INTEGER NOT NULL,
        hint TEXT,
        properties TEXT NOT NULL DEFAULT '[]',
+       digest TEXT,
        raw_bytes INTEGER NOT NULL DEFAULT 0,
        root_fragment INTEGER,
        indexed INTEGER NOT NULL DEFAULT 0,
@@ -1529,7 +1532,7 @@ fn fts_match_expression(q: &str) -> String {
 
 const SOURCE_COLUMNS: &str =
     "id, host, locator, source_type, content_type, len_unit, len, created, modified, observed, \
-     hint, properties, root_fragment";
+     hint, properties, root_fragment, digest";
 
 fn row_to_source(r: &libsql::Row) -> Result<StoredSource, StoreError> {
     let id: i64 = r.get(0)?;
@@ -1539,6 +1542,7 @@ fn row_to_source(r: &libsql::Row) -> Result<StoredSource, StoreError> {
     let len_unit: String = r.get(5)?;
     let len: i64 = r.get(6)?;
     let properties: String = r.get(11)?;
+    let digest: Option<String> = r.get(13)?;
     let address = Address::new(
         HostId::new(host).map_err(|e| corrupt(id, e))?,
         Locator::new(locator).map_err(|e| corrupt(id, e))?,
@@ -1561,6 +1565,9 @@ fn row_to_source(r: &libsql::Row) -> Result<StoredSource, StoreError> {
             hint: r.get(10)?,
             properties: serde_json::from_str::<Vec<Property>>(&properties)
                 .map_err(|e| corrupt(id, e))?,
+            content_digest: digest
+                .map(|d| d.parse().map_err(|e| corrupt(id, e)))
+                .transpose()?,
         },
         root_fragment: r.get::<Option<i64>>(12)?.map(FragmentId),
     })
@@ -1670,6 +1677,7 @@ mod tests {
             observed: Timestamp(1_700_000_000),
             properties: Vec::new(),
             hint: Some("note.md".into()),
+            content_digest: None,
         }
     }
 
@@ -1728,6 +1736,25 @@ mod tests {
         let stored = s.source_by_address(&a).await.expect("ok").expect("present");
         assert_eq!(stored.id, sid);
         assert_eq!(stored.envelope.hint.as_deref(), Some("note.md"));
+    }
+
+    #[tokio::test]
+    async fn content_digest_roundtrips_through_the_catalog() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        let a = addr("inseam://fs-test/tmp/note.md");
+
+        // Pair assertion with the write below: absent stays absent.
+        s.upsert_source(&a, &envelope(1, 10), 10).await.expect("upserts");
+        let stored = s.source_by_address(&a).await.expect("ok").expect("present");
+        assert_eq!(stored.envelope.content_digest, None);
+
+        let digest = crate::address::ContentDigest::of_bytes(b"# hi\n");
+        let mut env = envelope(2, 10);
+        env.content_digest = Some(digest);
+        s.upsert_source(&a, &env, 10).await.expect("upserts");
+        let stored = s.source_by_address(&a).await.expect("ok").expect("present");
+        assert_eq!(stored.envelope.content_digest, Some(digest));
     }
 
     #[tokio::test]

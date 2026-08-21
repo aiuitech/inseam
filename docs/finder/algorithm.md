@@ -39,3 +39,7 @@ source = f1 + 0.1·f2 + 0.05·f3
 ```
 
 Results are normalized so the top score is `1.0`, and each carries the envelope, the mandatory summary, and up to `max_hints` fragment hints (text preview + extent) so a client knows where to `scan` next.
+
+## 5. Merge: collapse by content digest
+
+Results whose envelopes carry equal content digests ([design/addressing.md](../../design/addressing.md)) are the same bytes living in two places — a local file and its cloud twin. They collapse into one result: the best-scoring copy supplies the score, summary, and hints, and the other copies ride along as `replicas` so a caller can pick where to fetch. Results without a digest never collapse — best-effort dedup degrades to duplication, never a wrong merge.

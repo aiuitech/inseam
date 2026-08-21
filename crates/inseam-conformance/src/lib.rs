@@ -66,6 +66,7 @@ fn synthetic_envelope(mimetype: &Mimetype) -> Envelope {
         observed: Timestamp(0),
         properties: Vec::new(),
         hint: Some("conformance".into()),
+        content_digest: None,
     }
 }
 

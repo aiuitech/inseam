@@ -147,6 +147,7 @@ mod tests {
             observed: Timestamp(1_700_000_100),
             properties: Vec::new(),
             hint: Some("note.md".into()),
+            content_digest: None,
         };
         let m = envelope.content_type.clone();
         let out = EntityExtractorTransform { max_per_source: 5 }

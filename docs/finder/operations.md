@@ -6,7 +6,7 @@ The boundary operations from [design/node-api.md](../../design/node-api.md), ser
 
 | Rung | Operation | Cost | Returns |
 | --- | --- | --- | --- |
-| 1 | `query { text, limit }` | cheapest | ranked addresses + envelopes, each with a score, summary, and fragment hints (text preview + line extent) |
+| 1 | `query { text, limit }` | cheapest | ranked addresses + envelopes, each with a score, summary, fragment hints (text preview + line extent), and any `replicas` — other addresses of the same content, collapsed by content digest |
 | 2 | `expand { address }` | index-only | the source's fragments (mimetype, extent, preview), its typed relations, and neighboring fragments beyond the source — keyed fragments such as entities and the sources they connect to |
 | 3 | `scan { address, start, end }` | reads a slice | lines `start..=end` (1-based, inclusive) through the fetch path; media sources redirect to their largest text descendant (`served_from_fragment` set) |
 | 4 | `fetch { address }` | full content | the whole source (text only, for now) |

@@ -3,6 +3,7 @@
 //! propagation; an LLM re-ranker on a big node is a provider swap, not a
 //! core change.
 
+use inseam_kernel::address::Address;
 use inseam_kernel::fragment::Relation;
 use inseam_kernel::store::{StoredFragment, StoredSource};
 use inseam_kernel::substrate::ServiceKey;
@@ -20,6 +21,11 @@ pub struct RankedSource {
     pub score: f64,
     pub summary: Option<String>,
     pub hints: Vec<RankedFragment>,
+    /// Addresses of other copies of the same content, collapsed into this
+    /// result by equal envelope content digests (`design/finder.md`). The
+    /// best-scoring copy is `source`; the caller picks its replica at fetch
+    /// time.
+    pub replicas: Vec<Address>,
 }
 
 /// A fragment that earned its source a place in the ranking.

@@ -7,7 +7,8 @@ The inseam vocabulary, one page. Definitions here are canonical; the linked desi
 - **Source** — one piece of data: an email, a file, a chat thread, a database row. The unit everything is addressed and found by. ([design/addressing.md](../design/addressing.md))
 - **Address** — a source's global name: host identity + locator. Addresses sync everywhere; content never does.
 - **Locator** — the part of an address that's specific to its host. Only that host's connection plugin knows how to read it.
-- **Envelope** — a small, size-limited metadata record that travels with an address: types, content length, timestamps, trust properties, discovery hints. The only content-derived thing that ever leaves a host.
+- **Envelope** — a small, size-limited metadata record that travels with an address: types, content length, timestamps, trust properties, discovery hints, and an optional content digest. The only content-derived thing that ever leaves a host.
+- **Content digest** — BLAKE3 over a source's raw bytes, carried in the envelope when the steward has one. Purely a merge key: the finder collapses results with equal digests into one; never a name. ([design/addressing.md](../design/addressing.md))
 
 ## Topology
 

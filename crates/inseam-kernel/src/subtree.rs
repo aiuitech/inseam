@@ -120,6 +120,7 @@ mod tests {
                 observed: Timestamp(0),
                 properties: Vec::new(),
                 hint: None,
+                content_digest: None,
             },
             raw_bytes: 1,
             root: NewFragment {

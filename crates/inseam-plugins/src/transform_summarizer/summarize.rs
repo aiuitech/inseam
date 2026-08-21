@@ -171,6 +171,7 @@ mod tests {
             observed: Timestamp(1_700_000_000),
             properties: Vec::new(),
             hint: Some("IMG_2019.jpeg".into()),
+            content_digest: None,
         };
         let s = envelope_summary(&e);
         assert!(s.contains("IMG_2019.jpeg"));

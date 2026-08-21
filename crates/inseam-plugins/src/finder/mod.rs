@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use inseam_kernel::address::ContentDigest;
 use inseam_kernel::fragment::{FragmentId, Relation, RelationKind};
 use inseam_kernel::store::{IndexStore, SourceId, StoredSource};
 use inseam_kernel::substrate::{
@@ -292,10 +293,36 @@ impl FinderService {
                 score: score / norm,
                 summary,
                 hints,
+                replicas: Vec::new(),
             });
         }
-        Ok(out)
+        Ok(collapse_by_digest(out))
     }
+}
+
+/// Merge collapses by content digest (`design/finder.md`): results whose
+/// envelopes carry equal digests are one logical result — the same file
+/// living on two hosts ranks once, not twice. The best-scoring copy (first,
+/// since `ranked` arrives best-first) supplies score, summary, and hints;
+/// the other copies become its replicas. Results without a digest never
+/// collapse: best-effort dedup degrades to duplication, never a wrong merge.
+fn collapse_by_digest(ranked: Vec<RankedSource>) -> Vec<RankedSource> {
+    let mut collapsed: Vec<RankedSource> = Vec::with_capacity(ranked.len());
+    let mut index_by_digest: HashMap<ContentDigest, usize> = HashMap::new();
+    for result in ranked {
+        let Some(digest) = result.source.envelope.content_digest else {
+            collapsed.push(result);
+            continue;
+        };
+        match index_by_digest.get(&digest) {
+            Some(&index) => collapsed[index].replicas.push(result.source.address),
+            None => {
+                index_by_digest.insert(digest, collapsed.len());
+                collapsed.push(result);
+            }
+        }
+    }
+    collapsed
 }
 
 /// Reciprocal rank fusion over best-first id lists: score(d) = Σ 1/(k + rank).

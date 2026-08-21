@@ -141,6 +141,7 @@ impl Operations for OperationsService {
                 summary: r.summary,
                 envelope: envelope_view(&r.source),
                 hints: r.hints.iter().map(hint_view).collect(),
+                replicas: r.replicas,
             })
             .collect();
         Ok(QueryResponse { results })

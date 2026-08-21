@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use inseam_kernel::address::{Address, ContentLength, Envelope, Timestamp};
+use inseam_kernel::address::{Address, ContentDigest, ContentLength, Envelope, Timestamp};
 use inseam_kernel::fragment::{
     Extent, FragmentId, FragmentKey, Mimetype, NewFragment, Relation, RelationKind,
 };
@@ -31,6 +31,7 @@ fn envelope(hint: &str) -> Envelope {
         observed: Timestamp(1_700_000_100),
         properties: Vec::new(),
         hint: Some(hint.into()),
+        content_digest: None,
     }
 }
 
@@ -93,6 +94,54 @@ async fn seed_source(
         .expect("adds row");
     store.mark_indexed(sid, Some(("test-stamp", &[]))).await.expect("marks");
     (sid, section)
+}
+
+/// Re-upsert a seeded source with a digest-bearing envelope: what a sweep's
+/// content read does once it has the bytes.
+async fn set_digest(store: &IndexStore, name: &str, digest: ContentDigest) {
+    let mut env = envelope(name);
+    env.content_digest = Some(digest);
+    store.upsert_source(&addr(name), &env, 100).await.expect("upserts");
+}
+
+#[tokio::test]
+async fn merge_collapses_equal_digests_and_leaves_digestless_copies_apart() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = open_store(dir.path()).await;
+    let embedder = hashed(DIMS);
+
+    let body = "Espresso machine descaling procedure and water hardness notes.";
+    // The same file living on two hosts: equal digests, one logical result.
+    seed_source(&store, embedder.as_ref(), "local-copy.md", body).await;
+    seed_source(&store, embedder.as_ref(), "drive-copy.md", body).await;
+    let digest = ContentDigest::of_bytes(body.as_bytes());
+    set_digest(&store, "local-copy.md", digest).await;
+    set_digest(&store, "drive-copy.md", digest).await;
+    // Identical content with no digest: degradation is duplication.
+    seed_source(&store, embedder.as_ref(), "dup-a.md", body).await;
+    seed_source(&store, embedder.as_ref(), "dup-b.md", body).await;
+    store.rebuild_fts().await.expect("fts");
+
+    let finder = FinderService::new(Arc::clone(&store), embedder, FinderConfig::default());
+    let results = finder.query("espresso descaling", 10).await.expect("queries");
+
+    let copies: Vec<_> = results
+        .iter()
+        .filter(|r| r.source.envelope.content_digest == Some(digest))
+        .collect();
+    assert_eq!(copies.len(), 1, "equal digests collapse into one result");
+    let copy_addresses = [addr("local-copy.md"), addr("drive-copy.md")];
+    assert!(copy_addresses.contains(&copies[0].source.address));
+    assert_eq!(copies[0].replicas.len(), 1, "the other copy rides as a replica");
+    assert!(copy_addresses.contains(&copies[0].replicas[0]));
+    assert_ne!(copies[0].replicas[0], copies[0].source.address);
+
+    let digestless: Vec<_> = results
+        .iter()
+        .filter(|r| r.source.envelope.content_digest.is_none())
+        .collect();
+    assert_eq!(digestless.len(), 2, "no digest, no collapse");
+    assert!(digestless.iter().all(|r| r.replicas.is_empty()));
 }
 
 #[tokio::test]

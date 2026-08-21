@@ -4,7 +4,7 @@ One libSQL database (`catalog.sqlite3`) under the node's data dir, owned entirel
 
 ## Catalog tables: source of truth
 
-- `sources` — the catalog: address (host + locator), envelope columns, `raw_bytes` for change detection, `root_fragment`, an `indexed` flag, and the two shape records ([maintenance.md](maintenance.md)): `shape_stamp` (fingerprint of the transforms that built it) and `mimetypes` (the subtree's mimetype inventory). Both NULL for catalog-only rows.
+- `sources` — the catalog: address (host + locator), envelope columns (including the optional content `digest`), `raw_bytes` for change detection, `root_fragment`, an `indexed` flag, and the two shape records ([maintenance.md](maintenance.md)): `shape_stamp` (fingerprint of the transforms that built it) and `mimetypes` (the subtree's mimetype inventory). Both NULL for catalog-only rows.
 - `fragments` — the graph's vertices: mimetype, text, extent. `source` is NULL only for keyed fragments, which are shared across the whole index.
 - `relations` — typed edges, stored input → output; the kind is an open name (`contains`, `derives`, `links-to`, `mentions`, `transcribes`, …), deleted along with their fragments.
 - `keyed_fragments` — the dedup registry for index-wide fragments: plugin-namespaced key (`entity:person:greg`) → fragment id.

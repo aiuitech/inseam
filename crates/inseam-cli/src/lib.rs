@@ -715,6 +715,9 @@ fn print_results(response: &QueryResponse) {
             .map(|m| format!(" · modified {m}"))
             .unwrap_or_default();
         println!("    {} · {}{}", e.content_type, e.length, modified);
+        for replica in &r.replicas {
+            println!("    = also at {replica}");
+        }
         if let Some(summary) = &r.summary {
             println!("    {summary}");
         }

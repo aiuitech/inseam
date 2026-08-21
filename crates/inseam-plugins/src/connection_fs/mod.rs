@@ -295,6 +295,9 @@ impl FsHost {
                 observed,
                 properties: Vec::new(),
                 hint: entry.file_name().to_str().map(str::to_string),
+                // Enumeration is metadata-only — no content is read here, so
+                // the digest is filled in when indexing first reads the bytes.
+                content_digest: None,
             };
             sources.push(EnumeratedSource {
                 address,

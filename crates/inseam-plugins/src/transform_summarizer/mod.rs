@@ -145,6 +145,7 @@ mod tests {
             observed: Timestamp(1_700_000_100),
             properties: Vec::new(),
             hint: Some(hint.into()),
+            content_digest: None,
         }
     }
 

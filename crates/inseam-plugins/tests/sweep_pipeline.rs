@@ -101,6 +101,46 @@ async fn concurrency_does_not_change_the_index() {
 }
 
 #[tokio::test]
+async fn indexing_fills_the_envelope_content_digest_from_the_bytes_it_reads() {
+    let corpus = tempfile::tempdir().expect("tempdir");
+    std::fs::write(corpus.path().join("note.md"), "# hi\n\ndigest me\n").expect("write");
+    let data = tempfile::tempdir().expect("tempdir");
+    let kernel = common::boot(data.path(), "").await;
+    let report = common::ops(&kernel)
+        .index(IndexRequest {
+            host: None,
+            root: corpus.path().display().to_string(),
+            rebuild: false,
+        })
+        .await
+        .expect("sweeps");
+    assert_eq!(report.indexed, 1, "{report}");
+    let store = kernel.store();
+    let host_id = kernel
+        .service(&CONNECTIONS)
+        .expect("connections bound")
+        .snapshot()
+        .pop()
+        .expect("the filesystem connection registered")
+        .host
+        .id
+        .clone();
+    let (sid, _) = store
+        .sources_of_host(&host_id)
+        .await
+        .expect("ok")
+        .pop()
+        .expect("one source");
+    let stored = store.source(sid).await.expect("ok").expect("present");
+    // Pair assertion with the planner's compute: the stored digest is
+    // exactly BLAKE3 of the file's raw bytes.
+    assert_eq!(
+        stored.envelope.content_digest,
+        Some(inseam_kernel::address::ContentDigest::of_bytes(b"# hi\n\ndigest me\n")),
+    );
+}
+
+#[tokio::test]
 async fn search_rows_reference_landed_fragments_only() {
     let corpus = tempfile::tempdir().expect("tempdir");
     write_corpus(corpus.path());

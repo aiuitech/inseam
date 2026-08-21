@@ -24,6 +24,8 @@ pub enum AddressError {
     AbsoluteLocator(String),
     #[error("`{0}` is not an address of the form inseam://<host>/<locator>")]
     Unparseable(String),
+    #[error("`{0}` is not a content digest (64 lowercase hex characters)")]
+    InvalidDigest(String),
 }
 
 /// Identity of a host — where sources live. Hosts have no inseam machinery;
@@ -204,6 +206,67 @@ impl fmt::Display for ContentLength {
     }
 }
 
+/// BLAKE3 over a source's raw bytes (`design/addressing.md`): the cross-host
+/// dedup key. Its one job is to be a merge key — the same file living on two
+/// hosts carries equal digests, and the finder collapses the copies into one
+/// result. Never a name: identity stays location-addressed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct ContentDigest([u8; 32]);
+
+impl ContentDigest {
+    /// Digest a source's complete raw bytes. Whole-content by design: the
+    /// caller already holds the bytes it read for indexing, so there is no
+    /// incremental path to keep in sync with this one.
+    pub fn of_bytes(bytes: &[u8]) -> Self {
+        Self(*blake3::hash(bytes).as_bytes())
+    }
+
+    pub fn to_hex(&self) -> String {
+        self.0.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+}
+
+impl FromStr for ContentDigest {
+    type Err = AddressError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Strict form on both paths: exactly what `to_hex` renders, so a
+        // digest round-trips byte-identically through its string form.
+        if s.len() != 64 {
+            return Err(AddressError::InvalidDigest(s.to_string()));
+        }
+        if !s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            return Err(AddressError::InvalidDigest(s.to_string()));
+        }
+        let mut bytes = [0u8; 32];
+        for (i, byte) in bytes.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
+                .map_err(|_| AddressError::InvalidDigest(s.to_string()))?;
+        }
+        Ok(Self(bytes))
+    }
+}
+
+impl TryFrom<String> for ContentDigest {
+    type Error = AddressError;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        s.parse()
+    }
+}
+
+impl From<ContentDigest> for String {
+    fn from(d: ContentDigest) -> String {
+        d.to_hex()
+    }
+}
+
+impl fmt::Display for ContentDigest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.to_hex())
+    }
+}
+
 /// How a trust property came to be believed (`design/access-control.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -235,6 +298,13 @@ pub struct Envelope {
     pub properties: Vec<Property>,
     /// Title-grade discovery hint the index can use without fetching.
     pub hint: Option<String>,
+    /// BLAKE3 over the source's raw bytes, when the steward has one: set from
+    /// service metadata at enumeration when the service provides that exact
+    /// algorithm, else filled in the first time indexing reads the content.
+    /// Best-effort by construction — a source with no stable byte form
+    /// carries none and never collapses (`design/addressing.md`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_digest: Option<ContentDigest>,
 }
 
 #[cfg(test)]
@@ -279,6 +349,30 @@ mod tests {
             Err(AddressError::InvalidHost(_))
         ));
         assert!(matches!(HostId::new(""), Err(AddressError::EmptyHost)));
+    }
+
+    #[test]
+    fn digest_roundtrips_through_hex() {
+        let d = ContentDigest::of_bytes(b"# hi\n");
+        let hex = d.to_hex();
+        assert_eq!(hex.len(), 64);
+        assert_eq!(hex.parse::<ContentDigest>().expect("parses"), d);
+    }
+
+    #[test]
+    fn equal_bytes_digest_equal_and_different_bytes_differ() {
+        assert_eq!(ContentDigest::of_bytes(b"same"), ContentDigest::of_bytes(b"same"));
+        assert_ne!(ContentDigest::of_bytes(b"same"), ContentDigest::of_bytes(b"other"));
+    }
+
+    #[test]
+    fn rejects_malformed_digests() {
+        for bad in ["", "abc", &"A".repeat(64), &"g".repeat(64)] {
+            assert!(matches!(
+                bad.parse::<ContentDigest>(),
+                Err(AddressError::InvalidDigest(_))
+            ));
+        }
     }
 
     #[test]

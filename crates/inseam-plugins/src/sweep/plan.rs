@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use futures_util::future::join_all;
 
-use inseam_kernel::address::{ContentLength, Envelope};
+use inseam_kernel::address::{ContentDigest, ContentLength, Envelope};
 use inseam_kernel::fragment::{Extent, Mimetype, NewFragment, Sprout};
 use inseam_kernel::store::InventoryEntry;
 use inseam_kernel::subtree::{PlanNode, PlannedFragment, PlannedKeyed, Shape, SubtreePlan};
@@ -90,24 +90,31 @@ impl Planner {
 
     /// Read what the transforms may see: the text for indexable text
     /// sources within the size cap, the raw bytes only when a byte-wanting
-    /// transform claims the root.
+    /// transform claims the root. One raw read serves everything derived
+    /// from content — the text, the bytes, and the envelope's content
+    /// digest (`design/addressing.md`): the digest costs no extra fetch.
     async fn read_source(&self, source: &EnumeratedSource) -> Result<SourceRead, SeamError> {
         let is_texty = is_indexable_text(&source.envelope.content_type);
         let within_size = source.raw_bytes <= self.limits.max_content_bytes;
-        let content: Option<String> = if is_texty && within_size {
-            Some(self.connection.read_text(&source.address).await?)
-        } else {
-            None
-        };
         let wants_bytes = self.registrations.iter().any(|r| {
             r.transform.wants_bytes() && r.transform.claims(&source.envelope.content_type, true)
         });
-        let bytes: Option<Vec<u8>> = if wants_bytes && within_size {
+        let raw: Option<Vec<u8>> = if (is_texty || wants_bytes) && within_size {
             Some(self.connection.read_bytes(&source.address).await?)
         } else {
             None
         };
         let mut envelope = source.envelope.clone();
+        if envelope.content_digest.is_none() {
+            // A steward-supplied digest (service metadata, same algorithm)
+            // is kept; otherwise this first content read fills it in.
+            envelope.content_digest = raw.as_deref().map(ContentDigest::of_bytes);
+        }
+        let content: Option<String> = match &raw {
+            Some(bytes) if is_texty => Some(String::from_utf8_lossy(bytes).into_owned()),
+            _ => None,
+        };
+        let bytes: Option<Vec<u8>> = if wants_bytes { raw } else { None };
         if let Some(text) = &content {
             envelope.length = ContentLength::Lines(count_lines(text));
         }

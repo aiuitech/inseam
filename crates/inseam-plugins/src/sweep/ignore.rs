@@ -239,6 +239,7 @@ mod tests {
             observed: Timestamp(0),
             properties: Vec::new(),
             hint: Some(hint.into()),
+            content_digest: None,
         };
         (address, envelope)
     }
