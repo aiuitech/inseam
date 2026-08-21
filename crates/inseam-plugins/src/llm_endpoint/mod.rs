@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use inseam_kernel::substrate::{
@@ -25,7 +25,7 @@ const RETRIES: u32 = 3;
 /// Inputs per embeddings request; keeps request bodies comfortably bounded.
 const EMBED_BATCH: usize = 64;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LlmEndpointConfig {
     pub base_url: String,
@@ -88,7 +88,7 @@ impl Plugin for LlmEndpoint {
     async fn apply(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
         // No key, no provider: the fiber fails loudly and consumers that
         // declared `llm` optional keep running without it.
-        let key = ApiKey::from_env(&self.config.api_key_env).map_err(|e| PluginError(e))?;
+        let key = ApiKey::from_env(&self.config.api_key_env).map_err(PluginError)?;
         let client = LlmClient::new(key, &self.config.base_url);
         let facts = Facts::new()
             .with(llm::facts::TRANSFORM_MODEL, self.config.transform_model.as_str())

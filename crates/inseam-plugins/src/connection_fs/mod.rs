@@ -1,7 +1,8 @@
-//! The filesystem connection plugin: binds the `connection` seam for this
-//! machine's local filesystem host. Enumerates sources read-only, extracts
-//! envelopes, and serves fetches and scans. Service-specific connections
-//! (Gmail, Slack, ...) arrive as loaded plugins on the same seam.
+//! The filesystem connection plugin: registers this machine's local
+//! filesystem host into the `connections` seam. Enumerates sources
+//! read-only, extracts envelopes, and serves fetches and scans.
+//! Service-specific connections (Gmail, Slack, ...) register the same way
+//! on the same seam, linked or loaded.
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -12,14 +13,15 @@ use ignore::WalkBuilder;
 
 use inseam_kernel::address::{Address, ContentLength, Envelope, HostId, Locator, Timestamp};
 use inseam_kernel::fragment::Mimetype;
-use inseam_kernel::substrate::{
-    parse_config, ApplyCx, Facts, Inject, Manifest, Plugin, PluginError,
+use inseam_kernel::substrate::{parse_config, ApplyCx, Inject, Manifest, Plugin, PluginError};
+use inseam_seams::connection::{
+    register_as_effect, Capabilities, Connection, EnumeratedSource, HostDescription, HostKind,
+    Registration,
 };
 use inseam_seams::text::slice_lines;
-use inseam_seams::connection::{self, Connection, EnumeratedSource, CONNECTION};
 use inseam_seams::SeamError;
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct FsConnectionConfig {
     /// Override the derived `fs-<hostname>` host id (tests, containers).
@@ -83,11 +85,11 @@ impl inseam_kernel::substrate::PluginFactory for FsConnectionFactory {
 #[async_trait::async_trait]
 impl Plugin for FsConnection {
     fn manifest(&self) -> Manifest {
-        static INJECT: &[Inject] = &[];
+        static INJECT: &[Inject] = &[Inject::required("connections")];
         Manifest {
             name: "connection-fs",
             inject: INJECT,
-            provides: &["connection"],
+            provides: &[],
         }
     }
 
@@ -98,10 +100,19 @@ impl Plugin for FsConnection {
         };
         let walk = WalkConfig::compile(&self.config).map_err(|e| PluginError(e.to_string()))?;
         let host = FsHost::new(id, walk);
-        let facts = Facts::new()
-            .with(connection::facts::CHANGE_FEED, false)
-            .with(connection::facts::HOST, host.id().as_str());
-        cx.provide(&CONNECTION, Arc::new(host) as Arc<dyn Connection>, facts)?;
+        let registration = Registration {
+            entry_id: cx.entry_id().to_string(),
+            host: HostDescription {
+                id: host.id().clone(),
+                kind: HostKind::filesystem(),
+                display_name: gethostname::gethostname().to_string_lossy().into_owned(),
+            },
+            // A plain filesystem walk: no FSEvents watcher yet, and never a
+            // write path.
+            capabilities: Capabilities::READ_ONLY,
+            connection: Arc::new(host) as Arc<dyn Connection>,
+        };
+        register_as_effect(cx, registration)?;
         Ok(())
     }
 }
@@ -205,6 +216,18 @@ impl FsHost {
         Ok(Address::new(self.id.clone(), locator))
     }
 
+    /// The directory a sweep scope names: an absolute path as given, or a
+    /// locator (what an `inseam://<host>/<root>` address carries) rooted at
+    /// `/` — so `inseam index inseam://fs-mba/Users/greg/Notes` and
+    /// `inseam index /Users/greg/Notes` are the same scope.
+    fn scope_path(root: &str) -> PathBuf {
+        if root.starts_with('/') {
+            PathBuf::from(root)
+        } else {
+            Path::new("/").join(root)
+        }
+    }
+
     /// The local path behind an address. Refuses foreign hosts and locators
     /// with parent-directory components.
     pub fn resolve(&self, address: &Address) -> Result<PathBuf, SeamError> {
@@ -285,17 +308,13 @@ impl FsHost {
 
 #[async_trait::async_trait]
 impl Connection for FsHost {
-    fn host(&self) -> &HostId {
-        &self.id
-    }
-
     /// Walk a directory and emit every enumerable source: regular, non-empty
     /// files the walk's ignore rules admit — hidden names, `.gitignore` and
     /// `.inseamignore` files in the tree, and the configured patterns all
     /// prune here, so an ignored file never becomes an address. Read-only;
     /// symlinks are not followed.
     async fn enumerate(&self, root: &str) -> Result<Vec<EnumeratedSource>, SeamError> {
-        let dir = Path::new(root)
+        let dir = Self::scope_path(root)
             .canonicalize()
             .map_err(|e| SeamError::failed(format!("cannot enumerate {root}: {e}")))?;
         // The walk is synchronous disk work; it runs on the blocking pool so
@@ -307,7 +326,7 @@ impl Connection for FsHost {
     }
 
     fn locator_prefix(&self, root: &str) -> Option<String> {
-        let canonical = Path::new(root).canonicalize().ok()?;
+        let canonical = Self::scope_path(root).canonicalize().ok()?;
         Some(self.address_for(&canonical).ok()?.locator.as_str().to_string())
     }
 

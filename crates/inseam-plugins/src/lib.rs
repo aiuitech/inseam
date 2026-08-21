@@ -12,9 +12,11 @@
 //! first-party set a distribution links.
 
 pub mod connection_fs;
+pub mod connections;
 pub mod embedder;
 pub mod finder;
 pub mod llm_endpoint;
+pub mod oauth;
 pub mod operations;
 pub mod sweep;
 pub mod transform_chunker;
@@ -31,7 +33,9 @@ use inseam_kernel::substrate::PluginFactory;
 /// set (the CLI, the macOS app).
 pub fn factories() -> Vec<Arc<dyn PluginFactory>> {
     vec![
+        Arc::new(connections::ConnectionsRegistryFactory),
         Arc::new(connection_fs::FsConnectionFactory),
+        Arc::new(oauth::OAuthFactory),
         Arc::new(llm_endpoint::LlmEndpointFactory),
         Arc::new(embedder::EmbedderFactory),
         Arc::new(transforms::TransformsRegistryFactory),

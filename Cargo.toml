@@ -24,6 +24,7 @@ inseam-wasm-host = { path = "crates/inseam-wasm-host" }
 
 anyhow = "1.0.104"
 async-trait = "0.1.89"
+base64 = "0.22.1"
 clap = { version = "4.6.6", features = ["derive", "env"] }
 dirs = "6.0.0"
 gethostname = "1.1.0"
@@ -32,16 +33,18 @@ ignore = "0.4.23"
 libsql = { version = "0.9.30", default-features = false, features = ["core"] }
 mime_guess = "2.0.5"
 pulldown-cmark = "0.13.4"
+rand = "0.9.5"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.10.9"
 thiserror = "2.0.20"
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "fs", "sync"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "fs", "sync", "net", "io-util", "time"] }
 futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
 toml = "1.1.4"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+url = "2.5.8"
 wasmtime = { version = "38", default-features = false, features = [
     "runtime", "component-model", "async", "cranelift", "parallel-compilation",
 ] }

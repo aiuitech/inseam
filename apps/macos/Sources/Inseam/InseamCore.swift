@@ -32,6 +32,34 @@ final class CoreNode {
         return String(cString: pointer)
     }
 
+    static func readSettings(at compositionURL: URL) throws -> ConfigurationSettings {
+        var error: UnsafeMutablePointer<CChar>?
+        guard let json = inseam_settings_read(compositionURL.path, &error) else {
+            throw CoreError(taking: error)
+        }
+        defer { inseam_string_free(json) }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(
+            ConfigurationSettings.self,
+            from: Data(String(cString: json).utf8)
+        )
+    }
+
+    static func writeSettings(
+        _ settings: ConfigurationSettings,
+        to compositionURL: URL
+    ) throws {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        encoder.outputFormatting = [.sortedKeys]
+        let json = try String(decoding: encoder.encode(settings), as: UTF8.self)
+        var error: UnsafeMutablePointer<CChar>?
+        guard inseam_settings_write(compositionURL.path, json, &error) else {
+            throw CoreError(taking: error)
+        }
+    }
+
     init(dataDir: URL) throws {
         var error: UnsafeMutablePointer<CChar>?
         guard let handle = inseam_node_open(dataDir.path, nil, &error) else {

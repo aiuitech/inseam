@@ -13,7 +13,7 @@
 //! kernel.
 
 use globset::{GlobBuilder, GlobMatcher};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use inseam_kernel::address::{Address, Envelope};
@@ -42,7 +42,7 @@ pub enum IgnoreError {
 /// a source when **any** of its rules does. `address` and `locator` are
 /// matched path-wise (`*` stops at `/`, `**` does not); the other fields
 /// are matched as plain strings (`*` matches anything).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct IgnoreRule {
     /// Glob over the rendered address, `inseam://<host>/<locator>`.

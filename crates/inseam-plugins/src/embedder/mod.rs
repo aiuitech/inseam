@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use inseam_kernel::substrate::{
     parse_config, ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, STORE,
@@ -20,7 +20,7 @@ use inseam_seams::SeamError;
 /// Characters of input text an embedding sees; more adds cost, not recall.
 const EMBED_INPUT_CHARS: usize = 6_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Provider {
     /// Remote embeddings through the `llm` seam's endpoint.
@@ -31,7 +31,7 @@ pub enum Provider {
     None,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct EmbedderConfig {
     pub provider: Provider,

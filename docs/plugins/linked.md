@@ -6,7 +6,9 @@ Every plugin is the same five declarations — name, config, inject, provide, ap
 
 | Plugin | Provides | Injects | Role |
 | --- | --- | --- | --- |
-| `connection-fs` | `connection` | — | the local filesystem host ([indexing/filesystem-host.md](../indexing/filesystem-host.md)) |
+| `connections` | `connections` | — | the registry connection plugins sign up with ([indexing/connections.md](../indexing/connections.md)) |
+| `connection-fs` | — | connections | the local filesystem host ([indexing/filesystem-host.md](../indexing/filesystem-host.md)) |
+| `oauth` | `oauth` | — | the node's OAuth grants: authorize, store, refresh; host connections consume them by id ([oauth.md](oauth.md)) |
 | `llm-endpoint` | `llm` | — | OpenAI-compatible client; declares `transform_model`/`agent_model` as facts. Fails loudly (and alone) when its key env var is unset, and declares that need via `Plugin::secrets()` so status surfaces can say why the key matters |
 | `embedder` | `embedder` | store, llm? | endpoint / hashed / none; declares the embedding identity to the store, which opens the search surface under it |
 | `transforms` | `transforms` | — | the registry transform plugins sign up with |
@@ -15,10 +17,10 @@ Every plugin is the same five declarations — name, config, inject, provide, ap
 | `transform-summarizer` | — | transforms | the mandatory summary (LLM → extractive → envelope) |
 | `transform-entities` | — | transforms | LLM entity extraction |
 | `finder` | `finder` | store, embedder | the ranking algorithm ([finder/algorithm.md](../finder/algorithm.md)) |
-| `sweep` | `sweep` | store, connection, transforms, embedder, llm? | the reconciling sweep ([indexing/maintenance.md](../indexing/maintenance.md)) |
-| `operations` | `operations` | store, connection, finder, sweep | the transport-neutral node API ([finder/operations.md](../finder/operations.md)) |
+| `sweep` | `sweep` | store, connections, transforms, embedder, llm? | the reconciling sweep ([indexing/maintenance.md](../indexing/maintenance.md)) |
+| `operations` | `operations` | store, connections, finder, sweep | the transport-neutral node API ([finder/operations.md](../finder/operations.md)) |
 
-Each plugin is one directory under `crates/inseam-plugins/src/`, named for its composition name with underscores (`transform-markdown` → `transform_markdown/`): its `mod.rs` holds the config, factory, manifest, and apply; pure helpers sit beside it as sibling files; and every linked transform ships its own golden checks there too (`src/<plugin>/<registration>.checks.toml`) — the same schema and coverage rule as a loaded plugin's, run by the conformance suite through the seam ([validation.md](validation.md)). Registering a transform is one seam call, `inseam_seams::transforms::register_as_effect`, which the wasm bridge uses too.
+Each plugin is one directory under `crates/inseam-plugins/src/`, named for its composition name with underscores (`transform-markdown` → `transform_markdown/`): its `mod.rs` holds the config, factory, manifest, and apply; pure helpers sit beside it as sibling files; and every linked transform ships its own golden checks there too (`src/<plugin>/<registration>.checks.toml`) — the same schema and coverage rule as a loaded plugin's, run by the conformance suite through the seam ([validation.md](validation.md)). Registering a transform is one seam call, `inseam_seams::transforms::register_as_effect`, which the wasm bridge uses too; registering a connection is its twin, `inseam_seams::connection::register_as_effect` ([indexing/connections.md](../indexing/connections.md)).
 
 The agent skill at `skills/inseam-linked-plugin/SKILL.md` is the authoring guide for this tier ([../skills/inseam-linked-plugin.md](../skills/inseam-linked-plugin.md)); it assumes a source checkout, since a linked plugin is a build input.
 

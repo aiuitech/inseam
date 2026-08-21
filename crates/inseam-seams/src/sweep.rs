@@ -1,10 +1,11 @@
 //! The `sweep` seam: the reconciling sweep as a service
 //! (`design/index-maintenance.md`), so change feeds can schedule targeted
-//! runs and owner operations can invoke it. Consumes `connection`,
+//! runs and owner operations can invoke it. Consumes `connections`,
 //! `transforms`, `embedder`, and the kernel store.
 
 use std::fmt;
 
+use inseam_kernel::address::HostId;
 use inseam_kernel::substrate::ServiceKey;
 
 use crate::SeamError;
@@ -13,6 +14,8 @@ pub const SWEEP: ServiceKey<dyn Sweep> = ServiceKey::new("sweep");
 
 #[derive(Debug, Clone)]
 pub struct SweepRequest {
+    /// The host to sweep; its connection interprets `root`.
+    pub host: HostId,
     /// Connection-interpreted scope (a directory path for the filesystem).
     pub root: String,
     /// Re-index sources even when unchanged.

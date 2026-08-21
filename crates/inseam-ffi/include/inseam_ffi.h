@@ -24,6 +24,14 @@ typedef struct InseamNode InseamNode;
 /* The core library version as a fresh string. */
 char *inseam_version(void);
 
+/* Read effective first-party settings, with plugin defaults, as JSON. */
+char *inseam_settings_read(const char *composition_path, char **error_out);
+
+/* Validate and atomically write settings JSON. Custom entries are retained. */
+bool inseam_settings_write(const char *composition_path,
+                           const char *settings_json,
+                           char **error_out);
+
 /* Open the node under data_dir. composition_path may be NULL: then
  * <data_dir>/composition.toml is layered over the built-in base composition
  * when present. */

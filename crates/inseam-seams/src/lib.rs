@@ -19,6 +19,7 @@ pub mod embedder;
 pub mod error;
 pub mod finder;
 pub mod llm;
+pub mod oauth;
 pub mod operations;
 pub mod sweep;
 pub mod text;

@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use inseam_kernel::fragment::{FragmentId, Relation, RelationKind};
 use inseam_kernel::store::{IndexStore, SourceId, StoredSource};
@@ -18,7 +18,7 @@ use inseam_seams::embedder::{Embedder, EMBEDDER};
 use inseam_seams::finder::{Expansion, Finder, RankedFragment, RankedSource, FINDER};
 use inseam_seams::SeamError;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct FinderConfig {
     /// Fragments retrieved from each seed list (full-text and vector).
@@ -58,7 +58,7 @@ impl Default for FinderConfig {
 /// kind name plus a default for kinds it does not list; the built-in table
 /// tunes the kinds the first-party transforms emit, and a composition may
 /// add or override entries (`[entry.config.weights]`).
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RelationWeights {
     /// Weight for any kind `by_kind` does not name.

@@ -20,7 +20,7 @@ use inseam_seams::transforms::{
 
 use summarize::SummaryKind;
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SummarizerConfig {
     /// Target summary length in characters. Config sets the length, not the

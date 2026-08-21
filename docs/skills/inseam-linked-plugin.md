@@ -107,3 +107,19 @@ Write them first and build to them.
    if you added to it) and the crate `//!` doc block, then `cargo xtask
    docs`. Commit with the checks file, the enrollment arms, and the docs
    in the same change.
+
+### Connection plugins
+
+A connection stewards a host: copy `crates/inseam-plugins/src/connection_fs/`.
+Its `apply` injects `connections` and calls
+`inseam_seams::connection::register_as_effect` once per host with a
+`Registration` — `HostDescription` (id, `HostKind`, display name),
+`Capabilities` stated in full (enumerates / change_feed / writable), and the
+`Connection` handle (`enumerate`, `locator_prefix`, `read_text`,
+`read_lines`, `read_bytes`). Consumers resolve by host, so nothing
+downstream changes when a host is added (`docs/indexing/connections.md`).
+A remote host reached through OAuth injects `oauth` too, names a grant in
+its config (`grant = "google"`), checks its scopes with `require_scopes` at
+apply, and asks the handle for `access_token()` per request — never
+implement the flow or keep tokens yourself (`docs/plugins/oauth.md`).
+

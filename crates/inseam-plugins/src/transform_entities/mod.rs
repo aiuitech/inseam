@@ -22,7 +22,7 @@ use inseam_seams::transforms::{
     TransformKind, TransformOutput,
 };
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct EntityExtractorConfig {
     /// Cap on entities taken from a single source (shape tier).

@@ -9,6 +9,8 @@ A C ABI static library (`libinseam_ffi.a`) with a hand-maintained header at `cra
 | Function | Does |
 | --- | --- |
 | `inseam_version` | Core version string |
+| `inseam_settings_read` | Effective first-party settings as JSON, with plugin defaults filled in |
+| `inseam_settings_write` | Validate settings JSON and atomically update the composition while retaining custom entries |
 | `inseam_node_open` | Open the node under a data dir; optional composition path, otherwise `<data_dir>/composition.toml` layered over the built-in base. Opens even when entries are parked (a missing API key, say) — operation calls then error with the explanation |
 | `inseam_node_health` | Per-entry fiber health JSON: `{id, plugin, state, error, missing, missing_secrets}` per composition entry — "what is parked and why", with each missing secret's variable name and owner-facing purpose |
 | `inseam_node_query` | Finder query → `QueryResponse` JSON |
@@ -24,12 +26,15 @@ A SwiftPM package, no Xcode project:
 - `Sources/CInseamFFI/module.modulemap` — system-library target exposing the FFI header and linking `inseam_ffi`.
 - `Sources/Inseam/InseamCore.swift` — `CoreNode`: RAII wrapper over the handle (with explicit `close()` so Settings can reopen), JSON decoding into Swift structs (snake_case converted).
 - `Sources/Inseam/ContentView.swift` — the UI: open node on launch (data dir `~/Library/Application Support/inseam`, shared with the CLI), Index Folder… button, query field, results list.
-- `Sources/Inseam/SettingsView.swift` — the Settings scene (⌘,): a Composition tab and a Secrets tab.
+- `Sources/Inseam/Configuration.swift` — Codable mirrors of the first-party plugin config types used by the settings bridge.
+- `Sources/Inseam/SettingsView.swift` — the Settings scene (⌘,): visual Configuration, Secrets, and Advanced tabs.
 - `Sources/Inseam/Secrets.swift` — `SecretStore`, the Keychain wrapper behind the Secrets tab.
 
 ## Configuration and secrets
 
-Settings is file-first, like VS Code: the Composition tab is a plain TOML editor over `<data-dir>/composition.toml` — the same file the CLI layers, documented in [configuration.md](../configuration.md) — so hand edits and GUI edits are the same thing. Saving writes the file and reopens the node.
+The Configuration tab is the ordinary editing path. It groups the first-party entries into Connections, Models, Indexing, and Search, with native controls for every field and enable switch. Connections includes the local filesystem and reusable OAuth grants. The Rust bridge reads the effective composition through the real plugin config types, fills in their defaults, validates edits, and atomically writes complete config tables back to `<data-dir>/composition.toml`. This matters because a config table replaces the base entry's table wholesale rather than merging field by field.
+
+Form saves retain custom and loaded-plugin entries. The serializer normalizes the TOML and does not retain comments. The Advanced tab keeps a raw editor for custom plugin fields and hand-authored structure the first-party form cannot represent. A malformed file prevents the visual form from loading and points the user to Advanced. Saving either editor reopens the node.
 
 Secrets follow the composition design ([design/composition.md](../../design/composition.md)): the file never holds them; plugin configs name environment variables (`api_key_env`-style). The CLI gets those variables from your shell, but a GUI app launched from Finder has no shell environment — so the Secrets tab stores name→value pairs in your login Keychain (service `app.inseam.secrets`), and the app exports each one with `setenv` just before every node open. Adding or removing a secret reopens the node so plugins re-resolve their keys.
 

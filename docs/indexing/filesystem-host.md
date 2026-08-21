@@ -1,6 +1,6 @@
 # The Filesystem Host
 
-The first `connection` provider: the `connection-fs` plugin, stewarding this machine's filesystem. Service hosts (Gmail, Slack, …) arrive later as loaded connection plugins on the same interface ([design/connections.md](../../design/connections.md)).
+The first connection plugin: `connection-fs`, registering this machine's filesystem into the `connections` registry ([connections.md](connections.md)) as a host of kind `fs` with read-only capabilities (enumerates; no change feed yet; not writable). Service hosts (Gmail, Slack, …) register the same way on the same seam ([design/connections.md](../../design/connections.md)).
 
 ## Identity and addresses
 
@@ -14,7 +14,7 @@ Resolution refuses addresses for other hosts and any locator containing a parent
 
 ## Enumeration
 
-`inseam index <dir>` walks the directory **read-only**:
+`inseam index <dir>` walks the directory **read-only** (a scope may also be given as a locator — `inseam index inseam://<host>/Users/greg/Notes` is the same scope as `/Users/greg/Notes`):
 
 - hidden files and directories (dot-named) are skipped by default, `.gitignore` files found in the tree are honored by default, `.inseamignore` files are always honored, and the entry's `ignore` patterns prune the walk — all in gitignore syntax ([ignore.md](ignore.md)). The root the caller explicitly named is never skipped;
 - symlinks are not followed; empty files are skipped;

@@ -4,6 +4,7 @@
 //! the apply context refuses access to any key not declared there, so what a
 //! plugin *can* touch is readable off its declaration.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
@@ -132,12 +133,21 @@ pub struct ApplyCx<'a> {
     pub(crate) bindings: &'a mut std::collections::HashMap<String, Binding>,
     pub(crate) effects: &'a mut Vec<Effect>,
     pub(crate) bus: &'a EventBus,
+    pub(crate) data_dir: &'a Path,
 }
 
 impl ApplyCx<'_> {
     /// The id of the composition entry this fiber runs as.
     pub fn entry_id(&self) -> &str {
         self.entry.as_str()
+    }
+
+    /// The node's data directory, for the files a plugin keeps that are
+    /// neither configuration (the composition) nor store (derived,
+    /// discardable): credential files above all (`design/kernel.md`). A
+    /// plugin must keep to its own subdirectory, named for its entry.
+    pub fn data_dir(&self) -> &Path {
+        self.data_dir
     }
 
     /// A required injection. Undeclared access is refused loudly — the

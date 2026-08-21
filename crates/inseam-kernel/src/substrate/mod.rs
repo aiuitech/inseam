@@ -8,7 +8,7 @@ mod kernel;
 mod plugin;
 mod service;
 
-pub use composition::{Composition, CompositionError, Entry};
+pub use composition::{Composition, CompositionError, Entry, ENTRY_COUNT_MAX};
 pub use error::{PluginError, SubstrateError};
 pub use events::{EventBus, Guard, Next, Notify, Subscription, Verdict, Waterfall};
 pub use fiber::{EntryId, FiberState, FiberView};

@@ -6,7 +6,7 @@
 //! unloads, and edits equals a fresh boot of the final composition.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::composition::{Composition, Entry};
@@ -36,6 +36,10 @@ pub struct Kernel {
     bindings: HashMap<String, Binding>,
     bus: EventBus,
     store: Arc<IndexStore>,
+    /// The node's data directory — where the store lives and where plugins
+    /// keep files that are neither config nor store (credential files,
+    /// artifact caches). Handed to plugins through `ApplyCx::data_dir`.
+    data_dir: PathBuf,
 }
 
 impl Kernel {
@@ -71,11 +75,17 @@ impl Kernel {
             bindings,
             bus: EventBus::new(),
             store,
+            data_dir: data_dir.to_path_buf(),
         })
     }
 
     pub fn store(&self) -> &Arc<IndexStore> {
         &self.store
+    }
+
+    /// The data directory the node was booted with.
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
     }
 
     pub fn bus(&self) -> &EventBus {
@@ -276,6 +286,7 @@ impl Kernel {
                 bindings: &mut self.bindings,
                 effects: &mut fiber.effects,
                 bus: &self.bus,
+                data_dir: &self.data_dir,
             };
             fiber.plugin.apply(&mut cx).await
         };

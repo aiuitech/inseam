@@ -11,6 +11,10 @@ use inseam_seams::operations::{Operations, QueryRequest, OPERATIONS};
 
 pub const OFFLINE_BASE: &str = r#"
 [[entry]]
+id = "connections"
+plugin = "connections"
+
+[[entry]]
 id = "fs"
 plugin = "connection-fs"
 

@@ -8,7 +8,7 @@
 mod common;
 
 use inseam_kernel::fragment::{FragmentKey, Mimetype, NewFragment, Relation, RelationKind};
-use inseam_seams::connection::CONNECTION;
+use inseam_seams::connection::CONNECTIONS;
 use inseam_seams::operations::{IndexRequest, QueryRequest};
 
 async fn index(
@@ -16,6 +16,7 @@ async fn index(
     root: &std::path::Path,
 ) -> inseam_seams::sweep::IndexReport {
     ops.index(IndexRequest {
+        host: None,
         root: root.display().to_string(),
         rebuild: false,
     })
@@ -41,12 +42,15 @@ async fn vanished_sources_are_removed_and_their_entities_collected() {
     // entity transform would have (it needs an LLM, so we plant it directly
     // through the kernel store).
     let store = kernel.store();
-    let host = kernel
-        .facts(&CONNECTION)
-        .and_then(|f| f.str("host"))
-        .expect("connection declares its host")
-        .to_string();
-    let host_id = inseam_kernel::address::HostId::new(host).expect("valid");
+    let host_id = kernel
+        .service(&CONNECTIONS)
+        .expect("connections bound")
+        .snapshot()
+        .pop()
+        .expect("the filesystem connection registered")
+        .host
+        .id
+        .clone();
     let sources = store.sources_of_host(&host_id).await.expect("ok");
     let (doomed_sid, _) = sources
         .iter()

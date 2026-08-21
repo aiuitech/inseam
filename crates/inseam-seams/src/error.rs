@@ -2,7 +2,7 @@
 //! conditions consumers meaningfully branch on; everything else travels as
 //! `Failed` with a message that says what failed and why.
 
-use inseam_kernel::address::Address;
+use inseam_kernel::address::{Address, HostId};
 use inseam_kernel::store::StoreError;
 use thiserror::Error;
 
@@ -16,6 +16,15 @@ pub enum SeamError {
     BinaryFetch(Address, String),
     #[error("bad address: {0}")]
     Address(#[from] inseam_kernel::address::AddressError),
+    /// No mounted connection stewards the named host.
+    #[error("no connection on this node stewards host `{0}`")]
+    UnknownHost(HostId),
+    /// A scope named no host and this node stewards several.
+    #[error("several hosts are mounted ({}); name one", hosts_list(.0))]
+    AmbiguousHost(Vec<HostId>),
+    /// A credential is not granted yet — the owner must authorize it.
+    #[error("not authorized: {0}")]
+    Unauthorized(String),
     /// A policy seam (budget guard, boundary filter) refused the call.
     #[error("refused: {0}")]
     Refused(String),
@@ -32,4 +41,12 @@ impl SeamError {
     pub fn failed(message: impl Into<String>) -> Self {
         Self::Failed(message.into())
     }
+}
+
+fn hosts_list(hosts: &[HostId]) -> String {
+    hosts
+        .iter()
+        .map(|h| format!("`{h}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }

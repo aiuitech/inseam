@@ -19,9 +19,11 @@ use clap::{Parser, Subcommand};
 mod agent;
 mod authoring;
 
+use inseam_kernel::address::{Address, HostId};
 use inseam_kernel::substrate::{Composition, FiberState, Kernel, SubstrateError};
 use agent::{run_agent, AgentEvent};
 use inseam_seams::llm::{self, ModelInfo, LLM};
+use inseam_seams::oauth::{GrantId, GrantState, OAUTH};
 use inseam_seams::operations::{
     ExpandRequest, FetchRequest, IndexRequest, QueryRequest, QueryResponse, ScanRequest,
     OPERATIONS,
@@ -35,8 +37,16 @@ pub use inseam_kernel::substrate::PluginFactory;
 /// result.
 const BASE_COMPOSITION: &str = r#"
 [[entry]]
+id = "connections"
+plugin = "connections"
+
+[[entry]]
 id = "fs"
 plugin = "connection-fs"
+
+[[entry]]
+id = "oauth"
+plugin = "oauth"
 
 [[entry]]
 id = "llm"
@@ -139,13 +149,27 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Index a directory of the local filesystem host (read-only).
+    /// Index a scope of one host this node stewards (read-only): a
+    /// directory for the filesystem host, a label or folder for a service
+    /// host. `root` may also be an address, `inseam://<host>/<root>`, which
+    /// names the host itself.
     Index {
-        root: PathBuf,
+        root: String,
+        /// The host to sweep; defaults to the only host mounted, and is
+        /// required once several are.
+        #[arg(long)]
+        host: Option<String>,
         /// Re-index sources even when unchanged.
         #[arg(long)]
         rebuild: bool,
     },
+    /// The hosts this node stewards and what each connection supports.
+    Hosts,
+    /// The configured OAuth grants and where each stands.
+    Grants,
+    /// Authorize an OAuth grant: prints the provider's sign-in URL and waits
+    /// for the browser to land back on the node.
+    Authorize { grant: String },
     /// Query the discovery index: ranked addresses with summaries and hints.
     Query {
         text: String,
@@ -387,15 +411,67 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
     }
 
     match cli.command {
-        Command::Index { root, rebuild } => {
+        Command::Index { root, host, rebuild } => {
             let ops = kernel.service(&OPERATIONS)?;
-            let report = ops
-                .index(IndexRequest {
-                    root: root.display().to_string(),
-                    rebuild,
-                })
-                .await?;
+            let (host, root) = index_scope(&root, host.as_deref())?;
+            let report = ops.index(IndexRequest { host, root, rebuild }).await?;
             println!("{report}");
+        }
+        Command::Hosts => {
+            let ops = kernel.service(&OPERATIONS)?;
+            let hosts = ops.hosts().await?;
+            if hosts.is_empty() {
+                println!("no hosts: no connection plugin is mounted");
+            }
+            for h in &hosts {
+                let c = h.capabilities;
+                println!(
+                    "{:28} {:8} {:14} {}{}{}  {}",
+                    h.id,
+                    h.kind,
+                    h.entry,
+                    if c.enumerates { "enumerates " } else { "" },
+                    if c.change_feed { "change-feed " } else { "" },
+                    if c.writable { "writable" } else { "read-only" },
+                    h.display_name
+                );
+            }
+        }
+        Command::Grants => {
+            let Ok(oauth) = kernel.service(&OAUTH) else {
+                bail!("`inseam grants` needs the oauth entry active");
+            };
+            let grants = oauth.grants();
+            if grants.is_empty() {
+                println!("no grants configured; add `[[entry.config.grants]]` to the oauth entry (docs/plugins/oauth.md)");
+            }
+            for grant in &grants {
+                let state = match grant.state().await {
+                    GrantState::MissingSecret { env } => format!("missing secret: set {env}"),
+                    GrantState::Unauthorized => "unauthorized — run `inseam authorize`".to_string(),
+                    GrantState::Authorized { expires_at, scopes } => format!(
+                        "authorized ({}) scopes: {}",
+                        expires_at.map_or("no expiry".to_string(), |t| format!("token until {}", inseam_seams::dates::ymd(t))),
+                        scopes.join(" ")
+                    ),
+                };
+                println!("{:20} {state}", grant.id());
+            }
+        }
+        Command::Authorize { grant } => {
+            let Ok(oauth) = kernel.service(&OAUTH) else {
+                bail!("`inseam authorize` needs the oauth entry active");
+            };
+            let id = GrantId::new(grant.as_str())?;
+            let Some(handle) = oauth.grant(&id) else {
+                let known: Vec<String> = oauth.grants().iter().map(|g| g.id().to_string()).collect();
+                bail!("no grant `{id}` is configured; known grants: {}", known.join(", "));
+            };
+            let pending = handle.authorize().await?;
+            println!("Open this URL in your browser and sign in:\n\n  {}\n", pending.url());
+            println!("Waiting for the browser to come back…");
+            pending.complete().await?;
+            println!("grant `{id}` authorized");
         }
         Command::Query { text, limit, json } => {
             let ops = kernel.service(&OPERATIONS)?;
@@ -570,6 +646,29 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
     }
     kernel.shutdown().await;
     Ok(())
+}
+
+/// What `inseam index` means by its arguments: an address names its host
+/// and the locator is the scope; otherwise `--host` (if any) and the root
+/// verbatim — except that a bare root naming an existing local path is made
+/// absolute, so `inseam index .` keeps meaning this directory. That
+/// convenience is the transport knowing it runs on a filesystem, nothing a
+/// connection is told.
+fn index_scope(root: &str, host: Option<&str>) -> anyhow::Result<(Option<HostId>, String)> {
+    if root.starts_with("inseam://") {
+        if host.is_some() {
+            bail!("pass either an address or --host, not both");
+        }
+        let address: Address = root.parse()?;
+        return Ok((Some(address.host), address.locator.as_str().to_string()));
+    }
+    let host = host.map(HostId::new).transpose()?;
+    let path = std::path::Path::new(root);
+    let root = match (host.is_none(), path.exists()) {
+        (true, true) => std::path::absolute(path)?.display().to_string(),
+        _ => root.to_string(),
+    };
+    Ok((host, root))
 }
 
 /// The node's composition overlay: `--composition`, else `<data-dir>/composition.toml`.

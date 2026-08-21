@@ -15,7 +15,7 @@ Errors are typed and written as sentences (`no source at …`, `scan start line 
 
 ## Owner operations
 
-`operations.index { root, rebuild }` — hands off to the `sweep` seam over a scope of the mounted connection, returning an `IndexReport` (counts per summary kind, fragments, relations, keyed fragments anchored, dollars spent). Owner-only; never exposed through a boundary adapter.
+`operations.index { host?, root, rebuild }` — hands off to the `sweep` seam over a scope of one stewarded host, returning an `IndexReport` (counts per summary kind, fragments, relations, keyed fragments anchored, dollars spent). `host` may be omitted only while the node stewards exactly one host; with several, the error lists them. `operations.hosts` — every host this node stewards: id, kind, display name, the entry whose connection serves it, and its capabilities ([indexing/connections.md](../indexing/connections.md)). Both owner-only; never exposed through a boundary adapter.
 
 ## The agent demo
 

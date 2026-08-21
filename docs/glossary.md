@@ -15,7 +15,8 @@ The inseam vocabulary, one page. Definitions here are canonical; the linked desi
 - **Node** — a running inseam instance; a participant in the network. Distinct from a host even on the same machine: the host holds the sources, the node does the networking.
 - **Steward** — the node that speaks for a host: publishes its addresses, indexes it, serves fetches from it. Every host joins the network through a steward.
 - **Local host / remote host** — a host its steward reaches through the local machine (filesystem, OS APIs) vs. through a service's own protocol (OAuth + REST, IMAP). The only difference is which connection plugin is used.
-- **Connection** — an edge owned by a node: node↔node (the inseam protocol: sync, query, fetch routing) or node→host (how a steward reaches a host). Carries protocol, credentials, and capabilities. ([design/connections.md](../design/connections.md))
+- **Connection** — an edge owned by a node: node↔node (the inseam protocol: sync, query, fetch routing) or node→host (how a steward reaches a host). Carries protocol, credentials, and capabilities. A node holds many, one per host, registered by connection plugins into the `connections` seam. ([design/connections.md](../design/connections.md))
+- **Grant** — one configured OAuth authorization against a provider account (`google`, `slack-work`): endpoints, scopes, and which environment variables hold the client's own credentials. Authorized once by the owner; host connections consume it by id for live access tokens. ([plugins/oauth.md](plugins/oauth.md))
 - **Network** — the graph of nodes: a private network forming a single trust domain with no central authority. ([design/network.md](../design/network.md))
 
 ## Sync
@@ -59,7 +60,7 @@ The inseam vocabulary, one page. Definitions here are canonical; the linked desi
 ## The kernel and plugins
 
 - **Kernel** — the smallest thing that makes "everything is a plugin" true: it runs plugins (the substrate) and owns persistent data (the store). It knows nothing about hosts, formats, ranking, or transports. ([design/kernel.md](../design/kernel.md))
-- **Seam** — a typed service interface bound to a well-known key (`connection`, `transforms`, `llm`, …); together the seams are the system's real API. Definitions live in `inseam-seams`, separate from both providers and consumers. ([design/services.md](../design/services.md))
+- **Seam** — a typed service interface bound to a well-known key (`connections`, `transforms`, `llm`, `oauth`, …); together the seams are the system's real API. Definitions live in `inseam-seams`, separate from both providers and consumers. ([design/services.md](../design/services.md))
 - **Capability fact** — a declared property of whatever provider is mounted at a key ("offers a change feed", "works offline"). Consumers check facts, never which provider it is.
 - **Plugin** — the unit of everything: name + typed config + inject (its capability manifest) + provide + apply. Two trust tiers, one model, named for when the code enters the node: **linked** (Rust, compiled into the binary at build, turned on by the composition) and **loaded** (WASM components mounted while the node runs, sandboxed by construction). ([design/plugins.md](../design/plugins.md))
 - **Fiber** — one running plugin instance, with a reactive lifecycle: it starts when the services it needs exist, restarts when one of them changes, and fails alone.

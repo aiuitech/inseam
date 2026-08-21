@@ -7,7 +7,7 @@
 mod common;
 
 use inseam_kernel::fragment::FragmentId;
-use inseam_seams::connection::CONNECTION;
+use inseam_seams::connection::CONNECTIONS;
 use inseam_seams::operations::IndexRequest;
 
 fn write_corpus(dir: &std::path::Path) {
@@ -34,12 +34,15 @@ fn write_corpus(dir: &std::path::Path) {
 /// in id order: the whole graph's observable identity.
 async fn graph_signature(kernel: &inseam_kernel::substrate::Kernel) -> Vec<(i64, String, String, Option<String>)> {
     let store = kernel.store();
-    let host = kernel
-        .facts(&CONNECTION)
-        .and_then(|f| f.str("host"))
-        .expect("host fact")
-        .to_string();
-    let host_id = inseam_kernel::address::HostId::new(host).expect("valid");
+    let host_id = kernel
+        .service(&CONNECTIONS)
+        .expect("connections bound")
+        .snapshot()
+        .pop()
+        .expect("the filesystem connection registered")
+        .host
+        .id
+        .clone();
     let mut out = Vec::new();
     for (sid, locator) in store.sources_of_host(&host_id).await.expect("ok") {
         let stored = store.source(sid).await.expect("ok").expect("present");
@@ -63,6 +66,7 @@ async fn index_with(concurrency: usize, corpus: &std::path::Path) -> (inseam_ker
     let ops = common::ops(&kernel);
     let report = ops
         .index(IndexRequest {
+            host: None,
             root: corpus.display().to_string(),
             rebuild: false,
         })

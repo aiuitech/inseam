@@ -45,6 +45,7 @@ async fn the_incremental_discovery_ladder_works_offline() {
     // --- index (owner operation) ---
     let report = ops
         .index(IndexRequest {
+            host: None,
             root: root.clone(),
             rebuild: false,
         })
@@ -62,6 +63,7 @@ async fn the_incremental_discovery_ladder_works_offline() {
     // Second run: everything unchanged, nothing rebuilt.
     let again = ops
         .index(IndexRequest {
+            host: None,
             root: root.clone(),
             rebuild: false,
         })
@@ -183,6 +185,7 @@ async fn rebuild_reindexes_unchanged_sources() {
     let ops = common::ops(&kernel);
     let root = corpus.path().display().to_string();
     ops.index(IndexRequest {
+        host: None,
         root: root.clone(),
         rebuild: false,
     })
@@ -190,6 +193,7 @@ async fn rebuild_reindexes_unchanged_sources() {
     .expect("indexes");
     let rebuilt = ops
         .index(IndexRequest {
+            host: None,
             root: root.clone(),
             rebuild: true,
         })
@@ -213,6 +217,7 @@ async fn changed_sources_have_their_subtree_replaced() {
     let ops = common::ops(&kernel);
     let root = corpus.path().display().to_string();
     ops.index(IndexRequest {
+        host: None,
         root: root.clone(),
         rebuild: false,
     })
@@ -222,6 +227,7 @@ async fn changed_sources_have_their_subtree_replaced() {
     std::fs::write(&file, "# New Title\n\nnew body about orchids entirely\n").expect("writes");
     let report = ops
         .index(IndexRequest {
+            host: None,
             root,
             rebuild: false,
         })

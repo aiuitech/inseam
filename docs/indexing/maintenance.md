@@ -1,6 +1,6 @@
 # Index Maintenance
 
-Every `inseam index <dir>` run is a **reconciling sweep** ([design/index-maintenance.md](../../design/index-maintenance.md)): it brings the index in line with reality (what the connection currently lists) and with the configuration (what the mounted transforms would build). There is no separate maintenance command, and plugins never trigger index work directly — the sweep discovers what's out of date on its own.
+Every `inseam index <scope>` run is a **reconciling sweep** over one host ([connections.md](connections.md)) ([design/index-maintenance.md](../../design/index-maintenance.md)): it brings the index in line with reality (what the connection currently lists) and with the configuration (what the mounted transforms would build). There is no separate maintenance command, and plugins never trigger index work directly — the sweep discovers what's out of date on its own.
 
 ## What one sweep does, in order
 
@@ -46,4 +46,4 @@ Ignore rules are different on purpose: they say a source is not yours to index, 
 
 ## Change detection
 
-The only thing the sweep needs from outside is a listing of what exists. Host-specific change feeds (FSEvents, Gmail history, …) arrive later as connection-plugin capabilities that schedule targeted sweeps — events are hints; the sweep is the truth.
+The only thing the sweep needs from outside is a listing of what exists — it resolves the host's connection from the registry at the start of every run, so mounting or unmounting a connection never restarts the sweep. Host-specific change feeds (FSEvents, Gmail history, …) are a declared connection capability (`change_feed`); the scheduling hook that turns their hints into targeted sweeps is not built yet — events are hints; the sweep is the truth.

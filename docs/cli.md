@@ -3,8 +3,13 @@
 The `inseam` binary is a distribution: the first-party linked plugins, the WASM plugin host, and a base composition. Every command is a thin call on the node's `operations` interface ([design/node-api.md](../design/node-api.md)). Global flags: `--data-dir` (`INSEAM_DATA_DIR`), `--composition` (`INSEAM_COMPOSITION`); see [configuration.md](configuration.md).
 
 ```sh
-inseam index ~/Data                 # index a directory (read-only): picks up new, changed,
-                                    # and deleted files, plus config changes; --rebuild forces
+inseam index ~/Data                 # index a scope of a host (read-only): picks up new, changed,
+                                    # and deleted sources, plus config changes; --rebuild forces.
+                                    # --host <id> names the host once several are mounted;
+                                    # an address (inseam://<host>/<root>) names it too
+inseam hosts                        # the hosts this node stewards and what each connection supports
+inseam grants                       # configured OAuth grants and where each stands
+inseam authorize <grant>            # sign in to a provider: prints the URL, waits for the browser
 inseam query "kitchen renovation"   # ranked results with summaries and hints; --json for raw output
 inseam expand <address>             # one source's fragments, relations, connected keyed fragments (entities)
 inseam scan <address> --start 120 --end 160   # read a line range of a source

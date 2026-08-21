@@ -8,11 +8,12 @@
 //! monotonic — no listener can force-allow what another denied
 //! (`design/access-control.md`).
 
-use inseam_kernel::address::Address;
+use inseam_kernel::address::{Address, HostId};
 use inseam_kernel::fragment::{FragmentId, Relation};
 use inseam_kernel::substrate::{Guard, ServiceKey};
 use serde::{Deserialize, Serialize};
 
+use crate::connection::{Capabilities, HostKind};
 use crate::sweep::IndexReport;
 use crate::SeamError;
 
@@ -35,8 +36,12 @@ pub trait Operations: Send + Sync {
     async fn expand(&self, request: ExpandRequest) -> Result<ExpandResponse, SeamError>;
     async fn scan(&self, request: ScanRequest) -> Result<ScanResponse, SeamError>;
     async fn fetch(&self, request: FetchRequest) -> Result<FetchResponse, SeamError>;
-    /// Owner operation: reconcile the index over a scope.
+    /// Owner operation: reconcile the index over a scope of one host.
     async fn index(&self, request: IndexRequest) -> Result<IndexReport, SeamError>;
+    /// Owner operation: the hosts this node stewards, with what each
+    /// connection supports — the local view of the stewardship records the
+    /// roster will publish.
+    async fn hosts(&self) -> Result<Vec<HostView>, SeamError>;
     /// Owner operation: index and catalog statistics.
     async fn status(&self) -> Result<StatusReport, SeamError>;
 }
@@ -177,9 +182,25 @@ pub struct FetchResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexRequest {
+    /// The host whose connection interprets `root`. `None` means the one
+    /// host this node stewards — an error naming the choices when there are
+    /// several, so a scope is never guessed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<HostId>,
     pub root: String,
     #[serde(default)]
     pub rebuild: bool,
+}
+
+/// One stewarded host as owner surfaces show it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostView {
+    pub id: HostId,
+    pub kind: HostKind,
+    pub display_name: String,
+    /// The composition entry whose connection stewards it.
+    pub entry: String,
+    pub capabilities: Capabilities,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -30,7 +30,7 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use futures_util::stream::{self, StreamExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use inseam_kernel::address::Timestamp;
 use inseam_kernel::store::{
@@ -39,7 +39,7 @@ use inseam_kernel::store::{
 use inseam_kernel::substrate::{
     parse_config, ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError, STORE,
 };
-use inseam_seams::connection::{Connection, EnumeratedSource, CONNECTION};
+use inseam_seams::connection::{Connections, EnumeratedSource, Registration as ConnectionRegistration, CONNECTIONS};
 use inseam_seams::dates::parse_ymd_epoch;
 use inseam_seams::embedder::{Embedder, EMBEDDER};
 use inseam_seams::llm::{self, Llm, LLM};
@@ -55,7 +55,7 @@ use plan::{expected_stamp, PlanLimits, Planned, Planner};
 /// Catalog-only rows per transaction.
 const CATALOG_CHUNK: usize = 1_000;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SweepConfig {
     /// Sources to deep-index per run; the rest still enter the catalog.
@@ -154,7 +154,7 @@ impl Plugin for SweepPlugin {
     fn manifest(&self) -> Manifest {
         static INJECT: &[Inject] = &[
             Inject::required("store"),
-            Inject::required("connection"),
+            Inject::required("connections"),
             Inject::required("transforms"),
             Inject::required("embedder"),
             Inject::optional("llm"),
@@ -177,7 +177,7 @@ impl Plugin for SweepPlugin {
             .to_string();
         let service = SweepService {
             store: cx.get(&STORE)?,
-            connection: cx.get(&CONNECTION)?,
+            connections: cx.get(&CONNECTIONS)?,
             transforms: cx.get(&TRANSFORMS)?,
             embedder: cx.get(&EMBEDDER)?,
             llm: cx.try_get(&LLM)?,
@@ -193,7 +193,7 @@ impl Plugin for SweepPlugin {
 
 pub struct SweepService {
     store: Arc<IndexStore>,
-    connection: Arc<dyn Connection>,
+    connections: Arc<dyn Connections>,
     transforms: Arc<dyn Transforms>,
     embedder: Arc<dyn Embedder>,
     llm: Option<Arc<dyn Llm>>,
@@ -211,6 +211,10 @@ impl Sweep for SweepService {
             .cutoff()
             .map_err(|e| SeamError::failed(e.to_string()))?;
         let mut report = IndexReport::default();
+        // Resolved per run, not at apply: connections come and go with
+        // their own fibers, and the registry binding never changes identity
+        // for it — mounting a mailbox does not restart the sweep.
+        let steward = self.steward_of(&request.host)?;
 
         // A pending embedding migration blocks search: resolve it before the
         // sweep so even a zero-change run leaves the index queryable.
@@ -218,7 +222,7 @@ impl Sweep for SweepService {
             self.reembed(&mut report).await?;
         }
 
-        let enumerated = self.connection.enumerate(&request.root).await?;
+        let enumerated = steward.connection.enumerate(&request.root).await?;
         report.sources_seen = enumerated.len();
         // Ignored sources leave the run here, before cataloging and before
         // vanished reconciliation — so a newly ignored source that was
@@ -250,7 +254,7 @@ impl Sweep for SweepService {
             meters: RunMeters::for_registrations(&registrations),
         });
         let planner = Arc::new(Planner {
-            connection: Arc::clone(&self.connection),
+            connection: Arc::clone(&steward.connection),
             registrations,
             grantor: Arc::clone(&grantor),
             sweep_shape,
@@ -258,7 +262,7 @@ impl Sweep for SweepService {
         });
         self.index_deep(decisions.deep, planner, &mut report).await?;
 
-        self.reconcile_vanished(&request.root, &sources, &mut report)
+        self.reconcile_vanished(&steward, &request.root, &sources, &mut report)
             .await?;
         let orphaned = self.store.gc_keyed_fragments().await?;
         report.keyed_removed = orphaned.len();
@@ -282,6 +286,22 @@ struct Decisions<'a> {
 }
 
 impl SweepService {
+    /// The connection stewarding `host`, if it can be swept at all: a
+    /// fetch-only edge has nothing to enumerate and is refused by name.
+    fn steward_of(&self, host: &inseam_kernel::address::HostId) -> Result<Arc<ConnectionRegistration>, SeamError> {
+        let steward = self
+            .connections
+            .resolve(host)
+            .ok_or_else(|| SeamError::UnknownHost(host.clone()))?;
+        if !steward.capabilities.enumerates {
+            return Err(SeamError::Unavailable(format!(
+                "the connection to host `{host}` (entry `{}`) cannot enumerate sources, so it cannot be swept",
+                steward.entry_id
+            )));
+        }
+        Ok(steward)
+    }
+
     /// Registry snapshot with model-sensitive fingerprints resolved.
     fn stamped_registrations(&self) -> Vec<Arc<Registration>> {
         self.transforms
@@ -425,18 +445,19 @@ impl SweepService {
     /// reappears is simply new.
     async fn reconcile_vanished(
         &self,
+        steward: &ConnectionRegistration,
         root: &str,
         seen: &[EnumeratedSource],
         report: &mut IndexReport,
     ) -> Result<(), SeamError> {
         // A scope with no stable locator prefix reconciles nothing rather
         // than guessing.
-        let Some(prefix) = self.connection.locator_prefix(root) else {
+        let Some(prefix) = steward.connection.locator_prefix(root) else {
             return Ok(());
         };
         let seen: HashSet<&str> = seen.iter().map(|s| s.address.locator.as_str()).collect();
         let child_prefix = format!("{prefix}/");
-        for (sid, locator) in self.store.sources_of_host(self.connection.host()).await? {
+        for (sid, locator) in self.store.sources_of_host(&steward.host.id).await? {
             let under_root = locator == prefix || locator.starts_with(&child_prefix);
             if !under_root || seen.contains(locator.as_str()) {
                 continue;

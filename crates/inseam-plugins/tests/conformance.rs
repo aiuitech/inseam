@@ -17,7 +17,7 @@ use inseam_seams::transforms::TRANSFORMS;
 /// that is the enrollment gate, not an oversight.
 fn conformance_config(name: &str) -> toml::Table {
     let raw = match name {
-        "connection-fs" | "llm-endpoint" | "transforms" | "transform-markdown"
+        "connections" | "connection-fs" | "oauth" | "llm-endpoint" | "transforms" | "transform-markdown"
         | "transform-chunker" | "transform-summarizer" | "transform-entities" | "finder"
         | "sweep" | "operations" => "",
         "embedder" => "provider = \"hashed\"\nmodel = \"hashed\"\ndimensions = 8",

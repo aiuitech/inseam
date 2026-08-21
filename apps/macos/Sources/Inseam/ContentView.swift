@@ -18,7 +18,7 @@ final class AppModel: ObservableObject {
     /// Ids of every non-active composition entry.
     @Published private(set) var parkedEntries: [String] = []
     /// Which Settings tab is showing; the "Add API Key…" button steers it.
-    @Published var settingsTab: SettingsTab = .composition
+    @Published var settingsTab: SettingsTab = .configuration
     /// Variable name the Secrets tab pre-fills, set when the main window
     /// sends the user there to satisfy a declared need.
     @Published var suggestedSecretName: String?

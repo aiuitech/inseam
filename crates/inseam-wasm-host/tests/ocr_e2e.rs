@@ -107,6 +107,10 @@ fn composition(artifact: &Path, ocr_config: &str) -> Composition {
         &format!(
             r#"
             [[entry]]
+            id = "connections"
+            plugin = "connections"
+
+            [[entry]]
             id = "fs"
             plugin = "connection-fs"
 
@@ -195,6 +199,7 @@ async fn loaded_ocr_transcribes_images_through_the_seam() {
 
     let report = ops
         .index(IndexRequest {
+            host: None,
             root: corpus.path().display().to_string(),
             rebuild: false,
         })
@@ -258,6 +263,7 @@ async fn loaded_ocr_transcribes_images_through_the_seam() {
     let ops = kernel.service(&OPERATIONS).expect("operations");
     let report = ops
         .index(IndexRequest {
+            host: None,
             root: corpus.path().display().to_string(),
             rebuild: false,
         })

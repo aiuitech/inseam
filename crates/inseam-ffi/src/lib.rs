@@ -23,12 +23,22 @@ use inseam_kernel::substrate::{Composition, FiberState, Kernel, SubstrateError};
 use inseam_seams::operations::{IndexRequest, Operations, QueryRequest, OPERATIONS};
 use tokio::runtime::Runtime;
 
+mod settings;
+
 /// The plugins an embedded node mounts by default; the node's
 /// `composition.toml` patches these entries by id.
 const BASE_COMPOSITION: &str = r#"
 [[entry]]
+id = "connections"
+plugin = "connections"
+
+[[entry]]
 id = "fs"
 plugin = "connection-fs"
+
+[[entry]]
+id = "oauth"
+plugin = "oauth"
 
 [[entry]]
 id = "llm"
@@ -87,6 +97,55 @@ pub struct InseamNode {
 #[unsafe(no_mangle)]
 pub extern "C" fn inseam_version() -> *mut c_char {
     to_c_string(env!("CARGO_PKG_VERSION"))
+}
+
+/// Read the effective first-party settings at `composition_path`, with
+/// plugin defaults filled in, as JSON for a native settings form.
+///
+/// # Safety
+/// `composition_path` must be a valid NUL-terminated string; `error_out`
+/// must be null or point to writable memory.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn inseam_settings_read(
+    composition_path: *const c_char,
+    error_out: *mut *mut c_char,
+) -> *mut c_char {
+    // SAFETY: caller contract above.
+    let Some(path) = (unsafe { arg_str(composition_path) }) else {
+        return fail(error_out, "composition_path must be a valid UTF-8 C string");
+    };
+    json_result(settings::read(Path::new(path)), error_out)
+}
+
+/// Validate and atomically write first-party settings JSON to the node's
+/// composition, retaining entries owned by custom plugins.
+///
+/// # Safety
+/// Both string arguments must be valid NUL-terminated strings; `error_out`
+/// must be null or point to writable memory.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn inseam_settings_write(
+    composition_path: *const c_char,
+    settings_json: *const c_char,
+    error_out: *mut *mut c_char,
+) -> bool {
+    // SAFETY: caller contract above.
+    let Some(path) = (unsafe { arg_str(composition_path) }) else {
+        set_error(error_out, "composition_path must be a valid UTF-8 C string");
+        return false;
+    };
+    // SAFETY: caller contract above.
+    let Some(json) = (unsafe { arg_str(settings_json) }) else {
+        set_error(error_out, "settings_json must be a valid UTF-8 C string");
+        return false;
+    };
+    match settings::write(Path::new(path), json) {
+        Ok(()) => true,
+        Err(message) => {
+            set_error(error_out, &message);
+            false
+        }
+    }
 }
 
 /// Open the node under `data_dir`. `composition_path` may be null: then
@@ -187,6 +246,7 @@ pub unsafe extern "C" fn inseam_node_index_dir(
         return fail(error_out, &unsettled_message(&handle.kernel));
     };
     let report = handle.runtime.block_on(operations.index(IndexRequest {
+        host: None,
         root: dir.to_string(),
         rebuild,
     }));
@@ -361,12 +421,16 @@ where
 }
 
 fn fail<T>(error_out: *mut *mut c_char, message: &str) -> *mut T {
+    set_error(error_out, message);
+    std::ptr::null_mut()
+}
+
+fn set_error(error_out: *mut *mut c_char, message: &str) {
     if !error_out.is_null() {
         // SAFETY: fail is only reached from ffi entry points whose callers
         // promise error_out is null or writable, and null is checked above.
         unsafe { *error_out = to_c_string(message) };
     }
-    std::ptr::null_mut()
 }
 
 fn to_c_string(s: &str) -> *mut c_char {

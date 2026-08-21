@@ -1,22 +1,26 @@
 //! The `operations` provider (`design/node-api.md`): serves the typed
-//! operation messages by consuming `store`, `connection`, `finder`, and
+//! operation messages by consuming `store`, `connections`, `finder`, and
 //! `sweep`. Transports (CLI, FFI, future HTTP/MCP) consume this seam and
 //! stay logic-free. Boundary enforcement is the [`OperationRequest`] guard
 //! on dispatch: access-control listeners deny, and denial is monotonic.
 
 use std::sync::Arc;
 
-use inseam_kernel::address::Address;
+use inseam_kernel::address::{Address, HostId};
 use inseam_kernel::store::{IndexStore, StoredFragment, StoredSource};
 use inseam_kernel::substrate::{
     ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError, Verdict, STORE,
 };
-use inseam_seams::connection::{Connection, CONNECTION};
+use inseam_seams::connection::{
+    resolve_default, Connection, Connections, Registration as ConnectionRegistration,
+    CONNECTIONS,
+};
 use inseam_seams::finder::{Finder, RankedFragment, FINDER};
 use inseam_seams::operations::{
     EnvelopeView, ExpandRequest, ExpandResponse, FetchRequest, FetchResponse, FragmentHint,
-    FragmentView, IndexRequest, OperationRequest, Operations, QueryRequest, QueryResponse,
-    QueryResult, RelationView, ScanRequest, ScanResponse, StatusReport, OPERATIONS,
+    FragmentView, HostView, IndexRequest, OperationRequest, Operations, QueryRequest,
+    QueryResponse, QueryResult, RelationView, ScanRequest, ScanResponse, StatusReport,
+    OPERATIONS,
 };
 use inseam_seams::sweep::{IndexReport, Sweep, SweepRequest, SWEEP};
 use inseam_seams::dates::ymd;
@@ -45,7 +49,7 @@ impl Plugin for OperationsPlugin {
     fn manifest(&self) -> Manifest {
         static INJECT: &[Inject] = &[
             Inject::required("store"),
-            Inject::required("connection"),
+            Inject::required("connections"),
             Inject::required("finder"),
             Inject::required("sweep"),
         ];
@@ -59,7 +63,7 @@ impl Plugin for OperationsPlugin {
     async fn apply(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
         let service = OperationsService {
             store: cx.get(&STORE)?,
-            connection: cx.get(&CONNECTION)?,
+            connections: cx.get(&CONNECTIONS)?,
             finder: cx.get(&FINDER)?,
             sweep: cx.get(&SWEEP)?,
             bus: cx.bus().clone(),
@@ -75,7 +79,7 @@ impl Plugin for OperationsPlugin {
 
 pub struct OperationsService {
     store: Arc<IndexStore>,
-    connection: Arc<dyn Connection>,
+    connections: Arc<dyn Connections>,
     finder: Arc<dyn Finder>,
     sweep: Arc<dyn Sweep>,
     bus: EventBus,
@@ -86,6 +90,27 @@ impl OperationsService {
         self.store
             .source_by_address(address).await?
             .ok_or_else(|| SeamError::UnknownSource(address.clone()))
+    }
+
+    /// The connection serving a host, for reads: a cataloged source whose
+    /// steward has since been unmounted is an unknown host, not a crash.
+    fn connection_to(&self, host: &HostId) -> Result<Arc<dyn Connection>, SeamError> {
+        self.connections
+            .resolve(host)
+            .map(|r| Arc::clone(&r.connection))
+            .ok_or_else(|| SeamError::UnknownHost(host.clone()))
+    }
+
+    /// The host an index request means: the one it names, else the only
+    /// one mounted.
+    fn host_for_index(&self, request: &IndexRequest) -> Result<Arc<ConnectionRegistration>, SeamError> {
+        match &request.host {
+            Some(host) => self
+                .connections
+                .resolve(host)
+                .ok_or_else(|| SeamError::UnknownHost(host.clone())),
+            None => resolve_default(self.connections.as_ref()),
+        }
     }
 
     /// The boundary guard: every scoped operation passes here before it is
@@ -162,7 +187,7 @@ impl Operations for OperationsService {
         let (start, end) = (request.start.max(1), request.end.max(request.start));
         if is_indexable_text(&source.envelope.content_type) {
             let text = self
-                .connection
+                .connection_to(&source.address.host)?
                 .read_lines(&source.address, start, end)
                 .await?;
             return Ok(ScanResponse {
@@ -206,7 +231,10 @@ impl Operations for OperationsService {
                 source.envelope.content_type.to_string(),
             ));
         }
-        let text = self.connection.read_text(&source.address).await?;
+        let text = self
+            .connection_to(&source.address.host)?
+            .read_text(&source.address)
+            .await?;
         Ok(FetchResponse {
             address: source.address,
             content_type: source.envelope.content_type.to_string(),
@@ -216,12 +244,30 @@ impl Operations for OperationsService {
 
     async fn index(&self, request: IndexRequest) -> Result<IndexReport, SeamError> {
         // Owner operation: not boundary-guarded (local transports only).
+        let steward = self.host_for_index(&request)?;
         self.sweep
             .sweep(&SweepRequest {
+                host: steward.host.id.clone(),
                 root: request.root,
                 rebuild: request.rebuild,
             })
             .await
+    }
+
+    async fn hosts(&self) -> Result<Vec<HostView>, SeamError> {
+        // Owner operation: not boundary-guarded (local transports only).
+        Ok(self
+            .connections
+            .snapshot()
+            .iter()
+            .map(|r| HostView {
+                id: r.host.id.clone(),
+                kind: r.host.kind.clone(),
+                display_name: r.host.display_name.clone(),
+                entry: r.entry_id.clone(),
+                capabilities: r.capabilities,
+            })
+            .collect())
     }
 
     async fn status(&self) -> Result<StatusReport, SeamError> {
