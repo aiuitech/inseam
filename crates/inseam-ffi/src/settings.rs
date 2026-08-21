@@ -405,6 +405,28 @@ mod tests {
     }
 
     #[test]
+    fn oauth_grant_fields_round_trip_through_settings_json() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("composition.toml");
+        let mut settings = serde_json::to_value(read(&path).unwrap()).unwrap();
+        settings["oauth"]["config"]["grants"] = serde_json::json!([{
+            "id": "google",
+            "authorization_url": "https://accounts.example/authorize",
+            "token_url": "https://accounts.example/token",
+            "scopes": ["mail.read"],
+            "client_id_env": "GOOGLE_CLIENT_ID",
+            "client_secret_env": "GOOGLE_CLIENT_SECRET",
+            "authorization_params": {"access_type": "offline"}
+        }]);
+        write(&path, &settings.to_string()).unwrap();
+        let reread = serde_json::to_value(read(&path).unwrap()).unwrap();
+        let grant = &reread["oauth"]["config"]["grants"][0];
+        assert_eq!(grant["id"], "google");
+        assert_eq!(grant["scopes"][0], "mail.read");
+        assert_eq!(grant["authorization_params"]["access_type"], "offline");
+    }
+
+    #[test]
     fn invalid_json_does_not_change_the_file() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("composition.toml");
