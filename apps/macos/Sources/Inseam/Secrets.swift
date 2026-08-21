@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 /// The app's Keychain-backed secret store. Each item is one environment
@@ -10,6 +11,7 @@ import Security
 enum SecretStore {
     /// Keychain service namespace for every item this app owns.
     private static let service = "app.inseam.secrets"
+    private static let secretCountMax = 64
 
     struct SecretStoreError: LocalizedError {
         let message: String
@@ -89,9 +91,94 @@ enum SecretStore {
     /// Export every stored secret into this process's environment so the
     /// core's `key_env`-style config fields resolve when the node opens.
     static func exportIntoEnvironment() throws {
-        for name in try names() {
+        let storedNames = try names()
+        guard storedNames.count <= secretCountMax else {
+            throw SecretStoreError(message: "keychain contains too many Inseam secrets")
+        }
+        for name in storedNames {
             guard let value = try read(name: name) else { continue }
             setenv(name, value, 1)
+        }
+    }
+
+    /// Look up only the exact Keychain service names declared missing by
+    /// plugins. This supports conventional items named after their env var
+    /// without enumerating unrelated Keychain entries or showing access UI.
+    /// Returns true when at least one value was exported.
+    static func exportDeclaredIntoEnvironment(names: [String]) throws -> Bool {
+        let names = Array(Set(names)).sorted()
+        guard names.count <= secretCountMax else { return false }
+        var exported = false
+        for name in names where isValidName(name) {
+            guard getenv(name) == nil else { continue }
+            guard let value = try readConventional(name: name) else { continue }
+            setenv(name, value, 1)
+            exported = true
+        }
+        return exported
+    }
+
+    /// Read one conventional generic-password item whose service is exactly
+    /// the environment variable name. Authentication UI is disabled because
+    /// automatic startup must never fan out into Keychain permission dialogs.
+    private static func readConventional(name: String) throws -> String? {
+        guard let account = try uniqueAccount(service: name) else { return nil }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: name,
+            kSecAttrAccount as String: account,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecReturnData as String: true,
+            kSecUseAuthenticationContext as String: noninteractiveContext(),
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if inaccessible(status) { return nil }
+        guard status == errSecSuccess, let data = result as? Data else {
+            throw SecretStoreError(message: "keychain read of service `\(name)` failed (status \(status))")
+        }
+        guard let value = String(data: data, encoding: .utf8) else {
+            throw SecretStoreError(message: "keychain service `\(name)` is not UTF-8")
+        }
+        return value
+    }
+
+    /// Resolve the account before requesting secret data. More than one item
+    /// under the declared service is ambiguous, so startup leaves it missing.
+    private static func uniqueAccount(service: String) throws -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+            kSecReturnAttributes as String: true,
+            kSecUseAuthenticationContext as String: noninteractiveContext(),
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if inaccessible(status) { return nil }
+        guard status == errSecSuccess else {
+            throw SecretStoreError(
+                message: "keychain lookup of service `\(service)` failed (status \(status))"
+            )
+        }
+        let items = result as? [[String: Any]]
+        guard let items, items.count == 1 else { return nil }
+        return items[0][kSecAttrAccount as String] as? String
+    }
+
+    private static func noninteractiveContext() -> LAContext {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        return context
+    }
+
+    private static func inaccessible(_ status: OSStatus) -> Bool {
+        switch status {
+        case errSecItemNotFound, errSecAuthFailed, errSecInteractionNotAllowed,
+             errSecUserCanceled:
+            true
+        default:
+            false
         }
     }
 

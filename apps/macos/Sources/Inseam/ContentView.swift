@@ -54,9 +54,7 @@ final class AppModel: ObservableObject {
         let dataDir = dataDir
         run("node open") { [weak self] in
             old?.close()
-            try SecretStore.exportIntoEnvironment()
-            let node = try CoreNode(dataDir: dataDir)
-            let health = try node.health()
+            let (node, health) = try Self.openNodeUsingKeychain(dataDir: dataDir)
             let parked = health.filter { $0.state != "active" }
             var seen = Set<String>()
             let needs = parked.flatMap(\.missingSecrets)
@@ -77,6 +75,23 @@ final class AppModel: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Open once with Inseam-owned secrets, then silently try exact Keychain
+    /// service names for declared missing variables before the UI can ask.
+    private static func openNodeUsingKeychain(
+        dataDir: URL
+    ) throws -> (CoreNode, [FiberHealth]) {
+        try SecretStore.exportIntoEnvironment()
+        let node = try CoreNode(dataDir: dataDir)
+        let health = try node.health()
+        let missingNames = health.flatMap(\.missingSecrets).map(\.env)
+        guard try SecretStore.exportDeclaredIntoEnvironment(names: missingNames) else {
+            return (node, health)
+        }
+        node.close()
+        let reopenedNode = try CoreNode(dataDir: dataDir)
+        return (reopenedNode, try reopenedNode.health())
     }
 
     /// Failed entries with their errors, then one line naming everything
