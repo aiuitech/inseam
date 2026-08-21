@@ -188,7 +188,8 @@ pub struct StatusReport {
     pub indexed_sources: u64,
     pub fragments: u64,
     pub relations: u64,
-    pub entities: u64,
+    /// Index-wide fragments deduplicated by key (entities, for instance).
+    pub keyed_fragments: u64,
     pub search_rows: usize,
     pub embedding_model: Option<String>,
     pub embedding_dimensions: usize,

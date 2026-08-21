@@ -1,9 +1,10 @@
 # Golden checks for the `entity-extractor` linked transform
-# (docs/plugins/validation.md): LLM entity extraction. Entities are not
-# fragments, so the expectations here use `entity`/`max_entities`.
+# (docs/plugins/validation.md): LLM entity extraction. Entities are keyed
+# sprouts, not child fragments, so the expectations here use
+# `keyed_contains`/`max_keyed`.
 
-# The claim: the model's JSON array becomes named entities, and nothing is
-# emitted as a fragment.
+# The claim: the model's JSON array becomes keyed entity sprouts, and nothing
+# is emitted as a child fragment.
 [[check]]
 name = "extracts named entities from the llm reply"
 mimetype = "text/plain"
@@ -13,8 +14,8 @@ llm_returns = '[{"name":"Ada Lovelace","kind":"person"},{"name":"Toronto","kind"
 [check.expect]
 min_fragments = 0
 max_fragments = 0
-entity = "Ada Lovelace"
-max_entities = 2
+keyed_contains = "Ada Lovelace"
+max_keyed = 2
 
 # The degrade path: no text and no LLM means no entities — never a guess.
 [[check]]
@@ -24,4 +25,4 @@ mimetype = "text/plain"
 [check.expect]
 min_fragments = 0
 max_fragments = 0
-max_entities = 0
+max_keyed = 0

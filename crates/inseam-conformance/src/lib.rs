@@ -26,7 +26,7 @@ use inseam_seams::transforms::{
 };
 use inseam_seams::SeamError;
 
-pub use golden::{ChecksFile, Emitted, EmittedFragment, Expect, GoldenCheck};
+pub use golden::{ChecksFile, Emitted, EmittedFragment, EmittedKeyed, Expect, GoldenCheck};
 
 /// Sweep a distribution's factories: every plugin must build from its
 /// enrolled minimal config and declare a coherent manifest. `config_for`
@@ -185,7 +185,15 @@ pub fn emitted_from_output(output: &TransformOutput) -> Emitted {
     }
     Emitted {
         fragments,
-        entities: output.entities.iter().map(|e| e.name.clone()).collect(),
+        keyed: output
+            .keyed
+            .iter()
+            .map(|k| EmittedKeyed {
+                key: k.key.to_string(),
+                relation: k.relation.as_str().to_string(),
+                text: k.fragment.text.clone(),
+            })
+            .collect(),
     }
 }
 

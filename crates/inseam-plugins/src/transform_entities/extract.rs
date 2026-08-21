@@ -1,14 +1,95 @@
-//! The entity extractor: pulls people, places, organizations, projects and
-//! dates out as entity fragments, deduplicated per index, with `mentions`
-//! relations back to every fragment that referenced them. Entities are the
-//! graph's connective tissue: two unrelated sources mentioning the same
-//! person end up one hop apart (`design/indexing.md`).
+//! The extraction half of the entity plugin: ask the granted LLM for the
+//! entities central to a text and parse its reply. The vocabulary — entity
+//! kinds, the dedup key, the mimetype and relation the plugin emits — is
+//! defined here, because it is this plugin's, not the kernel's
+//! (`design/indexing.md`).
+
+use std::fmt;
+use std::str::FromStr;
 
 use serde::Deserialize;
 
+use inseam_kernel::fragment::{FragmentKey, Mimetype, RelationKind};
 use inseam_seams::text::collapse_ws;
-use inseam_seams::transforms::{EntityKind, ExtractedEntity, GrantedLlm};
+use inseam_seams::transforms::GrantedLlm;
 use inseam_seams::SeamError;
+
+/// The mimetype of an entity fragment; under `text/x-inseam-` so the sweep
+/// treats it as derived understanding (never re-decomposed, never claimed).
+pub fn entity_mimetype(kind: EntityKind) -> Mimetype {
+    Mimetype::parse("text/x-inseam-entity")
+        .expect("literal mimetype is valid")
+        .with_param("kind", kind.as_str())
+}
+
+/// The relation from a fragment to an entity it references.
+pub fn mentions() -> RelationKind {
+    RelationKind::new("mentions").expect("literal relation kind is valid")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EntityKind {
+    Person,
+    Place,
+    Org,
+    Project,
+    Date,
+    Other,
+}
+
+impl EntityKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Person => "person",
+            Self::Place => "place",
+            Self::Org => "org",
+            Self::Project => "project",
+            Self::Date => "date",
+            Self::Other => "other",
+        }
+    }
+}
+
+impl fmt::Display for EntityKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for EntityKind {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "person" | "people" => Ok(Self::Person),
+            "place" | "location" => Ok(Self::Place),
+            "org" | "organization" | "organisation" | "company" => Ok(Self::Org),
+            "project" => Ok(Self::Project),
+            "date" | "time" => Ok(Self::Date),
+            _ => Ok(Self::Other),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtractedEntity {
+    pub name: String,
+    pub kind: EntityKind,
+}
+
+impl ExtractedEntity {
+    /// The per-index deduplication key: one fragment per entity, however
+    /// many sources mention it. Namespaced under `entity:` so no other
+    /// plugin's keyed fragments collide with it.
+    pub fn key(&self) -> FragmentKey {
+        FragmentKey::new(format!(
+            "entity:{}:{}",
+            self.kind,
+            collapse_ws(&self.name).to_lowercase()
+        ))
+        .expect("a bounded name under a literal prefix is a valid key")
+    }
+}
 
 /// Characters of source text an extraction call sees.
 const LLM_INPUT_CHARS: usize = 8_000;
@@ -83,7 +164,7 @@ mod tests {
         );
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].kind, EntityKind::Person);
-        assert_eq!(out[0].key(), "person:greg hunt");
+        assert_eq!(out[0].key().as_str(), "entity:person:greg hunt");
     }
 
     #[test]

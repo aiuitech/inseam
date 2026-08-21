@@ -7,7 +7,7 @@
 
 mod common;
 
-use inseam_kernel::fragment::{Mimetype, NewFragment, RelationKind};
+use inseam_kernel::fragment::{FragmentKey, Mimetype, NewFragment, Relation, RelationKind};
 use inseam_seams::operations::{IndexRequest, QueryRequest};
 
 async fn index(
@@ -59,26 +59,25 @@ async fn vanished_sources_are_removed_and_their_entities_collected() {
         .root_fragment
         .expect("indexed sources have roots");
     let entity = store
-        .insert_fragment(
-            None,
+        .keyed_fragment(
+            &FragmentKey::new("entity:instrument:xylophone").expect("valid key"),
             &NewFragment {
-                mimetype: Mimetype::entity().with_param("kind", "instrument"),
+                mimetype: Mimetype::parse("text/x-inseam-entity;kind=instrument").expect("valid"),
                 text: Some("Xylophone".into()),
                 extent: None,
             },
         ).await
-        .expect("inserts");
+        .expect("creates")
+        .id();
+    let mentions = RelationKind::new("mentions").expect("valid kind");
     store
-        .register_entity("instrument:xylophone", entity).await
-        .expect("registers");
-    store
-        .insert_relation(&RelationKind::Mentions.edge(root, entity)).await
+        .insert_relation(&Relation::new(root, mentions, entity)).await
         .expect("relates");
 
     std::fs::remove_file(&doomed).expect("removes");
     let report = index(ops.as_ref(), corpus.path()).await;
     assert_eq!(report.removed, 1, "vanished source reconciled: {report}");
-    assert_eq!(report.entities_removed, 1, "orphaned entity collected");
+    assert_eq!(report.keyed_removed, 1, "unanchored keyed fragment collected");
     assert_eq!(report.unchanged, 1, "the keeper was untouched");
 
     assert_eq!(common::hits(ops.as_ref(), "xylophones").await, 0, "no stale results");

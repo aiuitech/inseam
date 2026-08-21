@@ -66,7 +66,7 @@ fn push_chunk(
             text: Some(body),
             extent: Some(Extent::lines(start as u64 + 1, end as u64 + 1)),
         },
-        RelationKind::Contains,
+        RelationKind::contains(),
     ));
 }
 

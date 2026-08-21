@@ -6,7 +6,7 @@ The `inseam` binary is a distribution: the first-party linked plugins, the WASM 
 inseam index ~/Data                 # index a directory (read-only): picks up new, changed,
                                     # and deleted files, plus config changes; --rebuild forces
 inseam query "kitchen renovation"   # ranked results with summaries and hints; --json for raw output
-inseam expand <address>             # one source's fragments, relations, connected entities
+inseam expand <address>             # one source's fragments, relations, connected keyed fragments (entities)
 inseam scan <address> --start 120 --end 160   # read a line range of a source
 inseam fetch <address>              # the whole source
 inseam agent "when did I ...?"      # a live LLM using query/expand/scan/fetch as tools

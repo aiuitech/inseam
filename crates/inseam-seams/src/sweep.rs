@@ -36,11 +36,12 @@ pub struct IndexReport {
     pub skipped_cutoff: usize,
     pub fragments: usize,
     pub relations: usize,
-    pub entities_seen: usize,
+    /// Keyed sprouts anchored this run (an entity mentioned, say).
+    pub keyed_anchored: usize,
     /// Sources removed because enumeration no longer sees them.
     pub removed: usize,
-    /// Entity fragments collected because no relation touches them anymore.
-    pub entities_removed: usize,
+    /// Keyed fragments collected because no relation touches them anymore.
+    pub keyed_removed: usize,
     /// Search rows re-embedded by a pending embedding migration.
     pub reembedded: usize,
     pub llm_summaries: usize,
@@ -67,14 +68,14 @@ impl fmt::Display for IndexReport {
         )?;
         writeln!(
             f,
-            "{} fragments, {} relations, {} entity mentions",
-            self.fragments, self.relations, self.entities_seen
+            "{} fragments, {} relations, {} keyed fragments anchored",
+            self.fragments, self.relations, self.keyed_anchored
         )?;
-        if self.removed + self.entities_removed + self.reembedded > 0 {
+        if self.removed + self.keyed_removed + self.reembedded > 0 {
             writeln!(
                 f,
-                "maintenance: {} sources removed, {} entities collected, {} rows re-embedded",
-                self.removed, self.entities_removed, self.reembedded
+                "maintenance: {} sources removed, {} keyed fragments collected, {} rows re-embedded",
+                self.removed, self.keyed_removed, self.reembedded
             )?;
         }
         write!(

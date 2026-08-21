@@ -57,8 +57,11 @@ interface transform {
         /// Mimetype of the emitted fragment, params allowed
         /// (`text/plain;via=ocr`).
         mimetype: string,
-        /// Relation to the parent: `contains`, `derived-from`,
-        /// `transcribes`, `links-to`, or `mentions`.
+        /// Kind of the edge from the parent to this fragment, read
+        /// parent -> child: the kernel's `contains` (structural child) or
+        /// `derives` (derived understanding), or a kind this plugin defines
+        /// (kebab-case, e.g. `transcribes`). Malformed names fall back to
+        /// `contains`.
         relation: string,
         text: option<string>,
     }

@@ -6,7 +6,13 @@
 use std::sync::Arc;
 
 use inseam_kernel::address::{Address, ContentLength, Envelope, Timestamp};
-use inseam_kernel::fragment::{Extent, FragmentId, Mimetype, NewFragment, RelationKind};
+use inseam_kernel::fragment::{
+    Extent, FragmentId, FragmentKey, Mimetype, NewFragment, Relation, RelationKind,
+};
+
+fn mentions() -> RelationKind {
+    RelationKind::new("mentions").expect("valid kind")
+}
 use inseam_kernel::store::{IndexStore, SearchRow, SourceId};
 use inseam_plugins::embedder::hashed;
 use inseam_plugins::finder::{FinderConfig, FinderService};
@@ -53,7 +59,7 @@ async fn seed_source(
         .expect("upserts");
     let root = store
         .insert_fragment(
-            Some(sid),
+            sid,
             &NewFragment {
                 mimetype: Mimetype::markdown(),
                 text: None,
@@ -64,7 +70,7 @@ async fn seed_source(
     store.set_root_fragment(sid, root).await.expect("sets root");
     let section = store
         .insert_fragment(
-            Some(sid),
+            sid,
             &NewFragment {
                 mimetype: Mimetype::markdown(),
                 text: Some(body.to_string()),
@@ -73,7 +79,7 @@ async fn seed_source(
         ).await
         .expect("section");
     store
-        .insert_relation(&RelationKind::Contains.edge(root, section)).await
+        .insert_relation(&Relation::new(root, RelationKind::contains(), section)).await
         .expect("relates");
     let vector = embedder.embed(&[body]).await.expect("embeds").remove(0);
     store
@@ -120,20 +126,18 @@ async fn relational_relevance_beats_flat_similarity() {
     )
     .await;
 
-    // The shared entity is the highway between A and B.
+    // The shared entity — a keyed fragment — is the highway between A and B.
     let entity = store
-        .insert_fragment(
-            None,
+        .keyed_fragment(
+            &FragmentKey::new("entity:project:kitchen reno").expect("valid key"),
             &NewFragment {
-                mimetype: Mimetype::entity().with_param("kind", "project"),
+                mimetype: Mimetype::parse("text/x-inseam-entity;kind=project").expect("valid"),
                 text: Some("Kitchen Reno".to_string()),
                 extent: None,
             },
         ).await
-        .expect("entity");
-    store
-        .register_entity("project:kitchen reno", entity).await
-        .expect("registers");
+        .expect("entity")
+        .id();
     let entity_vec = embedder
         .embed(&["Kitchen Reno"])
         .await
@@ -149,10 +153,10 @@ async fn relational_relevance_beats_flat_similarity() {
         .await
         .expect("adds entity row");
     store
-        .insert_relation(&RelationKind::Mentions.edge(b_section, entity)).await
+        .insert_relation(&Relation::new(b_section, mentions(), entity)).await
         .expect("relates");
     store
-        .insert_relation(&RelationKind::Mentions.edge(a_section, entity)).await
+        .insert_relation(&Relation::new(a_section, mentions(), entity)).await
         .expect("relates");
     store.rebuild_fts().await.expect("fts");
 

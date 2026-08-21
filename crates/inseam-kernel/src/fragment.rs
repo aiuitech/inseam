@@ -10,12 +10,23 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Longest relation kind name accepted; far above any sensible vocabulary,
+/// present so the store's `kind` column has a known bound.
+pub const RELATION_KIND_LEN_MAX: u32 = 64;
+/// Longest key a keyed fragment may carry.
+pub const FRAGMENT_KEY_LEN_MAX: u32 = 256;
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum FragmentError {
     #[error("`{0}` is not a type/subtype mimetype")]
     BadMimetype(String),
-    #[error("`{0}` is not a relation kind")]
+    #[error(
+        "`{0}` is not a relation kind: lowercase ascii letters, digits and `-`, \
+         starting with a letter, at most {RELATION_KIND_LEN_MAX} long"
+    )]
     BadRelationKind(String),
+    #[error("`{0}` is not a fragment key: non-empty, no control characters, at most {FRAGMENT_KEY_LEN_MAX} long")]
+    BadFragmentKey(String),
 }
 
 /// Identifier of a stored fragment, local to one node's index.
@@ -92,26 +103,21 @@ impl Mimetype {
         Self::parse("text/uri-list").expect("literal mimetype is valid")
     }
 
-    /// inseam-defined type for the mandatory summary fragment.
+    /// The kernel-defined type for the mandatory summary fragment — the one
+    /// derived type the store itself reads (`summary_of`).
     pub fn summary() -> Self {
         Self::parse("text/x-inseam-summary").expect("literal mimetype is valid")
-    }
-
-    /// inseam-defined type for deduplicated entity fragments.
-    pub fn entity() -> Self {
-        Self::parse("text/x-inseam-entity").expect("literal mimetype is valid")
     }
 
     pub fn is_summary(&self) -> bool {
         self.essence == "text/x-inseam-summary"
     }
 
-    pub fn is_entity(&self) -> bool {
-        self.essence == "text/x-inseam-entity"
-    }
-
-    /// inseam-defined types are derived understanding, not source content;
-    /// structural transforms must never decompose them.
+    /// `text/x-inseam-*` types are derived understanding, not source
+    /// content: the sweep never re-decomposes them and loaded transforms may
+    /// not emit them. Plugins mint their own under the prefix (the entity
+    /// extractor's `text/x-inseam-entity`) to opt into exactly that
+    /// treatment.
     pub fn is_inseam_defined(&self) -> bool {
         self.essence.starts_with("text/x-inseam-")
     }
@@ -174,57 +180,57 @@ impl fmt::Display for Extent {
     }
 }
 
-/// Typed edge kinds between fragments. Relation kinds are first-class: the
-/// Finder conducts relevance along them with per-kind weights.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum RelationKind {
-    /// Structural decomposition: parent contains child.
-    Contains,
-    /// A link found inside a fragment, pointing at a URL fragment.
-    LinksTo,
-    /// Derived understanding (a summary) pointing back at what it derives from.
-    DerivedFrom,
-    /// A fragment references an entity.
-    Mentions,
-    /// A transcript fragment transcribing its media parent.
-    Transcribes,
-}
+/// The kind of an edge between fragments — an open vocabulary, because
+/// plugins extend the graph by vocabulary, not schema (`design/kernel.md`).
+/// The kernel defines exactly two kinds, the **transform relation**: a
+/// transform's input [`contains`](Self::contains) a structural child it
+/// emitted, or [`derives`](Self::derives) an enrichment of itself. Every
+/// other kind (`links-to`, `mentions`, `transcribes`, …) is minted by the
+/// plugin that emits it; the finder weights kinds by name.
+///
+/// Every relation is stored and read **input → output**: `from` is the
+/// fragment a transform was applied to (or anchored at), `to` is what it
+/// produced. A kind's name should read in that direction ("root contains
+/// section", "note mentions person").
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct RelationKind(String);
 
 impl RelationKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Contains => "contains",
-            Self::LinksTo => "links-to",
-            Self::DerivedFrom => "derived-from",
-            Self::Mentions => "mentions",
-            Self::Transcribes => "transcribes",
+    /// Structural decomposition: the input contains this child.
+    pub fn contains() -> Self {
+        Self("contains".to_string())
+    }
+
+    /// Enrichment: the input derives this understanding (a summary).
+    pub fn derives() -> Self {
+        Self("derives".to_string())
+    }
+
+    /// Parse a kind name: lowercase ascii letters, digits and `-`, starting
+    /// with a letter, at most [`RELATION_KIND_LEN_MAX`] long.
+    pub fn new(name: impl Into<String>) -> Result<Self, FragmentError> {
+        let name = name.into();
+        let len_ok = !name.is_empty() && name.len() <= RELATION_KIND_LEN_MAX as usize;
+        let starts_ok = name.chars().next().is_some_and(|c| c.is_ascii_lowercase());
+        let chars_ok = name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        if len_ok && starts_ok && chars_ok {
+            Ok(Self(name))
+        } else {
+            Err(FragmentError::BadRelationKind(name))
         }
     }
 
-    /// Build the stored relation for a parent -> child production, keeping the
-    /// semantic direction of each kind: `contains`/`links-to`/`mentions` read
-    /// parent -> child, while `derived-from`/`transcribes` read child -> parent
-    /// (the summary derives from its parent, the transcript transcribes it).
-    pub fn edge(self, parent: FragmentId, child: FragmentId) -> Relation {
-        match self {
-            Self::Contains | Self::LinksTo | Self::Mentions => Relation {
-                from: parent,
-                kind: self,
-                to: child,
-            },
-            Self::DerivedFrom | Self::Transcribes => Relation {
-                from: child,
-                kind: self,
-                to: parent,
-            },
-        }
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
 impl fmt::Display for RelationKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+        f.write_str(&self.0)
     }
 }
 
@@ -232,23 +238,81 @@ impl FromStr for RelationKind {
     type Err = FragmentError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "contains" => Ok(Self::Contains),
-            "links-to" => Ok(Self::LinksTo),
-            "derived-from" => Ok(Self::DerivedFrom),
-            "mentions" => Ok(Self::Mentions),
-            "transcribes" => Ok(Self::Transcribes),
-            other => Err(FragmentError::BadRelationKind(other.to_string())),
-        }
+        Self::new(s)
     }
 }
 
-/// A typed edge between two stored fragments.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+impl TryFrom<String> for RelationKind {
+    type Error = FragmentError;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        Self::new(s)
+    }
+}
+
+impl From<RelationKind> for String {
+    fn from(k: RelationKind) -> String {
+        k.0
+    }
+}
+
+/// The index-wide identity of a keyed fragment: a fragment that belongs to
+/// no single source and is deduplicated across the whole index under this
+/// key (an extracted entity, for instance). Keys are plugin-namespaced by
+/// convention (`entity:person:greg`) so two plugins' vocabularies never
+/// collide; the kernel only bounds and stores them.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct FragmentKey(String);
+
+impl FragmentKey {
+    pub fn new(key: impl Into<String>) -> Result<Self, FragmentError> {
+        let key = key.into();
+        let len_ok = !key.is_empty() && key.len() <= FRAGMENT_KEY_LEN_MAX as usize;
+        let chars_ok = !key.chars().any(char::is_control);
+        if len_ok && chars_ok {
+            Ok(Self(key))
+        } else {
+            Err(FragmentError::BadFragmentKey(key))
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for FragmentKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl TryFrom<String> for FragmentKey {
+    type Error = FragmentError;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        Self::new(s)
+    }
+}
+
+impl From<FragmentKey> for String {
+    fn from(k: FragmentKey) -> String {
+        k.0
+    }
+}
+
+/// A typed edge between two stored fragments, read input → output.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Relation {
     pub from: FragmentId,
     pub kind: RelationKind,
     pub to: FragmentId,
+}
+
+impl Relation {
+    /// The edge a parent (input) fragment has to a child (output) fragment.
+    pub fn new(from: FragmentId, kind: RelationKind, to: FragmentId) -> Self {
+        Self { from, kind, to }
+    }
 }
 
 /// A fragment that has not been stored yet — what transforms emit.
@@ -264,7 +328,7 @@ pub struct NewFragment {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Sprout {
     pub fragment: NewFragment,
-    /// Kind of the edge between the parent fragment and this one.
+    /// Kind of the edge from the parent (input) fragment to this one.
     pub relation: RelationKind,
     pub children: Vec<Sprout>,
 }
@@ -293,7 +357,6 @@ mod tests {
         let m = Mimetype::parse("Text/X-Inseam-Entity; kind=person").expect("parses");
         assert_eq!(m.essence(), "text/x-inseam-entity");
         assert_eq!(m.param("kind"), Some("person"));
-        assert!(m.is_entity());
         assert!(m.is_inseam_defined());
         assert_eq!(m.to_string(), "text/x-inseam-entity;kind=person");
     }
@@ -308,29 +371,31 @@ mod tests {
 
     #[test]
     fn relation_kinds_roundtrip_their_names() {
-        for kind in [
-            RelationKind::Contains,
-            RelationKind::LinksTo,
-            RelationKind::DerivedFrom,
-            RelationKind::Mentions,
-            RelationKind::Transcribes,
-        ] {
-            assert_eq!(kind.as_str().parse::<RelationKind>(), Ok(kind));
+        for name in ["contains", "derives", "links-to", "mentions", "transcribes", "x9-y"] {
+            let kind = name.parse::<RelationKind>().expect("valid kind");
+            assert_eq!(kind.as_str(), name);
+            assert_eq!(serde_json::to_string(&kind).expect("serializes"), format!("{name:?}"));
+        }
+        assert_eq!(RelationKind::contains().as_str(), "contains");
+        assert_eq!(RelationKind::derives().as_str(), "derives");
+    }
+
+    #[test]
+    fn relation_kinds_reject_shapeless_names() {
+        for bad in ["", "Contains", "derived_from", "9lives", "a b", &"x".repeat(65)] {
+            assert!(
+                matches!(RelationKind::new(bad), Err(FragmentError::BadRelationKind(_))),
+                "{bad:?} must be rejected"
+            );
         }
     }
 
     #[test]
-    fn derived_from_edge_points_child_to_parent() {
-        let parent = FragmentId(1);
-        let child = FragmentId(2);
-        let r = RelationKind::DerivedFrom.edge(parent, child);
-        assert_eq!((r.from, r.to), (child, parent));
-    }
-
-    #[test]
-    fn contains_edge_points_parent_to_child() {
-        let r = RelationKind::Contains.edge(FragmentId(1), FragmentId(2));
-        assert_eq!((r.from, r.to), (FragmentId(1), FragmentId(2)));
+    fn fragment_keys_are_bounded_and_printable() {
+        assert!(FragmentKey::new("entity:person:greg hunt").is_ok());
+        assert!(matches!(FragmentKey::new(""), Err(FragmentError::BadFragmentKey(_))));
+        assert!(matches!(FragmentKey::new("a\nb"), Err(FragmentError::BadFragmentKey(_))));
+        assert!(matches!(FragmentKey::new("k".repeat(257)), Err(FragmentError::BadFragmentKey(_))));
     }
 
     #[test]
@@ -342,7 +407,7 @@ mod tests {
                     text: Some(t.to_string()),
                     extent: None,
                 },
-                RelationKind::Contains,
+                RelationKind::contains(),
             )
         };
         let mut root = leaf("root");

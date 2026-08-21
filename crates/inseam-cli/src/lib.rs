@@ -155,7 +155,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Show one source's fragments, relations, and connected entities.
+    /// Show one source's fragments, relations, and connected keyed fragments (entities).
     Expand {
         address: String,
         #[arg(long)]
@@ -546,7 +546,7 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
             );
             println!("fragments      {}", status.fragments);
             println!("relations      {}", status.relations);
-            println!("entities       {}", status.entities);
+            println!("keyed          {}", status.keyed_fragments);
             println!("search rows    {}", status.search_rows);
         }
         Command::Plugins => {

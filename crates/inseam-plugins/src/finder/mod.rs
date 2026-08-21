@@ -4,7 +4,7 @@
 //! over the relation graph. Ranked fragments roll up to their sources.
 //! Every config dial here is query-time tier: tuning it never re-indexes.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use serde::Deserialize;
@@ -54,37 +54,51 @@ impl Default for FinderConfig {
 }
 
 /// How strongly each relation kind conducts relevance during propagation.
+/// Kinds are an open vocabulary (`design/kernel.md`), so this is a map by
+/// kind name plus a default for kinds it does not list; the built-in table
+/// tunes the kinds the first-party transforms emit, and a composition may
+/// add or override entries (`[entry.config.weights]`).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RelationWeights {
-    pub contains: f64,
-    pub links_to: f64,
-    pub derived_from: f64,
-    pub mentions: f64,
-    pub transcribes: f64,
+    /// Weight for any kind `by_kind` does not name.
+    pub default: f64,
+    /// Weight per relation kind name (`"links-to" = 0.4`).
+    pub by_kind: BTreeMap<String, f64>,
 }
 
 impl Default for RelationWeights {
     fn default() -> Self {
         Self {
-            contains: 1.0,
-            links_to: 0.4,
-            derived_from: 0.9,
-            mentions: 0.8,
-            transcribes: 1.0,
+            default: 0.5,
+            by_kind: BTreeMap::from([
+                ("contains".to_string(), 1.0),
+                ("derives".to_string(), 0.9),
+                ("links-to".to_string(), 0.4),
+                ("mentions".to_string(), 0.8),
+                ("transcribes".to_string(), 1.0),
+            ]),
         }
     }
 }
 
 impl RelationWeights {
-    pub fn weight(&self, kind: RelationKind) -> f64 {
-        match kind {
-            RelationKind::Contains => self.contains,
-            RelationKind::LinksTo => self.links_to,
-            RelationKind::DerivedFrom => self.derived_from,
-            RelationKind::Mentions => self.mentions,
-            RelationKind::Transcribes => self.transcribes,
-        }
+    pub fn weight(&self, kind: &RelationKind) -> f64 {
+        self.by_kind
+            .get(kind.as_str())
+            .copied()
+            .unwrap_or(self.default)
+    }
+
+    /// Layer configured weights over the built-in table, so naming one kind
+    /// in a composition does not silently zero the rest.
+    fn over_defaults(self) -> Self {
+        let mut merged = Self {
+            default: self.default,
+            ..Self::default()
+        };
+        merged.by_kind.extend(self.by_kind);
+        merged
     }
 }
 
@@ -94,9 +108,9 @@ pub struct FinderPlugin {
 
 impl FinderPlugin {
     pub fn from_config(config: &toml::Table) -> Result<Self, PluginError> {
-        Ok(Self {
-            config: parse_config(config)?,
-        })
+        let mut config: FinderConfig = parse_config(config)?;
+        config.weights = config.weights.over_defaults();
+        Ok(Self { config })
     }
 }
 
@@ -309,7 +323,7 @@ pub fn weighted_edges(relations: &[Relation], weights: &RelationWeights) -> Vec<
         if r.from == r.to {
             continue;
         }
-        let w = weights.weight(r.kind);
+        let w = weights.weight(&r.kind);
         if w <= 0.0 {
             continue;
         }
@@ -479,28 +493,33 @@ mod tests {
 
     #[test]
     fn weighted_edges_merge_parallel_and_drop_self_loops() {
+        let kind = |k: &str| RelationKind::new(k).expect("valid kind");
         let relations = vec![
-            Relation {
-                from: FragmentId(1),
-                kind: RelationKind::Contains,
-                to: FragmentId(2),
-            },
-            Relation {
-                from: FragmentId(2),
-                kind: RelationKind::Mentions,
-                to: FragmentId(1),
-            },
-            Relation {
-                from: FragmentId(3),
-                kind: RelationKind::Contains,
-                to: FragmentId(3),
-            },
+            Relation::new(FragmentId(1), kind("contains"), FragmentId(2)),
+            Relation::new(FragmentId(2), kind("mentions"), FragmentId(1)),
+            Relation::new(FragmentId(3), kind("contains"), FragmentId(3)),
         ];
         let edges = weighted_edges(&relations, &weights());
         assert_eq!(edges.len(), 1);
         let (a, b, w) = edges[0];
         assert_eq!((a, b), (1, 2));
         assert!((w - 1.8).abs() < 1e-9, "contains 1.0 + mentions 0.8");
+    }
+
+    #[test]
+    fn unknown_relation_kinds_get_the_default_weight_and_config_layers_over_it() {
+        let weights = weights();
+        assert_eq!(weights.weight(&RelationKind::new("cites").expect("valid")), 0.5);
+        let configured: RelationWeights =
+            toml::from_str("default = 0.1
+[by_kind]
+\"links-to\" = 0.2
+cites = 0.7").expect("parses");
+        let merged = configured.over_defaults();
+        assert_eq!(merged.weight(&RelationKind::new("links-to").expect("valid")), 0.2);
+        assert_eq!(merged.weight(&RelationKind::new("cites").expect("valid")), 0.7);
+        assert_eq!(merged.weight(&RelationKind::contains()), 1.0, "unnamed kinds keep the table");
+        assert_eq!(merged.weight(&RelationKind::new("other").expect("valid")), 0.1);
     }
 
     #[test]

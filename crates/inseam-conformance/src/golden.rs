@@ -65,10 +65,11 @@ pub struct Expect {
     pub relation: Option<String>,
     /// At least one emitted fragment's mimetype starts with this.
     pub mimetype: Option<String>,
-    /// At least one extracted entity is named this (linked transforms
-    /// only — the transform WIT seam emits fragments, never entities).
-    pub entity: Option<String>,
-    pub max_entities: Option<usize>,
+    /// At least one keyed sprout's key or text contains this (linked
+    /// transforms only — the transform WIT seam emits child fragments,
+    /// never keyed sprouts).
+    pub keyed_contains: Option<String>,
+    pub max_keyed: Option<usize>,
 }
 
 /// What a plugin emitted for one check, in the tier-neutral shape the
@@ -76,7 +77,16 @@ pub struct Expect {
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Emitted {
     pub fragments: Vec<EmittedFragment>,
-    pub entities: Vec<String>,
+    pub keyed: Vec<EmittedKeyed>,
+}
+
+/// One keyed sprout as emitted: its index-wide key, the relation it anchors
+/// with, and its text.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmittedKeyed {
+    pub key: String,
+    pub relation: String,
+    pub text: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -182,7 +192,7 @@ impl Expect {
         self.fragment_contains.is_some()
             || self.relation.is_some()
             || self.mimetype.is_some()
-            || self.entity.is_some()
+            || self.keyed_contains.is_some()
     }
 
     /// Bounds the output from above — the difference between "degrades to
@@ -220,15 +230,18 @@ impl Expect {
         {
             misses.push(format!("no fragment mimetype starts with {prefix:?}"));
         }
-        if let Some(name) = &self.entity
-            && !emitted.entities.iter().any(|e| e == name)
+        if let Some(needle) = &self.keyed_contains
+            && !emitted.keyed.iter().any(|k| {
+                k.key.contains(needle.as_str())
+                    || k.text.as_deref().is_some_and(|t| t.contains(needle.as_str()))
+            })
         {
-            misses.push(format!("no extracted entity is named {name:?}"));
+            misses.push(format!("no keyed sprout's key or text contains {needle:?}"));
         }
-        if let Some(max) = self.max_entities
-            && emitted.entities.len() > max
+        if let Some(max) = self.max_keyed
+            && emitted.keyed.len() > max
         {
-            misses.push(format!("expected at most {max} entit(y/ies)"));
+            misses.push(format!("expected at most {max} keyed sprout(s)"));
         }
         misses
     }
@@ -252,8 +265,9 @@ impl Emitted {
             };
             out.push_str(&format!(" [{} {} {text}]", f.mimetype, f.relation));
         }
-        if !self.entities.is_empty() {
-            out.push_str(&format!(", {} entit(y/ies) {:?}", self.entities.len(), self.entities));
+        if !self.keyed.is_empty() {
+            let keys: Vec<&str> = self.keyed.iter().map(|k| k.key.as_str()).collect();
+            out.push_str(&format!(", {} keyed {:?}", self.keyed.len(), keys));
         }
         out
     }
@@ -274,7 +288,7 @@ mod tests {
     fn emitted(fragments: Vec<EmittedFragment>) -> Emitted {
         Emitted {
             fragments,
-            entities: Vec::new(),
+            keyed: Vec::new(),
         }
     }
 
@@ -313,17 +327,22 @@ mod tests {
     }
 
     #[test]
-    fn expect_matches_entities_by_name_and_caps_them() {
+    fn expect_matches_keyed_sprouts_by_key_or_text_and_caps_them() {
         let expect: Expect =
-            toml::from_str("min_fragments = 0\nentity = \"Ada\"\nmax_entities = 1").expect("parses");
+            toml::from_str("min_fragments = 0\nkeyed_contains = \"Ada\"\nmax_keyed = 1").expect("parses");
+        let keyed = |key: &str, text: &str| EmittedKeyed {
+            key: key.into(),
+            relation: "mentions".into(),
+            text: Some(text.into()),
+        };
         let hit = Emitted {
             fragments: Vec::new(),
-            entities: vec!["Ada".into()],
+            keyed: vec![keyed("entity:person:ada", "Ada")],
         };
         assert!(expect.unmet(&hit).is_empty());
         let miss = Emitted {
             fragments: Vec::new(),
-            entities: vec!["Bob".into(), "Cy".into()],
+            keyed: vec![keyed("entity:person:bob", "Bob"), keyed("entity:person:cy", "Cy")],
         };
         assert_eq!(expect.unmet(&miss).len(), 2);
     }

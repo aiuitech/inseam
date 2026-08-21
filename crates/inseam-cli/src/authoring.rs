@@ -49,8 +49,8 @@ pub fn seams(wit: bool) {
     println!("                       llm-complete        needs [capabilities] llm = true");
     println!("                       llm-describe-image  needs [capabilities] llm = true");
     println!("                       source-bytes        needs [capabilities] source_bytes = true (root only)");
-    println!("              output   fragments only (no entities); parent indexes an EARLIER fragment;");
-    println!("                       relations: contains | derived-from | transcribes | links-to | mentions;");
+    println!("              output   child fragments only (no keyed sprouts); parent indexes an EARLIER fragment;");
+    println!("                       relation: contains | derives (kernel) or your own kebab-case kind;");
     println!("                       inseam-defined mimetypes (text/x-inseam-*) are refused");
     println!("              rules    degrade, never trap; fresh instance per call; fuel-metered");
     println!();
@@ -249,7 +249,7 @@ fn scaffold_checks(s: &Scaffold<'_>) -> String {
          [check.expect]\n\
          min_fragments = 1\n\
          fragment_contains = \"REPLACE WITH TEXT YOUR PLUGIN EMITS\"\n\
-         relation = \"REPLACE: contains | derived-from | transcribes | links-to | mentions\"\n\
+         relation = \"REPLACE: contains | derives | your-own-kind\"\n\
          # mimetype = \"text/plain\"   # prefix of an emitted fragment's mimetype\n\
          \n\
          # The degrade path: no content, no LLM. Decide what happens — nothing is the\n\

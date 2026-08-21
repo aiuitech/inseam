@@ -125,7 +125,7 @@ impl Transform for SummarizerTransform {
                 text: Some(text),
                 extent: None,
             },
-            RelationKind::DerivedFrom,
+            RelationKind::derives(),
         )])
     }
 }
@@ -172,7 +172,7 @@ mod tests {
             .await;
         assert_eq!(out.sprouts.len(), 1);
         let sprout = &out.sprouts[0];
-        assert_eq!(sprout.relation, RelationKind::DerivedFrom);
+        assert_eq!(sprout.relation, RelationKind::derives());
         assert_eq!(sprout.fragment.mimetype.param("via"), Some("envelope"));
         assert!(sprout
             .fragment

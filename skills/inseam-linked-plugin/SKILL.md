@@ -47,8 +47,8 @@ Write them first and build to them.
    `transform_chunker/`, `transform_summarizer/`, `transform_entities/` —
    are the templates). Minimum coverage, enforced:
    one check with a substantive expectation (`fragment_contains`,
-   `relation`, `mimetype`, or `entity` — linked transforms can assert
-   entities, loaded ones cannot), and one *starved* check (no `text`, no
+   `relation`, `mimetype`, or `keyed_contains` — linked transforms can
+   assert keyed sprouts, loaded ones cannot), and one *starved* check (no `text`, no
    `llm_returns`) with `max_fragments` set. Add a check per distinct
    behavior; each check's `mimetype` must be one the transform claims, or
    the sweep fails it. The LLM is canned (`llm_returns` verbatim, absent =

@@ -9,15 +9,13 @@
 //! mimetype inventory decides which registrations *would* participate now —
 //! so mounting a video transform never dirties a markdown note.
 
-use std::fmt;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use inseam_kernel::address::Envelope;
-use inseam_kernel::fragment::{Mimetype, Sprout};
+use inseam_kernel::fragment::{FragmentKey, Mimetype, NewFragment, RelationKind, Sprout};
 use inseam_kernel::store::InventoryEntry;
 use inseam_kernel::substrate::{fnv1a, ApplyCx, PluginError, ServiceKey};
-use crate::text::collapse_ws;
+
 use crate::SeamError;
 
 pub const TRANSFORMS: ServiceKey<dyn Transforms> = ServiceKey::new("transforms");
@@ -83,12 +81,43 @@ pub struct TransformCtx<'a> {
 }
 
 /// What a transform emits: sprouts become child fragments of the input;
-/// entities are handed back for the core to deduplicate index-wide (a
-/// transform cannot know fragment ids).
+/// keyed sprouts become (or attach to) index-wide fragments the sweep
+/// deduplicates by key and anchors into this source's subtree — a transform
+/// cannot know fragment ids, so it describes the anchor and the sweep
+/// resolves it.
 #[derive(Debug, Default)]
 pub struct TransformOutput {
     pub sprouts: Vec<Sprout>,
-    pub entities: Vec<ExtractedEntity>,
+    pub keyed: Vec<KeyedSprout>,
+}
+
+/// A fragment shared index-wide under a key (`design/indexing.md`): the
+/// first transform to emit a key creates the fragment, later emitters reuse
+/// it, and each emission anchors it into the emitting source with an edge.
+/// The vocabulary — key namespace, mimetype, relation kind — is the
+/// emitting plugin's; the entity extractor's `entity:person:<name>` /
+/// `text/x-inseam-entity` / `mentions` is one such vocabulary, not the
+/// kernel's.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KeyedSprout {
+    pub key: FragmentKey,
+    pub fragment: NewFragment,
+    /// Kind of the edge from each anchor fragment to the keyed fragment,
+    /// read anchor → keyed ("section mentions person").
+    pub relation: RelationKind,
+    pub anchor: Anchor,
+}
+
+/// Where in the emitting source a keyed sprout is anchored — which fragments
+/// get the edge to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Anchor {
+    /// The fragment the transform was applied to.
+    Input,
+    /// Every text-bearing source-content fragment in the source's subtree
+    /// whose text contains this (case-insensitive); the input fragment when
+    /// none does.
+    TextContaining(String),
 }
 
 impl TransformOutput {
@@ -108,8 +137,8 @@ pub trait Transform: Send + Sync {
     fn kind(&self) -> TransformKind;
 
     /// Whether this transform claims a fragment of this mimetype at this
-    /// position. Inseam-defined mimetypes (summaries, entities) are derived
-    /// understanding and must never be claimed.
+    /// position. Inseam-defined mimetypes (`text/x-inseam-*`: summaries,
+    /// entities) are derived understanding and must never be claimed.
     fn claims(&self, mimetype: &Mimetype, is_root: bool) -> bool;
 
     /// Whether applications should receive the source's raw bytes.
@@ -215,72 +244,9 @@ pub fn prune(sprouts: Vec<Sprout>, budget: DecomposeBudget) -> Vec<Sprout> {
     sprouts
 }
 
-// ---------------------------------------------------------------------------
-// Entity vocabulary (what enrichment transforms hand back)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum EntityKind {
-    Person,
-    Place,
-    Org,
-    Project,
-    Date,
-    Other,
-}
-
-impl EntityKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Person => "person",
-            Self::Place => "place",
-            Self::Org => "org",
-            Self::Project => "project",
-            Self::Date => "date",
-            Self::Other => "other",
-        }
-    }
-}
-
-impl fmt::Display for EntityKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for EntityKind {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "person" | "people" => Ok(Self::Person),
-            "place" | "location" => Ok(Self::Place),
-            "org" | "organization" | "organisation" | "company" => Ok(Self::Org),
-            "project" => Ok(Self::Project),
-            "date" | "time" => Ok(Self::Date),
-            _ => Ok(Self::Other),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExtractedEntity {
-    pub name: String,
-    pub kind: EntityKind,
-}
-
-impl ExtractedEntity {
-    /// The per-index deduplication key: one fragment per entity, however
-    /// many sources mention it.
-    pub fn key(&self) -> String {
-        format!("{}:{}", self.kind, collapse_ws(&self.name).to_lowercase())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use inseam_kernel::fragment::{NewFragment, RelationKind};
 
     struct Claimer(&'static [&'static str], bool);
 
@@ -366,7 +332,7 @@ mod tests {
                     text: Some("x".into()),
                     extent: None,
                 },
-                relation: RelationKind::Contains,
+                relation: RelationKind::contains(),
                 children,
             }
         }

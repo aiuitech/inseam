@@ -22,7 +22,7 @@ How merging works: when your entry matches a base entry's id, your `config` **re
 | `chunker` | `transform-chunker` | `target_chars` (1600) |
 | `summarizer` | `transform-summarizer` | `target_chars` (400), `llm_call_budget` (500) |
 | `entities` | `transform-entities` | `max_per_source` (12), `llm_call_budget` (500) |
-| `finder` | `finder` | `seed_k`, `rrf_k`, `damping`, `iterations`, `epsilon`, `max_hints`, `max_vector_distance`, `[weights]` |
+| `finder` | `finder` | `seed_k`, `rrf_k`, `damping`, `iterations`, `epsilon`, `max_hints`, `max_vector_distance`, `[weights]` (`default` + `by_kind` by relation kind name) |
 | `sweep` | `sweep` | `max_sources` (0 = unlimited), `max_fragments_per_source` (400), `max_depth` (6), `max_content_bytes` (2 MB), `modified_after` (`YYYY-MM-DD`), `ignore` (rules over addresses and envelopes; [indexing/ignore.md](indexing/ignore.md)) |
 | `operations` | `operations` | — |
 

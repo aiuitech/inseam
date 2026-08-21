@@ -1,22 +1,25 @@
 //! The `transform-entities` plugin: the enrichment that pulls people,
-//! places, organizations, projects and dates out of a root as deduplicated
-//! entity fragments with `mentions` relations back to what referenced them
-//! ([`extract`]). Entities are the graph's connective tissue: two unrelated
-//! sources mentioning the same person end up one hop apart
-//! (`design/indexing.md`). Useless without the granted LLM handle, so it
-//! emits nothing when the handle is withheld. Its golden checks live beside
-//! it in `entity-extractor.checks.toml`.
+//! places, organizations, projects and dates out of a root as **keyed
+//! sprouts** — one `text/x-inseam-entity` fragment per entity across the
+//! whole index, anchored by a `mentions` edge to every fragment whose text
+//! names it ([`extract`]). Entities are the graph's connective tissue: two
+//! unrelated sources mentioning the same person end up one hop apart
+//! (`design/indexing.md`). The entity vocabulary is entirely this plugin's;
+//! the kernel only knows keyed fragments and relation names. Useless without
+//! the granted LLM handle, so it emits nothing when the handle is withheld.
+//! Its golden checks live beside it in `entity-extractor.checks.toml`.
 
 mod extract;
 
 use std::sync::Arc;
 
-use inseam_kernel::fragment::Mimetype;
+use inseam_kernel::fragment::{Mimetype, NewFragment};
 use inseam_kernel::substrate::{
     parse_config, ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory,
 };
 use inseam_seams::transforms::{
-    register_as_effect, Registration, Transform, TransformCtx, TransformKind, TransformOutput,
+    register_as_effect, Anchor, KeyedSprout, Registration, Transform, TransformCtx,
+    TransformKind, TransformOutput,
 };
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -108,9 +111,22 @@ impl Transform for EntityExtractorTransform {
                 tracing::warn!("entity extraction failed, continuing without: {e}");
                 Vec::new()
             });
+        let keyed = entities
+            .into_iter()
+            .map(|entity| KeyedSprout {
+                key: entity.key(),
+                fragment: NewFragment {
+                    mimetype: extract::entity_mimetype(entity.kind),
+                    text: Some(entity.name.clone()),
+                    extent: None,
+                },
+                relation: extract::mentions(),
+                anchor: Anchor::TextContaining(entity.name),
+            })
+            .collect();
         TransformOutput {
             sprouts: Vec::new(),
-            entities,
+            keyed,
         }
     }
 }
@@ -144,6 +160,6 @@ mod tests {
             })
             .await;
         assert!(out.sprouts.is_empty());
-        assert!(out.entities.is_empty());
+        assert!(out.keyed.is_empty());
     }
 }

@@ -1,7 +1,7 @@
 //! The index store — the kernel's second responsibility (`design/kernel.md`).
 //! One libSQL database, two layers, as `design/runtime.md` settled: the
 //! catalog tables are the transactional source of truth (sources + envelopes,
-//! the semantic graph of fragments + relations + the entity registry, and
+//! the semantic graph of fragments + relations + the keyed-fragment registry, and
 //! plugin state namespaces); the search tables — FTS5 full-text and native
 //! vectors — are derived, rebuildable from the catalog tables at any time.
 //!
@@ -20,9 +20,11 @@ use libsql::params;
 use thiserror::Error;
 
 use crate::address::{Address, ContentLength, Envelope, HostId, Locator, Property, Timestamp};
-use crate::fragment::{Extent, FragmentId, Mimetype, NewFragment, Relation, RelationKind};
+use crate::fragment::{
+    Extent, FragmentId, FragmentKey, Mimetype, NewFragment, Relation, RelationKind,
+};
 
-const SCHEMA_VERSION: &str = "4";
+const SCHEMA_VERSION: &str = "5";
 /// Ids per DELETE predicate; keeps the SQL bounded.
 const DELETE_CHUNK: usize = 400;
 
@@ -73,8 +75,9 @@ pub struct StoredSource {
     pub root_fragment: Option<FragmentId>,
 }
 
-/// A fragment as the graph stores it. `source` is `None` only for entity
-/// fragments, which are deduplicated across the whole index.
+/// A fragment as the graph stores it. `source` is `None` only for keyed
+/// fragments, which belong to no single source and are deduplicated across
+/// the whole index under their key.
 #[derive(Debug, Clone)]
 pub struct StoredFragment {
     pub id: FragmentId,
@@ -123,7 +126,23 @@ pub struct StoreStats {
     pub indexed_sources: u64,
     pub fragments: u64,
     pub relations: u64,
-    pub entities: u64,
+    pub keyed_fragments: u64,
+}
+
+/// The outcome of asking for a keyed fragment: the id it already had, or the
+/// id it was just created under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyedFragment {
+    Existing(FragmentId),
+    Created(FragmentId),
+}
+
+impl KeyedFragment {
+    pub fn id(&self) -> FragmentId {
+        match self {
+            Self::Existing(id) | Self::Created(id) => *id,
+        }
+    }
 }
 
 /// The live search surface: the embedding identity the search tables are
@@ -383,11 +402,11 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Drop entity fragments no relation touches anymore — the consequence of
-    /// source deletions, rebuilds that no longer mention them, and disabling
-    /// entity extraction. Their search rows go in the same transaction; the
-    /// registry rows cascade. Returns the dropped fragment ids.
-    pub async fn gc_entities(&self) -> Result<Vec<i64>, StoreError> {
+    /// Drop keyed fragments no relation touches anymore — the consequence of
+    /// source deletions, rebuilds that no longer anchor them, and unmounting
+    /// the plugin that emitted them. Their search rows go in the same
+    /// transaction; the registry rows cascade. Returns the dropped ids.
+    pub async fn gc_keyed_fragments(&self) -> Result<Vec<i64>, StoreError> {
         let tx = self.catalog.transaction().await?;
         let mut rows = tx
             .query(
@@ -462,8 +481,8 @@ impl IndexStore {
 
     /// Drop a source's fragments and their derived search rows in one
     /// transaction (relations cascade) — a crash can never leave search rows
-    /// pointing at fragments the catalog no longer has. Entity fragments
-    /// survive — only their mention edges into this source go.
+    /// pointing at fragments the catalog no longer has. Keyed fragments
+    /// survive — only their edges into this source go.
     pub async fn delete_fragments_of(&self, source: SourceId) -> Result<(), StoreError> {
         let tx = self.catalog.transaction().await?;
         if search_tables_exist(&tx).await? {
@@ -479,25 +498,16 @@ impl IndexStore {
         Ok(())
     }
 
+    /// Insert a fragment of a source's subtree. Source-less fragments exist
+    /// only through [`keyed_fragment`](Self::keyed_fragment), so "no source"
+    /// and "keyed" stay one state.
     pub async fn insert_fragment(
         &self,
-        source: Option<SourceId>,
+        source: SourceId,
         fragment: &NewFragment,
     ) -> Result<FragmentId, StoreError> {
-        let (unit, start, end) = extent_columns(fragment.extent);
         let row = self
-            .first_row(
-                "INSERT INTO fragments (source, mimetype, text, extent_unit, extent_start, extent_end)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6) RETURNING id",
-                params![
-                    source.map(|s| s.0),
-                    fragment.mimetype.to_string(),
-                    fragment.text.as_deref(),
-                    unit,
-                    start,
-                    end,
-                ],
-            )
+            .first_row(INSERT_FRAGMENT_SQL, fragment_params(Some(source), fragment))
             .await?
             .ok_or_else(|| StoreError::Corrupt(0, "fragment insert returned no id".into()))?;
         Ok(FragmentId(row.get(0)?))
@@ -590,7 +600,7 @@ impl IndexStore {
         Ok(out)
     }
 
-    /// Which source each fragment belongs to (entity fragments absent).
+    /// Which source each fragment belongs to (keyed fragments absent).
     pub async fn sources_of_fragments(
         &self,
         ids: &[FragmentId],
@@ -614,12 +624,14 @@ impl IndexStore {
     pub async fn summary_of(&self, source: SourceId) -> Result<Option<String>, StoreError> {
         let row = self
             .first_row(
+                // The root `derives` its summary: input -> output, like
+                // every relation.
                 "SELECT f.text FROM fragments f
-                 JOIN relations r ON r.from_fragment = f.id AND r.kind = 'derived-from'
-                 JOIN sources s ON r.to_fragment = s.root_fragment
+                 JOIN relations r ON r.to_fragment = f.id AND r.kind = ?2
+                 JOIN sources s ON r.from_fragment = s.root_fragment
                  WHERE s.id = ?1 AND f.mimetype LIKE 'text/x-inseam-summary%'
                  LIMIT 1",
-                params![source.0],
+                params![source.0, RelationKind::derives().as_str()],
             )
             .await?;
         match row {
@@ -629,12 +641,16 @@ impl IndexStore {
     }
 
     // ------------------------------------------------------------------
-    // Entity registry
+    // Keyed fragments
     // ------------------------------------------------------------------
 
-    pub async fn entity_fragment(&self, key: &str) -> Result<Option<FragmentId>, StoreError> {
+    /// The fragment stored under `key`, if any plugin has created it.
+    pub async fn fragment_by_key(&self, key: &FragmentKey) -> Result<Option<FragmentId>, StoreError> {
         let row = self
-            .first_row("SELECT fragment FROM entities WHERE key = ?1", params![key])
+            .first_row(
+                "SELECT fragment FROM keyed_fragments WHERE key = ?1",
+                params![key.as_str()],
+            )
             .await?;
         match row {
             None => Ok(None),
@@ -642,14 +658,44 @@ impl IndexStore {
         }
     }
 
-    pub async fn register_entity(&self, key: &str, fragment: FragmentId) -> Result<(), StoreError> {
-        self.catalog
-            .execute(
-                "INSERT OR IGNORE INTO entities (key, fragment) VALUES (?1, ?2)",
-                params![key, fragment.0],
+    /// Get-or-create the fragment stored under `key`, in one transaction:
+    /// the first emitter's `fragment` is what the index keeps, later
+    /// emitters get the existing id. This is the only way a source-less
+    /// fragment comes to exist.
+    pub async fn keyed_fragment(
+        &self,
+        key: &FragmentKey,
+        fragment: &NewFragment,
+    ) -> Result<KeyedFragment, StoreError> {
+        let tx = self.catalog.transaction().await?;
+        // Statements must run to completion before the transaction can
+        // commit, so both single-row reads are drained rather than peeked.
+        let existing = drain_single_i64(
+            tx.query(
+                "SELECT fragment FROM keyed_fragments WHERE key = ?1",
+                params![key.as_str()],
             )
-            .await?;
-        Ok(())
+            .await?,
+        )
+        .await?;
+        if let Some(id) = existing {
+            tx.commit().await?;
+            return Ok(KeyedFragment::Existing(FragmentId(id)));
+        }
+        let inserted = drain_single_i64(
+            tx.query(INSERT_FRAGMENT_SQL, fragment_params(None, fragment))
+                .await?,
+        )
+        .await?
+        .ok_or_else(|| StoreError::Corrupt(0, "fragment insert returned no id".into()))?;
+        let id = FragmentId(inserted);
+        tx.execute(
+            "INSERT INTO keyed_fragments (key, fragment) VALUES (?1, ?2)",
+            params![key.as_str(), id.0],
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(KeyedFragment::Created(id))
     }
 
     pub async fn stats(&self) -> Result<StoreStats, StoreError> {
@@ -660,7 +706,7 @@ impl IndexStore {
                 .await?,
             fragments: self.count_of("SELECT COUNT(*) FROM fragments").await?,
             relations: self.count_of("SELECT COUNT(*) FROM relations").await?,
-            entities: self.count_of("SELECT COUNT(*) FROM entities").await?,
+            keyed_fragments: self.count_of("SELECT COUNT(*) FROM keyed_fragments").await?,
         })
     }
 
@@ -971,7 +1017,7 @@ async fn converge_schema(conn: &libsql::Connection) -> Result<(), StoreError> {
         conn.execute_batch(SEARCH_SCHEMA_DROP_SQL).await?;
         conn.execute_batch(
             "DROP TABLE IF EXISTS relations;
-             DROP TABLE IF EXISTS entities;
+             DROP TABLE IF EXISTS keyed_fragments;
              DROP TABLE IF EXISTS fragments;
              DROP TABLE IF EXISTS sources;
              DROP TABLE IF EXISTS plugin_state;
@@ -1022,7 +1068,7 @@ async fn converge_schema(conn: &libsql::Connection) -> Result<(), StoreError> {
            PRIMARY KEY (from_fragment, kind, to_fragment)
          ) WITHOUT ROWID;
          CREATE INDEX IF NOT EXISTS relations_by_to ON relations(to_fragment);
-         CREATE TABLE IF NOT EXISTS entities (
+         CREATE TABLE IF NOT EXISTS keyed_fragments (
            key TEXT PRIMARY KEY,
            fragment INTEGER NOT NULL REFERENCES fragments(id) ON DELETE CASCADE
          );
@@ -1253,13 +1299,42 @@ fn row_to_relation(r: &libsql::Row) -> Result<Relation, StoreError> {
     let to: i64 = r.get(2)?;
     Ok(Relation {
         from: FragmentId(from),
-        kind: kind.parse::<RelationKind>().map_err(|e| corrupt(from, e))?,
+        kind: RelationKind::new(kind).map_err(|e| corrupt(from, e))?,
         to: FragmentId(to),
     })
 }
 
 fn corrupt(id: i64, err: impl std::fmt::Display) -> StoreError {
     StoreError::Corrupt(id, format!("{err}"))
+}
+
+const INSERT_FRAGMENT_SQL: &str =
+    "INSERT INTO fragments (source, mimetype, text, extent_unit, extent_start, extent_end)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6) RETURNING id";
+
+/// Read the first column of an at-most-one-row result and run the statement
+/// to completion, so a surrounding transaction can commit afterwards.
+async fn drain_single_i64(mut rows: libsql::Rows) -> Result<Option<i64>, StoreError> {
+    let mut value: Option<i64> = None;
+    while let Some(row) = rows.next().await? {
+        assert!(value.is_none(), "single-row query returned more than one row");
+        value = Some(row.get(0)?);
+    }
+    Ok(value)
+}
+
+/// The bound parameters for [`INSERT_FRAGMENT_SQL`]; `source` is `None`
+/// only for keyed fragments.
+fn fragment_params(source: Option<SourceId>, fragment: &NewFragment) -> impl libsql::params::IntoParams {
+    let (unit, start, end) = extent_columns(fragment.extent);
+    params![
+        source.map(|s| s.0),
+        fragment.mimetype.to_string(),
+        fragment.text.as_deref(),
+        unit,
+        start,
+        end,
+    ]
 }
 
 fn extent_columns(extent: Option<Extent>) -> (Option<&'static str>, Option<i64>, Option<i64>) {
@@ -1359,7 +1434,7 @@ mod tests {
 
         let root = s
             .insert_fragment(
-                Some(sid),
+                sid,
                 &NewFragment {
                     mimetype: Mimetype::markdown(),
                     text: None,
@@ -1371,7 +1446,7 @@ mod tests {
         s.set_root_fragment(sid, root).await.expect("sets root");
         let section = s
             .insert_fragment(
-                Some(sid),
+                sid,
                 &NewFragment {
                     mimetype: Mimetype::markdown(),
                     text: Some("# Kitchen\nbudget notes".into()),
@@ -1382,7 +1457,7 @@ mod tests {
             .expect("inserts");
         let summary = s
             .insert_fragment(
-                Some(sid),
+                sid,
                 &NewFragment {
                     mimetype: Mimetype::summary(),
                     text: Some("Notes about the kitchen budget.".into()),
@@ -1391,10 +1466,10 @@ mod tests {
             )
             .await
             .expect("inserts");
-        s.insert_relation(&RelationKind::Contains.edge(root, section))
+        s.insert_relation(&Relation::new(root, RelationKind::contains(), section))
             .await
             .expect("relates");
-        s.insert_relation(&RelationKind::DerivedFrom.edge(root, summary))
+        s.insert_relation(&Relation::new(root, RelationKind::derives(), summary))
             .await
             .expect("relates");
 
@@ -1409,7 +1484,7 @@ mod tests {
 
         let rels = s.relations_touching(&[section]).await.expect("ok");
         assert_eq!(rels.len(), 1);
-        assert_eq!(rels[0].kind, RelationKind::Contains);
+        assert_eq!(rels[0].kind, RelationKind::contains());
 
         // Deleting the source's fragments cascades relations.
         s.delete_fragments_of(sid).await.expect("deletes");
@@ -1559,7 +1634,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gc_entities_drops_only_unrelated_entity_fragments() {
+    async fn gc_drops_only_unanchored_keyed_fragments() {
         let dir = tempfile::tempdir().expect("tempdir");
         let s = store(dir.path()).await;
         let a = addr("inseam://fs-test/tmp/note.md");
@@ -1569,7 +1644,7 @@ mod tests {
             .expect("upserts");
         let root = s
             .insert_fragment(
-                Some(sid),
+                sid,
                 &NewFragment {
                     mimetype: Mimetype::markdown(),
                     text: Some("greg's note".into()),
@@ -1578,30 +1653,26 @@ mod tests {
             )
             .await
             .expect("inserts");
-        async fn entity(s: &IndexStore, name: &str) -> FragmentId {
-            s.insert_fragment(
-                None,
+        async fn keyed(s: &IndexStore, key: &str, name: &str) -> FragmentId {
+            s.keyed_fragment(
+                &FragmentKey::new(key).expect("valid key"),
                 &NewFragment {
-                    mimetype: Mimetype::entity().with_param("kind", "person"),
+                    mimetype: Mimetype::parse("text/x-test-entity;kind=person").expect("valid"),
                     text: Some(name.into()),
                     extent: None,
                 },
             )
             .await
-            .expect("inserts")
+            .expect("creates")
+            .id()
         }
-        let mentioned = entity(&s, "Greg").await;
-        let orphan = entity(&s, "Nobody").await;
-        s.register_entity("person:greg", mentioned)
-            .await
-            .expect("registers");
-        s.register_entity("person:nobody", orphan)
-            .await
-            .expect("registers");
-        s.insert_relation(&RelationKind::Mentions.edge(root, mentioned))
+        let mentioned = keyed(&s, "person:greg", "Greg").await;
+        let orphan = keyed(&s, "person:nobody", "Nobody").await;
+        let mentions = RelationKind::new("mentions").expect("valid kind");
+        s.insert_relation(&Relation::new(root, mentions, mentioned))
             .await
             .expect("relates");
-        // Entity fragments carry search rows too; GC must purge the orphan's
+        // Keyed fragments carry search rows too; GC must purge the orphan's
         // row in the same transaction it drops the fragment.
         s.add_search_rows(&[
             SearchRow {
@@ -1621,7 +1692,7 @@ mod tests {
         .expect("adds");
         s.rebuild_fts().await.expect("indexes");
 
-        let dropped = s.gc_entities().await.expect("gcs");
+        let dropped = s.gc_keyed_fragments().await.expect("gcs");
         assert_eq!(dropped, vec![orphan.0]);
         assert!(s.fragment(mentioned).await.expect("ok").is_some());
         assert!(s.fragment(orphan).await.expect("ok").is_none());
@@ -1630,41 +1701,39 @@ mod tests {
         let hits = s.search_fts("Greg", 5).await.expect("searches");
         assert_eq!(hits.first().map(|(id, _)| *id), Some(mentioned.0));
         // The registry row cascaded with the fragment.
-        assert_eq!(s.entity_fragment("person:nobody").await.expect("ok"), None);
-        assert_eq!(
-            s.entity_fragment("person:greg").await.expect("ok"),
-            Some(mentioned)
-        );
+        let nobody = FragmentKey::new("person:nobody").expect("valid key");
+        let greg = FragmentKey::new("person:greg").expect("valid key");
+        assert_eq!(s.fragment_by_key(&nobody).await.expect("ok"), None);
+        assert_eq!(s.fragment_by_key(&greg).await.expect("ok"), Some(mentioned));
 
         // Deleting the source orphans the survivor; the next GC takes it.
         s.delete_fragments_of(sid).await.expect("deletes");
-        let dropped = s.gc_entities().await.expect("gcs");
+        let dropped = s.gc_keyed_fragments().await.expect("gcs");
         assert_eq!(dropped, vec![mentioned.0]);
     }
 
     #[tokio::test]
-    async fn entity_registry_deduplicates() {
+    async fn keyed_fragments_deduplicate_under_their_key() {
         let dir = tempfile::tempdir().expect("tempdir");
         let s = store(dir.path()).await;
-        let e = s
-            .insert_fragment(
-                None,
-                &NewFragment {
-                    mimetype: Mimetype::entity().with_param("kind", "person"),
-                    text: Some("Greg Hunt".into()),
-                    extent: None,
-                },
-            )
-            .await
-            .expect("inserts");
-        s.register_entity("person:greg hunt", e).await.expect("registers");
-        assert_eq!(
-            s.entity_fragment("person:greg hunt").await.expect("ok"),
-            Some(e)
-        );
-        assert_eq!(s.entity_fragment("person:unknown").await.expect("ok"), None);
+        let key = FragmentKey::new("entity:person:greg hunt").expect("valid key");
+        let fragment = NewFragment {
+            mimetype: Mimetype::parse("text/x-test-entity;kind=person").expect("valid"),
+            text: Some("Greg Hunt".into()),
+            extent: None,
+        };
+        let first = s.keyed_fragment(&key, &fragment).await.expect("creates");
+        let KeyedFragment::Created(e) = first else {
+            panic!("first sighting creates, got {first:?}");
+        };
+        let again = s.keyed_fragment(&key, &fragment).await.expect("finds");
+        assert_eq!(again, KeyedFragment::Existing(e));
+        assert_eq!(s.fragment_by_key(&key).await.expect("ok"), Some(e));
+        let other = FragmentKey::new("entity:person:unknown").expect("valid key");
+        assert_eq!(s.fragment_by_key(&other).await.expect("ok"), None);
         let f = s.fragment(e).await.expect("ok").expect("present");
-        assert!(f.source.is_none());
+        assert!(f.source.is_none(), "keyed fragments belong to no source");
         assert_eq!(f.mimetype.param("kind"), Some("person"));
+        assert_eq!(s.stats().await.expect("ok").keyed_fragments, 1);
     }
 }

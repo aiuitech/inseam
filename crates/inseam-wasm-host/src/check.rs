@@ -197,7 +197,7 @@ fn emitted_from_fragments(fragments: &[Fragment]) -> Emitted {
                 text: f.text.clone(),
             })
             .collect(),
-        entities: Vec::new(),
+        keyed: Vec::new(),
     }
 }
 
@@ -626,10 +626,10 @@ async fn run_golden(
     if check.llm_returns.is_some() && !manifest.capabilities.llm {
         return Outcome::Warn("llm_returns is inert: the manifest does not request `llm`".into());
     }
-    if check.expect.entity.is_some() {
+    if check.expect.keyed_contains.is_some() || check.expect.max_keyed.is_some() {
         return Outcome::Fail(
-            "`entity` is not expressible on the transform WIT seam (it emits fragments only); \
-             assert the shape with `fragment_contains`/`relation`/`mimetype`"
+            "`keyed_contains`/`max_keyed` are not expressible on the transform WIT seam (it emits \
+             child fragments only); assert the shape with `fragment_contains`/`relation`/`mimetype`"
                 .into(),
         );
     }
@@ -796,9 +796,9 @@ fn hygiene(fragments: &[Fragment]) -> Outcome {
             Ok(_) => {}
             Err(e) => return Outcome::Fail(format!("fragment {i} mimetype: {e}")),
         }
-        if f.relation.parse::<RelationKind>().is_err() {
+        if let Err(e) = RelationKind::new(f.relation.as_str()) {
             return Outcome::Warn(format!(
-                "fragment {i} relation `{}` is unknown; the bridge will coerce it to `contains`",
+                "fragment {i} relation `{}` is malformed ({e}); the bridge will coerce it to `contains`",
                 f.relation
             ));
         }

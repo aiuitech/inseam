@@ -14,7 +14,7 @@ Merging by rank instead of score sidesteps the fact that BM25 scores and cosine 
 
 ## 2. Boost: spread relevance along the graph
 
-The seed scores, normalized into a distribution, become the restart vector for personalized PageRank over the **undirected** relation graph, with edge weights by relation kind (`[finder.weights]`) and parallel edges summed:
+The seed scores, normalized into a distribution, become the restart vector for personalized PageRank over the **undirected** relation graph, with edge weights by relation kind name (`[finder.weights]`: `by_kind` plus a `default` for kinds not listed) and parallel edges summed:
 
 ```
 p ← (1 − damping) · seed  +  damping · (Wᵀ p + dangling · seed)
@@ -32,7 +32,7 @@ Because the boost is *added*, a fragment with no useful relations keeps its sear
 
 ## 4. Rollup: fragments → sources
 
-Fragments group by source (entity fragments, having none, carry relevance but never rank). A source scores its best fragment plus a tapering bonus for additional hits — using only the max would ignore independent hits; summing everything would favor long documents:
+Fragments group by source (keyed fragments such as entities, having none, carry relevance but never rank). A source scores its best fragment plus a tapering bonus for additional hits — using only the max would ignore independent hits; summing everything would favor long documents:
 
 ```
 source = f1 + 0.1·f2 + 0.05·f3

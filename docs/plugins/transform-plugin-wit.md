@@ -112,8 +112,11 @@ and `none` hangs the fragment off the claimed fragment itself.
   (`text/plain;via=ocr`).
 
 - <a id="fragment.relation"></a>`relation`: `string`
-  <p>Relation to the parent: `contains`, `derived-from`,
-  `transcribes`, `links-to`, or `mentions`.
+  <p>Kind of the edge from the parent to this fragment, read
+  parent -> child: the kernel's `contains` (structural child) or
+  `derives` (derived understanding), or a kind this plugin defines
+  (kebab-case, e.g. `transcribes`). Malformed names fall back to
+  `contains`.
 
 - <a id="fragment.text"></a>`text`: option<`string`>
 

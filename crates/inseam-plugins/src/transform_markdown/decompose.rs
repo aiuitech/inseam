@@ -7,6 +7,12 @@ use pulldown_cmark::{Event, Options, Parser, Tag};
 
 use inseam_kernel::fragment::{Extent, Mimetype, NewFragment, RelationKind, Sprout};
 
+/// The markdown transform's own relation kind: a section `links-to` the URL
+/// fragment found inside it — plugin vocabulary, not the kernel's.
+pub fn links_to() -> RelationKind {
+    RelationKind::new("links-to").expect("literal relation kind is valid")
+}
+
 // Headingless documents degrade to the chunker's paragraph chunking, so
 // the two structural transforms agree on what a structureless text becomes.
 use crate::transform_chunker::chunk;
@@ -50,7 +56,7 @@ pub fn decompose(text: &str) -> Vec<Sprout> {
                 text: Some(url.clone()),
                 extent: Some(Extent::lines(line, line)),
             },
-            RelationKind::LinksTo,
+            links_to(),
         );
         match deepest_containing(&mut sprouts, &sections, *byte) {
             Some(sprout) => sprout.children.push(link),
@@ -145,7 +151,7 @@ impl Section {
                 text: Some(body.to_string()),
                 extent: Some(Extent::lines(start_line, end_line)),
             },
-            relation: RelationKind::Contains,
+            relation: RelationKind::contains(),
             children: self
                 .children
                 .iter()
@@ -199,7 +205,7 @@ fn attach_links(sprouts: &mut [Sprout], links: &[(usize, String)], lines: &LineI
                     text: Some(url.clone()),
                     extent: Some(Extent::lines(line, line)),
                 },
-                RelationKind::LinksTo,
+                links_to(),
             ));
         }
     }
@@ -307,7 +313,7 @@ Fence and beds.
             links[0].fragment.text.as_deref(),
             Some("https://example.com/mood")
         );
-        assert_eq!(links[0].relation, RelationKind::LinksTo);
+        assert_eq!(links[0].relation, links_to());
         assert_eq!(links[0].fragment.extent, Some(Extent::lines(5, 5)));
     }
 

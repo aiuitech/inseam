@@ -3,7 +3,7 @@
 # recorded in the summary mimetype's `via` parameter.
 
 # The claim: with a granted LLM, the summary is the model's reply, marked
-# `via=llm` and `derived-from` its source.
+# `via=llm` and `derives` its source.
 [[check]]
 name = "summarizes through the granted llm"
 mimetype = "text/plain"
@@ -13,7 +13,7 @@ llm_returns = "Kitchen renovation budget approved; demolition in March."
 [check.expect]
 min_fragments = 1
 max_fragments = 1
-relation = "derived-from"
+relation = "derives"
 mimetype = "text/x-inseam-summary;via=llm"
 fragment_contains = "demolition in March"
 
@@ -40,5 +40,5 @@ mimetype = "text/plain"
 [check.expect]
 min_fragments = 1
 max_fragments = 1
-relation = "derived-from"
+relation = "derives"
 mimetype = "text/x-inseam-summary;via=envelope"

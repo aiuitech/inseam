@@ -41,6 +41,7 @@ async fn claims_route_each_root_mimetype_to_the_right_transforms() {
     for r in &registrations {
         assert!(!r.transform.claims(&Mimetype::markdown(), false), "{} claims a non-root", r.name);
         assert!(!r.transform.claims(&Mimetype::summary(), true), "{} claims summaries", r.name);
-        assert!(!r.transform.claims(&Mimetype::entity(), true), "{} claims entities", r.name);
+        let entity = Mimetype::parse("text/x-inseam-entity").expect("valid");
+        assert!(!r.transform.claims(&entity, true), "{} claims entities", r.name);
     }
 }

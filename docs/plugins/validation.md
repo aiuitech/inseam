@@ -32,8 +32,8 @@ min_fragments = 1               # default 1; 0 + max 0 asserts clean degradation
 fragment_contains = "GARAGE"    # some fragment's text contains this
 relation = "transcribes"        # some fragment carries this relation
 mimetype = "text/plain"         # some fragment's mimetype starts with this
-# entity = "Ada Lovelace"       # some extracted entity is named this (linked transforms only)
-# max_entities = 2
+# keyed_contains = "Ada Lovelace"  # some keyed sprout's key or text contains this (linked transforms only)
+# max_keyed = 2
 ```
 
 The schema, the matcher, and the coverage rule live once, in `inseam_conformance::golden`, and both tiers use them.
@@ -42,7 +42,7 @@ The schema, the matcher, and the coverage rule live once, in `inseam_conformance
 
 A checks file must contain, at minimum:
 
-- **one check that proves the claim** — an expectation about *what* came out (`fragment_contains`, `relation`, `mimetype`, or `entity`), not merely that something did;
+- **one check that proves the claim** — an expectation about *what* came out (`fragment_contains`, `relation`, `mimetype`, or `keyed_contains`), not merely that something did;
 - **one check that pins the degrade path** — a *starved* check (no `text`, no `llm_returns`) with `max_fragments` set: `0` for "emits nothing", or the fallback's shape (the summarizer's starved check asserts exactly one `via=envelope` summary).
 
 The harness reports each unmet requirement as its own `mandatory coverage` failure, worded as the fix. The rule is deliberately small: the contract battery already covers "doesn't crash" generically, so a plugin's own checks are for "does what it says" and "knows what it does without" — padding beyond that buys nothing.
@@ -70,6 +70,6 @@ Linked plugins are gated at build time instead, through the shared harness crate
 
 - `check_factories` — every factory must build from an enrolled config and declare a sensible manifest.
 - `batter_transforms` — every registered transform faces the same hostile-input battery (text withheld, empty, garbage, no LLM) through the seam.
-- `golden_transforms` — every registered transform must ship its own `<registration-name>.checks.toml` (beside its source, `crates/inseam-plugins/src/<plugin>/`), meeting the same coverage rule, and pass every check through the seam with the same canned LLM. Linked checks may additionally assert `entity`/`max_entities`, since linked transforms emit entities and the WIT seam does not.
+- `golden_transforms` — every registered transform must ship its own `<registration-name>.checks.toml` (beside its source, `crates/inseam-plugins/src/<plugin>/`), meeting the same coverage rule, and pass every check through the seam with the same canned LLM. Linked checks may additionally assert `keyed_contains`/`max_keyed`, since linked transforms emit keyed sprouts and the WIT seam does not.
 
 Adding a linked plugin without enrolling it — a config arm, and for a transform a checks-file arm — panics the suite with instructions: there is no way to link one into a distribution without inheriting the tests. A custom distribution runs the same three sweeps over its own factories ([distributions.md](distributions.md)).

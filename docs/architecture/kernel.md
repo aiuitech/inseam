@@ -2,7 +2,7 @@
 
 `crates/inseam-kernel` implements the two kernel jobs from [design/kernel.md](../../design/kernel.md): run plugins, and own the stored data. Everything else in a running node is a plugin.
 
-The crate is exactly those two jobs plus the data model they share: `substrate/`, `store.rs` + `state.rs`, and the vocabulary types the store persists (`address.rs` — addresses, envelopes, timestamps, properties; `fragment.rs` — mimetypes, fragments, relations). There is deliberately nothing else: no ignore rules (the sweep plugin's), no text or date helpers and no "which types are text" list (`inseam-seams`, beside the seams that need them), no host, format, ranking, or transport knowledge of any kind.
+The crate is exactly those two jobs plus the data model they share: `substrate/`, `store.rs` + `state.rs`, and the vocabulary types the store persists (`address.rs` — addresses, envelopes, timestamps, properties; `fragment.rs` — mimetypes, fragments, relation kinds as validated names, keyed-fragment keys). The kernel defines two relation kinds, `contains` and `derives`; every other kind is a plugin's. There is deliberately nothing else: no ignore rules (the sweep plugin's), no text or date helpers and no "which types are text" list (`inseam-seams`, beside the seams that need them), no host, format, ranking, or transport knowledge of any kind.
 
 ## The substrate (`substrate/`)
 

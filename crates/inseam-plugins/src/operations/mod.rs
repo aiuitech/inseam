@@ -233,7 +233,7 @@ impl Operations for OperationsService {
             indexed_sources: stats.indexed_sources,
             fragments: stats.fragments,
             relations: stats.relations,
-            entities: stats.entities,
+            keyed_fragments: stats.keyed_fragments,
             search_rows,
             embedding_model: identity.as_ref().map(|(m, _)| m.clone()),
             embedding_dimensions: identity.map(|(_, d)| d).unwrap_or(0),

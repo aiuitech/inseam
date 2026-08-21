@@ -3,7 +3,7 @@
 //! catalog against reality (what the connection enumerates) and against the
 //! composition (what the mounted transforms would build): unchanged sources
 //! are skipped, changed/interrupted/shape-stale ones have their subtree
-//! rebuilt, vanished ones are removed, orphaned entities collected, and a
+//! rebuilt, vanished ones are removed, unanchored keyed fragments collected, and a
 //! pending embedding migration performed before anything else.
 //!
 //! Plugin churn needs no hooks here: mounting or unmounting a transform
@@ -26,8 +26,8 @@ use serde::Deserialize;
 
 use inseam_kernel::address::ContentLength;
 use inseam_kernel::address::Timestamp;
-use inseam_kernel::fragment::{Extent, FragmentId, Mimetype, NewFragment, RelationKind, Sprout};
-use inseam_kernel::store::{IndexStore, InventoryEntry, SearchRow, SourceId};
+use inseam_kernel::fragment::{Extent, FragmentId, Mimetype, NewFragment, Relation, Sprout};
+use inseam_kernel::store::{IndexStore, InventoryEntry, KeyedFragment, SearchRow, SourceId};
 use inseam_kernel::substrate::{
     parse_config, ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError, Verdict, STORE,
 };
@@ -36,7 +36,7 @@ use inseam_seams::embedder::{Embedder, EMBEDDER};
 use inseam_seams::llm::{self, ChatMessage, ChatRequest, Llm, LlmCall, LLM};
 use inseam_seams::sweep::{IndexReport, Sweep, SweepRequest, SWEEP};
 use inseam_seams::transforms::{
-    participating, shape_stamp, DecomposeBudget, ExtractedEntity, GrantedLlm, Registration,
+    participating, shape_stamp, Anchor, DecomposeBudget, GrantedLlm, KeyedSprout, Registration,
     TransformCtx, Transforms, TRANSFORMS,
 };
 use inseam_seams::dates::parse_ymd_epoch;
@@ -285,8 +285,8 @@ impl Sweep for SweepService {
         self.flush(&mut pending, &mut report).await?;
         self.reconcile_vanished(&request.root, &sources, &mut report)
             .await?;
-        let orphaned = self.store.gc_entities().await?;
-        report.entities_removed = orphaned.len();
+        let orphaned = self.store.gc_keyed_fragments().await?;
+        report.keyed_removed = orphaned.len();
         self.store.rebuild_fts().await?;
         for (entry, meter) in meters {
             let calls = meter.calls.load(Ordering::Relaxed);
@@ -377,7 +377,7 @@ impl SweepService {
             ContentLength::Bytes(n) => Extent::Bytes { start: 0, end: n },
         };
         let root = self.store.insert_fragment(
-            Some(sid),
+            sid,
             &NewFragment {
                 mimetype: envelope.content_type.clone(),
                 text: None,
@@ -389,7 +389,9 @@ impl SweepService {
 
         let mut fragment_budget = self.config.max_fragments_per_source;
         let mut texted: Vec<(FragmentId, String)> = Vec::new();
-        let mut entities: Vec<ExtractedEntity> = Vec::new();
+        // Keyed sprouts wait until the whole subtree is planted, so text
+        // anchors can see every fragment; each remembers its input.
+        let mut keyed: Vec<(FragmentId, KeyedSprout)> = Vec::new();
         let mut inventory: Vec<InventoryEntry> = vec![InventoryEntry {
             mimetype: envelope.content_type.essence().to_string(),
             is_root: true,
@@ -407,7 +409,7 @@ impl SweepService {
 
         while let Some(item) = queue.pop_front() {
             // Derived understanding is never source content: transforms must
-            // not re-decompose summaries or entities, whatever they claim.
+            // not re-decompose `text/x-inseam-*` fragments, whatever they claim.
             if item.mimetype.is_inseam_defined() {
                 continue;
             }
@@ -482,13 +484,12 @@ impl SweepService {
                     &mut inventory,
                     &mut inventory_seen,
                 ).await?;
-                entities.extend(out.entities);
+                keyed.extend(out.keyed.into_iter().map(|k| (item.fragment, k)));
             }
         }
 
-        if !entities.is_empty() {
-            self.wire_entities(root, entities, &texted, report, pending)
-                .await?;
+        if !keyed.is_empty() {
+            self.plant_keyed(keyed, &texted, report, pending).await?;
         }
 
         let stamp = expected_stamp(registrations, &inventory, sweep_shape);
@@ -498,8 +499,9 @@ impl SweepService {
     }
 
     /// Persist a sprout forest under `parent`, collecting text-bearing
-    /// fragments for embedding and entity attachment, extending the mimetype
-    /// inventory, and enqueueing emitted fragments for chained claims.
+    /// fragments for embedding and keyed-sprout anchoring, extending the
+    /// mimetype inventory, and enqueueing emitted fragments for chained
+    /// claims.
     #[allow(clippy::too_many_arguments)]
     async fn plant(
         &self,
@@ -515,9 +517,9 @@ impl SweepService {
         inventory_seen: &mut HashSet<(String, bool)>,
     ) -> Result<(), SeamError> {
         for sprout in sprouts {
-            let id = self.store.insert_fragment(Some(sid), &sprout.fragment).await?;
+            let id = self.store.insert_fragment(sid, &sprout.fragment).await?;
             self.store
-                .insert_relation(&sprout.relation.edge(parent, id)).await?;
+                .insert_relation(&Relation::new(parent, sprout.relation.clone(), id)).await?;
             report.fragments += 1;
             report.relations += 1;
             let essence = sprout.fragment.mimetype.essence().to_string();
@@ -535,8 +537,8 @@ impl SweepService {
                     source: Some(sid),
                     text: text.clone(),
                 });
-                // Derived understanding (summaries) is searchable but not a
-                // mention site: entities wire to source content only.
+                // Derived understanding (summaries) is searchable but not an
+                // anchor site: keyed sprouts anchor to source content only.
                 if !sprout.fragment.mimetype.is_inseam_defined() {
                     texted.push((id, text.clone()));
                 }
@@ -573,58 +575,42 @@ impl SweepService {
         Ok(())
     }
 
-    /// Deduplicate extracted entities through the index-wide registry and
-    /// wire `mentions` relations to the fragments whose text references
-    /// them. This stays sweep-side: a transform cannot know fragment ids.
-    async fn wire_entities(
+    /// Resolve keyed sprouts: get-or-create each index-wide fragment under
+    /// its key, then anchor it into this source with the emitter's relation
+    /// kind — at the input fragment, or at every source-content fragment
+    /// whose text contains the anchor needle (falling back to the input).
+    /// This stays sweep-side: a transform cannot know fragment ids.
+    async fn plant_keyed(
         &self,
-        root: FragmentId,
-        extracted: Vec<ExtractedEntity>,
+        keyed: Vec<(FragmentId, KeyedSprout)>,
         texted: &[(FragmentId, String)],
         report: &mut IndexReport,
         pending: &mut Vec<PendingRow>,
     ) -> Result<(), SeamError> {
-        for entity in extracted {
-            let key = entity.key();
-            let fragment = match self.store.entity_fragment(&key).await? {
-                Some(f) => f,
-                None => {
-                    let f = self.store.insert_fragment(
-                        None,
-                        &NewFragment {
-                            mimetype: Mimetype::entity().with_param("kind", entity.kind.as_str()),
-                            text: Some(entity.name.clone()),
-                            extent: None,
-                        },
-                    ).await?;
-                    self.store.register_entity(&key, f).await?;
-                    report.fragments += 1;
+        for (input, sprout) in keyed {
+            let resolved = self.store.keyed_fragment(&sprout.key, &sprout.fragment).await?;
+            let fragment = resolved.id();
+            if let KeyedFragment::Created(_) = resolved {
+                report.fragments += 1;
+                if let Some(text) = &sprout.fragment.text
+                    && !text.trim().is_empty()
+                {
                     pending.push(PendingRow {
-                        fragment: f,
+                        fragment,
                         source: None,
-                        text: entity.name.clone(),
+                        text: text.clone(),
                     });
-                    f
-                }
-            };
-            // Relate the entity to the fragments that actually mention it,
-            // falling back to the source root.
-            let needle = entity.name.to_lowercase();
-            let mut mentioned = false;
-            for (fid, ftext) in texted {
-                if ftext.to_lowercase().contains(&needle) {
-                    self.store
-                        .insert_relation(&RelationKind::Mentions.edge(*fid, fragment)).await?;
-                    report.relations += 1;
-                    mentioned = true;
                 }
             }
-            if !mentioned {
+            let anchors = anchors_for(&sprout.anchor, input, texted);
+            assert!(!anchors.is_empty(), "every keyed sprout anchors somewhere");
+            for anchor in anchors {
                 self.store
-                    .insert_relation(&RelationKind::Mentions.edge(root, fragment)).await?;
+                    .insert_relation(&Relation::new(anchor, sprout.relation.clone(), fragment))
+                    .await?;
                 report.relations += 1;
             }
-            report.entities_seen += 1;
+            report.keyed_anchored += 1;
         }
         Ok(())
     }
@@ -798,5 +784,24 @@ impl GrantedLlm for MeteredLlm {
         self.llm
             .describe_image(&self.model, prompt, mimetype, image)
             .await
+    }
+}
+
+/// The fragments a keyed sprout's anchor resolves to within one source:
+/// the input fragment, or every text-bearing source-content fragment whose
+/// text contains the needle (case-insensitive), falling back to the input
+/// when none does — so an emission is never silently dropped.
+fn anchors_for(anchor: &Anchor, input: FragmentId, texted: &[(FragmentId, String)]) -> Vec<FragmentId> {
+    match anchor {
+        Anchor::Input => vec![input],
+        Anchor::TextContaining(needle) => {
+            let needle = needle.to_lowercase();
+            let hits: Vec<FragmentId> = texted
+                .iter()
+                .filter(|(_, text)| text.to_lowercase().contains(&needle))
+                .map(|(id, _)| *id)
+                .collect();
+            if hits.is_empty() { vec![input] } else { hits }
+        }
     }
 }

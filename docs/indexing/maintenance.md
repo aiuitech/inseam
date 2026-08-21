@@ -7,7 +7,7 @@ Every `inseam index <dir>` run is a **reconciling sweep** ([design/index-mainten
 1. **Re-embed, if pending** — if the embedding model changed, vectors are rebuilt in the search tables from the text already in the catalog. No transforms re-run, no LLM spend; search refuses (with instructions) until this finishes. An interrupted re-embed restarts.
 2. **Per-source reconciliation** — a source re-indexes (its index subtree deleted and rebuilt with the full mounted transform set) when its content changed (`modified` + byte size), its previous run was interrupted, or it is **shape-stale** (see below). Catalog-only rows (past `max_sources`, or first seen outside the date cutoff) carry no stamp, so they're picked up automatically once the budget or cutoff allows.
 3. **Vanished-source removal** — cataloged sources under the swept scope that the listing no longer shows are deleted outright. No tombstones; a file that reappears is simply new. Sources the ignore rules now cover ([ignore.md](ignore.md)) leave the listing the same way and are removed by this step.
-4. **Entity cleanup** — entity fragments left with no relations are dropped.
+4. **Keyed-fragment cleanup** — keyed fragments (entities, for instance) left with no relations are dropped.
 
 ## Shape staleness: re-index only what a change touches
 

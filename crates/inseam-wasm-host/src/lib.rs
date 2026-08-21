@@ -664,9 +664,9 @@ fn sprout_forest(
                 continue;
             }
         };
-        let relation = f.relation.parse::<RelationKind>().unwrap_or_else(|_| {
-            tracing::warn!(plugin, relation = %f.relation, "unknown relation; using contains");
-            RelationKind::Contains
+        let relation = RelationKind::new(f.relation.as_str()).unwrap_or_else(|e| {
+            tracing::warn!(plugin, relation = %f.relation, "malformed relation kind ({e}); using contains");
+            RelationKind::contains()
         });
         nodes.push(Some(Sprout::leaf(
             NewFragment {
@@ -778,7 +778,7 @@ mod tests {
             ],
         );
         assert_eq!(out.sprouts.len(), 2, "root + orphan-as-root; forged summary dropped");
-        assert_eq!(out.sprouts[0].relation, RelationKind::Transcribes);
+        assert_eq!(out.sprouts[0].relation.as_str(), "transcribes");
         assert_eq!(out.sprouts[0].children.len(), 1);
         assert_eq!(
             out.sprouts[0].children[0].fragment.text.as_deref(),
