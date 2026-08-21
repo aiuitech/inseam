@@ -38,8 +38,8 @@ use inseam_kernel::substrate::{
     SchemeFactory, STATE,
 };
 use inseam_seams::transforms::{
-    GrantedLlm, Registration, Transform, TransformCtx, TransformKind, TransformOutput,
-    TRANSFORMS,
+    register_as_effect, GrantedLlm, Registration, Transform, TransformCtx, TransformKind,
+    TransformOutput,
 };
 
 wasmtime::component::bindgen!({
@@ -392,29 +392,26 @@ impl Plugin for WasmTransformPlugin {
             fuel: self.config.fuel,
         };
 
-        let registry = cx.get(&TRANSFORMS)?;
-        let disposer = registry.register(Registration {
-            entry_id: cx.entry_id().to_string(),
-            name: self.manifest.name.clone(),
-            transform: Arc::new(transform),
-            llm_call_budget: if self.manifest.capabilities.llm {
-                self.manifest.capabilities.llm_call_budget
-            } else {
-                0
+        register_as_effect(
+            cx,
+            Registration {
+                entry_id: cx.entry_id().to_string(),
+                name: self.manifest.name.clone(),
+                transform: Arc::new(transform),
+                llm_call_budget: if self.manifest.capabilities.llm {
+                    self.manifest.capabilities.llm_call_budget
+                } else {
+                    0
+                },
+                // The artifact version and content hash are in the shape
+                // fingerprint: an upgraded loaded transform dirties exactly
+                // the sources it built (`design/index-maintenance.md`).
+                shape_fingerprint: format!(
+                    "wasm|{}|{}|{}",
+                    self.manifest.name, self.manifest.version, self.artifact_hash
+                ),
             },
-            // The artifact version and content hash are in the shape
-            // fingerprint: an upgraded loaded transform dirties exactly
-            // the sources it built (`design/index-maintenance.md`).
-            shape_fingerprint: format!(
-                "wasm|{}|{}|{}",
-                self.manifest.name, self.manifest.version, self.artifact_hash
-            ),
-        });
-        cx.effect(
-            format!("register loaded transform {}", self.manifest.name),
-            disposer,
-        );
-        Ok(())
+        )
     }
 }
 

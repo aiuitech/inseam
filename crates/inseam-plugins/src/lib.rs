@@ -3,16 +3,24 @@
 //! `inseam-seams` defines. Nothing here is privileged — a community plugin
 //! binding the same seam is structurally identical.
 //!
-//! A distribution links the set it ships and registers the factories with
-//! the kernel; [`factories`] returns the full first-party set.
+//! The crate is plugin-centric: **one directory per plugin**, named after
+//! the plugin's composition name (`transform-markdown` lives in
+//! `transform_markdown/`), holding its `mod.rs`, any pure helpers it owns,
+//! and — for transforms — its golden checks (`<registration>.checks.toml`)
+//! beside the source. Nothing lives outside a plugin directory but this
+//! file, which declares the modules and, in [`factories`], the full
+//! first-party set a distribution links.
 
-pub mod agent;
 pub mod connection_fs;
 pub mod embedder;
 pub mod finder;
 pub mod llm_endpoint;
 pub mod operations;
 pub mod sweep;
+pub mod transform_chunker;
+pub mod transform_entities;
+pub mod transform_markdown;
+pub mod transform_summarizer;
 pub mod transforms;
 
 use std::sync::Arc;
@@ -27,10 +35,10 @@ pub fn factories() -> Vec<Arc<dyn PluginFactory>> {
         Arc::new(llm_endpoint::LlmEndpointFactory),
         Arc::new(embedder::EmbedderFactory),
         Arc::new(transforms::TransformsRegistryFactory),
-        Arc::new(transforms::MarkdownFactory),
-        Arc::new(transforms::ChunkerFactory),
-        Arc::new(transforms::SummarizerFactory),
-        Arc::new(transforms::EntityExtractorFactory),
+        Arc::new(transform_markdown::MarkdownFactory),
+        Arc::new(transform_chunker::ChunkerFactory),
+        Arc::new(transform_summarizer::SummarizerFactory),
+        Arc::new(transform_entities::EntityExtractorFactory),
         Arc::new(finder::FinderFactory),
         Arc::new(sweep::SweepFactory),
         Arc::new(operations::OperationsFactory),

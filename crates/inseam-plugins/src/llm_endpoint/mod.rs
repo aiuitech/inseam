@@ -17,7 +17,7 @@ use serde_json::{json, Value};
 use inseam_kernel::substrate::{
     parse_config, ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, SecretNeed,
 };
-use inseam_kernel::text::truncate_chars;
+use inseam_seams::text::truncate_chars;
 use inseam_seams::llm::{self, ChatMessage, ChatRequest, Llm, ModelInfo, LLM};
 use inseam_seams::SeamError;
 

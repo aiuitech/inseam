@@ -1,4 +1,35 @@
-//! Small text helpers shared across the index pipeline and result rendering.
+//! The text conventions plugins share when they speak the seams: the
+//! line arithmetic `scan` and `Extent::lines` agree on (1-based, inclusive),
+//! the single-line previews hints and views are cut to, and which content
+//! types the index reads as text at all. None of this is kernel business —
+//! the kernel knows no file format — but every plugin that renders or slices
+//! text must agree on it, so it lives beside the seam definitions rather than
+//! being re-derived in each plugin.
+
+use inseam_kernel::fragment::Mimetype;
+
+/// Whether content of this type is worth reading and indexing as text:
+/// all of `text/*` plus the structured-text application types. This is
+/// indexing policy shared by the connection (lines vs. bytes in the
+/// envelope), the chunker (what it claims), and the operations (`scan` and
+/// `fetch` return text only for these) — one list, so they never disagree.
+pub fn is_indexable_text(mimetype: &Mimetype) -> bool {
+    if mimetype.is_text() {
+        return true;
+    }
+    matches!(
+        mimetype.essence(),
+        "application/json"
+            | "application/x-yaml"
+            | "application/yaml"
+            | "application/toml"
+            | "application/xml"
+            | "application/javascript"
+            | "application/x-sh"
+            | "application/sql"
+            | "image/svg+xml"
+    )
+}
 
 /// Truncate to at most `max` characters on a char boundary, appending an
 /// ellipsis when anything was cut.
@@ -65,5 +96,15 @@ mod tests {
     #[test]
     fn preview_is_single_line() {
         assert_eq!(preview("a\n  b\t\tc\n", 20), "a b c");
+    }
+
+    #[test]
+    fn indexable_text_covers_text_and_structured_application_types() {
+        let m = |s: &str| Mimetype::parse(s).expect("valid mimetype");
+        assert!(is_indexable_text(&m("text/markdown")));
+        assert!(is_indexable_text(&m("application/json")));
+        assert!(is_indexable_text(&m("image/svg+xml")));
+        assert!(!is_indexable_text(&m("image/jpeg")));
+        assert!(!is_indexable_text(&m("application/pdf")));
     }
 }

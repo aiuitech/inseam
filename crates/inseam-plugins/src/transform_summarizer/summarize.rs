@@ -5,7 +5,8 @@
 //! extractive for text otherwise, envelope-derived for everything else.
 
 use inseam_kernel::address::Envelope;
-use inseam_kernel::text::{collapse_ws, truncate_chars};
+use inseam_seams::dates::ymd;
+use inseam_seams::text::{collapse_ws, truncate_chars};
 use inseam_seams::transforms::GrantedLlm;
 
 /// Characters of source text an LLM summary call sees.
@@ -98,7 +99,7 @@ pub fn envelope_summary(envelope: &Envelope) -> String {
     let name = envelope.hint.as_deref().unwrap_or("unnamed source");
     let modified = envelope
         .modified
-        .map(|t| format!(", modified {}", t.ymd()))
+        .map(|t| format!(", modified {}", ymd(t)))
         .unwrap_or_default();
     format!(
         "{name} — {} {} of {}{modified}. Content not indexed on this node; fetch to inspect.",

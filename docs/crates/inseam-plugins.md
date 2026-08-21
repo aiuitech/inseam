@@ -7,5 +7,10 @@ shipping inseam distribution, as providers and consumers on the seams
 `inseam-seams` defines. Nothing here is privileged — a community plugin
 binding the same seam is structurally identical.
 
-A distribution links the set it ships and registers the factories with
-the kernel; [`factories`] returns the full first-party set.
+The crate is plugin-centric: **one directory per plugin**, named after
+the plugin's composition name (`transform-markdown` lives in
+`transform_markdown/`), holding its `mod.rs`, any pure helpers it owns,
+and — for transforms — its golden checks (`<registration>.checks.toml`)
+beside the source. Nothing lives outside a plugin directory but this
+file, which declares the modules and, in [`factories`], the full
+first-party set a distribution links.

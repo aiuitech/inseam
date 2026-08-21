@@ -30,18 +30,19 @@ fn conformance_config(name: &str) -> toml::Table {
 }
 
 /// Every linked transform's golden checks, keyed by registration name and
-/// kept beside the transform's source. A transform registered without an
-/// arm here panics the golden sweep with instructions — the linked tier's
-/// mirror of "no checks file, no admission".
+/// kept beside the transform's source in its plugin directory
+/// (`src/<plugin>/<registration>.checks.toml`). A transform registered
+/// without an arm here panics the golden sweep with instructions — the
+/// linked tier's mirror of "no checks file, no admission".
 fn golden_checks_for(name: &str) -> Option<PathBuf> {
     let file = match name {
-        "markdown" => "markdown.checks.toml",
-        "chunker" => "chunker.checks.toml",
-        "summarizer" => "summarizer.checks.toml",
-        "entity-extractor" => "entity-extractor.checks.toml",
+        "markdown" => "transform_markdown/markdown.checks.toml",
+        "chunker" => "transform_chunker/chunker.checks.toml",
+        "summarizer" => "transform_summarizer/summarizer.checks.toml",
+        "entity-extractor" => "transform_entities/entity-extractor.checks.toml",
         _ => return None,
     };
-    Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/transforms").join(file))
+    Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join(file))
 }
 
 #[test]

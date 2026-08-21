@@ -25,9 +25,16 @@ Write them first and build to them.
   (name, config, inject, provide, apply); `docs/plugins/validation.md` —
   the golden-check schema and the mandatory coverage.
 - `crates/inseam-seams` — the seam definitions consumers depend on.
-- `crates/inseam-plugins/src/` — the first-party set. Pick the closest
-  neighbor to what you're building as your template, and read its
-  `.checks.toml` beside it.
+- `crates/inseam-plugins/src/` — the first-party set, one directory per
+  plugin named for its composition name (`transform_markdown/` is
+  `transform-markdown`). Pick the closest neighbor to what you're building
+  and copy its directory whole: `mod.rs` (config, factory, manifest,
+  apply), its pure helpers beside it, and its `.checks.toml`.
+- `crates/inseam-seams/src/text.rs` and `dates.rs` — the shared
+  conventions (previews, `scan` line arithmetic, which mimetypes are read
+  as text, `YYYY-MM-DD`). Use these; don't re-derive them, and don't look
+  for them in the kernel — the kernel holds only the substrate, the store,
+  and the data model.
 - The running node: `inseam claims <mimetype|path>` shows which transforms
   already claim an input (complement, don't duplicate); `inseam
   capabilities` shows what the node grants (an LLM? which model?), i.e.
@@ -36,9 +43,10 @@ Write them first and build to them.
 ### The TDD loop
 
 1. **State the claim as checks (red).** For a transform, write
-   `crates/inseam-plugins/src/transforms/<registration-name>.checks.toml`
-   before the code (the neighbors — `markdown`, `chunker`, `summarizer`,
-   `entity-extractor` — are the templates). Minimum coverage, enforced:
+   `crates/inseam-plugins/src/<plugin>/<registration-name>.checks.toml`
+   before the code (the neighbors — `transform_markdown/`,
+   `transform_chunker/`, `transform_summarizer/`, `transform_entities/` —
+   are the templates). Minimum coverage, enforced:
    one check with a substantive expectation (`fragment_contains`,
    `relation`, `mimetype`, or `entity` — linked transforms can assert
    entities, loaded ones cannot), and one *starved* check (no `text`, no
@@ -47,19 +55,21 @@ Write them first and build to them.
    the sweep fails it. The LLM is canned (`llm_returns` verbatim, absent =
    refuses); checks prove plumbing and shape, never model quality.
    Fixtures (`bytes_file`) sit beside the checks file.
-2. **Write the plugin** in `crates/inseam-plugins` (or in your own crate
-   for a custom distribution — `docs/plugins/distributions.md`), following
-   the styleguide in `AGENTS.md`. Start from the smallest apply that
+2. **Write the plugin** as a new directory in `crates/inseam-plugins/src/`
+   (or in your own crate for a custom distribution —
+   `docs/plugins/distributions.md`), following the styleguide in
+   `AGENTS.md`. A transform registers with one seam call,
+   `inseam_seams::transforms::register_as_effect`, from its `apply`. Start from the smallest apply that
    degrades to empty output. Declare exactly what you touch: inject only
    the seams you use — reaching for an undeclared service fails the fiber.
    Transforms never do I/O or touch the `llm` seam directly; they use the
    granted, metered handle the sweep passes in and fall back gracefully
    when it refuses. If your config names a secret environment variable
    (`api_key_env`-style), implement `Plugin::secrets()` with the variable
-   and an owner-facing sentence on why it's needed (`llm_endpoint.rs` is
-   the template).
-3. **Register and enroll.** Add the factory to `factories()` in
-   `crates/inseam-plugins/src/lib.rs` (or via
+   and an owner-facing sentence on why it's needed (`llm_endpoint/mod.rs`
+   is the template).
+3. **Register and enroll.** Declare the module and add the factory to
+   `factories()` in `crates/inseam-plugins/src/lib.rs` (or via
    `Distribution::with_factories` in a custom distribution). Then in
    `crates/inseam-plugins/tests/conformance.rs`: add a minimal config arm
    to `conformance_config` (the build/manifest sweep) and, for a

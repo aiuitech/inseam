@@ -190,7 +190,7 @@ fn scaffold_validate(s: &Scaffold<'_>) -> anyhow::Result<()> {
 fn claims_are_textual(claims: &[String]) -> bool {
     claims.iter().any(|c| {
         Mimetype::parse(c.strip_suffix("/*").unwrap_or(c))
-            .map(|m| m.is_indexable_text())
+            .map(|m| inseam_seams::text::is_indexable_text(&m))
             .unwrap_or(c.starts_with("text/"))
     })
 }
@@ -405,8 +405,7 @@ fn try_input(request: &TryRequest<'_>) -> anyhow::Result<TryInput> {
         None => detect_mimetype(request.file),
     };
     let bytes = std::fs::read(request.file).with_context(|| request.file.display().to_string())?;
-    let text = mimetype
-        .is_indexable_text()
+    let text = inseam_seams::text::is_indexable_text(&mimetype)
         .then(|| String::from_utf8_lossy(&bytes).into_owned());
     Ok(TryInput {
         mimetype: mimetype.to_string(),

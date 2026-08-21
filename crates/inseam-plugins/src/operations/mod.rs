@@ -11,7 +11,6 @@ use inseam_kernel::store::{IndexStore, StoredFragment, StoredSource};
 use inseam_kernel::substrate::{
     ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError, Verdict, STORE,
 };
-use inseam_kernel::text::preview;
 use inseam_seams::connection::{Connection, CONNECTION};
 use inseam_seams::finder::{Finder, RankedFragment, FINDER};
 use inseam_seams::operations::{
@@ -20,6 +19,8 @@ use inseam_seams::operations::{
     QueryResult, RelationView, ScanRequest, ScanResponse, StatusReport, OPERATIONS,
 };
 use inseam_seams::sweep::{IndexReport, Sweep, SweepRequest, SWEEP};
+use inseam_seams::dates::ymd;
+use inseam_seams::text::{is_indexable_text, preview, slice_lines};
 use inseam_seams::SeamError;
 
 /// Characters of fragment text shown in hints and expand views.
@@ -159,7 +160,7 @@ impl Operations for OperationsService {
         self.guard("scan")?;
         let source = self.source_at(&request.address).await?;
         let (start, end) = (request.start.max(1), request.end.max(request.start));
-        if source.envelope.content_type.is_indexable_text() {
+        if is_indexable_text(&source.envelope.content_type) {
             let text = self
                 .connection
                 .read_lines(&source.address, start, end)
@@ -185,7 +186,7 @@ impl Operations for OperationsService {
             return Err(SeamError::NothingToScan(source.address));
         };
         let sliced =
-            inseam_kernel::text::slice_lines(text, start, end).map_err(SeamError::failed)?;
+            slice_lines(text, start, end).map_err(SeamError::failed)?;
         Ok(ScanResponse {
             address: source.address,
             mimetype: fragment.mimetype.to_string(),
@@ -199,7 +200,7 @@ impl Operations for OperationsService {
     async fn fetch(&self, request: FetchRequest) -> Result<FetchResponse, SeamError> {
         self.guard("fetch")?;
         let source = self.source_at(&request.address).await?;
-        if !source.envelope.content_type.is_indexable_text() {
+        if !is_indexable_text(&source.envelope.content_type) {
             return Err(SeamError::BinaryFetch(
                 source.address,
                 source.envelope.content_type.to_string(),
@@ -247,8 +248,8 @@ fn envelope_view(source: &StoredSource) -> EnvelopeView {
         source_type: e.source_type.clone(),
         content_type: e.content_type.to_string(),
         length: e.length.to_string(),
-        created: e.created.map(|t| t.ymd()),
-        modified: e.modified.map(|t| t.ymd()),
+        created: e.created.map(ymd),
+        modified: e.modified.map(ymd),
         title: e.hint.clone(),
     }
 }

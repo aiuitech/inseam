@@ -70,6 +70,6 @@ Linked plugins are gated at build time instead, through the shared harness crate
 
 - `check_factories` — every factory must build from an enrolled config and declare a sensible manifest.
 - `batter_transforms` — every registered transform faces the same hostile-input battery (text withheld, empty, garbage, no LLM) through the seam.
-- `golden_transforms` — every registered transform must ship its own `<registration-name>.checks.toml` (beside its source, `crates/inseam-plugins/src/transforms/`), meeting the same coverage rule, and pass every check through the seam with the same canned LLM. Linked checks may additionally assert `entity`/`max_entities`, since linked transforms emit entities and the WIT seam does not.
+- `golden_transforms` — every registered transform must ship its own `<registration-name>.checks.toml` (beside its source, `crates/inseam-plugins/src/<plugin>/`), meeting the same coverage rule, and pass every check through the seam with the same canned LLM. Linked checks may additionally assert `entity`/`max_entities`, since linked transforms emit entities and the WIT seam does not.
 
 Adding a linked plugin without enrolling it — a config arm, and for a transform a checks-file arm — panics the suite with instructions: there is no way to link one into a distribution without inheriting the tests. A custom distribution runs the same three sweeps over its own factories ([distributions.md](distributions.md)).

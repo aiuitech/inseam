@@ -15,6 +15,9 @@
 //! (the loaded tier's normal shape) is applied to the emitted fragment in
 //! the same rebuild, so chains resolve in one pass.
 
+
+pub mod ignore;
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -22,15 +25,12 @@ use std::sync::Arc;
 use serde::Deserialize;
 
 use inseam_kernel::address::ContentLength;
-use inseam_kernel::dates::parse_ymd_epoch;
 use inseam_kernel::address::Timestamp;
 use inseam_kernel::fragment::{Extent, FragmentId, Mimetype, NewFragment, RelationKind, Sprout};
-use inseam_kernel::ignore::{IgnoreRule, IgnoreSet};
 use inseam_kernel::store::{IndexStore, InventoryEntry, SearchRow, SourceId};
 use inseam_kernel::substrate::{
     parse_config, ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError, Verdict, STORE,
 };
-use inseam_kernel::text::count_lines;
 use inseam_seams::connection::{Connection, EnumeratedSource, CONNECTION};
 use inseam_seams::embedder::{Embedder, EMBEDDER};
 use inseam_seams::llm::{self, ChatMessage, ChatRequest, Llm, LlmCall, LLM};
@@ -39,7 +39,11 @@ use inseam_seams::transforms::{
     participating, shape_stamp, DecomposeBudget, ExtractedEntity, GrantedLlm, Registration,
     TransformCtx, Transforms, TRANSFORMS,
 };
+use inseam_seams::dates::parse_ymd_epoch;
+use inseam_seams::text::{count_lines, is_indexable_text};
 use inseam_seams::SeamError;
+
+use ignore::{IgnoreRule, IgnoreSet};
 
 /// Search rows buffered before an embed+write flush.
 const FLUSH_AT: usize = 128;
@@ -342,7 +346,7 @@ impl SweepService {
         report: &mut IndexReport,
         pending: &mut Vec<PendingRow>,
     ) -> Result<(), SeamError> {
-        let is_texty = source.envelope.content_type.is_indexable_text();
+        let is_texty = is_indexable_text(&source.envelope.content_type);
         let within_size = source.raw_bytes <= self.config.max_content_bytes;
         let content: Option<String> = if is_texty && within_size {
             Some(self.connection.read_text(&source.address).await?)

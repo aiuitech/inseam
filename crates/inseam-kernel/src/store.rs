@@ -84,14 +84,6 @@ pub struct StoredFragment {
     pub extent: Option<Extent>,
 }
 
-/// What the catalog knows about a source relative to what enumeration sees.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Freshness {
-    New,
-    Changed,
-    Unchanged,
-}
-
 /// The index bookkeeping the sweep reads to decide dirtiness: content-change
 /// fields plus the two claims-aware shape records
 /// (`design/index-maintenance.md`) — the **shape stamp** (digest of the

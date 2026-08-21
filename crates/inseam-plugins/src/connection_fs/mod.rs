@@ -15,7 +15,7 @@ use inseam_kernel::fragment::Mimetype;
 use inseam_kernel::substrate::{
     parse_config, ApplyCx, Facts, Inject, Manifest, Plugin, PluginError,
 };
-use inseam_kernel::text::slice_lines;
+use inseam_seams::text::slice_lines;
 use inseam_seams::connection::{self, Connection, EnumeratedSource, CONNECTION};
 use inseam_seams::SeamError;
 
@@ -553,7 +553,8 @@ mod tests {
     #[test]
     fn detects_code_files_as_text() {
         assert_eq!(detect_mimetype(Path::new("main.zsh")).essence(), "text/plain");
-        assert!(detect_mimetype(Path::new("config.json")).is_indexable_text());
-        assert!(!detect_mimetype(Path::new("photo.jpeg")).is_indexable_text());
+        use inseam_seams::text::is_indexable_text;
+        assert!(is_indexable_text(&detect_mimetype(Path::new("config.json"))));
+        assert!(!is_indexable_text(&detect_mimetype(Path::new("photo.jpeg"))));
     }
 }

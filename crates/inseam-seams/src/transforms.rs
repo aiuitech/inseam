@@ -16,12 +16,28 @@ use std::sync::Arc;
 use inseam_kernel::address::Envelope;
 use inseam_kernel::fragment::{Mimetype, Sprout};
 use inseam_kernel::store::InventoryEntry;
-use inseam_kernel::substrate::{fnv1a, ServiceKey};
-use inseam_kernel::text::collapse_ws;
-
+use inseam_kernel::substrate::{fnv1a, ApplyCx, PluginError, ServiceKey};
+use crate::text::collapse_ws;
 use crate::SeamError;
 
 pub const TRANSFORMS: ServiceKey<dyn Transforms> = ServiceKey::new("transforms");
+
+/// Register a transform into the seam as a fiber effect: a transform plugin's
+/// `apply` calls this once per transform it ships, and unmounting the plugin
+/// unwinds the registration through the disposer the registry returned. The
+/// next sweep discovers the shape divergence on its own, so there are no
+/// lifecycle hooks into the index. Both tiers register this way — the wasm
+/// bridge included — which is what keeps them indistinguishable to the sweep.
+pub fn register_as_effect(
+    cx: &mut ApplyCx<'_>,
+    registration: Registration,
+) -> Result<(), PluginError> {
+    let label = format!("register transform {}", registration.name);
+    let registry = cx.get(&TRANSFORMS)?;
+    let disposer = registry.register(registration);
+    cx.effect(label, disposer);
+    Ok(())
+}
 
 /// How a transform participates: structural transforms decompose a fragment
 /// into its subtree; enrichment transforms derive understanding from it.

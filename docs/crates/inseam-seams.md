@@ -10,3 +10,9 @@ its well-known key, and the capability facts consumers may branch on.
 
 The kernel-provided `store` and `state` services are defined in
 `inseam-kernel` itself; everything else is here.
+
+Beside the seams sit the two small conventions every plugin speaking them
+must agree on — [`text`] (previews, the `scan` line arithmetic, which
+content types are read as text) and [`dates`] (`YYYY-MM-DD` rendering and
+parsing of the kernel's epoch timestamps). They are deliberately not
+kernel modules: the kernel knows no file format and renders nothing.

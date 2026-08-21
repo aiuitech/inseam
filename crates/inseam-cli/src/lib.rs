@@ -16,10 +16,11 @@ use std::sync::Arc;
 use anyhow::{bail, Context};
 use clap::{Parser, Subcommand};
 
+mod agent;
 mod authoring;
 
 use inseam_kernel::substrate::{Composition, FiberState, Kernel, SubstrateError};
-use inseam_plugins::agent::{run_agent, AgentEvent};
+use agent::{run_agent, AgentEvent};
 use inseam_seams::llm::{self, ModelInfo, LLM};
 use inseam_seams::operations::{
     ExpandRequest, FetchRequest, IndexRequest, QueryRequest, QueryResponse, ScanRequest,

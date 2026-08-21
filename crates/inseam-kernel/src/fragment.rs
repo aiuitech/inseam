@@ -115,26 +115,6 @@ impl Mimetype {
     pub fn is_inseam_defined(&self) -> bool {
         self.essence.starts_with("text/x-inseam-")
     }
-
-    /// Whether content of this type is worth reading and indexing as text:
-    /// all of `text/*` plus the structured-text application types.
-    pub fn is_indexable_text(&self) -> bool {
-        if self.is_text() {
-            return true;
-        }
-        matches!(
-            self.essence(),
-            "application/json"
-                | "application/x-yaml"
-                | "application/yaml"
-                | "application/toml"
-                | "application/xml"
-                | "application/javascript"
-                | "application/x-sh"
-                | "application/sql"
-                | "image/svg+xml"
-        )
-    }
 }
 
 impl fmt::Display for Mimetype {

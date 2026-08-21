@@ -3,15 +3,20 @@
 //! an address and its envelope that exist for every host — host id,
 //! locator, source type, content type, hint, trust properties — so the same
 //! vocabulary ignores a directory on a filesystem host and a correspondent
-//! on a mail host. Rules are parsed from the composition once, at the
-//! boundary, into an [`IgnoreSet`]; a bad glob is a configuration error
-//! reported before any sweep runs, never a silent non-match.
+//! on a mail host. Rules are parsed from the sweep entry's config once, at
+//! the boundary, into an [`IgnoreSet`]; a bad glob is a configuration error
+//! that parks the sweep before any run, never a silent non-match.
+//!
+//! This is the sweep plugin's own vocabulary, not a kernel type: the kernel
+//! knows no ignore rule, and the one consumer is the sweep. A second consumer
+//! (a query-time ignore) would promote it to the `sweep` seam, not the
+//! kernel.
 
 use globset::{GlobBuilder, GlobMatcher};
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::address::{Address, Envelope};
+use inseam_kernel::address::{Address, Envelope};
 
 /// Upper bound on rules in one set. Far above any hand-written composition;
 /// exists so the per-source match loop has a known ceiling.
@@ -220,8 +225,8 @@ fn compile_glob(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::address::{ContentLength, Property, Timestamp, TrustLevel};
-    use crate::fragment::Mimetype;
+    use inseam_kernel::address::{ContentLength, Property, Timestamp, TrustLevel};
+    use inseam_kernel::fragment::Mimetype;
 
     fn file(address: &str, mimetype: &str, hint: &str) -> (Address, Envelope) {
         let address: Address = address.parse().expect("test address parses");

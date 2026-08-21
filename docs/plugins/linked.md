@@ -18,7 +18,9 @@ Every plugin is the same five declarations — name, config, inject, provide, ap
 | `sweep` | `sweep` | store, connection, transforms, embedder, llm? | the reconciling sweep ([indexing/maintenance.md](../indexing/maintenance.md)) |
 | `operations` | `operations` | store, connection, finder, sweep | the transport-neutral node API ([finder/operations.md](../finder/operations.md)) |
 
-The agent skill at `skills/inseam-linked-plugin/SKILL.md` is the authoring guide for this tier ([../skills/inseam-linked-plugin.md](../skills/inseam-linked-plugin.md)); it assumes a source checkout, since a linked plugin is a build input. Every linked transform ships its own golden checks beside its source (`crates/inseam-plugins/src/transforms/<name>.checks.toml`) — the same schema and coverage rule as a loaded plugin's, run by the conformance suite through the seam ([validation.md](validation.md)).
+Each plugin is one directory under `crates/inseam-plugins/src/`, named for its composition name with underscores (`transform-markdown` → `transform_markdown/`): its `mod.rs` holds the config, factory, manifest, and apply; pure helpers sit beside it as sibling files; and every linked transform ships its own golden checks there too (`src/<plugin>/<registration>.checks.toml`) — the same schema and coverage rule as a loaded plugin's, run by the conformance suite through the seam ([validation.md](validation.md)). Registering a transform is one seam call, `inseam_seams::transforms::register_as_effect`, which the wasm bridge uses too.
+
+The agent skill at `skills/inseam-linked-plugin/SKILL.md` is the authoring guide for this tier ([../skills/inseam-linked-plugin.md](../skills/inseam-linked-plugin.md)); it assumes a source checkout, since a linked plugin is a build input.
 
 Discipline notes:
 

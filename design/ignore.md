@@ -27,7 +27,7 @@ content_type = "image/*"
 
 "Ignore some emails from Gmail" is therefore answered by the envelope, not by a path: an email source already carries `email:<correspondent>` trust properties ([access-control](access-control.md)) and its subject as the discovery hint, so sender, domain, and subject are all matchable without teaching the core anything about mail. The same rules apply unchanged to sources that arrive by address sync from another steward, which a connection-level rule never sees.
 
-Rules are parsed once, at the composition boundary, and a malformed glob or an empty rule (which would ignore everything) parks the sweep entry with the rule and field named — never a silent non-match. The rule set is a kernel type (`inseam_kernel::ignore`), so a later query-time ignore can reuse the vocabulary rather than invent a second one.
+Rules are parsed once, at the composition boundary, and a malformed glob or an empty rule (which would ignore everything) parks the sweep entry with the rule and field named — never a silent non-match. The rule set is the sweep plugin's own type (`inseam_plugins::sweep::ignore`); the kernel knows no ignore rule. A later query-time ignore would promote the type to the `sweep` seam so both consumers share one vocabulary — never into the kernel.
 
 ## Ignored means absent — and that evicts
 
@@ -40,8 +40,13 @@ It follows that ignoring is the one configuration change that *removes* index da
 - **One layer only, in the core.** Rejected: the core cannot read `.gitignore`, cannot prune a walk it does not perform, and cannot know a mail label. Host-native exclusion is a connection fact.
 - **One layer only, in the connections.** Rejected: it would give every host a different ignore vocabulary, and could never cover sources learned by address sync.
 - **Ignored sources as catalog-only rows.** Rejected: it leaks the address and envelope network-wide, defeating the purpose; and it would make "vanished" and "ignored" two states the sweep has to tell apart.
-- **A separate ignore seam or plugin.** Rejected for now: one consumer (the sweep) and one rule type; the type lives in the kernel so a second consumer can share it without a seam.
+- **A separate ignore seam or plugin.** Rejected for now: one consumer (the sweep) and one rule type, so the type lives with the sweep; a second consumer promotes it to the seam, not to its own plugin.
+- **The rule type in the kernel** (this design's first shape). Rejected on the kernel's own terms ([kernel](kernel.md)): the kernel runs plugins and owns persistent structure, and an ignore rule is neither — it is indexing policy parsed from one plugin's config. Parking it in the kernel so a hypothetical second consumer could share it bought nothing a seam would not, at the cost of the kernel learning a glob vocabulary and a dependency it had no other use for.
 - **Ordered rules with negation in the core set.** Rejected for now: a set of OR-ed rules has no order to reason about, and the host-native layer already has gitignore's `!` where people expect it.
+
+## Settled since
+
+- **The rule set moved out of the kernel** into the sweep plugin (`crates/inseam-plugins/src/sweep/ignore.rs`), unchanged in vocabulary and behavior, as part of the kernel sweep recorded in [kernel](kernel.md). Ignore is an indexing plugin's responsibility end to end: the host-native layer in the connection, the host-agnostic layer in the sweep.
 
 ## Open questions
 

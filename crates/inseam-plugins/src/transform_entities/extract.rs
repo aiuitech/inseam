@@ -6,7 +6,7 @@
 
 use serde::Deserialize;
 
-use inseam_kernel::text::collapse_ws;
+use inseam_seams::text::collapse_ws;
 use inseam_seams::transforms::{EntityKind, ExtractedEntity, GrantedLlm};
 use inseam_seams::SeamError;
 

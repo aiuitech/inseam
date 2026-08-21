@@ -6,7 +6,7 @@
 use serde_json::json;
 use thiserror::Error;
 
-use inseam_kernel::text::truncate_chars;
+use inseam_seams::text::truncate_chars;
 use inseam_seams::llm::{ChatMessage, ChatRequest, Llm, Tool, ToolCall};
 use inseam_seams::operations::{
     ExpandRequest, FetchRequest, Operations, QueryRequest, ScanRequest,

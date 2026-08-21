@@ -1,7 +1,11 @@
-//! Minimal civil-date <-> unix-epoch conversion, so profiles can express date
-//! cutoffs and envelopes can render timestamps without pulling in a calendar
-//! crate. Algorithms are Howard Hinnant's `days_from_civil` / `civil_from_days`.
+//! Minimal civil-date <-> unix-epoch conversion, so plugin config can express
+//! date cutoffs (`modified_after = "YYYY-MM-DD"`) and operations can render
+//! envelope timestamps, without pulling in a calendar crate. The kernel's
+//! [`Timestamp`] is epoch seconds and nothing more; rendering it as a date is
+//! a presentation convention plugins share, which is why it lives here.
+//! Algorithms are Howard Hinnant's `days_from_civil` / `civil_from_days`.
 
+use inseam_kernel::address::Timestamp;
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -65,6 +69,11 @@ pub fn epoch_to_ymd(secs: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
+/// The date a timestamp falls on, as `YYYY-MM-DD` (UTC).
+pub fn ymd(timestamp: Timestamp) -> String {
+    epoch_to_ymd(timestamp.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,6 +101,11 @@ mod tests {
     #[test]
     fn renders_mid_day_times_as_their_date() {
         assert_eq!(epoch_to_ymd(1_420_070_400 + 3600 * 13), "2015-01-01");
+    }
+
+    #[test]
+    fn timestamp_renders_its_date() {
+        assert_eq!(ymd(Timestamp(1_420_070_400)), "2015-01-01");
     }
 
     #[test]

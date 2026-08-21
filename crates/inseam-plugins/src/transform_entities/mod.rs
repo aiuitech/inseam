@@ -1,0 +1,149 @@
+//! The `transform-entities` plugin: the enrichment that pulls people,
+//! places, organizations, projects and dates out of a root as deduplicated
+//! entity fragments with `mentions` relations back to what referenced them
+//! ([`extract`]). Entities are the graph's connective tissue: two unrelated
+//! sources mentioning the same person end up one hop apart
+//! (`design/indexing.md`). Useless without the granted LLM handle, so it
+//! emits nothing when the handle is withheld. Its golden checks live beside
+//! it in `entity-extractor.checks.toml`.
+
+mod extract;
+
+use std::sync::Arc;
+
+use inseam_kernel::fragment::Mimetype;
+use inseam_kernel::substrate::{
+    parse_config, ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory,
+};
+use inseam_seams::transforms::{
+    register_as_effect, Registration, Transform, TransformCtx, TransformKind, TransformOutput,
+};
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EntityExtractorConfig {
+    /// Cap on entities taken from a single source (shape tier).
+    pub max_per_source: usize,
+    /// Extraction LLM calls per index run (run-metering tier).
+    pub llm_call_budget: usize,
+}
+
+impl Default for EntityExtractorConfig {
+    fn default() -> Self {
+        Self {
+            max_per_source: 12,
+            llm_call_budget: 500,
+        }
+    }
+}
+
+pub struct EntityExtractorPlugin {
+    config: EntityExtractorConfig,
+}
+
+pub struct EntityExtractorFactory;
+
+impl PluginFactory for EntityExtractorFactory {
+    fn name(&self) -> &str {
+        "transform-entities"
+    }
+
+    fn build(&self, config: &toml::Table) -> Result<Box<dyn Plugin>, PluginError> {
+        Ok(Box::new(EntityExtractorPlugin {
+            config: parse_config(config)?,
+        }))
+    }
+}
+
+#[async_trait::async_trait]
+impl Plugin for EntityExtractorPlugin {
+    fn manifest(&self) -> Manifest {
+        static INJECT: &[Inject] = &[Inject::required("transforms")];
+        Manifest {
+            name: "transform-entities",
+            inject: INJECT,
+            provides: &[],
+        }
+    }
+
+    async fn apply(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
+        register_as_effect(
+            cx,
+            Registration {
+                entry_id: cx.entry_id().to_string(),
+                name: "entity-extractor".to_string(),
+                transform: Arc::new(EntityExtractorTransform {
+                    max_per_source: self.config.max_per_source,
+                }),
+                llm_call_budget: self.config.llm_call_budget,
+                shape_fingerprint: format!("entities-v1|max={}", self.config.max_per_source),
+            },
+        )
+    }
+}
+
+pub(crate) struct EntityExtractorTransform {
+    pub(crate) max_per_source: usize,
+}
+
+#[async_trait::async_trait]
+impl Transform for EntityExtractorTransform {
+    fn kind(&self) -> TransformKind {
+        TransformKind::Enrichment
+    }
+
+    fn claims(&self, mimetype: &Mimetype, is_root: bool) -> bool {
+        is_root && !mimetype.is_inseam_defined()
+    }
+
+    async fn apply(&self, ctx: TransformCtx<'_>) -> TransformOutput {
+        let (Some(llm), Some(text)) = (ctx.llm.as_deref(), ctx.text.filter(|t| !t.trim().is_empty()))
+        else {
+            return TransformOutput::default();
+        };
+        let hint = ctx.envelope.hint.as_deref();
+        let entities = extract::extract(llm, hint, text, self.max_per_source)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("entity extraction failed, continuing without: {e}");
+                Vec::new()
+            });
+        TransformOutput {
+            sprouts: Vec::new(),
+            entities,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use inseam_kernel::address::{ContentLength, Envelope, Timestamp};
+
+    #[tokio::test]
+    async fn without_llm_capability_emits_nothing() {
+        let envelope = Envelope {
+            source_type: "file".into(),
+            content_type: Mimetype::markdown(),
+            length: ContentLength::Bytes(100),
+            created: None,
+            modified: None,
+            observed: Timestamp(1_700_000_100),
+            properties: Vec::new(),
+            hint: Some("note.md".into()),
+        };
+        let m = envelope.content_type.clone();
+        let out = EntityExtractorTransform { max_per_source: 5 }
+            .apply(TransformCtx {
+                envelope: &envelope,
+                mimetype: &m,
+                is_root: true,
+                text: Some("Dana and the Kitchen Reno."),
+                bytes: None,
+                llm: None,
+            })
+            .await;
+        assert!(out.sprouts.is_empty());
+        assert!(out.entities.is_empty());
+    }
+}

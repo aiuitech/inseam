@@ -19,4 +19,4 @@ Errors are typed and written as sentences (`no source at …`, `scan start line 
 
 ## The agent demo
 
-`inseam agent "<question>"` hands a live model exactly the four boundary operations as OpenAI-style tools and prints each rung it climbs. It's both a demo and a test of the ladder's usability: if the model can't navigate it, neither can a real client. Boundary enforcement is a deny-wins guard on dispatch (`OperationRequest`); no access-control listeners ship yet, so the network is one trust domain until the boundary layer lands.
+`inseam agent "<question>"` (`crates/inseam-cli/src/agent.rs`, a consumer of the `operations` and `llm` seams — not a plugin) hands a live model exactly the four boundary operations as OpenAI-style tools and prints each rung it climbs. It's both a demo and a test of the ladder's usability: if the model can't navigate it, neither can a real client. Boundary enforcement is a deny-wins guard on dispatch (`OperationRequest`); no access-control listeners ship yet, so the network is one trust domain until the boundary layer lands.

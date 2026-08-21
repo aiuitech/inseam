@@ -10,7 +10,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::dates::epoch_to_ymd;
 use crate::fragment::Mimetype;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -157,17 +156,12 @@ impl From<Address> for String {
     }
 }
 
-/// Unix-epoch seconds. All the calendar precision inseam needs.
+/// Unix-epoch seconds. All the calendar precision inseam needs; rendering
+/// one as a date is a plugin convention (`inseam_seams::dates`), not a
+/// kernel one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Timestamp(pub i64);
-
-impl Timestamp {
-    /// The date this timestamp falls on, as `YYYY-MM-DD` (UTC).
-    pub fn ymd(&self) -> String {
-        epoch_to_ymd(self.0)
-    }
-}
 
 impl From<SystemTime> for Timestamp {
     fn from(t: SystemTime) -> Self {
@@ -291,10 +285,5 @@ mod tests {
             Locator::new("/etc/passwd"),
             Err(AddressError::AbsoluteLocator(_))
         ));
-    }
-
-    #[test]
-    fn timestamp_renders_its_date() {
-        assert_eq!(Timestamp(1_420_070_400).ymd(), "2015-01-01");
     }
 }

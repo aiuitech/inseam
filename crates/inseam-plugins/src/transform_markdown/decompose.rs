@@ -7,7 +7,9 @@ use pulldown_cmark::{Event, Options, Parser, Tag};
 
 use inseam_kernel::fragment::{Extent, Mimetype, NewFragment, RelationKind, Sprout};
 
-use super::chunk;
+// Headingless documents degrade to the chunker's paragraph chunking, so
+// the two structural transforms agree on what a structureless text becomes.
+use crate::transform_chunker::chunk;
 
 /// Decompose markdown into its heading outline. Documents without headings
 /// fall back to paragraph chunking. Links (http/https) become `uri-list`

@@ -62,7 +62,7 @@ Linked-tier plugins are tested by the shared conformance harness
 (`crates/inseam-conformance`), whose workspace suite
 (`crates/inseam-plugins/tests/conformance.rs`) sweeps every registered
 factory automatically — the same hostile-input battery, and each
-transform's own golden checks (`crates/inseam-plugins/src/transforms/
+transform's own golden checks (`crates/inseam-plugins/src/<plugin>/
 <name>.checks.toml`, same schema and coverage rule as here). A linked
 plugin cannot be added without inheriting both.
 

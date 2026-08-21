@@ -7,16 +7,14 @@
 //!    and plugin state, with no data migrations anywhere, ever ([`store`]).
 //!
 //! Plus the vocabulary those two speak: addresses and envelopes
-//! ([`address`]), fragments and relations ([`fragment`]), and the ignore
-//! rules that keep sources out of a node ([`ignore`]). The kernel knows no
-//! host, no file format, no ranking algorithm, no transport — those are all
-//! plugins on the seams `inseam-seams` defines.
+//! ([`address`]) and fragments and relations ([`fragment`]) — the data model
+//! the store persists, and nothing more. The kernel knows no host, no file
+//! format, no ranking algorithm, no transport, no ignore rule, no date
+//! format — those are all plugins on the seams `inseam-seams` defines, or
+//! conventions that crate carries beside them.
 
 pub mod address;
-pub mod dates;
 pub mod fragment;
-pub mod ignore;
 pub mod state;
 pub mod store;
 pub mod substrate;
-pub mod text;
