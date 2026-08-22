@@ -17,7 +17,7 @@ The inseam vocabulary, one page. Definitions here are canonical; the linked desi
 - **Steward** — the node that speaks for a host: publishes its addresses, indexes it, serves fetches from it. Every host joins the network through a steward.
 - **Local host / remote host** — a host its steward reaches through the local machine (filesystem, OS APIs) vs. through a service's own protocol (OAuth + REST, IMAP). The only difference is which connection plugin is used.
 - **Connection** — an edge owned by a node: node↔node (the inseam protocol: sync, query, fetch routing) or node→host (how a steward reaches a host). Carries protocol, credentials, and capabilities. A node holds many, one per host, registered by connection plugins into the `connections` seam. ([design/connections.md](../design/connections.md))
-- **Grant** — one configured OAuth authorization against a provider account (`google`, `slack-work`): endpoints, scopes, and which environment variables hold the client's own credentials. Authorized once by the owner; host connections consume it by id for live access tokens. ([plugins/oauth.md](plugins/oauth.md))
+- **Grant** — one OAuth authorization against a provider account (`google`, `slack-work`): endpoints, scopes, and which environment variables hold the client's own credentials — configured on the `oauth` entry or registered by the connection that knows the provider. Authorized once by the owner from any client; host connections consume it by id for live access tokens and follow its changes. ([plugins/oauth.md](plugins/oauth.md))
 - **Network** — the graph of nodes: a private network forming a single trust domain with no central authority. ([design/network.md](../design/network.md))
 
 ## Sync

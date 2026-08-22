@@ -30,5 +30,12 @@ entries:
 INSEAM_INDEX_ROOTS=documents=/srv/inseam/hosts/documents,notes=/srv/inseam/hosts/notes
 ```
 
+To connect a Google account from the console, set `GOOGLE_CLIENT_ID` and
+`GOOGLE_CLIENT_SECRET` in the environment and `INSEAM_PUBLIC_URL` to the
+origin owners use (`https://node.example`); register
+`https://node.example/api/v1/oauth/callback` as a redirect URI on the OAuth
+client. The console's Connections panel then signs in and the Google hosts
+appear without a restart (`docs/indexing/google-workspace.md`).
+
 Run one container per personal trust domain. Do not share `/var/lib/inseam`
 between replicas or customers.

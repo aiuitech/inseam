@@ -54,6 +54,31 @@ char *inseam_node_index_dir(const InseamNode *node,
                             bool rebuild,
                             char **error_out);
 
+/* The hosts this node stewards, as a JSON array of HostView. */
+char *inseam_node_hosts(const InseamNode *node, char **error_out);
+
+/* The OAuth grants this node holds, as a JSON array of GrantView
+ * ({id, provider, scopes, client_id_env, client_secret_env, state}). */
+char *inseam_node_grants(const InseamNode *node, char **error_out);
+
+/* Begin authorizing a grant over the loopback redirect. Returns JSON
+ * {grant, url, state, redirect_uri}: open url in the owner's browser, then
+ * block on inseam_node_authorize_await with state. */
+char *inseam_node_authorize_begin(const InseamNode *node,
+                                  const char *grant,
+                                  char **error_out);
+
+/* Wait for a begun authorization to finish (blocks up to the oauth entry's
+ * timeout — call off the main thread). Returns the grant's GrantView JSON. */
+char *inseam_node_authorize_await(const InseamNode *node,
+                                  const char *state,
+                                  char **error_out);
+
+/* Forget a grant's tokens. Returns the grant's GrantView JSON afterwards. */
+char *inseam_node_revoke_grant(const InseamNode *node,
+                               const char *grant,
+                               char **error_out);
+
 /* Per-entry health as a JSON array of {id, plugin, state, error, missing}.
  * state is "active" | "pending" | "failed"; error is set only for failed
  * entries and missing only for pending ones. */

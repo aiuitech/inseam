@@ -24,10 +24,10 @@ use inseam_kernel::address::{Address, HostId};
 use inseam_kernel::substrate::{Composition, FiberState, Kernel, SubstrateError};
 use agent::{run_agent, AgentEvent};
 use inseam_seams::llm::{self, ModelInfo, LLM};
-use inseam_seams::oauth::{GrantId, GrantState, OAUTH};
+use inseam_seams::oauth::{GrantId, GrantState, Redirect};
 use inseam_seams::operations::{
-    ExpandRequest, FetchRequest, IndexRequest, QueryRequest, QueryResponse, ScanRequest,
-    OPERATIONS,
+    AuthorizeGrantRequest, AwaitAuthorizationRequest, ExpandRequest, FetchRequest, GrantView,
+    IndexRequest, QueryRequest, QueryResponse, RevokeGrantRequest, ScanRequest, OPERATIONS,
 };
 
 pub use inseam_kernel::substrate::PluginFactory;
@@ -48,6 +48,10 @@ plugin = "connection-fs"
 [[entry]]
 id = "oauth"
 plugin = "oauth"
+
+[[entry]]
+id = "google"
+plugin = "connection-google"
 
 [[entry]]
 id = "llm"
@@ -180,6 +184,11 @@ enum Command {
             default_value_t = CookieMode::Secure
         )]
         cookie: CookieMode,
+        /// The origin owners reach this node at (https://node.example): what
+        /// OAuth providers redirect back to when a grant is authorized from
+        /// the web console. Derived from --bind when unset.
+        #[arg(long, env = "INSEAM_PUBLIC_URL")]
+        public_url: Option<String>,
     },
     /// Index a scope of one host this node stewards (read-only): a
     /// directory for the filesystem host, a label or folder for a service
@@ -197,11 +206,14 @@ enum Command {
     },
     /// The hosts this node stewards and what each connection supports.
     Hosts,
-    /// The configured OAuth grants and where each stands.
+    /// The OAuth grants this node holds and where each stands.
     Grants,
     /// Authorize an OAuth grant: prints the provider's sign-in URL and waits
     /// for the browser to land back on the node.
     Authorize { grant: String },
+    /// Forget a grant's tokens; the hosts behind it withdraw until it is
+    /// authorized again.
+    Revoke { grant: String },
     /// Query the discovery index: ranked addresses with summaries and hints.
     Query {
         text: String,
@@ -464,6 +476,7 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
             index_roots,
             web_dir,
             cookie,
+            public_url,
         } => {
             let roots = index_roots
                 .iter()
@@ -477,6 +490,7 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                     cookie_security: cookie.into(),
                     index_roots: roots,
                     web_dir,
+                    public_url,
                 },
                 operations,
                 shutdown_signal(),
@@ -510,40 +524,38 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
             }
         }
         Command::Grants => {
-            let Ok(oauth) = kernel.service(&OAUTH) else {
-                bail!("`inseam grants` needs the oauth entry active");
-            };
-            let grants = oauth.grants();
+            let ops = kernel.service(&OPERATIONS)?;
+            let grants = ops.grants().await?;
             if grants.is_empty() {
-                println!("no grants configured; add `[[entry.config.grants]]` to the oauth entry (docs/plugins/oauth.md)");
+                println!("no grants: mount a connection that registers one (the `google` entry) or add `[[entry.config.grants]]` to the oauth entry (docs/plugins/oauth.md)");
             }
             for grant in &grants {
-                let state = match grant.state().await {
-                    GrantState::MissingSecret { env } => format!("missing secret: set {env}"),
-                    GrantState::Unauthorized => "unauthorized — run `inseam authorize`".to_string(),
-                    GrantState::Authorized { expires_at, scopes } => format!(
-                        "authorized ({}) scopes: {}",
-                        expires_at.map_or("no expiry".to_string(), |t| format!("token until {}", inseam_seams::dates::ymd(t))),
-                        scopes.join(" ")
-                    ),
-                };
-                println!("{:20} {state}", grant.id());
+                println!("{:20} {:24} {}", grant.id, grant.provider, grant_status(grant));
             }
         }
         Command::Authorize { grant } => {
-            let Ok(oauth) = kernel.service(&OAUTH) else {
-                bail!("`inseam authorize` needs the oauth entry active");
-            };
+            let ops = kernel.service(&OPERATIONS)?;
             let id = GrantId::new(grant.as_str())?;
-            let Some(handle) = oauth.grant(&id) else {
-                let known: Vec<String> = oauth.grants().iter().map(|g| g.id().to_string()).collect();
-                bail!("no grant `{id}` is configured; known grants: {}", known.join(", "));
-            };
-            let pending = handle.authorize().await?;
-            println!("Open this URL in your browser and sign in:\n\n  {}\n", pending.url());
-            println!("Waiting for the browser to come back…");
-            pending.complete().await?;
-            println!("grant `{id}` authorized");
+            let started = ops
+                .authorize_grant(AuthorizeGrantRequest {
+                    grant: id.clone(),
+                    redirect: Redirect::Loopback,
+                })
+                .await?;
+            println!("Open this URL in your browser and sign in:\n\n  {}\n", started.url);
+            println!("Waiting for the browser to come back on {}…", started.redirect_uri);
+            let view = ops
+                .await_authorization(AwaitAuthorizationRequest {
+                    state: started.state,
+                })
+                .await?;
+            println!("grant `{id}` {}", grant_status(&view));
+        }
+        Command::Revoke { grant } => {
+            let ops = kernel.service(&OPERATIONS)?;
+            let id = GrantId::new(grant.as_str())?;
+            let view = ops.revoke_grant(RevokeGrantRequest { grant: id.clone() }).await?;
+            println!("grant `{id}` {}", grant_status(&view));
         }
         Command::Query { text, limit, json } => {
             let ops = kernel.service(&OPERATIONS)?;
@@ -718,6 +730,24 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
     }
     kernel.shutdown().await;
     Ok(())
+}
+
+/// One line of where a grant stands, with the next step when there is one.
+fn grant_status(grant: &GrantView) -> String {
+    match &grant.state {
+        GrantState::MissingSecret { env } => format!("missing secret: set {env}"),
+        GrantState::Unauthorized => format!("unauthorized — run `inseam authorize {}`", grant.id),
+        GrantState::Authorized {
+            expires_at,
+            scopes,
+            account,
+        } => format!(
+            "authorized{} ({}) scopes: {}",
+            account.as_deref().map(|a| format!(" as {a}")).unwrap_or_default(),
+            expires_at.map_or("no expiry".to_string(), |t| format!("token until {}", inseam_seams::dates::ymd(t))),
+            scopes.join(" ")
+        ),
+    }
 }
 
 /// What `inseam index` means by its arguments: an address names its host

@@ -115,6 +115,28 @@ impl fmt::Display for HostKind {
     }
 }
 
+/// Characters of digest hex in a derived host id: 64 bits — ample for a
+/// network of tens of hosts, short enough to read in an address.
+pub const DERIVED_HOST_ID_HEX_CHARS: usize = 16;
+
+/// The opaque, stable host id for a host of `kind` identified by
+/// `principal` (`design/addressing.md`): a BLAKE3 fingerprint of the
+/// identity material with the kind as domain separator, so two stewards of
+/// one account mint the same id independently and two kinds can never
+/// collide — `gmail-3f9a…` for the Gmail host of a given address. The
+/// principal is the host's own identity (an account email, a workspace id),
+/// never the protocol used to reach it.
+pub fn derive_host_id(kind: &HostKind, principal: &str) -> HostId {
+    assert!(!principal.is_empty(), "a host principal is never empty");
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(kind.as_str().as_bytes());
+    hasher.update(b"\n");
+    hasher.update(principal.trim().to_lowercase().as_bytes());
+    let digest = hasher.finalize().to_hex();
+    let short = &digest.as_str()[..DERIVED_HOST_ID_HEX_CHARS];
+    HostId::new(format!("{kind}-{short}")).expect("a kind and hex digits form a valid host id")
+}
+
 /// What the roster's host record carries about a host: its stable id, its
 /// kind, and presentation (`design/roster.md`). Presentation lives here,
 /// never in addresses.
@@ -169,8 +191,11 @@ pub trait Connection: Send + Sync {
     async fn enumerate(&self, root: &str) -> Result<Vec<EnumeratedSource>, SeamError>;
 
     /// The locator prefix that `root` covers, for reconciling vanished
-    /// sources. `None` when the scope has no stable prefix (reconciliation
-    /// is skipped rather than guessed).
+    /// sources: a locator equal to it or under it (`<prefix>/…`) belongs to
+    /// the scope. `Some("")` says the scope is the whole host — every locator
+    /// belongs — which is what a flat id space (Drive files, mail messages)
+    /// answers for its "everything" scope. `None` when the scope has no
+    /// stable prefix (reconciliation is skipped rather than guessed).
     fn locator_prefix(&self, root: &str) -> Option<String>;
 
     /// Full content of a text source, lossily decoded.
@@ -237,6 +262,19 @@ mod tests {
         assert_eq!(HostKind::new("gmail").expect("valid").as_str(), "gmail");
         assert_eq!(HostKind::new("fs-2").expect("valid").as_str(), "fs-2");
         assert_eq!(HostKind::filesystem().as_str(), "fs");
+    }
+
+    #[test]
+    fn derived_host_ids_are_stable_case_insensitive_and_kind_separated() {
+        let gmail = HostKind::new("gmail").expect("valid");
+        let drive = HostKind::new("google-drive").expect("valid");
+        let a = derive_host_id(&gmail, "Greg@Example.com");
+        let b = derive_host_id(&gmail, " greg@example.com ");
+        assert_eq!(a, b, "the same account mints the same id on any steward");
+        assert!(a.as_str().starts_with("gmail-"));
+        assert_eq!(a.as_str().len(), "gmail-".len() + DERIVED_HOST_ID_HEX_CHARS);
+        assert_ne!(a, derive_host_id(&drive, "greg@example.com"), "kind separates");
+        assert_ne!(a, derive_host_id(&gmail, "other@example.com"));
     }
 
     #[test]

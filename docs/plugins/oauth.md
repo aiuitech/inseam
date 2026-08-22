@@ -1,8 +1,11 @@
 # OAuth Grants
 
-Many remote hosts are reached the same way: an OAuth 2.0 authorization-code grant that yields a refreshable token. The `oauth` seam holds that once — configure a **grant** per provider account, authorize it in the browser, and any connection plugin (linked or loaded) consumes it by id for live access tokens ([design/connections.md](../../design/connections.md)). The linked `oauth` plugin is the provider; it is in the base composition with no grants, so adding one is a config patch.
+Many remote hosts are reached the same way: an OAuth 2.0 authorization-code grant that yields a refreshable token. The `oauth` seam holds that once — a **grant** per provider account, authorized in the browser, consumed by any connection plugin (linked or loaded) for live access tokens ([design/connections.md](../../design/connections.md)). The linked `oauth` plugin is the provider; it is in the base composition with no grants of its own.
 
-## Configure a grant
+## Two ways a grant arrives
+
+- **A connection registers it.** A connection plugin that knows its provider brings the grant with it: the [Google Workspace connection](../indexing/google-workspace.md) registers `google` — Google's endpoints, the read-only scopes for the services it stewards, the OpenID scopes that name the account — and you supply only the client identity through the environment variables its entry names. Nothing to configure on the `oauth` entry.
+- **You configure it.** For a provider no connection knows yet, define a generic grant on the `oauth` entry:
 
 ```toml
 [[entry]]
@@ -13,42 +16,62 @@ id = "oauth"
 # credentials_dir = "…"          # default <data-dir>/oauth
 
 [[entry.config.grants]]
-id = "google"                                           # what consumers name: grant = "google"
-authorization_url = "https://accounts.google.com/o/oauth2/v2/auth"
-token_url = "https://oauth2.googleapis.com/token"
-scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
-client_id_env = "GOOGLE_CLIENT_ID"                      # the app identity, from your environment
-client_secret_env = "GOOGLE_CLIENT_SECRET"              # omit for public (PKCE-only) clients
-[entry.config.grants.authorization_params]              # provider extras; Google needs these for a refresh token
-access_type = "offline"
-prompt = "consent"
+id = "slack"                                            # what consumers name: grant = "slack"
+authorization_url = "https://slack.com/oauth/v2/authorize"
+token_url = "https://slack.com/api/oauth.v2.access"
+scopes = ["channels:history"]
+client_id_env = "SLACK_CLIENT_ID"                       # the app identity, from your environment
+client_secret_env = "SLACK_CLIENT_SECRET"               # omit for public (PKCE-only) clients
+[entry.config.grants.authorization_params]              # provider extras, if any
 ```
 
-Register `http://127.0.0.1:47781/callback` as a redirect URI when you create the client in the provider's console. `callback_port = 0` lets the OS pick a port per attempt — only for providers that accept any loopback port.
+Either way a grant is one record — id, endpoints, scopes, client variables — and one grant per id: a plugin cannot register an id the `oauth` entry already configures.
 
-The client id and secret are environment variables, like every secret the node reads; a grant whose variables are unset shows as `missing secret` in `inseam grants` and the other grants keep working. `inseam plugins` lists the variables with the reason each is needed.
+The client id and secret are environment variables, like every secret the node reads; a grant whose variables are unset shows as `missing secret` in `inseam grants` and the other grants keep working. `inseam plugins` lists the variables with the reason each is needed; the macOS app's Secrets tab stores them in the Keychain.
 
-## Authorize
+## Authorize — from any client
+
+The flow is RFC 6749 authorization code with PKCE (S256): a random `state` guards against forged redirects, the code is exchanged at `token_url`, and the tokens land in `<data-dir>/oauth/<grant>.json` (directory 0700, file 0600). What differs per client is only where the browser comes back:
+
+| Client | Redirect | How |
+| --- | --- | --- |
+| CLI | loopback (RFC 8252) | `inseam authorize <grant>` prints the sign-in URL and waits on `127.0.0.1:<callback_port>/callback` |
+| macOS app | loopback | Settings → Connections → **Connect Google…** opens the browser and waits off the main thread |
+| web console | the node's own URL | **connect** sends the tab to the provider, which returns it to `<public url>/api/v1/oauth/callback`; the node exchanges the code and sends the tab back to the console ([../architecture/hosted-node.md](../architecture/hosted-node.md)) |
+
+Register both redirect URIs on the OAuth client — the loopback one and, for a node you authorize from the web, its callback URL (`inseam serve` prints it in `/api/v1/owner/info`, and the console shows it). `callback_port = 0` lets the OS pick a port per attempt — only for providers that accept any loopback port.
 
 ```sh
-inseam grants              # each grant: missing secret / unauthorized / authorized (token until …, scopes)
+inseam grants              # each grant: missing secret / unauthorized / authorized as <account> (token until …, scopes)
 inseam authorize google    # prints the sign-in URL; waits for the browser to land on the loopback port
+inseam revoke google       # forget the tokens; hosts behind the grant withdraw
 ```
 
-The flow is RFC 6749 authorization code with PKCE (S256) over a loopback redirect (RFC 8252): a random `state` guards against forged redirects, the code is exchanged at `token_url`, and the tokens land in `<data-dir>/oauth/<grant>.json` (directory 0700, file 0600). Access tokens are refreshed a minute before they expire; a rotated refresh token replaces the old one in place. Nothing about a grant ever enters the store or the composition.
+Access tokens are refreshed a minute before they expire; a rotated refresh token replaces the old one in place. When the provider returns an OpenID `id_token` the signed-in account (its `email`) is kept with the tokens — that is what a connection derives its host ids from, so nothing about a grant depends on a further API call. Nothing about a grant ever enters the store or the composition.
+
+## What happens when a grant changes
+
+Authorizing or revoking a grant fires a `GrantChanged` event on the node's bus. Connections behind the grant listen: the Google connection registers its hosts the moment the browser comes back and withdraws them on revoke, without a restart — `inseam serve` and the macOS app see new hosts live.
 
 ## Consume a grant from a plugin
 
-A host connection declares `Inject::required("oauth")`, names the grant in its config, and at apply:
+A connection that knows its provider registers the grant and keeps the handle:
+
+```rust
+let grant = inseam_seams::oauth::register_as_effect(cx, spec).await?;   // spec: GrantSpec — endpoints, scopes, client envs
+```
+
+A connection consuming a grant configured elsewhere declares `Inject::required("oauth")`, names the grant in its config, and at apply:
 
 ```rust
 let oauth = cx.get(&OAUTH)?;
 let grant = oauth.grant(&config.grant).ok_or_else(|| PluginError(format!("no grant `{}`", config.grant)))?;
 require_scopes(grant.as_ref(), &["https://www.googleapis.com/auth/gmail.readonly"])
     .map_err(|e| PluginError(e.to_string()))?;            // a scope gap is named now, not as a 403 mid-sweep
-// later, per request:
-let token = grant.access_token().await?;                  // refreshed if needed; Unauthorized until `inseam authorize`
-request.header("Authorization", token.authorization_header())
 ```
 
-`GrantState` (`missing_secret` / `unauthorized` / `authorized`) is what a connection reports while it cannot work; `revoke()` forgets the stored tokens.
+Either way, per request: `let token = grant.access_token().await?;` (refreshed if needed; `Unauthorized` until the owner authorizes) and `request.header("Authorization", token.authorization_header())`. `grant.state()` is `missing_secret` / `unauthorized` / `authorized { account, expires_at, scopes }`; `grant.revoke()` forgets the stored tokens. Subscribe to `GrantChanged` on `cx.bus()` to register hosts when the grant becomes usable.
+
+## Owner operations
+
+The `operations` seam carries the owner's side so every transport is the same thin skin: `grants`, `authorize_grant { grant, redirect: loopback | external { redirect_uri } }`, `await_authorization { state }`, `complete_authorization { state, code, error, … }`, `revoke_grant { grant }` ([../finder/operations.md](../finder/operations.md)).

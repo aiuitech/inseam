@@ -15,6 +15,10 @@ A C ABI static library (`libinseam_ffi.a`) with a hand-maintained header at `cra
 | `inseam_node_health` | Per-entry fiber health JSON: `{id, plugin, state, error, missing, missing_secrets}` per composition entry — "what is parked and why", with each missing secret's variable name and owner-facing purpose |
 | `inseam_node_query` | Finder query → `QueryResponse` JSON |
 | `inseam_node_index_dir` | Index a local directory → `IndexReport` JSON |
+| `inseam_node_hosts` | The hosts the node stewards → `HostView[]` JSON |
+| `inseam_node_grants` | The OAuth grants the node holds → `GrantView[]` JSON |
+| `inseam_node_authorize_begin` / `inseam_node_authorize_await` | Start a loopback authorization (returns the provider URL the app opens) and block until the browser comes back |
+| `inseam_node_revoke_grant` | Forget a grant's tokens |
 | `inseam_node_free` / `inseam_string_free` | Release handles/strings the library allocated |
 
 Conventions: calls that can fail take `char **error_out` (null return + owned message on failure); every returned string is freed with `inseam_string_free`. The handle owns a booted kernel and its tokio runtime, so calls block — app shells run them off the main thread. Responses are the same serde types `ops` serializes everywhere else.
@@ -32,7 +36,7 @@ A SwiftPM package, no Xcode project:
 
 ## Configuration and secrets
 
-The Configuration tab is the ordinary editing path. It groups the first-party entries into Connections, Models, Indexing, and Search, with native controls for every field and enable switch. Connections includes the local filesystem and reusable OAuth grants. The Rust bridge reads the effective composition through the real plugin config types, fills in their defaults, validates edits, and atomically writes complete config tables back to `<data-dir>/composition.toml`. This matters because a config table replaces the base entry's table wholesale rather than merging field by field.
+The Configuration tab is the ordinary editing path. It groups the first-party entries into Connections, Models, Indexing, and Search, with native controls for every field and enable switch. Connections includes the local filesystem, the Google Workspace connection — its entry config plus, live from the open node, where its grant stands and the one button that fits (**Add Client ID…** steering to Secrets, **Connect Google…** which opens the browser and waits off the main thread, **Disconnect**), and the hosts it stewards — and generic OAuth grants. The Rust bridge reads the effective composition through the real plugin config types, fills in their defaults, validates edits, and atomically writes complete config tables back to `<data-dir>/composition.toml`. This matters because a config table replaces the base entry's table wholesale rather than merging field by field.
 
 Form saves retain custom and loaded-plugin entries. The serializer normalizes the TOML and does not retain comments. The Advanced tab keeps a raw editor for custom plugin fields and hand-authored structure the first-party form cannot represent. A malformed file prevents the visual form from loading and points the user to Advanced. Saving either editor reopens the node.
 

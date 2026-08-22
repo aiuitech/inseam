@@ -12,6 +12,7 @@
 //! first-party set a distribution links.
 
 pub mod connection_fs;
+pub mod connection_google;
 pub mod connections;
 pub mod embedder;
 pub mod finder;
@@ -35,6 +36,7 @@ pub fn factories() -> Vec<Arc<dyn PluginFactory>> {
     vec![
         Arc::new(connections::ConnectionsRegistryFactory),
         Arc::new(connection_fs::FsConnectionFactory),
+        Arc::new(connection_google::GoogleConnectionFactory),
         Arc::new(oauth::OAuthFactory),
         Arc::new(llm_endpoint::LlmEndpointFactory),
         Arc::new(embedder::EmbedderFactory),

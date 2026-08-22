@@ -4,6 +4,14 @@
 //! build. It contains no node logic and never calls the store or plugins
 //! directly. API responses are not cacheable; every response carries a
 //! restrictive browser security policy.
+//!
+//! One route is deliberately unauthenticated besides `/health`:
+//! `/api/v1/oauth/callback`, where a provider sends the owner's browser
+//! back after they authorize a grant from the web console. The owner's
+//! browser is not where the node runs, so the loopback redirect the CLI
+//! uses cannot serve it; the transport serves the redirect at its public
+//! URL instead and hands the parameters to the `complete_authorization`
+//! operation, which trusts nothing but the unguessable `state` it issued.
 
 mod auth;
 mod error;
@@ -18,10 +26,14 @@ use axum::extract::{DefaultBodyLimit, State};
 use axum::middleware;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use axum::extract::Query;
+use axum::response::{Html, IntoResponse, Redirect as HttpRedirect, Response};
 use inseam_kernel::address::HostId;
+use inseam_seams::oauth::{AuthorizationCallback, GrantId, Redirect};
 use inseam_seams::operations::{
-    ExpandRequest, ExpandResponse, FetchRequest, FetchResponse, HostView, IndexRequest, Operations,
-    QueryRequest, QueryResponse, ScanRequest, ScanResponse, StatusReport,
+    AuthorizeGrantRequest, ExpandRequest, ExpandResponse, FetchRequest, FetchResponse, GrantView,
+    HostView, IndexRequest, Operations, QueryRequest, QueryResponse, RevokeGrantRequest,
+    ScanRequest, ScanResponse, StatusReport,
 };
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
@@ -38,6 +50,11 @@ const BODY_BYTES_MAX: usize = 64 * 1024;
 const REQUESTS_IN_FLIGHT_MAX: usize = 64;
 const REQUEST_TIMEOUT_SECS: u64 = 60;
 const INDEX_ROOTS_MAX: usize = 64;
+/// Where a provider sends the owner's browser back; registered with the
+/// provider as `<public url>/api/v1/oauth/callback`.
+pub const OAUTH_CALLBACK_PATH: &str = "/api/v1/oauth/callback";
+/// Longest a provider's error description is echoed into the console URL.
+const CALLBACK_MESSAGE_CHARS_MAX: usize = 300;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct IndexRoot {
@@ -69,10 +86,42 @@ pub struct ServerConfig {
     pub cookie_security: CookieSecurity,
     pub index_roots: Vec<IndexRoot>,
     pub web_dir: Option<PathBuf>,
+    /// The origin the owner reaches this node at (`https://node.example`),
+    /// which is what an OAuth provider must redirect back to. `None` derives
+    /// it from the bind address — right for a local server, never for one
+    /// behind a TLS proxy.
+    pub public_url: Option<String>,
 }
 
 impl ServerConfig {
+    /// The OAuth callback URL this server answers at: the public origin plus
+    /// [`OAUTH_CALLBACK_PATH`].
+    pub fn oauth_callback_url(&self) -> Result<String, ConfigError> {
+        let origin = match &self.public_url {
+            Some(url) => {
+                let parsed = url::Url::parse(url)
+                    .map_err(|_| ConfigError::PublicUrlInvalid(url.clone()))?;
+                if parsed.scheme() != "https" && parsed.scheme() != "http" {
+                    return Err(ConfigError::PublicUrlInvalid(url.clone()));
+                }
+                if parsed.host_str().is_none() {
+                    return Err(ConfigError::PublicUrlInvalid(url.clone()));
+                }
+                parsed.origin().ascii_serialization()
+            }
+            None => {
+                let scheme = match self.cookie_security {
+                    CookieSecurity::Secure => "https",
+                    CookieSecurity::LocalHttp => "http",
+                };
+                format!("{scheme}://{}", self.bind)
+            }
+        };
+        Ok(format!("{origin}{OAUTH_CALLBACK_PATH}"))
+    }
+
     pub fn validate(self) -> Result<Self, ConfigError> {
+        self.oauth_callback_url()?;
         if self.index_roots.len() > INDEX_ROOTS_MAX {
             return Err(ConfigError::TooManyIndexRoots(self.index_roots.len()));
         }
@@ -98,6 +147,11 @@ struct AppState {
     operations: Arc<dyn Operations>,
     auth: Arc<Auth>,
     index_roots: Arc<[IndexRoot]>,
+    /// Where providers redirect the owner's browser back.
+    oauth_callback_url: Arc<str>,
+    /// Whether the console is served here, so the callback can return the
+    /// browser to it.
+    serves_console: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -109,6 +163,13 @@ struct HealthResponse {
 struct OwnerInfo {
     version: &'static str,
     index_roots: Vec<IndexRoot>,
+    /// What to register with an OAuth provider for web-console sign-in.
+    oauth_callback_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct HttpGrantRequest {
+    grant: GrantId,
 }
 
 #[derive(Debug, Deserialize)]
@@ -139,15 +200,19 @@ pub async fn serve(
 }
 
 fn router(config: ServerConfig, operations: Arc<dyn Operations>) -> Result<Router, ConfigError> {
+    let oauth_callback_url = config.oauth_callback_url()?;
     let state = AppState {
         operations,
         auth: Arc::new(Auth::new(&config.owner_token, config.cookie_security)?),
         index_roots: config.index_roots.into(),
+        oauth_callback_url: oauth_callback_url.into(),
+        serves_console: config.web_dir.is_some(),
     };
     let owner = owner_router(&state);
     let api = Router::new()
         .route("/health", get(health))
         .route("/session", get(session).post(login).delete(logout))
+        .route("/oauth/callback", get(oauth_callback))
         .nest("/owner", owner)
         .fallback(api_not_found)
         .with_state(state)
@@ -175,6 +240,9 @@ fn owner_router(state: &AppState) -> Router<AppState> {
         .route("/scan", post(scan))
         .route("/fetch", post(fetch))
         .route("/index", post(index))
+        .route("/grants", get(grants))
+        .route("/grants/authorize", post(authorize_grant))
+        .route("/grants/revoke", post(revoke_grant))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_owner))
 }
 
@@ -238,7 +306,110 @@ async fn info(State(state): State<AppState>) -> Json<OwnerInfo> {
     Json(OwnerInfo {
         version: env!("CARGO_PKG_VERSION"),
         index_roots: state.index_roots.to_vec(),
+        oauth_callback_url: state.oauth_callback_url.to_string(),
     })
+}
+
+async fn grants(State(state): State<AppState>) -> Result<Json<Vec<GrantView>>, ApiError> {
+    Ok(Json(state.operations.grants().await?))
+}
+
+/// Start an authorization whose redirect this server serves: the console
+/// sends the owner to the returned URL, and the provider brings them back to
+/// [`OAUTH_CALLBACK_PATH`].
+async fn authorize_grant(
+    State(state): State<AppState>,
+    Json(request): Json<HttpGrantRequest>,
+) -> Result<Json<inseam_seams::oauth::AuthorizationStarted>, ApiError> {
+    let started = state
+        .operations
+        .authorize_grant(AuthorizeGrantRequest {
+            grant: request.grant,
+            redirect: Redirect::External {
+                redirect_uri: state.oauth_callback_url.to_string(),
+            },
+        })
+        .await?;
+    Ok(Json(started))
+}
+
+async fn revoke_grant(
+    State(state): State<AppState>,
+    Json(request): Json<HttpGrantRequest>,
+) -> Result<Json<GrantView>, ApiError> {
+    Ok(Json(
+        state
+            .operations
+            .revoke_grant(RevokeGrantRequest {
+                grant: request.grant,
+            })
+            .await?,
+    ))
+}
+
+/// The provider's redirect. Unauthenticated by necessity — the session
+/// cookie is `SameSite=Strict` and a cross-site redirect never carries it —
+/// and safe because the operation accepts nothing but a `state` it issued.
+/// The owner is looking at this tab, so it answers with the console when
+/// one is served here, or a plain page otherwise.
+async fn oauth_callback(
+    State(state): State<AppState>,
+    Query(callback): Query<AuthorizationCallback>,
+) -> Response {
+    let outcome = state.operations.complete_authorization(callback).await;
+    let (grant, message) = match &outcome {
+        Ok(view) => (Some(view.id.to_string()), None),
+        Err(error) => (None, Some(error.to_string())),
+    };
+    if state.serves_console {
+        let mut console = url::Url::parse("http://console.invalid/").expect("literal URL is valid");
+        {
+            let mut query = console.query_pairs_mut();
+            match (&grant, &message) {
+                (Some(grant), None) => {
+                    query.append_pair("authorized", grant);
+                }
+                (_, Some(message)) => {
+                    let short: String = message.chars().take(CALLBACK_MESSAGE_CHARS_MAX).collect();
+                    query.append_pair("authorization_error", &short);
+                }
+                (None, None) => {}
+            }
+        }
+        let target = match console.query() {
+            Some(query) => format!("/?{query}"),
+            None => "/".to_string(),
+        };
+        return HttpRedirect::to(&target).into_response();
+    }
+    match (grant, message) {
+        (Some(grant), _) => Html(callback_page(
+            "Authorized",
+            &format!("inseam received the grant `{grant}`. You can close this tab."),
+        ))
+        .into_response(),
+        (None, message) => (
+            axum::http::StatusCode::BAD_GATEWAY,
+            Html(callback_page(
+                "Authorization failed",
+                &message.unwrap_or_else(|| "no outcome".to_string()),
+            )),
+        )
+            .into_response(),
+    }
+}
+
+/// A minimal page for the tab the provider sent back, with the message
+/// HTML-escaped — it may quote the provider.
+fn callback_page(title: &str, message: &str) -> String {
+    let escaped = message
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>{title}</title></head>\
+         <body style=\"font-family:system-ui;margin:3rem\"><h1>{title}</h1><p>{escaped}</p></body></html>"
+    )
 }
 
 async fn status(State(state): State<AppState>) -> Result<Json<StatusReport>, ApiError> {
@@ -332,8 +503,10 @@ mod tests {
     use axum::http::header::{CONTENT_TYPE, COOKIE, SET_COOKIE};
     use axum::http::{Request, StatusCode};
     use inseam_seams::SeamError;
+    use inseam_seams::oauth::{AuthorizationStarted, GrantState};
     use inseam_seams::operations::{
-        ExpandResponse, FetchResponse, IndexRequest, QueryResponse, ScanResponse,
+        AwaitAuthorizationRequest, ExpandResponse, FetchResponse, IndexRequest, QueryResponse,
+        ScanResponse,
     };
     use inseam_seams::sweep::IndexReport;
     use tower::ServiceExt;
@@ -345,6 +518,19 @@ mod tests {
     #[derive(Default)]
     struct StubOperations {
         indexed: Mutex<Option<IndexRequest>>,
+        authorized: Mutex<Option<AuthorizeGrantRequest>>,
+        completed: Mutex<Option<AuthorizationCallback>>,
+    }
+
+    fn grant_view(state: GrantState) -> GrantView {
+        GrantView {
+            id: GrantId::new("google").expect("valid"),
+            provider: "accounts.google.com".to_string(),
+            scopes: vec!["openid".to_string()],
+            client_id_env: "GOOGLE_CLIENT_ID".to_string(),
+            client_secret_env: None,
+            state,
+        }
     }
 
     #[async_trait]
@@ -392,24 +578,62 @@ mod tests {
                 reembed_pending: false,
             })
         }
+
+        async fn grants(&self) -> Result<Vec<GrantView>, SeamError> {
+            Ok(vec![grant_view(GrantState::Unauthorized)])
+        }
+
+        async fn authorize_grant(&self, request: AuthorizeGrantRequest) -> Result<AuthorizationStarted, SeamError> {
+            let redirect_uri = match &request.redirect {
+                Redirect::External { redirect_uri } => redirect_uri.clone(),
+                Redirect::Loopback => "http://127.0.0.1:1/callback".to_string(),
+            };
+            let grant = request.grant.clone();
+            *self.authorized.lock().unwrap_or_else(|error| error.into_inner()) = Some(request);
+            Ok(AuthorizationStarted {
+                grant,
+                url: format!("https://accounts.example/auth?redirect_uri={redirect_uri}&state=st"),
+                state: "st".to_string(),
+                redirect_uri,
+            })
+        }
+
+        async fn await_authorization(&self, _request: AwaitAuthorizationRequest) -> Result<GrantView, SeamError> {
+            Err(unused())
+        }
+
+        async fn complete_authorization(&self, callback: AuthorizationCallback) -> Result<GrantView, SeamError> {
+            let ok = callback.state.as_deref() == Some("st") && callback.code.is_some();
+            *self.completed.lock().unwrap_or_else(|error| error.into_inner()) = Some(callback);
+            if ok {
+                Ok(grant_view(GrantState::Authorized { expires_at: None, scopes: Vec::new(), account: Some("greg@example.com".into()) }))
+            } else {
+                Err(SeamError::Refused("wrong state".to_string()))
+            }
+        }
+
+        async fn revoke_grant(&self, _request: RevokeGrantRequest) -> Result<GrantView, SeamError> {
+            Ok(grant_view(GrantState::Unauthorized))
+        }
     }
 
     fn unused() -> SeamError {
         SeamError::Unavailable("unused by this transport test".to_string())
     }
 
+    fn test_config(index_roots: Vec<IndexRoot>, web_dir: Option<PathBuf>) -> ServerConfig {
+        ServerConfig {
+            bind: "127.0.0.1:7337".parse().expect("valid bind"),
+            owner_token: TOKEN.to_string(),
+            cookie_security: CookieSecurity::LocalHttp,
+            index_roots,
+            web_dir,
+            public_url: None,
+        }
+    }
+
     fn test_router(operations: Arc<StubOperations>, index_roots: Vec<IndexRoot>) -> Router {
-        router(
-            ServerConfig {
-                bind: "127.0.0.1:0".parse().expect("valid bind"),
-                owner_token: TOKEN.to_string(),
-                cookie_security: CookieSecurity::LocalHttp,
-                index_roots,
-                web_dir: None,
-            },
-            operations,
-        )
-        .expect("valid router")
+        router(test_config(index_roots, None), operations).expect("valid router")
     }
 
     async fn login_cookie(app: &Router) -> String {
@@ -443,13 +667,7 @@ mod tests {
         let web_dir = tempfile::tempdir().expect("temporary web directory");
         std::fs::write(web_dir.path().join("index.html"), "web client").expect("web index");
         let app = router(
-            ServerConfig {
-                bind: "127.0.0.1:0".parse().expect("valid bind"),
-                owner_token: TOKEN.to_string(),
-                cookie_security: CookieSecurity::LocalHttp,
-                index_roots: Vec::new(),
-                web_dir: Some(web_dir.path().to_path_buf()),
-            },
+            test_config(Vec::new(), Some(web_dir.path().to_path_buf())),
             Arc::new(StubOperations::default()),
         )
         .expect("valid router");
@@ -513,6 +731,91 @@ mod tests {
             index_request(&app, &cookie, "/etc").await,
             StatusCode::BAD_REQUEST
         );
+    }
+
+    #[test]
+    fn the_callback_url_follows_the_public_url_or_the_bind_address() {
+        let local = test_config(Vec::new(), None);
+        assert_eq!(local.oauth_callback_url().expect("derives"), "http://127.0.0.1:7337/api/v1/oauth/callback");
+        let mut secure = test_config(Vec::new(), None);
+        secure.cookie_security = CookieSecurity::Secure;
+        assert_eq!(secure.oauth_callback_url().expect("derives"), "https://127.0.0.1:7337/api/v1/oauth/callback");
+        let mut public = test_config(Vec::new(), None);
+        public.public_url = Some("https://node.example/some/path".to_string());
+        assert_eq!(public.oauth_callback_url().expect("derives"), "https://node.example/api/v1/oauth/callback");
+        public.public_url = Some("node.example".to_string());
+        assert!(matches!(public.oauth_callback_url(), Err(ConfigError::PublicUrlInvalid(_))));
+    }
+
+    #[tokio::test]
+    async fn authorize_route_asks_for_the_server_served_redirect() {
+        let operations = Arc::new(StubOperations::default());
+        let app = test_router(Arc::clone(&operations), Vec::new());
+        let cookie = login_cookie(&app).await;
+        let request = Request::post("/api/v1/owner/grants/authorize")
+            .header(CONTENT_TYPE, "application/json")
+            .header(COOKIE, cookie.clone())
+            .body(Body::from(r#"{"grant":"google"}"#))
+            .expect("valid request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), 4096).await.expect("body");
+        let body: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON");
+        assert_eq!(body["redirect_uri"], "http://127.0.0.1:7337/api/v1/oauth/callback");
+        assert_eq!(body["state"], "st");
+        let recorded = operations.authorized.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        assert_eq!(
+            recorded.expect("recorded").redirect,
+            Redirect::External { redirect_uri: "http://127.0.0.1:7337/api/v1/oauth/callback".to_string() }
+        );
+
+        let request = Request::get("/api/v1/owner/grants")
+            .header(COOKIE, cookie)
+            .body(Body::empty())
+            .expect("valid request");
+        let response = app.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), 4096).await.expect("body");
+        let body: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON");
+        assert_eq!(body[0]["id"], "google");
+        assert_eq!(body[0]["state"]["state"], "unauthorized");
+    }
+
+    #[tokio::test]
+    async fn the_callback_is_unauthenticated_and_returns_the_browser_to_the_console() {
+        let web_dir = tempfile::tempdir().expect("temporary web directory");
+        std::fs::write(web_dir.path().join("index.html"), "web client").expect("web index");
+        let operations = Arc::new(StubOperations::default());
+        let app = router(
+            test_config(Vec::new(), Some(web_dir.path().to_path_buf())),
+            Arc::clone(&operations) as Arc<dyn Operations>,
+        )
+        .expect("valid router");
+        let request = Request::get("/api/v1/oauth/callback?code=abc&state=st")
+            .body(Body::empty())
+            .expect("valid request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(response.headers()["location"], "/?authorized=google");
+        let completed = operations.completed.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        assert_eq!(completed.expect("delivered").code.as_deref(), Some("abc"));
+
+        let request = Request::get("/api/v1/oauth/callback?error=access_denied&state=nope")
+            .body(Body::empty())
+            .expect("valid request");
+        let response = app.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert!(response.headers()["location"].to_str().expect("ascii").starts_with("/?authorization_error="));
+
+        // Without a console to return to, the tab gets a page.
+        let bare = test_router(Arc::new(StubOperations::default()), Vec::new());
+        let request = Request::get("/api/v1/oauth/callback?code=abc&state=st")
+            .body(Body::empty())
+            .expect("valid request");
+        let response = bare.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), 4096).await.expect("body");
+        assert!(String::from_utf8_lossy(&bytes).contains("Authorized"));
     }
 
     async fn index_request(app: &Router, cookie: &str, root: &str) -> StatusCode {

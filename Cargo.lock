@@ -1468,6 +1468,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -1491,6 +1492,7 @@ name = "inseam-plugins"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "base64",
  "futures-util",
  "gethostname",
@@ -1520,6 +1522,7 @@ name = "inseam-seams"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "blake3",
  "inseam-kernel",
  "serde",
  "serde_json",

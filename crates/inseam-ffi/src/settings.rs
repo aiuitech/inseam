@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use inseam_kernel::address::HostId;
 use inseam_kernel::substrate::{Composition, ENTRY_COUNT_MAX, Entry, parse_config};
 use inseam_plugins::connection_fs::{FsConnectionConfig, WalkConfig};
+use inseam_plugins::connection_google::{GoogleConnection, GoogleConnectionConfig};
 use inseam_plugins::embedder::{EmbedderConfig, Provider};
 use inseam_plugins::finder::FinderConfig;
 use inseam_plugins::llm_endpoint::LlmEndpointConfig;
@@ -25,6 +26,7 @@ pub(crate) struct SettingsDocument {
     connections: Toggle,
     fs: Configurable<FsConnectionConfig>,
     oauth: Configurable<OAuthConfig>,
+    google: Configurable<GoogleConnectionConfig>,
     llm: Configurable<LlmEndpointConfig>,
     embedder: Configurable<EmbedderConfig>,
     transforms: Toggle,
@@ -80,6 +82,7 @@ fn from_composition(composition: &Composition) -> Result<SettingsDocument, Strin
         connections: toggle(composition, "connections")?,
         fs: configurable(composition, "fs")?,
         oauth: configurable(composition, "oauth")?,
+        google: configurable(composition, "google")?,
         llm: configurable(composition, "llm")?,
         embedder: configurable(composition, "embedder")?,
         transforms: toggle(composition, "transforms")?,
@@ -124,6 +127,7 @@ impl SettingsDocument {
     fn validate(&self) -> Result<(), String> {
         validate_source(&self.fs.config)?;
         validate_oauth(&self.oauth.config)?;
+        validate_google(&self.google.config)?;
         validate_models(&self.llm.config, &self.embedder.config)?;
         validate_transforms(self)?;
         validate_finder(&self.finder.config)?;
@@ -134,6 +138,7 @@ impl SettingsDocument {
         apply_toggle(composition, "connections", self.connections);
         apply_config(composition, "fs", self.fs)?;
         apply_config(composition, "oauth", self.oauth)?;
+        apply_config(composition, "google", self.google)?;
         apply_config(composition, "llm", self.llm)?;
         apply_config(composition, "embedder", self.embedder)?;
         apply_toggle(composition, "transforms", self.transforms);
@@ -157,6 +162,17 @@ fn validate_oauth(config: &OAuthConfig) -> Result<(), String> {
     OAuthPlugin::from_config(&table)
         .map(|_| ())
         .map_err(|error| format!("oauth: {error}"))
+}
+
+fn validate_google(config: &GoogleConnectionConfig) -> Result<(), String> {
+    let value = toml::Value::try_from(config)
+        .map_err(|error| format!("serialize `google` config: {error}"))?;
+    let toml::Value::Table(table) = value else {
+        return Err("`google` config did not serialize as a table".to_string());
+    };
+    GoogleConnection::from_config(&table)
+        .map(|_| ())
+        .map_err(|error| format!("google: {error}"))
 }
 
 fn validate_source(config: &FsConnectionConfig) -> Result<(), String> {
@@ -378,6 +394,9 @@ mod tests {
         assert!(settings.fs.config.skip_hidden);
         assert!(settings.oauth.enabled);
         assert_eq!(settings.oauth.config.callback_port, 47_781);
+        assert!(settings.google.enabled);
+        assert_eq!(settings.google.config.client_id_env, "GOOGLE_CLIENT_ID");
+        assert_eq!(settings.google.config.services.len(), 5);
         assert_eq!(settings.embedder.config.dimensions, 1536);
         assert_eq!(settings.finder.config.weights.by_kind["mentions"], 0.8);
     }
@@ -424,6 +443,23 @@ mod tests {
         assert_eq!(grant["id"], "google");
         assert_eq!(grant["scopes"][0], "mail.read");
         assert_eq!(grant["authorization_params"]["access_type"], "offline");
+    }
+
+    #[test]
+    fn google_services_round_trip_and_an_empty_list_is_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("composition.toml");
+        let mut settings = serde_json::to_value(read(&path).unwrap()).unwrap();
+        settings["google"]["config"]["services"] = serde_json::json!(["gmail", "calendar"]);
+        // TOML has no null, so "no client secret" is the empty name — which
+        // the plugin reads as none.
+        settings["google"]["config"]["client_secret_env"] = serde_json::json!("");
+        write(&path, &settings.to_string()).unwrap();
+        let reread = serde_json::to_value(read(&path).unwrap()).unwrap();
+        assert_eq!(reread["google"]["config"]["services"], serde_json::json!(["gmail", "calendar"]));
+        assert_eq!(reread["google"]["config"]["client_secret_env"], "");
+        settings["google"]["config"]["services"] = serde_json::json!([]);
+        assert!(write(&path, &settings.to_string()).is_err());
     }
 
     #[test]

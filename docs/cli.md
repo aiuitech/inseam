@@ -9,8 +9,9 @@ inseam index ~/Data                 # index a scope of a host (read-only): picks
                                     # --host <id> names the host once several are mounted;
                                     # an address (inseam://<host>/<root>) names it too
 inseam hosts                        # the hosts this node stewards and what each connection supports
-inseam grants                       # configured OAuth grants and where each stands
+inseam grants                       # the OAuth grants this node holds and where each stands
 inseam authorize <grant>            # sign in to a provider: prints the URL, waits for the browser
+inseam revoke <grant>               # forget a grant's tokens; its hosts withdraw
 inseam query "kitchen renovation"   # ranked results with summaries and hints; --json for raw output
 inseam expand <address>             # one source's fragments, relations, connected keyed fragments (entities)
 inseam scan <address> --start 120 --end 160   # read a line range of a source
@@ -36,7 +37,9 @@ roots the operator names with repeated `--index-root id=/absolute/path` flags
 or comma-separated `INSEAM_INDEX_ROOTS`. `--cookie local-http` or
 `INSEAM_COOKIE_SECURITY=local-http` permits the session cookie on an HTTP
 development server; hosted nodes keep the secure default and terminate TLS in
-front of the listener. See
-[architecture/hosted-node.md](architecture/hosted-node.md).
+front of the listener. `--public-url` (`INSEAM_PUBLIC_URL`) is the origin
+owners reach the node at — what OAuth providers redirect back to when a grant
+is authorized from the web console; it is derived from `--bind` when unset.
+See [architecture/hosted-node.md](architecture/hosted-node.md).
 
 If part of the configuration can't start (say the default `endpoint` embedder with no API key set), the node prints a warning naming each waiting entry and what it's missing. Commands that need those parts fail with the same message; everything else keeps working. `inseam plugins` is the diagnostic view. The quickest offline setup is a `composition.toml` that switches the embedder to `hashed` ([configuration.md](configuration.md) has the example).

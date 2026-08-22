@@ -118,8 +118,15 @@ Its `apply` injects `connections` and calls
 `Connection` handle (`enumerate`, `locator_prefix`, `read_text`,
 `read_lines`, `read_bytes`). Consumers resolve by host, so nothing
 downstream changes when a host is added (`docs/indexing/connections.md`).
-A remote host reached through OAuth injects `oauth` too, names a grant in
-its config (`grant = "google"`), checks its scopes with `require_scopes` at
-apply, and asks the handle for `access_token()` per request — never
-implement the flow or keep tokens yourself (`docs/plugins/oauth.md`).
+A remote host reached through OAuth injects `oauth` too and registers the
+grant it knows — `inseam_seams::oauth::register_as_effect(cx, spec).await`
+with the provider's endpoints, scopes, and the owner's client variables —
+or, for a grant configured on the `oauth` entry, names it in its config
+(`grant = "…"`) and checks scopes with `require_scopes`. Derive host ids
+with `derive_host_id(kind, principal)` from the signed-in account
+(`grant.state().account()`), register hosts when the grant is authorized
+and on `GrantChanged` (subscribe on `cx.bus()`, keep the subscription with
+`cx.keep`), and ask the handle for `access_token()` per request — never
+implement the flow or keep tokens yourself. `connection_google/` is the
+worked example (`docs/plugins/oauth.md`, `docs/indexing/google-workspace.md`).
 

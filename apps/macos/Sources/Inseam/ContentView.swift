@@ -22,6 +22,16 @@ final class AppModel: ObservableObject {
     /// Variable name the Secrets tab pre-fills, set when the main window
     /// sends the user there to satisfy a declared need.
     @Published var suggestedSecretName: String?
+    /// The OAuth grants the node holds, refreshed after every open and
+    /// every authorization or revocation.
+    @Published private(set) var grants: [GrantView] = []
+    /// The hosts the node stewards — the Google services appear here the
+    /// moment their grant is authorized.
+    @Published private(set) var hosts: [HostView] = []
+    /// The grant a browser sign-in is in flight for, if any.
+    @Published private(set) var authorizingGrant: String?
+    /// The last outcome of a connect/disconnect, for the Settings page.
+    @Published var connectionMessage = ""
 
     let coreVersion = CoreNode.coreVersion()
     let dataDir: URL
@@ -60,12 +70,16 @@ final class AppModel: ObservableObject {
             let needs = parked.flatMap(\.missingSecrets)
                 .filter { seen.insert($0.env).inserted }
             let warnings = Self.parkedWarnings(in: health)
+            let grants = (try? node.grants()) ?? []
+            let hosts = (try? node.hosts()) ?? []
             return {
                 self?.node = node
                 self?.nodeOpen = true
                 self?.parkedEntries = parked.map(\.id)
                 self?.neededSecrets = needs
                 self?.parkedWarnings = warnings
+                self?.grants = grants
+                self?.hosts = hosts
                 if !needs.isEmpty {
                     self?.status = "node open — an API key is needed"
                 } else if !warnings.isEmpty {
@@ -73,6 +87,76 @@ final class AppModel: ObservableObject {
                 } else {
                     self?.status = "node open · data dir \(dataDir.path)"
                 }
+            }
+        }
+    }
+
+    /// Re-read grants and hosts — after a sign-in or a revocation, nothing
+    /// else changes, so the node stays open.
+    func refreshConnections() {
+        guard let node else { return }
+        run("refresh connections") { [weak self] in
+            let grants = try node.grants()
+            let hosts = try node.hosts()
+            return {
+                self?.grants = grants
+                self?.hosts = hosts
+            }
+        }
+    }
+
+    /// Authorize a grant: begin on the node (it listens on the loopback
+    /// port), send the owner's browser to the provider, and wait off the
+    /// main thread for the browser to come back.
+    func authorize(grant: String) {
+        guard let node else {
+            connectionMessage = "node is not open"
+            return
+        }
+        authorizingGrant = grant
+        connectionMessage = "Waiting for the browser…"
+        run("authorize \(grant)") { [weak self] in
+            let started = try node.authorizeBegin(grant: grant)
+            guard let url = URL(string: started.url) else {
+                throw CoreError(message: "the provider URL is not valid: \(started.url)")
+            }
+            DispatchQueue.main.async { NSWorkspace.shared.open(url) }
+            let view: GrantView
+            do {
+                view = try node.authorizeAwait(state: started.state)
+            } catch {
+                DispatchQueue.main.async {
+                    self?.authorizingGrant = nil
+                    self?.connectionMessage = error.localizedDescription
+                }
+                throw error
+            }
+            let grants = try node.grants()
+            let hosts = try node.hosts()
+            return {
+                self?.authorizingGrant = nil
+                self?.grants = grants
+                self?.hosts = hosts
+                let account = view.state.account.map { " as \($0)" } ?? ""
+                self?.connectionMessage = "Connected\(account)."
+            }
+        }
+    }
+
+    /// Forget a grant's tokens; its hosts withdraw at once.
+    func revoke(grant: String) {
+        guard let node else {
+            connectionMessage = "node is not open"
+            return
+        }
+        run("disconnect \(grant)") { [weak self] in
+            _ = try node.revokeGrant(grant)
+            let grants = try node.grants()
+            let hosts = try node.hosts()
+            return {
+                self?.grants = grants
+                self?.hosts = hosts
+                self?.connectionMessage = "Disconnected."
             }
         }
     }

@@ -17,9 +17,9 @@ use inseam_seams::transforms::TRANSFORMS;
 /// that is the enrollment gate, not an oversight.
 fn conformance_config(name: &str) -> toml::Table {
     let raw = match name {
-        "connections" | "connection-fs" | "oauth" | "llm-endpoint" | "transforms" | "transform-markdown"
-        | "transform-chunker" | "transform-summarizer" | "transform-entities" | "finder"
-        | "sweep" | "operations" => "",
+        "connections" | "connection-fs" | "connection-google" | "oauth" | "llm-endpoint"
+        | "transforms" | "transform-markdown" | "transform-chunker" | "transform-summarizer"
+        | "transform-entities" | "finder" | "sweep" | "operations" => "",
         "embedder" => "provider = \"hashed\"\nmodel = \"hashed\"\ndimensions = 8",
         other => panic!(
             "linked plugin `{other}` is not enrolled in the conformance suite; add a minimal \

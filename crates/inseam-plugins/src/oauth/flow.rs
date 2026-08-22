@@ -30,8 +30,9 @@ pub const RANDOM_BYTES: usize = 32;
 pub const REQUEST_HEAD_BYTES_MAX: usize = 8 * 1024;
 
 /// The credential-file format version; a bump discards old files (the
-/// owner re-authorizes) rather than migrating them.
-pub const TOKENS_VERSION: u32 = 1;
+/// owner re-authorizes) rather than migrating them. Version 2 added the
+/// signed-in account.
+pub const TOKENS_VERSION: u32 = 2;
 
 /// A fresh base64url token of [`RANDOM_BYTES`] from the OS CSPRNG.
 pub fn random_token() -> String {
@@ -168,15 +169,22 @@ pub struct StoredTokens {
     pub expires_at: Option<i64>,
     pub scopes: Vec<String>,
     pub token_type: String,
+    /// The signed-in account (the OpenID Connect `email` claim) when the
+    /// provider issued an `id_token`: the principal a connection derives its
+    /// host identity from. Carried across refreshes, which rarely re-issue
+    /// the id token.
+    #[serde(default)]
+    pub account: Option<String>,
 }
 
 /// Interpret a token-endpoint response body (RFC 6749 §5.1 / §5.2).
-/// `previous_refresh_token` survives a refresh response that omits one;
-/// `declared_scopes` stands in when the provider does not echo `scope`.
+/// `previous` is the record a refresh replaces: its refresh token survives
+/// a response that omits one, and so does its account; `declared_scopes`
+/// stands in when the provider does not echo `scope`.
 pub fn parse_token_response(
     body: &serde_json::Value,
     now_epoch: i64,
-    previous_refresh_token: Option<&str>,
+    previous: Option<&StoredTokens>,
     declared_scopes: &[String],
 ) -> Result<StoredTokens, SeamError> {
     if let Some(error) = body.get("error").and_then(|e| e.as_str()) {
@@ -210,13 +218,18 @@ pub fn parse_token_response(
         .get("refresh_token")
         .and_then(|t| t.as_str())
         .map(str::to_string)
-        .or_else(|| previous_refresh_token.map(str::to_string));
+        .or_else(|| previous.and_then(|p| p.refresh_token.clone()));
     let scopes = match body.get("scope").and_then(|s| s.as_str()) {
         Some(scope) if !scope.trim().is_empty() => {
             scope.split_whitespace().map(str::to_string).collect()
         }
         _ => declared_scopes.to_vec(),
     };
+    let account = body
+        .get("id_token")
+        .and_then(|t| t.as_str())
+        .and_then(id_token_email)
+        .or_else(|| previous.and_then(|p| p.account.clone()));
     Ok(StoredTokens {
         version: TOKENS_VERSION,
         access_token: access_token.to_string(),
@@ -224,7 +237,28 @@ pub fn parse_token_response(
         expires_at,
         scopes,
         token_type: "Bearer".to_string(),
+        account,
     })
+}
+
+/// The `email` claim of an OpenID Connect id token, read without verifying
+/// the signature. That is deliberate and within the spec: the token arrived
+/// directly from the token endpoint over TLS in the same response as the
+/// access token (OpenID Connect Core §3.1.3.7, item 6), so its integrity
+/// is the channel's; it is used only to name the account, never to grant
+/// anything.
+pub fn id_token_email(id_token: &str) -> Option<String> {
+    let payload = id_token.split('.').nth(1)?;
+    let bytes = URL_SAFE_NO_PAD
+        .decode(payload.trim_end_matches('='))
+        .ok()?;
+    let claims: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    claims
+        .get("email")
+        .and_then(|e| e.as_str())
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .map(str::to_string)
 }
 
 #[cfg(test)]
@@ -329,20 +363,53 @@ mod tests {
         let body = serde_json::json!({
             "access_token": "at", "token_type": "bearer", "expires_in": 3600
         });
-        let tokens = parse_token_response(&body, 1_000, Some("rt-old"), &["s".to_string()])
+        let previous = StoredTokens {
+            version: TOKENS_VERSION,
+            access_token: "old".to_string(),
+            refresh_token: Some("rt-old".to_string()),
+            expires_at: None,
+            scopes: Vec::new(),
+            token_type: "Bearer".to_string(),
+            account: Some("greg@example.com".to_string()),
+        };
+        let tokens = parse_token_response(&body, 1_000, Some(&previous), &["s".to_string()])
             .expect("parses");
         assert_eq!(tokens.access_token, "at");
         assert_eq!(tokens.refresh_token.as_deref(), Some("rt-old"));
         assert_eq!(tokens.expires_at, Some(4_600));
         assert_eq!(tokens.scopes, vec!["s".to_string()]);
+        assert_eq!(tokens.account.as_deref(), Some("greg@example.com"), "account survives a refresh");
 
         let rotated = serde_json::json!({
             "access_token": "at2", "refresh_token": "rt-new", "scope": "x y"
         });
-        let tokens = parse_token_response(&rotated, 0, Some("rt-old"), &[]).expect("parses");
+        let tokens = parse_token_response(&rotated, 0, Some(&previous), &[]).expect("parses");
         assert_eq!(tokens.refresh_token.as_deref(), Some("rt-new"));
         assert_eq!(tokens.expires_at, None);
         assert_eq!(tokens.scopes, vec!["x".to_string(), "y".to_string()]);
+    }
+
+    /// An id token whose payload carries the given claims; the signature is
+    /// junk on purpose — it is not verified.
+    fn fake_id_token(claims: serde_json::Value) -> String {
+        let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(claims.to_string());
+        format!("{header}.{payload}.sig")
+    }
+
+    #[test]
+    fn token_response_reads_the_account_from_the_id_token() {
+        let body = serde_json::json!({
+            "access_token": "at",
+            "id_token": fake_id_token(serde_json::json!({"sub": "1", "email": "Greg@Example.com"}))
+        });
+        let tokens = parse_token_response(&body, 0, None, &[]).expect("parses");
+        assert_eq!(tokens.account.as_deref(), Some("Greg@Example.com"));
+        assert_eq!(id_token_email("not.a-token"), None);
+        assert_eq!(id_token_email(&fake_id_token(serde_json::json!({"sub": "1"}))), None);
+        let none = parse_token_response(&serde_json::json!({"access_token": "at"}), 0, None, &[])
+            .expect("parses");
+        assert_eq!(none.account, None);
     }
 
     #[test]

@@ -5,18 +5,47 @@ import {
   ApiError,
   type ExpandResponse,
   type FetchResponse,
+  type Grant,
   type Host,
   type IndexReport,
   type OwnerInfo,
   type QueryResult,
   type StatusReport,
 } from "@/api"
+import { ConnectionsPanel } from "@/components/connections-panel"
 import { IndexControl } from "@/components/index-control"
 import { LoginScreen } from "@/components/login-screen"
 import { NodeSidebar } from "@/components/node-sidebar"
 import { SearchWorkspace } from "@/components/search-workspace"
 
-type NodeSnapshot = { hosts: Host[]; info: OwnerInfo; status: StatusReport }
+type NodeSnapshot = {
+  hosts: Host[]
+  info: OwnerInfo
+  status: StatusReport
+  grants: Grant[]
+}
+
+type Notice = { kind: "ok" | "error"; text: string }
+
+/** What the node's OAuth callback route appended when it sent this tab
+ * back: an authorized grant, or why the authorization failed. Read once and
+ * cleared from the address bar so a reload does not repeat it. */
+function takeCallbackNotice(): Notice | null {
+  const params = new URLSearchParams(window.location.search)
+  const authorized = params.get("authorized")
+  const failed = params.get("authorization_error")
+  if (!authorized && !failed) return null
+  params.delete("authorized")
+  params.delete("authorization_error")
+  const rest = params.toString()
+  window.history.replaceState(
+    null,
+    "",
+    `${window.location.pathname}${rest ? `?${rest}` : ""}`
+  )
+  if (authorized) return { kind: "ok", text: `connected ${authorized}` }
+  return { kind: "error", text: failed ?? "authorization failed" }
+}
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
@@ -65,6 +94,7 @@ function OwnerConsole({ onExpired }: { onExpired: () => void }) {
   const [fetched, setFetched] = useState<FetchResponse | null>(null)
   const [report, setReport] = useState<IndexReport | null>(null)
   const [pending, setPending] = useState(true)
+  const [notice, setNotice] = useState<Notice | null>(() => takeCallbackNotice())
 
   const run = useCallback(
     async <T,>(operation: () => Promise<T>): Promise<T | null> => {
@@ -84,14 +114,25 @@ function OwnerConsole({ onExpired }: { onExpired: () => void }) {
   )
 
   useEffect(() => {
-    Promise.all([api.info(), api.status(), api.hosts()])
-      .then(([info, status, hosts]) => setSnapshot({ info, status, hosts }))
+    Promise.all([api.info(), api.status(), api.hosts(), api.grants()])
+      .then(([info, status, hosts, grants]) =>
+        setSnapshot({ info, status, hosts, grants })
+      )
       .catch((reason: unknown) => {
         if (reason instanceof ApiError && reason.status === 401) onExpired()
         setError(errorMessage(reason))
       })
       .finally(() => setPending(false))
   }, [onExpired])
+
+  /** Grants and hosts move together: a connection changes both. */
+  const refreshConnections = useCallback(
+    (current: NodeSnapshot) =>
+      Promise.all([api.hosts(), api.grants()])
+        .then(([hosts, grants]) => setSnapshot({ ...current, hosts, grants }))
+        .catch((reason) => setError(errorMessage(reason))),
+    []
+  )
 
   if (!snapshot) {
     return <div className="boot-screen">{error ?? "reading node state..."}</div>
@@ -137,6 +178,27 @@ function OwnerConsole({ onExpired }: { onExpired: () => void }) {
           onFetch={(address) =>
             void run(() => api.fetch(address)).then((value) => {
               if (value) setFetched(value)
+            })
+          }
+        />
+        <ConnectionsPanel
+          grants={snapshot.grants}
+          hosts={snapshot.hosts}
+          pending={pending}
+          callbackUrl={snapshot.info.oauth_callback_url}
+          notice={notice}
+          onConnect={(grant) =>
+            void run(() => api.authorizeGrant(grant)).then((started) => {
+              // A top-level navigation: the provider signs the owner in and
+              // redirects back to this node's callback route.
+              if (started) window.location.assign(started.url)
+            })
+          }
+          onDisconnect={(grant) =>
+            void run(() => api.revokeGrant(grant)).then((value) => {
+              if (!value) return
+              setNotice({ kind: "ok", text: `disconnected ${grant}` })
+              void refreshConnections(snapshot)
             })
           }
         />

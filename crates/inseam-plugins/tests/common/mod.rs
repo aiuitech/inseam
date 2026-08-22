@@ -64,14 +64,27 @@ pub async fn boot(data_dir: &Path, overlay: &str) -> Kernel {
 }
 
 pub async fn reconcile(kernel: &mut Kernel, overlay: &str) {
+    kernel.reconcile(&layered(overlay)).await.expect("settles");
+}
+
+/// Boot a kernel whose composition is allowed to leave entries failed —
+/// for tests about one entry failing alone.
+pub async fn boot_unsettled(data_dir: &Path, overlay: &str) -> Kernel {
+    let mut kernel = Kernel::boot(data_dir, inseam_plugins::factories(), Vec::new())
+        .await
+        .expect("kernel boots");
+    let _ = kernel.reconcile(&layered(overlay)).await;
+    kernel
+}
+
+fn layered(overlay: &str) -> Composition {
     let base = Composition::parse(OFFLINE_BASE, "test base").expect("base parses");
-    let composition = if overlay.is_empty() {
+    if overlay.is_empty() {
         base
     } else {
         base.layered(Composition::parse(overlay, "test overlay").expect("overlay parses"))
             .expect("layers")
-    };
-    kernel.reconcile(&composition).await.expect("settles");
+    }
 }
 
 pub fn ops(kernel: &Kernel) -> Arc<dyn Operations> {

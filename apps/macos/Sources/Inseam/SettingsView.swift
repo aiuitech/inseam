@@ -212,8 +212,130 @@ private struct SourceConfigurationView: View {
                 }
                 .disabled(!settings.fs.enabled)
             }
+            GoogleConnectionView(google: $settings.google)
             OAuthConfigurationView(oauth: $settings.oauth)
         }
+    }
+}
+
+/// The Google Workspace connection: the entry's config, and — live from the
+/// open node — where its grant stands, with the one button that fits.
+private struct GoogleConnectionView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.openSettings) private var openSettings
+    @Binding var google: Configurable<GoogleConnectionConfig>
+
+    private var grant: GrantView? {
+        model.grants.first { $0.id == google.config.grant }
+    }
+
+    private var googleHosts: [HostView] {
+        model.hosts.filter { $0.entry == "google" }
+    }
+
+    var body: some View {
+        SettingsGroup(
+            title: "Google Workspace",
+            summary:
+                "One sign-in covers Gmail, Drive, Calendar, Contacts, and Tasks, each as its own host. The client id and secret come from your Keychain."
+        ) {
+            Toggle("Enabled", isOn: $google.enabled)
+            Divider()
+            connection
+            Divider()
+            VStack(spacing: 10) {
+                SettingsTextField("Grant ID", text: $google.config.grant)
+                SettingsTextField("Client ID variable", text: $google.config.clientIdEnv)
+                SettingsTextField("Client secret variable", text: $google.config.clientSecretEnv)
+                SettingsNumberField("Sources per service per run", value: $google.config.sourcesMax)
+            }
+            .disabled(!google.enabled)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Services").font(.caption).foregroundStyle(.secondary)
+                ForEach(GoogleService.allCases) { service in
+                    Toggle(service.label, isOn: serviceBinding(service))
+                }
+                Text("Leave the secret variable empty for a client without one. Changing the services or the variables needs Save Changes, then a fresh sign-in.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .disabled(!google.enabled)
+        }
+    }
+
+    @ViewBuilder
+    private var connection: some View {
+        if let grant {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(statusLine(for: grant))
+                        .font(.callout)
+                    Spacer()
+                    if model.authorizingGrant == grant.id {
+                        ProgressView().controlSize(.small)
+                        Text("Waiting for the browser…").font(.caption).foregroundStyle(.secondary)
+                    } else if grant.state.isMissingSecret {
+                        Button("Add Client ID…") {
+                            model.suggestedSecretName = grant.state.env
+                            model.settingsTab = .secrets
+                            openSettings()
+                        }
+                    } else if grant.state.isAuthorized {
+                        Button("Reconnect…") { model.authorize(grant: grant.id) }
+                        Button("Disconnect") { model.revoke(grant: grant.id) }
+                    } else {
+                        Button("Connect Google…") { model.authorize(grant: grant.id) }
+                    }
+                }
+                if !googleHosts.isEmpty {
+                    ForEach(googleHosts) { host in
+                        Text("\(host.displayName) · \(host.kind) · \(host.id)")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if !model.connectionMessage.isEmpty {
+                    Text(model.connectionMessage).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        } else {
+            Text(
+                model.nodeOpen
+                    ? "The node holds no grant `\(google.config.grant)` — save this entry enabled, then connect."
+                    : "Open the node to connect."
+            )
+            .font(.callout)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private func statusLine(for grant: GrantView) -> String {
+        switch grant.state.state {
+        case "authorized":
+            let account = grant.state.account.map { " as \($0)" } ?? ""
+            return "Connected\(account)"
+        case "missing_secret":
+            return "Not connected — set \(grant.state.env ?? grant.clientIdEnv) in Secrets"
+        default:
+            return "Not connected"
+        }
+    }
+
+    /// One service's toggle over the config's list, kept in catalog order.
+    private func serviceBinding(_ service: GoogleService) -> Binding<Bool> {
+        Binding(
+            get: { google.config.services.contains(service.rawValue) },
+            set: { enabled in
+                var chosen = Set(google.config.services)
+                if enabled {
+                    chosen.insert(service.rawValue)
+                } else {
+                    chosen.remove(service.rawValue)
+                }
+                let ordered = GoogleService.allCases.map(\.rawValue)
+                google.config.services = ordered.filter { chosen.contains($0) }
+            }
+        )
     }
 }
 

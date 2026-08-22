@@ -105,6 +105,49 @@ final class CoreNode {
         }
     }
 
+    /// The hosts this node stewards — the filesystem, and each Google
+    /// service once its grant is authorized.
+    func hosts() throws -> [HostView] {
+        guard let handle else { throw CoreError(message: "node is closed") }
+        return try decode([HostView].self) { error in
+            inseam_node_hosts(handle, &error)
+        }
+    }
+
+    /// The OAuth grants the node holds and where each stands.
+    func grants() throws -> [GrantView] {
+        guard let handle else { throw CoreError(message: "node is closed") }
+        return try decode([GrantView].self) { error in
+            inseam_node_grants(handle, &error)
+        }
+    }
+
+    /// Start authorizing a grant over the loopback redirect; the caller
+    /// opens `url` in the browser, then blocks on `authorizeAwait`.
+    func authorizeBegin(grant: String) throws -> AuthorizationStarted {
+        guard let handle else { throw CoreError(message: "node is closed") }
+        return try decode(AuthorizationStarted.self) { error in
+            inseam_node_authorize_begin(handle, grant, &error)
+        }
+    }
+
+    /// Wait for the browser to come back — blocks for up to the oauth
+    /// entry's timeout, so call it off the main thread.
+    func authorizeAwait(state: String) throws -> GrantView {
+        guard let handle else { throw CoreError(message: "node is closed") }
+        return try decode(GrantView.self) { error in
+            inseam_node_authorize_await(handle, state, &error)
+        }
+    }
+
+    /// Forget a grant's tokens; its hosts withdraw.
+    func revokeGrant(_ grant: String) throws -> GrantView {
+        guard let handle else { throw CoreError(message: "node is closed") }
+        return try decode(GrantView.self) { error in
+            inseam_node_revoke_grant(handle, grant, &error)
+        }
+    }
+
     private func decode<T: Decodable>(
         _ type: T.Type,
         _ call: (inout UnsafeMutablePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
@@ -158,6 +201,43 @@ struct SecretNeed: Decodable, Identifiable, Equatable {
     let purpose: String
 
     var id: String { env }
+}
+
+struct HostView: Decodable, Identifiable {
+    let id: String
+    let kind: String
+    let displayName: String
+    let entry: String
+}
+
+/// One OAuth grant as the node reports it (`GrantView`).
+struct GrantView: Decodable, Identifiable {
+    let id: String
+    let provider: String
+    let scopes: [String]
+    let clientIdEnv: String
+    let clientSecretEnv: String?
+    let state: GrantStateView
+}
+
+/// The tagged `GrantState`: `missing_secret` names the variable, `authorized`
+/// carries the account and expiry.
+struct GrantStateView: Decodable {
+    let state: String
+    let env: String?
+    let account: String?
+    let expiresAt: Int64?
+    let scopes: [String]?
+
+    var isAuthorized: Bool { state == "authorized" }
+    var isMissingSecret: Bool { state == "missing_secret" }
+}
+
+struct AuthorizationStarted: Decodable {
+    let grant: String
+    let url: String
+    let state: String
+    let redirectUri: String
 }
 
 struct IndexReport: Decodable {

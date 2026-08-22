@@ -16,7 +16,8 @@ How merging works: when your entry matches a base entry's id, your `config` **re
 | --- | --- | --- |
 | `connections` | `connections` | — (the host-connection registry) |
 | `fs` | `connection-fs` | `host_id` (default `fs-<hostname>`), `skip_hidden` (true), `gitignore` (true), `ignore` (gitignore-syntax patterns; [indexing/ignore.md](indexing/ignore.md)) |
-| `oauth` | `oauth` | `callback_port` (47781), `authorization_timeout_secs` (300), `credentials_dir` (the node's private `oauth/` directory), `grants` (provider URLs, scopes, client environment variables, and authorization parameters) |
+| `oauth` | `oauth` | `callback_port` (47781), `authorization_timeout_secs` (300), `credentials_dir` (the node's private `oauth/` directory), `grants` (generic grants: provider URLs, scopes, client environment variables, and authorization parameters; connections such as `google` register their own) |
+| `google` | `connection-google` | `grant` (`google`), `client_id_env` (`GOOGLE_CLIENT_ID`), `client_secret_env` (`GOOGLE_CLIENT_SECRET`; `""` for none), `services` (all five), `sources_max` (5000) — one Google account as one host per service ([indexing/google-workspace.md](indexing/google-workspace.md)) |
 | `llm` | `llm-endpoint` | `base_url` (OpenRouter), `api_key_env` (`OPENROUTER_API_KEY`), `transform_model`, `agent_model` |
 | `embedder` | `embedder` | `provider` = `endpoint` \| `hashed` \| `none`, `model`, `dimensions` |
 | `transforms` | `transforms` | — (the registry) |
@@ -51,7 +52,7 @@ cooldown_days = 7      # wait period before a newly seen plugin version activate
 # admission = "enforce"  # validation on first sighting: enforce | warn | off
 ```
 
-Secrets never live in the composition or the store: the `llm` entry names an environment variable (`api_key_env`), and OAuth grants name `client_id_env` and optional `client_secret_env` variables. The CLI reads those variables from your shell; the macOS app has no shell environment, so its Settings screen stores each value in your login Keychain and exports it into the process environment at node open ([architecture/macos-app.md](architecture/macos-app.md)). The app's visual Configuration tab reads and writes these same entries through native controls; its Advanced tab edits the same `composition.toml` directly. CLI and app therefore remain one node with one config.
+Secrets never live in the composition or the store: the `llm` entry names an environment variable (`api_key_env`), and OAuth grants — the `google` entry's, or generic ones on `oauth` — name `client_id_env` and optional `client_secret_env` variables. The CLI reads those variables from your shell; the macOS app has no shell environment, so its Settings screen stores each value in your login Keychain and exports it into the process environment at node open ([architecture/macos-app.md](architecture/macos-app.md)). The app's visual Configuration tab reads and writes these same entries through native controls; its Advanced tab edits the same `composition.toml` directly. CLI and app therefore remain one node with one config.
 
 ## What a config change costs
 

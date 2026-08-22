@@ -57,3 +57,13 @@ So the example flow: my external service calls `query("some topic", properties: 
   node useful without claiming that caller registration and verified-property
   filtering are finished. Index calls name an operator-configured root ID;
   the browser never sends an arbitrary server path.
+- **Connecting an account is an owner operation, in every transport.**
+  `grants` / `authorize_grant` / `await_authorization` /
+  `complete_authorization` / `revoke_grant` ride the operations seam, so the
+  CLI, the FFI app, and the HTTP console stay logic-free skins over one flow
+  ([connections](connections.md)). The HTTP transport carries one consequence
+  of being remote: a second unauthenticated route, `/api/v1/oauth/callback`,
+  where the provider returns the owner's browser — unauthenticated because a
+  `SameSite=Strict` cookie never rides a cross-site redirect, safe because the
+  operation accepts nothing but the `state` it issued, and addressed by an
+  explicit public URL (`--public-url`) rather than a trusted `Host` header.

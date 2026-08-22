@@ -456,10 +456,8 @@ impl SweepService {
             return Ok(());
         };
         let seen: HashSet<&str> = seen.iter().map(|s| s.address.locator.as_str()).collect();
-        let child_prefix = format!("{prefix}/");
         for (sid, locator) in self.store.sources_of_host(&steward.host.id).await? {
-            let under_root = locator == prefix || locator.starts_with(&child_prefix);
-            if !under_root || seen.contains(locator.as_str()) {
+            if !scope_covers(&prefix, &locator) || seen.contains(locator.as_str()) {
                 continue;
             }
             self.store.delete_source(sid).await?;
@@ -497,6 +495,22 @@ impl SweepService {
         tracing::info!(rows = report.reembedded, "re-embedded search index");
         Ok(())
     }
+}
+
+/// Whether a swept scope's locator prefix covers a cataloged locator: the
+/// prefix itself, anything under it (`<prefix>/…`), and — for the empty
+/// prefix, which a flat id space answers for its "everything" scope — every
+/// locator of the host (`Connection::locator_prefix`).
+fn scope_covers(prefix: &str, locator: &str) -> bool {
+    if prefix.is_empty() {
+        return true;
+    }
+    if locator == prefix {
+        return true;
+    }
+    locator
+        .strip_prefix(prefix)
+        .is_some_and(|rest| rest.starts_with('/'))
 }
 
 /// Fold one landed plan into the run report.
@@ -580,5 +594,20 @@ impl<T> std::future::Future for Spawned<T> {
         std::pin::Pin::new(&mut self.0)
             .poll(cx)
             .map(|joined| joined.map_err(|e| SeamError::failed(format!("planner task failed: {e}"))))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scope_covers;
+
+    #[test]
+    fn scope_covers_the_prefix_its_children_and_everything_for_the_empty_prefix() {
+        assert!(scope_covers("Users/greg/Notes", "Users/greg/Notes"));
+        assert!(scope_covers("Users/greg/Notes", "Users/greg/Notes/a.md"));
+        assert!(!scope_covers("Users/greg/Notes", "Users/greg/Notes-old/a.md"));
+        assert!(!scope_covers("Users/greg/Notes", "Users/greg"));
+        assert!(scope_covers("", "any/locator/at/all"));
+        assert!(scope_covers("", "1a2b3c"));
     }
 }

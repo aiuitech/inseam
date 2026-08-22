@@ -602,3 +602,66 @@ body::before {
     transition-duration: 0.01ms !important;
   }
 }
+
+.connections-panel {
+  display: grid;
+  gap: 0.9rem;
+  margin-top: 1.5rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1.25rem;
+}
+.connections-panel h2 {
+  margin: 0.2rem 0 0;
+  font-size: 1.1rem;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+.grant-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid var(--border);
+  background: var(--card);
+  padding: 0.8rem 1rem;
+}
+.grant-copy {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.grant-copy strong {
+  font-weight: 500;
+}
+.grant-copy span,
+.grant-copy small {
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+}
+.grant-copy small {
+  color: var(--foreground);
+}
+.grant-hosts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+}
+.grant-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.5rem;
+}
+.grant-footnote {
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+}
+.grant-footnote code {
+  color: var(--foreground);
+}
+.notice-ok {
+  border-left: 2px solid var(--primary);
+  padding-left: 0.6rem;
+  color: var(--primary);
+  font-size: 0.8rem;
+}

@@ -14,6 +14,7 @@ use inseam_kernel::substrate::{Guard, ServiceKey};
 use serde::{Deserialize, Serialize};
 
 use crate::connection::{Capabilities, HostKind};
+use crate::oauth::{AuthorizationCallback, AuthorizationStarted, GrantId, GrantState, Redirect};
 use crate::sweep::IndexReport;
 use crate::SeamError;
 
@@ -44,6 +45,23 @@ pub trait Operations: Send + Sync {
     async fn hosts(&self) -> Result<Vec<HostView>, SeamError>;
     /// Owner operation: index and catalog statistics.
     async fn status(&self) -> Result<StatusReport, SeamError>;
+    /// Owner operation: the OAuth grants this node holds and where each
+    /// stands — what a "connect an account" surface lists.
+    async fn grants(&self) -> Result<Vec<GrantView>, SeamError>;
+    /// Owner operation: start the browser authorization of a grant; the
+    /// transport sends the owner to the returned URL. A local transport
+    /// asks for the loopback redirect and then waits with
+    /// [`Operations::await_authorization`]; a remote one serves the redirect
+    /// itself and delivers it with [`Operations::complete_authorization`].
+    async fn authorize_grant(&self, request: AuthorizeGrantRequest) -> Result<AuthorizationStarted, SeamError>;
+    /// Owner operation: wait for a started authorization to finish, bounded
+    /// by the oauth provider's timeout; the grant as it stands afterwards.
+    async fn await_authorization(&self, request: AwaitAuthorizationRequest) -> Result<GrantView, SeamError>;
+    /// Owner operation: the browser came back to a transport-served
+    /// redirect with these parameters; exchange and store.
+    async fn complete_authorization(&self, callback: AuthorizationCallback) -> Result<GrantView, SeamError>;
+    /// Owner operation: forget a grant's tokens; hosts behind it withdraw.
+    async fn revoke_grant(&self, request: RevokeGrantRequest) -> Result<GrantView, SeamError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +224,38 @@ pub struct HostView {
     /// The composition entry whose connection stewards it.
     pub entry: String,
     pub capabilities: Capabilities,
+}
+
+/// One grant as owner surfaces show it: what it is for, where it stands,
+/// and which environment variables unlock it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GrantView {
+    pub id: GrantId,
+    /// The provider's host ("accounts.google.com"), for presentation.
+    pub provider: String,
+    /// The scopes declared for the grant.
+    pub scopes: Vec<String>,
+    pub client_id_env: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret_env: Option<String>,
+    pub state: GrantState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthorizeGrantRequest {
+    pub grant: GrantId,
+    pub redirect: Redirect,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AwaitAuthorizationRequest {
+    /// The `state` the authorization started with.
+    pub state: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevokeGrantRequest {
+    pub grant: GrantId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -8,6 +8,14 @@ services:
       INSEAM_OWNER_TOKEN: ${INSEAM_OWNER_TOKEN:?set a random owner token of at least 32 bytes}
       INSEAM_INDEX_ROOTS: documents=/srv/inseam/hosts/documents
       INSEAM_COOKIE_SECURITY: ${INSEAM_COOKIE_SECURITY:-secure}
+      # The origin owners reach the node at; OAuth providers redirect back to
+      # <this>/api/v1/oauth/callback when an account is connected from the
+      # console. Leave unset only for local HTTP testing.
+      INSEAM_PUBLIC_URL: ${INSEAM_PUBLIC_URL:-}
+      # The Google OAuth client, when the node should connect a Google
+      # account; unset, the google entry waits without parking anything.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     ports:
       - "127.0.0.1:7337:7337"
     volumes:

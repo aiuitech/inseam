@@ -15,7 +15,7 @@ Errors are typed and written as sentences (`no source at …`, `scan start line 
 
 ## Owner operations
 
-`operations.index { host?, root, rebuild }` — hands off to the `sweep` seam over a scope of one stewarded host, returning an `IndexReport` (counts per summary kind, fragments, relations, keyed fragments anchored, dollars spent). `host` may be omitted only while the node stewards exactly one host; with several, the error lists them. `operations.hosts` — every host this node stewards: id, kind, display name, the entry whose connection serves it, and its capabilities ([indexing/connections.md](../indexing/connections.md)). Both owner-only; never exposed through a boundary adapter.
+`operations.index { host?, root, rebuild }` — hands off to the `sweep` seam over a scope of one stewarded host, returning an `IndexReport` (counts per summary kind, fragments, relations, keyed fragments anchored, dollars spent). `host` may be omitted only while the node stewards exactly one host; with several, the error lists them. `operations.hosts` — every host this node stewards: id, kind, display name, the entry whose connection serves it, and its capabilities ([indexing/connections.md](../indexing/connections.md)). `operations.grants` / `authorize_grant { grant, redirect }` / `await_authorization { state }` / `complete_authorization { state, code, … }` / `revoke_grant { grant }` — the OAuth grants and the owner's authorization of them, shaped so a local transport can take the loopback redirect and a remote one can serve the redirect itself ([plugins/oauth.md](../plugins/oauth.md)). All owner-only; never exposed through a boundary adapter.
 
 ## The agent demo
 

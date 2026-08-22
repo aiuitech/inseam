@@ -20,7 +20,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use inseam_kernel::substrate::{Composition, FiberState, Kernel, SubstrateError};
-use inseam_seams::operations::{IndexRequest, Operations, QueryRequest, OPERATIONS};
+use inseam_seams::oauth::{GrantId, Redirect};
+use inseam_seams::operations::{
+    AuthorizeGrantRequest, AwaitAuthorizationRequest, IndexRequest, Operations, QueryRequest,
+    RevokeGrantRequest, OPERATIONS,
+};
 use tokio::runtime::Runtime;
 
 mod settings;
@@ -39,6 +43,10 @@ plugin = "connection-fs"
 [[entry]]
 id = "oauth"
 plugin = "oauth"
+
+[[entry]]
+id = "google"
+plugin = "connection-google"
 
 [[entry]]
 id = "llm"
@@ -251,6 +259,145 @@ pub unsafe extern "C" fn inseam_node_index_dir(
         rebuild,
     }));
     json_result(report, error_out)
+}
+
+/// The hosts this node stewards, as a JSON array of `HostView`.
+///
+/// # Safety
+/// `node` must be a live handle from `inseam_node_open`; `error_out` null
+/// or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn inseam_node_hosts(
+    node: *const InseamNode,
+    error_out: *mut *mut c_char,
+) -> *mut c_char {
+    // SAFETY: caller contract above.
+    let Some(handle) = (unsafe { node.as_ref() }) else {
+        return fail(error_out, "node handle is null");
+    };
+    let Some(operations) = handle.operations.as_ref() else {
+        return fail(error_out, &unsettled_message(&handle.kernel));
+    };
+    json_result(handle.runtime.block_on(operations.hosts()), error_out)
+}
+
+/// The OAuth grants this node holds, as a JSON array of `GrantView`
+/// (`{id, provider, scopes, client_id_env, client_secret_env, state}`).
+///
+/// # Safety
+/// `node` must be a live handle from `inseam_node_open`; `error_out` null
+/// or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn inseam_node_grants(
+    node: *const InseamNode,
+    error_out: *mut *mut c_char,
+) -> *mut c_char {
+    // SAFETY: caller contract above.
+    let Some(handle) = (unsafe { node.as_ref() }) else {
+        return fail(error_out, "node handle is null");
+    };
+    let Some(operations) = handle.operations.as_ref() else {
+        return fail(error_out, &unsettled_message(&handle.kernel));
+    };
+    json_result(handle.runtime.block_on(operations.grants()), error_out)
+}
+
+/// Begin authorizing a grant over the loopback redirect. Returns the
+/// `AuthorizationStarted` JSON (`{grant, url, state, redirect_uri}`): the
+/// app opens `url` in the owner's browser, then blocks on
+/// `inseam_node_authorize_await` with `state`.
+///
+/// # Safety
+/// `node` must be a live handle; `grant` a valid C string; `error_out` null
+/// or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn inseam_node_authorize_begin(
+    node: *const InseamNode,
+    grant: *const c_char,
+    error_out: *mut *mut c_char,
+) -> *mut c_char {
+    // SAFETY: caller contract above.
+    let Some(handle) = (unsafe { node.as_ref() }) else {
+        return fail(error_out, "node handle is null");
+    };
+    // SAFETY: caller contract above.
+    let Some(grant) = (unsafe { arg_str(grant) }) else {
+        return fail(error_out, "grant must be a valid UTF-8 C string");
+    };
+    let Some(operations) = handle.operations.as_ref() else {
+        return fail(error_out, &unsettled_message(&handle.kernel));
+    };
+    let grant = match GrantId::new(grant) {
+        Ok(grant) => grant,
+        Err(e) => return fail(error_out, &e.to_string()),
+    };
+    let started = handle.runtime.block_on(operations.authorize_grant(AuthorizeGrantRequest {
+        grant,
+        redirect: Redirect::Loopback,
+    }));
+    json_result(started, error_out)
+}
+
+/// Wait for a begun authorization to finish — blocks up to the oauth
+/// entry's timeout, so call it off the main thread — and return the grant's
+/// `GrantView` JSON.
+///
+/// # Safety
+/// `node` must be a live handle; `state` a valid C string; `error_out` null
+/// or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn inseam_node_authorize_await(
+    node: *const InseamNode,
+    state: *const c_char,
+    error_out: *mut *mut c_char,
+) -> *mut c_char {
+    // SAFETY: caller contract above.
+    let Some(handle) = (unsafe { node.as_ref() }) else {
+        return fail(error_out, "node handle is null");
+    };
+    // SAFETY: caller contract above.
+    let Some(state) = (unsafe { arg_str(state) }) else {
+        return fail(error_out, "state must be a valid UTF-8 C string");
+    };
+    let Some(operations) = handle.operations.as_ref() else {
+        return fail(error_out, &unsettled_message(&handle.kernel));
+    };
+    let view = handle.runtime.block_on(operations.await_authorization(AwaitAuthorizationRequest {
+        state: state.to_string(),
+    }));
+    json_result(view, error_out)
+}
+
+/// Forget a grant's tokens. Returns the grant's `GrantView` JSON afterwards.
+///
+/// # Safety
+/// `node` must be a live handle; `grant` a valid C string; `error_out` null
+/// or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn inseam_node_revoke_grant(
+    node: *const InseamNode,
+    grant: *const c_char,
+    error_out: *mut *mut c_char,
+) -> *mut c_char {
+    // SAFETY: caller contract above.
+    let Some(handle) = (unsafe { node.as_ref() }) else {
+        return fail(error_out, "node handle is null");
+    };
+    // SAFETY: caller contract above.
+    let Some(grant) = (unsafe { arg_str(grant) }) else {
+        return fail(error_out, "grant must be a valid UTF-8 C string");
+    };
+    let Some(operations) = handle.operations.as_ref() else {
+        return fail(error_out, &unsettled_message(&handle.kernel));
+    };
+    let grant = match GrantId::new(grant) {
+        Ok(grant) => grant,
+        Err(e) => return fail(error_out, &e.to_string()),
+    };
+    json_result(
+        handle.runtime.block_on(operations.revoke_grant(RevokeGrantRequest { grant })),
+        error_out,
+    )
 }
 
 /// Per-entry health for status surfaces, as a JSON array of
@@ -504,6 +651,54 @@ mod tests {
         let json = take_string(response);
         assert!(json.contains("\"results\""));
 
+        // SAFETY: freeing the node exactly once.
+        unsafe { inseam_node_free(node) };
+    }
+
+    #[test]
+    fn grants_and_hosts_are_listed_and_the_google_grant_waits_for_its_client() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("composition.toml"),
+            r#"
+            [[entry]]
+            id = "embedder"
+            [entry.config]
+            provider = "hashed"
+            model = "hashed"
+            dimensions = 64
+
+            [[entry]]
+            id = "llm"
+            disabled = true
+
+            [[entry]]
+            id = "google"
+            [entry.config]
+            client_id_env = "INSEAM_TEST_GOOGLE_CLIENT_ID_NEVER_SET"
+            "#,
+        )
+        .unwrap();
+        let data_dir = CString::new(dir.path().to_str().unwrap()).unwrap();
+        let mut err: *mut c_char = std::ptr::null_mut();
+        // SAFETY: valid C strings and a writable error slot.
+        let node = unsafe { inseam_node_open(data_dir.as_ptr(), std::ptr::null(), &mut err) };
+        assert!(!node.is_null(), "node opens");
+        // SAFETY: live node, writable error slot.
+        let grants = take_string(unsafe { inseam_node_grants(node, &mut err) });
+        assert!(grants.contains("\"id\":\"google\""), "got: {grants}");
+        assert!(grants.contains("\"state\":\"missing_secret\""), "got: {grants}");
+        assert!(grants.contains("INSEAM_TEST_GOOGLE_CLIENT_ID_NEVER_SET"), "got: {grants}");
+        // SAFETY: live node, writable error slot.
+        let hosts = take_string(unsafe { inseam_node_hosts(node, &mut err) });
+        assert!(hosts.contains("\"kind\":\"fs\""), "got: {hosts}");
+        assert!(!hosts.contains("gmail"), "no Google hosts before authorization");
+        let google = CString::new("google").unwrap();
+        // SAFETY: live node, valid strings, writable error slot.
+        let begun = unsafe { inseam_node_authorize_begin(node, google.as_ptr(), &mut err) };
+        assert!(begun.is_null(), "a grant without its client cannot begin");
+        let message = take_string(err);
+        assert!(message.contains("INSEAM_TEST_GOOGLE_CLIENT_ID_NEVER_SET"), "got: {message}");
         // SAFETY: freeing the node exactly once.
         unsafe { inseam_node_free(node) };
     }

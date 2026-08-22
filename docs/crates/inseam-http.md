@@ -8,3 +8,11 @@ JSON to the existing operation messages, and serves an optional Vite
 build. It contains no node logic and never calls the store or plugins
 directly. API responses are not cacheable; every response carries a
 restrictive browser security policy.
+
+One route is deliberately unauthenticated besides `/health`:
+`/api/v1/oauth/callback`, where a provider sends the owner's browser
+back after they authorize a grant from the web console. The owner's
+browser is not where the node runs, so the loopback redirect the CLI
+uses cannot serve it; the transport serves the redirect at its public
+URL instead and hands the parameters to the `complete_authorization`
+operation, which trusts nothing but the unguessable `state` it issued.

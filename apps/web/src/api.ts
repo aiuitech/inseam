@@ -1,6 +1,36 @@
 export type Session = { authenticated: boolean }
 export type IndexRoot = { id: string }
-export type OwnerInfo = { version: string; index_roots: IndexRoot[] }
+export type OwnerInfo = {
+  version: string
+  index_roots: IndexRoot[]
+  oauth_callback_url: string
+}
+
+export type GrantState =
+  | { state: "missing_secret"; env: string }
+  | { state: "unauthorized" }
+  | {
+      state: "authorized"
+      expires_at: number | null
+      scopes: string[]
+      account?: string
+    }
+
+export type Grant = {
+  id: string
+  provider: string
+  scopes: string[]
+  client_id_env: string
+  client_secret_env?: string
+  state: GrantState
+}
+
+export type AuthorizationStarted = {
+  grant: string
+  url: string
+  state: string
+  redirect_uri: string
+}
 
 export type StatusReport = {
   sources: number
@@ -124,4 +154,9 @@ export const api = {
   fetch: (address: string) => post<FetchResponse>("/owner/fetch", { address }),
   index: (root: string, host?: string) =>
     post<IndexReport>("/owner/index", { root, host, rebuild: false }),
+  grants: () => request<Grant[]>("/owner/grants"),
+  authorizeGrant: (grant: string) =>
+    post<AuthorizationStarted>("/owner/grants/authorize", { grant }),
+  revokeGrant: (grant: string) =>
+    post<Grant>("/owner/grants/revoke", { grant }),
 }

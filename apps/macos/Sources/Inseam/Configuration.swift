@@ -4,6 +4,7 @@ struct ConfigurationSettings: Codable {
     var connections: FeatureToggle
     var fs: Configurable<FilesystemConfig>
     var oauth: Configurable<OAuthConfig>
+    var google: Configurable<GoogleConnectionConfig>
     var llm: Configurable<LanguageModelConfig>
     var embedder: Configurable<EmbedderConfig>
     var transforms: FeatureToggle
@@ -40,6 +41,55 @@ struct OAuthGrantConfig: Codable, Identifiable {
     }
 
     var id: UUID { formId }
+}
+
+/// The Google Workspace connection entry: which grant it registers, which
+/// Keychain-backed variables hold the client identity, and which services
+/// become hosts once the grant is authorized.
+struct GoogleConnectionConfig: Codable {
+    var grant: String
+    var clientIdEnv: String
+    /// Empty means a client without a secret: the composition is TOML, which
+    /// has no null, so the empty name is the spelling the plugin reads as
+    /// "none".
+    var clientSecretEnv: String
+    var services: [String]
+    var sourcesMax: Int
+
+    enum CodingKeys: String, CodingKey {
+        case grant, clientIdEnv, clientSecretEnv, services, sourcesMax
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        grant = try container.decode(String.self, forKey: .grant)
+        clientIdEnv = try container.decode(String.self, forKey: .clientIdEnv)
+        clientSecretEnv = try container.decodeIfPresent(String.self, forKey: .clientSecretEnv) ?? ""
+        services = try container.decode([String].self, forKey: .services)
+        sourcesMax = try container.decode(Int.self, forKey: .sourcesMax)
+    }
+}
+
+/// The services the Google connection can steward, in catalog order; the
+/// raw value is the composition's spelling.
+enum GoogleService: String, CaseIterable, Identifiable {
+    case gmail
+    case drive
+    case calendar
+    case contacts
+    case tasks
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .gmail: "Gmail"
+        case .drive: "Google Drive"
+        case .calendar: "Google Calendar"
+        case .contacts: "Google Contacts"
+        case .tasks: "Google Tasks"
+        }
+    }
 }
 
 struct Configurable<Config: Codable>: Codable {

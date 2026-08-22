@@ -1,8 +1,9 @@
 //! The `operations` provider (`design/node-api.md`): serves the typed
-//! operation messages by consuming `store`, `connections`, `finder`, and
-//! `sweep`. Transports (CLI, FFI, future HTTP/MCP) consume this seam and
-//! stay logic-free. Boundary enforcement is the [`OperationRequest`] guard
-//! on dispatch: access-control listeners deny, and denial is monotonic.
+//! operation messages by consuming `store`, `connections`, `finder`,
+//! `sweep`, and — for the owner's grant operations — `oauth`. Transports
+//! (CLI, FFI, HTTP) consume this seam and stay logic-free. Boundary
+//! enforcement is the [`OperationRequest`] guard on dispatch:
+//! access-control listeners deny, and denial is monotonic.
 
 use std::sync::Arc;
 
@@ -16,10 +17,14 @@ use inseam_seams::connection::{
     CONNECTIONS,
 };
 use inseam_seams::finder::{Finder, RankedFragment, FINDER};
+use inseam_seams::oauth::{
+    AuthorizationCallback, AuthorizationStarted, Grant, GrantId, OAuth, OAUTH,
+};
 use inseam_seams::operations::{
-    EnvelopeView, ExpandRequest, ExpandResponse, FetchRequest, FetchResponse, FragmentHint,
-    FragmentView, HostView, IndexRequest, OperationRequest, Operations, QueryRequest,
-    QueryResponse, QueryResult, RelationView, ScanRequest, ScanResponse, StatusReport,
+    AuthorizeGrantRequest, AwaitAuthorizationRequest, EnvelopeView, ExpandRequest,
+    ExpandResponse, FetchRequest, FetchResponse, FragmentHint, FragmentView, GrantView,
+    HostView, IndexRequest, OperationRequest, Operations, QueryRequest, QueryResponse,
+    QueryResult, RelationView, RevokeGrantRequest, ScanRequest, ScanResponse, StatusReport,
     OPERATIONS,
 };
 use inseam_seams::sweep::{IndexReport, Sweep, SweepRequest, SWEEP};
@@ -52,6 +57,7 @@ impl Plugin for OperationsPlugin {
             Inject::required("connections"),
             Inject::required("finder"),
             Inject::required("sweep"),
+            Inject::optional("oauth"),
         ];
         Manifest {
             name: "operations",
@@ -66,6 +72,7 @@ impl Plugin for OperationsPlugin {
             connections: cx.get(&CONNECTIONS)?,
             finder: cx.get(&FINDER)?,
             sweep: cx.get(&SWEEP)?,
+            oauth: cx.try_get(&OAUTH)?,
             bus: cx.bus().clone(),
         };
         cx.provide(
@@ -82,10 +89,25 @@ pub struct OperationsService {
     connections: Arc<dyn Connections>,
     finder: Arc<dyn Finder>,
     sweep: Arc<dyn Sweep>,
+    /// Absent when no oauth entry is active: the grant operations then say
+    /// so instead of pretending there are no grants.
+    oauth: Option<Arc<dyn OAuth>>,
     bus: EventBus,
 }
 
 impl OperationsService {
+    fn oauth(&self) -> Result<&Arc<dyn OAuth>, SeamError> {
+        self.oauth.as_ref().ok_or_else(|| {
+            SeamError::Unavailable("the oauth entry is not active on this node".to_string())
+        })
+    }
+
+    fn grant(&self, id: &GrantId) -> Result<Arc<dyn Grant>, SeamError> {
+        self.oauth()?.grant(id).ok_or_else(|| {
+            SeamError::Unavailable(format!("no grant `{id}` is configured on this node"))
+        })
+    }
+
     async fn source_at(&self, address: &Address) -> Result<StoredSource, SeamError> {
         self.store
             .source_by_address(address).await?
@@ -271,6 +293,35 @@ impl Operations for OperationsService {
             .collect())
     }
 
+    async fn grants(&self) -> Result<Vec<GrantView>, SeamError> {
+        // Owner operation: not boundary-guarded (local transports only).
+        let mut views = Vec::new();
+        for grant in self.oauth()?.grants() {
+            views.push(grant_view(grant.as_ref()).await);
+        }
+        Ok(views)
+    }
+
+    async fn authorize_grant(&self, request: AuthorizeGrantRequest) -> Result<AuthorizationStarted, SeamError> {
+        self.oauth()?.authorize(&request.grant, request.redirect).await
+    }
+
+    async fn await_authorization(&self, request: AwaitAuthorizationRequest) -> Result<GrantView, SeamError> {
+        let id = self.oauth()?.await_authorization(&request.state).await?;
+        Ok(grant_view(self.grant(&id)?.as_ref()).await)
+    }
+
+    async fn complete_authorization(&self, callback: AuthorizationCallback) -> Result<GrantView, SeamError> {
+        let id = self.oauth()?.complete_authorization(callback).await?;
+        Ok(grant_view(self.grant(&id)?.as_ref()).await)
+    }
+
+    async fn revoke_grant(&self, request: RevokeGrantRequest) -> Result<GrantView, SeamError> {
+        let grant = self.grant(&request.grant)?;
+        grant.revoke().await?;
+        Ok(grant_view(grant.as_ref()).await)
+    }
+
     async fn status(&self) -> Result<StatusReport, SeamError> {
         let stats = self.store.stats().await?;
         let search_rows = self.store.search_rows_count().await.unwrap_or(0);
@@ -286,6 +337,18 @@ impl Operations for OperationsService {
             embedding_dimensions: identity.map(|(_, d)| d).unwrap_or(0),
             reembed_pending: self.store.reembed_pending(),
         })
+    }
+}
+
+async fn grant_view(grant: &dyn Grant) -> GrantView {
+    let spec = grant.spec();
+    GrantView {
+        id: spec.id.clone(),
+        provider: spec.provider(),
+        scopes: spec.scopes.clone(),
+        client_id_env: spec.client_id_env.clone(),
+        client_secret_env: spec.client_secret_env.clone(),
+        state: grant.state().await,
     }
 }
 

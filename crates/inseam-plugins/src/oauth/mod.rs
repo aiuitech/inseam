@@ -1,34 +1,49 @@
 //! The `oauth` plugin: the seam's provider — every OAuth 2.0 grant this node
-//! holds, configured once in the composition and consumed by any host
-//! connection that names one (`design/connections.md`). The flow is the
-//! authorization-code grant with PKCE and a loopback redirect (RFC 6749,
-//! 7636, 8252): `inseam authorize <grant>` prints the provider's URL, the
-//! owner signs in, the browser lands on `127.0.0.1:<callback_port>/callback`,
-//! and the code is exchanged for tokens kept in a private credential file
-//! under the node's data directory. Access tokens refresh themselves ahead
-//! of expiry; consumers only ever ask the handle for a live token.
+//! holds (`design/connections.md`). Grants arrive two ways and live in one
+//! registry: configured on this entry in the composition, or registered by
+//! a connection plugin that knows its provider (the Google connection
+//! brings Google's endpoints and scopes). The flow is the authorization-code
+//! grant with PKCE (RFC 6749, 7636): the owner is sent to the provider and
+//! the browser comes back either to a loopback listener this plugin runs
+//! (RFC 8252 — `inseam authorize`, the native app) or to a redirect URI a
+//! remote transport serves and hands back (`inseam serve`'s callback route
+//! for the web console). The code is exchanged for tokens kept in a private
+//! credential file under the node's data directory; access tokens refresh
+//! themselves ahead of expiry; consumers only ever ask the handle for a live
+//! token, and learn of authorizations through the `GrantChanged` event.
 //!
 //! The client's own credentials (client id, optional secret) are
 //! environment variables the grant names, never composition values — the
 //! one secrets rule the node has (`design/composition.md`). A grant whose
-//! variables are unset is mounted in a `MissingSecret` state so the other
+//! variables are unset is held in a `MissingSecret` state so the other
 //! grants keep working and status surfaces can ask for exactly what is
-//! missing; `Plugin::secrets()` declares every variable with its reason.
+//! missing; `Plugin::secrets()` declares every configured variable with its
+//! reason (a registering plugin declares its own).
 
+mod attempt;
 mod flow;
 mod grant;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use tokio::net::TcpListener;
 
+use inseam_kernel::address::Timestamp;
 use inseam_kernel::substrate::{
     parse_config, ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, SecretNeed,
 };
-use inseam_seams::oauth::{Grant, GrantId, OAuth, OAUTH};
+use inseam_seams::oauth::{
+    AuthorizationCallback, AuthorizationStarted, Grant, GrantDisposer, GrantId, GrantSpec,
+    OAuth, Redirect, OAUTH,
+};
+use inseam_seams::SeamError;
+
+use attempt::{Attempt, ATTEMPTS_MAX};
+use grant::{ClientCredentials, GrantHandle, Settings};
 
 pub use grant::{Clock, SystemClock};
 
@@ -37,7 +52,8 @@ pub use grant::{Clock, SystemClock};
 pub const CREDENTIALS_DIRNAME: &str = "oauth";
 
 /// Grants one entry may configure; a node authorizes a handful of
-/// providers, never hundreds.
+/// providers, never hundreds. Registered grants count against the same
+/// ceiling.
 pub const GRANTS_MAX: usize = 64;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -48,12 +64,15 @@ pub struct OAuthConfig {
     /// lets the OS pick a port per attempt — only for providers that accept
     /// any loopback port (Google's desktop clients do).
     pub callback_port: u16,
-    /// How long `inseam authorize` waits for the browser to come back.
+    /// How long an authorization may take: the listener, the waiter, and a
+    /// remote transport's pending attempt all give up after this.
     pub authorization_timeout_secs: u64,
     /// Where credential files live; `<data-dir>/oauth` when unset. Owner-
     /// private (0700 / 0600), never synced, never in the store.
     pub credentials_dir: Option<PathBuf>,
-    pub grants: Vec<GrantConfig>,
+    /// Generic grants the owner defines here; connection plugins register
+    /// their own.
+    pub grants: Vec<GrantSpec>,
 }
 
 impl Default for OAuthConfig {
@@ -67,31 +86,9 @@ impl Default for OAuthConfig {
     }
 }
 
-/// One provider account the node may be authorized against.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct GrantConfig {
-    /// What consumers name (`grant = "google"`); also the credential file's
-    /// name.
-    pub id: GrantId,
-    pub authorization_url: String,
-    pub token_url: String,
-    /// The scopes the owner is willing to grant; consumers check the ones
-    /// they need against this list at apply time.
-    #[serde(default)]
-    pub scopes: Vec<String>,
-    /// Environment variable holding the OAuth client id.
-    pub client_id_env: String,
-    /// Environment variable holding the client secret; absent for public
-    /// (PKCE-only) clients.
-    #[serde(default)]
-    pub client_secret_env: Option<String>,
-    /// Extra parameters on the authorization request — Google needs
-    /// `access_type = "offline"` and `prompt = "consent"` to issue a
-    /// refresh token.
-    #[serde(default)]
-    pub authorization_params: BTreeMap<String, String>,
-}
+/// One provider account the node may be authorized against — the
+/// composition's name for a [`GrantSpec`].
+pub type GrantConfig = GrantSpec;
 
 pub struct OAuthPlugin {
     config: OAuthConfig,
@@ -120,25 +117,32 @@ fn validate(config: &OAuthConfig) -> Result<(), PluginError> {
         if !seen.insert(grant.id.as_str()) {
             return Err(PluginError(format!("config: grant `{}` is configured twice", grant.id)));
         }
-        for (field, value) in [
-            ("authorization_url", &grant.authorization_url),
-            ("token_url", &grant.token_url),
-        ] {
-            let url = url::Url::parse(value)
-                .map_err(|e| PluginError(format!("config: grant `{}` {field}: {e}", grant.id)))?;
-            if url.scheme() != "https" && url.scheme() != "http" {
-                return Err(PluginError(format!(
-                    "config: grant `{}` {field} must be an http(s) URL",
-                    grant.id
-                )));
-            }
-        }
-        if grant.client_id_env.trim().is_empty() {
-            return Err(PluginError(format!(
-                "config: grant `{}` names no client_id_env",
-                grant.id
+        validate_spec(grant).map_err(|e| PluginError(format!("config: {e}")))?;
+    }
+    Ok(())
+}
+
+/// What makes a grant definition usable: http(s) endpoints and a named
+/// client id variable. Shared by the composition door and the registry door.
+pub fn validate_spec(spec: &GrantSpec) -> Result<(), SeamError> {
+    for (field, value) in [
+        ("authorization_url", &spec.authorization_url),
+        ("token_url", &spec.token_url),
+    ] {
+        let url = url::Url::parse(value)
+            .map_err(|e| SeamError::failed(format!("grant `{}` {field}: {e}", spec.id)))?;
+        if url.scheme() != "https" && url.scheme() != "http" {
+            return Err(SeamError::failed(format!(
+                "grant `{}` {field} must be an http(s) URL",
+                spec.id
             )));
         }
+    }
+    if spec.client_id_env.trim().is_empty() {
+        return Err(SeamError::failed(format!(
+            "grant `{}` names no client_id_env",
+            spec.id
+        )));
     }
     Ok(())
 }
@@ -172,7 +176,7 @@ impl Plugin for OAuthPlugin {
             .credentials_dir
             .clone()
             .unwrap_or_else(|| cx.data_dir().join(CREDENTIALS_DIRNAME));
-        let settings = Arc::new(grant::Settings {
+        let settings = Arc::new(Settings {
             callback_port: self.config.callback_port,
             authorization_timeout: Duration::from_secs(self.config.authorization_timeout_secs),
             http: reqwest::Client::builder()
@@ -180,8 +184,9 @@ impl Plugin for OAuthPlugin {
                 .build()
                 .map_err(|e| PluginError(format!("http client: {e}")))?,
             clock: Arc::new(SystemClock),
+            bus: cx.bus().clone(),
         });
-        let service = Service::load(&self.config.grants, &dir, settings).await;
+        let service = Service::load(&self.config.grants, dir, settings).await;
         cx.provide(&OAUTH, Arc::new(service) as Arc<dyn OAuth>, Facts::new())?;
         Ok(())
     }
@@ -190,101 +195,273 @@ impl Plugin for OAuthPlugin {
         self.config
             .grants
             .iter()
-            .flat_map(|grant| {
-                let provider = provider_host(&grant.authorization_url);
-                let id = [(
-                    grant.client_id_env.clone(),
-                    format!(
-                        "The OAuth client id for grant `{}` — the app identity inseam signs \
-                         in to {provider} as. Create one in the provider's developer console \
-                         with `http://127.0.0.1:{}/callback` as a redirect URI.",
-                        grant.id, self.config.callback_port
-                    ),
-                )];
-                let secret = grant.client_secret_env.clone().map(|env| {
-                    (
-                        env,
-                        format!(
-                            "The OAuth client secret issued with the client id for grant `{}` \
-                             ({provider}).",
-                            grant.id
-                        ),
-                    )
-                });
-                id.into_iter().chain(secret)
-            })
-            .map(|(env, purpose)| SecretNeed { env, purpose })
+            .flat_map(|grant| secret_needs(grant, self.config.callback_port))
             .collect()
     }
 }
 
-/// The host part of a provider URL, for owner-facing prose.
-fn provider_host(url: &str) -> String {
-    url::Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_string))
-        .unwrap_or_else(|| url.to_string())
+/// The owner-facing needs one grant definition implies: its client id
+/// variable, and its secret variable when it has one. Shared with plugins
+/// that register a grant, so every grant explains itself the same way.
+pub fn secret_needs(spec: &GrantSpec, callback_port: u16) -> Vec<SecretNeed> {
+    let provider = spec.provider();
+    let id = SecretNeed {
+        env: spec.client_id_env.clone(),
+        purpose: format!(
+            "The OAuth client id for grant `{}` — the app identity inseam signs in to \
+             {provider} as. Create one in the provider's developer console with \
+             `http://127.0.0.1:{callback_port}/callback` as a redirect URI (and your node's \
+             `/api/v1/oauth/callback` URL when you authorize from the web console).",
+            spec.id
+        ),
+    };
+    let secret = spec.client_secret_env.clone().map(|env| SecretNeed {
+        env,
+        purpose: format!(
+            "The OAuth client secret issued with the client id for grant `{}` ({provider}).",
+            spec.id
+        ),
+    });
+    std::iter::once(id).chain(secret).collect()
 }
 
-/// The seam provider: the configured grants, loaded once at apply.
-struct Service {
-    grants: Vec<Arc<dyn Grant>>,
+/// The seam provider: the registry of grants and the authorizations in
+/// flight.
+pub struct Service {
+    inner: Arc<ServiceInner>,
+}
+
+struct ServiceInner {
+    settings: Arc<Settings>,
+    credentials_dir: PathBuf,
+    grants: RwLock<BTreeMap<GrantId, GrantHandle>>,
+    attempts: Mutex<Vec<Arc<Attempt>>>,
 }
 
 impl Service {
-    async fn load(
-        configs: &[GrantConfig],
-        dir: &std::path::Path,
-        settings: Arc<grant::Settings>,
-    ) -> Self {
-        let mut grants: Vec<Arc<dyn Grant>> = Vec::with_capacity(configs.len());
-        for config in configs {
-            let client = client_credentials(config);
-            let path = dir.join(format!("{}.json", config.id));
-            let handle =
-                grant::GrantHandle::load(config.clone(), client, path, Arc::clone(&settings)).await;
-            grants.push(Arc::new(handle));
+    /// Load the configured grants; registered ones arrive through
+    /// [`OAuth::register`].
+    pub async fn load(configs: &[GrantSpec], dir: PathBuf, settings: Arc<Settings>) -> Self {
+        let mut grants = BTreeMap::new();
+        for spec in configs {
+            let handle = load_handle(spec, &dir, &settings).await;
+            grants.insert(spec.id.clone(), handle);
         }
-        grants.sort_by(|a, b| a.id().cmp(b.id()));
-        Self { grants }
+        Self {
+            inner: Arc::new(ServiceInner {
+                settings,
+                credentials_dir: dir,
+                grants: RwLock::new(grants),
+                attempts: Mutex::new(Vec::new()),
+            }),
+        }
+    }
+
+    fn handle(&self, id: &GrantId) -> Result<GrantHandle, SeamError> {
+        let grants = self.inner.grants.read().unwrap_or_else(|e| e.into_inner());
+        grants.get(id).cloned().ok_or_else(|| {
+            let known: Vec<String> = grants.keys().map(ToString::to_string).collect();
+            SeamError::Unavailable(format!(
+                "no grant `{id}` is configured; known grants: {}",
+                if known.is_empty() { "none".to_string() } else { known.join(", ") }
+            ))
+        })
+    }
+
+    fn attempt(&self, state: &str) -> Result<Arc<Attempt>, SeamError> {
+        let attempts = self.inner.attempts.lock().unwrap_or_else(|e| e.into_inner());
+        attempts
+            .iter()
+            .find(|a| a.state == state)
+            .cloned()
+            .ok_or_else(|| {
+                SeamError::Refused(
+                    "no authorization attempt matches this state; start again".to_string(),
+                )
+            })
+    }
+
+    /// Make room for a new attempt: drop expired ones, refuse when the
+    /// ceiling is still reached.
+    fn admit(&self, attempt: Arc<Attempt>) -> Result<(), SeamError> {
+        let now = self.inner.settings.clock.now();
+        let mut attempts = self.inner.attempts.lock().unwrap_or_else(|e| e.into_inner());
+        attempts.retain(|a| !a.is_expired(now));
+        if attempts.len() >= ATTEMPTS_MAX {
+            return Err(SeamError::Refused(format!(
+                "{ATTEMPTS_MAX} authorizations are already in flight; finish or wait out one first"
+            )));
+        }
+        attempts.push(attempt);
+        Ok(())
     }
 }
 
-/// Read the client's credentials from the environment the grant names.
-fn client_credentials(config: &GrantConfig) -> grant::ClientCredentials {
-    let present = |env: &str| std::env::var(env).ok().filter(|v| !v.trim().is_empty());
-    let Some(id) = present(&config.client_id_env) else {
-        return grant::ClientCredentials::Missing {
-            env: config.client_id_env.clone(),
-        };
-    };
-    let secret = match &config.client_secret_env {
-        None => None,
-        Some(env) => match present(env) {
-            Some(secret) => Some(secret),
-            None => return grant::ClientCredentials::Missing { env: env.clone() },
-        },
-    };
-    grant::ClientCredentials::Ready { id, secret }
+async fn load_handle(spec: &GrantSpec, dir: &Path, settings: &Arc<Settings>) -> GrantHandle {
+    let client = ClientCredentials::from_environment(spec);
+    let path = dir.join(format!("{}.json", spec.id));
+    GrantHandle::load(spec.clone(), client, path, Arc::clone(settings)).await
 }
 
+#[async_trait::async_trait]
 impl OAuth for Service {
     fn grants(&self) -> Vec<Arc<dyn Grant>> {
-        self.grants.clone()
+        self.inner
+            .grants
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .map(|h| Arc::new(h.clone()) as Arc<dyn Grant>)
+            .collect()
     }
+
+    async fn register(&self, spec: GrantSpec) -> Result<(Arc<dyn Grant>, GrantDisposer), SeamError> {
+        validate_spec(&spec)?;
+        let handle = load_handle(&spec, &self.inner.credentials_dir, &self.inner.settings).await;
+        let id = spec.id.clone();
+        {
+            let mut grants = self.inner.grants.write().unwrap_or_else(|e| e.into_inner());
+            if grants.contains_key(&id) {
+                return Err(SeamError::Refused(format!(
+                    "grant `{id}` already exists; a plugin cannot register a second grant under a configured or registered id"
+                )));
+            }
+            if grants.len() >= GRANTS_MAX {
+                return Err(SeamError::Refused(format!(
+                    "{GRANTS_MAX} grants are held already; at most {GRANTS_MAX} are supported"
+                )));
+            }
+            grants.insert(id.clone(), handle.clone());
+        }
+        // The disposer holds the registry weakly: a grant being unwound after
+        // the whole service is gone (full teardown) is a no-op.
+        let weak = Arc::downgrade(&self.inner);
+        let disposer: GrantDisposer = Box::new(move || {
+            if let Some(inner) = weak.upgrade() {
+                inner
+                    .grants
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&id);
+            }
+        });
+        Ok((Arc::new(handle) as Arc<dyn Grant>, disposer))
+    }
+
+    async fn authorize(
+        &self,
+        grant: &GrantId,
+        redirect: Redirect,
+    ) -> Result<AuthorizationStarted, SeamError> {
+        let handle = self.handle(grant)?;
+        let (listener, redirect_uri) = match redirect {
+            Redirect::Loopback => {
+                let listener = bind_loopback(self.inner.settings.callback_port).await?;
+                let port = listener
+                    .local_addr()
+                    .map_err(|e| SeamError::failed(format!("loopback listener has no address: {e}")))?
+                    .port();
+                (Some(listener), format!("http://127.0.0.1:{port}/callback"))
+            }
+            Redirect::External { redirect_uri } => {
+                validate_redirect_uri(&redirect_uri)?;
+                (None, redirect_uri)
+            }
+        };
+        let begun = handle.begin(&redirect_uri)?;
+        let timeout = self.inner.settings.authorization_timeout;
+        let deadline = Timestamp(
+            self.inner
+                .settings
+                .clock
+                .now()
+                .0
+                .saturating_add(i64::try_from(timeout.as_secs()).unwrap_or(i64::MAX)),
+        );
+        let attempt = Arc::new(Attempt::new(
+            begun.state.clone(),
+            handle,
+            redirect_uri.clone(),
+            begun.verifier,
+            deadline,
+        ));
+        self.admit(Arc::clone(&attempt))?;
+        if let Some(listener) = listener {
+            tokio::spawn(attempt::serve_loopback(attempt, listener, timeout));
+        }
+        Ok(AuthorizationStarted {
+            grant: grant.clone(),
+            url: begun.url,
+            state: begun.state,
+            redirect_uri,
+        })
+    }
+
+    async fn await_authorization(&self, state: &str) -> Result<GrantId, SeamError> {
+        let attempt = self.attempt(state)?;
+        // A second of slack past the attempt's own timeout, so the listener's
+        // verdict — not the waiter's — is what the owner reads.
+        let timeout = self.inner.settings.authorization_timeout + Duration::from_secs(1);
+        let outcome = attempt::wait(attempt.subscribe(), timeout).await?;
+        outcome.into_result(attempt.grant.id())
+    }
+
+    async fn complete_authorization(
+        &self,
+        callback: AuthorizationCallback,
+    ) -> Result<GrantId, SeamError> {
+        let Some(state) = callback.state.as_deref() else {
+            return Err(SeamError::Refused(
+                "authorization redirect carried no state".to_string(),
+            ));
+        };
+        let attempt = self.attempt(state)?;
+        if let Some(outcome) = attempt.outcome() {
+            return outcome.into_result(attempt.grant.id());
+        }
+        let code = match attempt.accept(&callback) {
+            Ok(code) => code,
+            Err(e) => {
+                attempt.resolve(attempt::Outcome::Refused(e.to_string()));
+                return Err(e);
+            }
+        };
+        attempt.finish(&code).await.into_result(attempt.grant.id())
+    }
+}
+
+async fn bind_loopback(port: u16) -> Result<TcpListener, SeamError> {
+    TcpListener::bind(("127.0.0.1", port)).await.map_err(|e| {
+        SeamError::failed(format!(
+            "cannot listen on 127.0.0.1:{port} for the authorization redirect: {e}"
+        ))
+    })
+}
+
+/// A transport-served redirect must be an absolute http(s) URL — it is what
+/// the provider compares against the client's registered URIs.
+fn validate_redirect_uri(uri: &str) -> Result<(), SeamError> {
+    let parsed = url::Url::parse(uri)
+        .map_err(|e| SeamError::failed(format!("redirect_uri `{uri}`: {e}")))?;
+    if parsed.scheme() != "https" && parsed.scheme() != "http" {
+        return Err(SeamError::failed(format!(
+            "redirect_uri `{uri}` must be an http(s) URL"
+        )));
+    }
+    if parsed.host_str().is_none() {
+        return Err(SeamError::failed(format!("redirect_uri `{uri}` has no host")));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicI64, Ordering};
-    use std::sync::Mutex;
 
-    use inseam_kernel::address::Timestamp;
-    use inseam_seams::oauth::GrantState;
-    use inseam_seams::SeamError;
+    use inseam_kernel::substrate::EventBus;
+    use inseam_seams::oauth::{GrantChanged, GrantState};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpListener;
 
     struct FixedClock(AtomicI64);
 
@@ -341,70 +518,108 @@ mod tests {
         FakeTokenServer { url, bodies }
     }
 
-    fn grant_config(token_url: &str) -> GrantConfig {
-        GrantConfig {
+    fn spec(token_url: &str) -> GrantSpec {
+        GrantSpec {
             id: GrantId::new("test").expect("valid"),
             authorization_url: "https://auth.example.com/authorize".to_string(),
             token_url: token_url.to_string(),
             scopes: vec!["read".to_string()],
-            client_id_env: "X".to_string(),
+            client_id_env: "INSEAM_TEST_OAUTH_CLIENT_ID_NEVER_SET".to_string(),
             client_secret_env: None,
             authorization_params: BTreeMap::new(),
         }
     }
 
-    async fn handle(
-        dir: &std::path::Path,
-        config: GrantConfig,
-        clock: Arc<dyn Clock>,
-    ) -> grant::GrantHandle {
-        let settings = Arc::new(grant::Settings {
+    fn settings(clock: Arc<dyn Clock>, bus: EventBus) -> Arc<Settings> {
+        Arc::new(Settings {
             callback_port: 0,
             authorization_timeout: Duration::from_secs(10),
             http: reqwest::Client::new(),
             clock,
-        });
-        grant::GrantHandle::load(
-            config.clone(),
-            grant::ClientCredentials::Ready {
+            bus,
+        })
+    }
+
+    /// A service holding one ready grant `test` over `dir`.
+    async fn ready_service(dir: &Path, token_url: &str, clock: Arc<dyn Clock>, bus: EventBus) -> Service {
+        let settings = settings(clock, bus);
+        let spec = spec(token_url);
+        let handle = GrantHandle::load(
+            spec.clone(),
+            ClientCredentials::Ready {
                 id: "client-1".to_string(),
                 secret: Some("s3".to_string()),
             },
-            dir.join(format!("{}.json", config.id)),
-            settings,
+            dir.join("test.json"),
+            Arc::clone(&settings),
         )
-        .await
+        .await;
+        let mut grants = BTreeMap::new();
+        grants.insert(spec.id.clone(), handle);
+        Service {
+            inner: Arc::new(ServiceInner {
+                settings,
+                credentials_dir: dir.to_path_buf(),
+                grants: RwLock::new(grants),
+                attempts: Mutex::new(Vec::new()),
+            }),
+        }
+    }
+
+    fn test_grant() -> GrantId {
+        GrantId::new("test").expect("valid")
+    }
+
+    fn query_pairs(url: &str) -> BTreeMap<String, String> {
+        url::Url::parse(url)
+            .expect("authorization url parses")
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect()
     }
 
     /// Simulate the browser: follow the state in the authorization URL back
     /// to the loopback listener with a code.
     async fn browser_returns(url: &str, code: &str, state_override: Option<&str>) {
-        let parsed = url::Url::parse(url).expect("authorization url parses");
-        let pairs: BTreeMap<String, String> = parsed
-            .query_pairs()
-            .map(|(k, v)| (k.into_owned(), v.into_owned()))
-            .collect();
+        let pairs = query_pairs(url);
         let state = state_override.unwrap_or(&pairs["state"]);
         let redirect = format!("{}?code={code}&state={state}", pairs["redirect_uri"]);
         let _ = reqwest::Client::new().get(redirect).send().await;
     }
 
+    fn fake_id_token(email: &str) -> String {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use base64::Engine;
+        let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(serde_json::json!({"email": email}).to_string());
+        format!("{header}.{payload}.sig")
+    }
+
     #[tokio::test]
-    async fn authorize_round_trips_through_the_loopback_and_persists_tokens() {
+    async fn loopback_authorization_round_trips_and_persists_tokens() {
         let dir = tempfile::tempdir().expect("tempdir");
         let server = fake_token_server(vec![serde_json::json!({
-            "access_token": "at-1", "refresh_token": "rt-1", "expires_in": 3600, "token_type": "Bearer"
+            "access_token": "at-1", "refresh_token": "rt-1", "expires_in": 3600, "token_type": "Bearer",
+            "id_token": fake_id_token("greg@example.com")
         })])
         .await;
+        let bus = EventBus::new();
+        let seen: Arc<Mutex<Vec<GrantChanged>>> = Arc::default();
+        let record = Arc::clone(&seen);
+        let _sub = bus.on::<GrantChanged>(move |e| record.lock().expect("lock").push(e.clone()));
         let clock = Arc::new(FixedClock(AtomicI64::new(1_000)));
-        let grant = handle(dir.path(), grant_config(&server.url), clock).await;
+        let service = ready_service(dir.path(), &server.url, clock, bus).await;
+        let grant = service.grant(&test_grant()).expect("held");
         assert_eq!(grant.state().await, GrantState::Unauthorized);
         assert!(matches!(grant.access_token().await, Err(SeamError::Unauthorized(_))));
 
-        let pending = grant.authorize().await.expect("begins");
-        let url = pending.url().to_string();
+        let started = service.authorize(&test_grant(), Redirect::Loopback).await.expect("begins");
+        assert!(started.redirect_uri.starts_with("http://127.0.0.1:"));
+        assert_eq!(query_pairs(&started.url)["state"], started.state);
+        let url = started.url.clone();
         tokio::spawn(async move { browser_returns(&url, "code-xyz", None).await });
-        pending.complete().await.expect("completes");
+        let done = service.await_authorization(&started.state).await.expect("completes");
+        assert_eq!(done, test_grant());
 
         let sent = server.bodies.lock().expect("lock").clone();
         assert_eq!(sent.len(), 1);
@@ -413,17 +628,21 @@ mod tests {
         assert!(sent[0].contains("code_verifier="));
         assert!(sent[0].contains("client_secret=s3"));
 
+        assert_eq!(grant.access_token().await.expect("token").secret(), "at-1");
+        let state = grant.state().await;
         assert_eq!(
-            grant.access_token().await.expect("token").secret(),
-            "at-1"
-        );
-        assert_eq!(
-            grant.state().await,
+            state,
             GrantState::Authorized {
                 expires_at: Some(Timestamp(4_600)),
-                scopes: vec!["read".to_string()]
+                scopes: vec!["read".to_string()],
+                account: Some("greg@example.com".to_string()),
             }
         );
+        let events = seen.lock().expect("lock").clone();
+        assert_eq!(events.len(), 1, "authorization is announced once");
+        assert_eq!(events[0].grant, test_grant());
+        assert_eq!(events[0].state, state);
+
         let file = dir.path().join("test.json");
         assert!(file.exists(), "tokens persisted");
         #[cfg(unix)]
@@ -433,22 +652,106 @@ mod tests {
             assert_eq!(mode, 0o600, "credential file is owner-private");
         }
 
-        // A fresh handle over the same file is authorized without a flow.
-        let reloaded = handle(dir.path(), grant_config(&server.url), Arc::new(FixedClock(AtomicI64::new(1_000)))).await;
-        assert_eq!(reloaded.access_token().await.expect("token").secret(), "at-1");
+        // A fresh service over the same file is authorized without a flow.
+        let reloaded = ready_service(dir.path(), &server.url, Arc::new(FixedClock(AtomicI64::new(1_000))), EventBus::new()).await;
+        let grant = reloaded.grant(&test_grant()).expect("held");
+        assert_eq!(grant.access_token().await.expect("token").secret(), "at-1");
+        assert_eq!(grant.state().await.account(), Some("greg@example.com"));
+    }
+
+    #[tokio::test]
+    async fn external_redirect_completes_through_the_service() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let server = fake_token_server(vec![serde_json::json!({
+            "access_token": "at-ext", "refresh_token": "rt", "expires_in": 100
+        })])
+        .await;
+        let service = ready_service(dir.path(), &server.url, Arc::new(FixedClock(AtomicI64::new(0))), EventBus::new()).await;
+        let started = service
+            .authorize(
+                &test_grant(),
+                Redirect::External {
+                    redirect_uri: "https://node.example/api/v1/oauth/callback".to_string(),
+                },
+            )
+            .await
+            .expect("begins");
+        let pairs = query_pairs(&started.url);
+        assert_eq!(pairs["redirect_uri"], "https://node.example/api/v1/oauth/callback");
+
+        // Nobody listens locally: the transport brings the parameters back.
+        let callback = AuthorizationCallback {
+            state: Some(started.state.clone()),
+            code: Some("code-1".to_string()),
+            ..AuthorizationCallback::default()
+        };
+        let done = service.complete_authorization(callback.clone()).await.expect("completes");
+        assert_eq!(done, test_grant());
+        let sent = server.bodies.lock().expect("lock").clone();
+        assert!(sent[0].contains("redirect_uri=https%3A%2F%2Fnode.example%2Fapi%2Fv1%2Foauth%2Fcallback"));
+        assert_eq!(
+            service.grant(&test_grant()).expect("held").access_token().await.expect("token").secret(),
+            "at-ext"
+        );
+        // A waiter sees the same outcome, and a replayed callback is the
+        // recorded outcome, not a second exchange.
+        assert_eq!(service.await_authorization(&started.state).await.expect("settled"), test_grant());
+        assert_eq!(service.complete_authorization(callback).await.expect("idempotent"), test_grant());
+        assert_eq!(server.bodies.lock().expect("lock").len(), 1);
     }
 
     #[tokio::test]
     async fn a_redirect_with_the_wrong_state_is_refused() {
         let dir = tempfile::tempdir().expect("tempdir");
         let server = fake_token_server(Vec::new()).await;
-        let grant = handle(dir.path(), grant_config(&server.url), Arc::new(FixedClock(AtomicI64::new(0)))).await;
-        let pending = grant.authorize().await.expect("begins");
-        let url = pending.url().to_string();
+        let service = ready_service(dir.path(), &server.url, Arc::new(FixedClock(AtomicI64::new(0))), EventBus::new()).await;
+        let started = service.authorize(&test_grant(), Redirect::Loopback).await.expect("begins");
+        let url = started.url.clone();
         tokio::spawn(async move { browser_returns(&url, "code", Some("forged")).await });
-        assert!(matches!(pending.complete().await, Err(SeamError::Refused(_))));
-        assert_eq!(grant.state().await, GrantState::Unauthorized);
+        assert!(matches!(
+            service.await_authorization(&started.state).await,
+            Err(SeamError::Refused(_))
+        ));
+        assert_eq!(service.grant(&test_grant()).expect("held").state().await, GrantState::Unauthorized);
         assert!(!dir.path().join("test.json").exists());
+
+        // Unknown states and provider errors are refusals on the external
+        // path too.
+        assert!(matches!(
+            service.complete_authorization(AuthorizationCallback { state: Some("nope".into()), ..Default::default() }).await,
+            Err(SeamError::Refused(_))
+        ));
+        let started = service
+            .authorize(&test_grant(), Redirect::External { redirect_uri: "http://127.0.0.1:9/cb".into() })
+            .await
+            .expect("begins");
+        let denied = service
+            .complete_authorization(AuthorizationCallback {
+                state: Some(started.state.clone()),
+                error: Some("access_denied".into()),
+                ..Default::default()
+            })
+            .await;
+        assert!(matches!(denied, Err(SeamError::Refused(_))));
+        assert!(matches!(service.await_authorization(&started.state).await, Err(SeamError::Refused(_))));
+    }
+
+    #[tokio::test]
+    async fn authorization_refuses_bad_redirect_uris_and_unknown_grants() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let service = ready_service(dir.path(), "http://127.0.0.1:1/token", Arc::new(FixedClock(AtomicI64::new(0))), EventBus::new()).await;
+        assert!(service
+            .authorize(&test_grant(), Redirect::External { redirect_uri: "ftp://x/cb".into() })
+            .await
+            .is_err());
+        assert!(service
+            .authorize(&test_grant(), Redirect::External { redirect_uri: "/relative".into() })
+            .await
+            .is_err());
+        assert!(matches!(
+            service.authorize(&GrantId::new("nope").expect("valid"), Redirect::Loopback).await,
+            Err(SeamError::Unavailable(_))
+        ));
     }
 
     #[tokio::test]
@@ -465,10 +768,12 @@ mod tests {
             expires_at: Some(1_030),
             scopes: vec!["read".to_string()],
             token_type: "Bearer".to_string(),
+            account: Some("greg@example.com".to_string()),
         };
         std::fs::write(dir.path().join("test.json"), serde_json::to_vec(&stale).expect("json")).expect("write");
         let clock = Arc::new(FixedClock(AtomicI64::new(1_000)));
-        let grant = handle(dir.path(), grant_config(&server.url), clock).await;
+        let service = ready_service(dir.path(), &server.url, clock, EventBus::new()).await;
+        let grant = service.grant(&test_grant()).expect("held");
 
         // 30 seconds to expiry is inside the skew: refresh.
         assert_eq!(grant.access_token().await.expect("token").secret(), "at-2");
@@ -484,13 +789,13 @@ mod tests {
             serde_json::from_slice(&std::fs::read(dir.path().join("test.json")).expect("read")).expect("parses");
         assert_eq!(on_disk.access_token, "at-2");
         assert_eq!(on_disk.refresh_token.as_deref(), Some("rt-1"), "old refresh token kept");
+        assert_eq!(on_disk.account.as_deref(), Some("greg@example.com"), "account kept");
         assert_eq!(on_disk.expires_at, Some(1_100));
     }
 
     #[tokio::test]
-    async fn revoke_forgets_the_tokens() {
+    async fn revoke_forgets_the_tokens_and_announces_it() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let server = fake_token_server(Vec::new()).await;
         let good = flow::StoredTokens {
             version: flow::TOKENS_VERSION,
             access_token: "at".to_string(),
@@ -498,38 +803,73 @@ mod tests {
             expires_at: None,
             scopes: Vec::new(),
             token_type: "Bearer".to_string(),
+            account: None,
         };
         std::fs::write(dir.path().join("test.json"), serde_json::to_vec(&good).expect("json")).expect("write");
-        let grant = handle(dir.path(), grant_config(&server.url), Arc::new(FixedClock(AtomicI64::new(0)))).await;
+        let bus = EventBus::new();
+        let seen: Arc<Mutex<Vec<GrantChanged>>> = Arc::default();
+        let record = Arc::clone(&seen);
+        let _sub = bus.on::<GrantChanged>(move |e| record.lock().expect("lock").push(e.clone()));
+        let service = ready_service(dir.path(), "http://127.0.0.1:1/token", Arc::new(FixedClock(AtomicI64::new(0))), bus).await;
+        let grant = service.grant(&test_grant()).expect("held");
         assert!(matches!(grant.state().await, GrantState::Authorized { .. }));
         grant.revoke().await.expect("revokes");
         assert_eq!(grant.state().await, GrantState::Unauthorized);
         assert!(!dir.path().join("test.json").exists());
         grant.revoke().await.expect("revoking twice is fine");
+        let events = seen.lock().expect("lock").clone();
+        assert_eq!(events.len(), 1, "only the first revoke changes anything");
+        assert_eq!(events[0].state, GrantState::Unauthorized);
     }
 
     #[tokio::test]
     async fn missing_client_secret_is_reported_not_fatal() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let settings = Arc::new(grant::Settings {
-            callback_port: 0,
-            authorization_timeout: Duration::from_secs(1),
-            http: reqwest::Client::new(),
-            clock: Arc::new(FixedClock(AtomicI64::new(0))),
-        });
-        let grant = grant::GrantHandle::load(
-            grant_config("http://127.0.0.1:1/token"),
-            grant::ClientCredentials::Missing { env: "TEST_CLIENT_ID".to_string() },
-            dir.path().join("test.json"),
-            settings,
+        let service = Service::load(
+            &[spec("http://127.0.0.1:1/token")],
+            dir.path().to_path_buf(),
+            settings(Arc::new(FixedClock(AtomicI64::new(0))), EventBus::new()),
         )
         .await;
+        let grant = service.grant(&test_grant()).expect("held");
         assert_eq!(
             grant.state().await,
-            GrantState::MissingSecret { env: "TEST_CLIENT_ID".to_string() }
+            GrantState::MissingSecret { env: "INSEAM_TEST_OAUTH_CLIENT_ID_NEVER_SET".to_string() }
         );
         assert!(matches!(grant.access_token().await, Err(SeamError::Unavailable(_))));
-        assert!(matches!(grant.authorize().await, Err(SeamError::Unavailable(_))));
+        assert!(matches!(
+            service.authorize(&test_grant(), Redirect::Loopback).await,
+            Err(SeamError::Unavailable(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn registered_grants_join_the_registry_and_leave_with_their_disposer() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let service = Service::load(
+            &[spec("http://127.0.0.1:1/token")],
+            dir.path().to_path_buf(),
+            settings(Arc::new(FixedClock(AtomicI64::new(0))), EventBus::new()),
+        )
+        .await;
+        let mut google = spec("http://127.0.0.1:1/token");
+        google.id = GrantId::new("google").expect("valid");
+        let (grant, dispose) = service.register(google.clone()).await.expect("registers");
+        assert_eq!(grant.id().as_str(), "google");
+        let ids: Vec<String> = service.grants().iter().map(|g| g.id().to_string()).collect();
+        assert_eq!(ids, vec!["google", "test"], "ordered by id");
+
+        // One grant per id, whichever door it came through.
+        assert!(matches!(service.register(google).await, Err(SeamError::Refused(_))));
+        assert!(matches!(service.register(spec("http://127.0.0.1:1/token")).await, Err(SeamError::Refused(_))));
+        let mut bad = spec("http://127.0.0.1:1/token");
+        bad.id = GrantId::new("bad").expect("valid");
+        bad.token_url = "ftp://nope".to_string();
+        assert!(service.register(bad).await.is_err());
+
+        dispose();
+        let ids: Vec<String> = service.grants().iter().map(|g| g.id().to_string()).collect();
+        assert_eq!(ids, vec!["test"]);
     }
 
     #[test]

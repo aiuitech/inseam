@@ -63,6 +63,51 @@ pub fn parse_ymd_epoch(s: &str) -> Result<i64, DateError> {
     Ok(days_from_civil(y, m, d) * SECS_PER_DAY)
 }
 
+/// Parse an RFC 3339 timestamp (`YYYY-MM-DDTHH:MM:SS[.fff](Z|±HH:MM)`) —
+/// the form every Google API and most REST services emit — into unix-epoch
+/// seconds. Fractional seconds are dropped; the offset is applied. A bare
+/// `YYYY-MM-DD` is accepted too, as midnight UTC, since all-day calendar
+/// events come that way.
+pub fn parse_rfc3339_epoch(s: &str) -> Result<i64, DateError> {
+    let s = s.trim();
+    let Some((date, time)) = s.split_once(['T', 't', ' ']) else {
+        return parse_ymd_epoch(s);
+    };
+    let date_epoch = parse_ymd_epoch(date)?;
+    let (clock, offset_secs) = split_offset(time).ok_or_else(|| DateError::Unparseable(s.to_string()))?;
+    let mut fields = clock.split(':');
+    let (h, m, sec) = match (fields.next(), fields.next(), fields.next(), fields.next()) {
+        (Some(h), Some(m), Some(sec), None) => (
+            h.parse::<i64>().map_err(|_| DateError::Unparseable(s.to_string()))?,
+            m.parse::<i64>().map_err(|_| DateError::Unparseable(s.to_string()))?,
+            sec.split('.').next().unwrap_or_default().parse::<i64>().map_err(|_| DateError::Unparseable(s.to_string()))?,
+        ),
+        _ => return Err(DateError::Unparseable(s.to_string())),
+    };
+    if !(0..24).contains(&h) || !(0..60).contains(&m) || !(0..=60).contains(&sec) {
+        return Err(DateError::OutOfRange(s.to_string()));
+    }
+    Ok(date_epoch + h * 3600 + m * 60 + sec - offset_secs)
+}
+
+/// Split `HH:MM:SS[.fff]<offset>` into the clock and the offset in seconds
+/// east of UTC; `None` when no offset designator is present.
+fn split_offset(time: &str) -> Option<(&str, i64)> {
+    if let Some(clock) = time.strip_suffix(['Z', 'z']) {
+        return Some((clock, 0));
+    }
+    let sign_at = time.rfind(['+', '-'])?;
+    let (clock, offset) = time.split_at(sign_at);
+    let sign: i64 = if offset.starts_with('-') { -1 } else { 1 };
+    let (oh, om) = offset[1..].split_once(':')?;
+    let oh: i64 = oh.parse().ok()?;
+    let om: i64 = om.parse().ok()?;
+    if !(0..24).contains(&oh) || !(0..60).contains(&om) {
+        return None;
+    }
+    Some((clock, sign * (oh * 3600 + om * 60)))
+}
+
 /// Render unix-epoch seconds as a `YYYY-MM-DD` string (UTC).
 pub fn epoch_to_ymd(secs: i64) -> String {
     let (y, m, d) = civil_from_days(secs.div_euclid(SECS_PER_DAY));
@@ -106,6 +151,23 @@ mod tests {
     #[test]
     fn timestamp_renders_its_date() {
         assert_eq!(ymd(Timestamp(1_420_070_400)), "2015-01-01");
+    }
+
+    #[test]
+    fn rfc3339_applies_offsets_and_drops_fractions() {
+        assert_eq!(parse_rfc3339_epoch("2015-01-01T00:00:00Z"), Ok(1_420_070_400));
+        assert_eq!(parse_rfc3339_epoch("2015-01-01T00:00:00.123Z"), Ok(1_420_070_400));
+        assert_eq!(parse_rfc3339_epoch("2015-01-01T02:30:00+02:30"), Ok(1_420_070_400));
+        assert_eq!(parse_rfc3339_epoch("2014-12-31T19:00:00-05:00"), Ok(1_420_070_400));
+        assert_eq!(parse_rfc3339_epoch("2015-01-01"), Ok(1_420_070_400), "bare dates are midnight UTC");
+    }
+
+    #[test]
+    fn rfc3339_rejects_malformed_times() {
+        assert!(matches!(parse_rfc3339_epoch("2015-01-01T25:00:00Z"), Err(DateError::OutOfRange(_))));
+        assert!(matches!(parse_rfc3339_epoch("2015-01-01T00:00Z"), Err(DateError::Unparseable(_))));
+        assert!(matches!(parse_rfc3339_epoch("2015-01-01T00:00:00"), Err(DateError::Unparseable(_))));
+        assert!(matches!(parse_rfc3339_epoch("soon"), Err(DateError::Unparseable(_))));
     }
 
     #[test]
