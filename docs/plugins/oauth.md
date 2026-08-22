@@ -27,7 +27,7 @@ client_secret_env = "SLACK_CLIENT_SECRET"               # omit for public (PKCE-
 
 Either way a grant is one record — id, endpoints, scopes, client variables — and one grant per id: a plugin cannot register an id the `oauth` entry already configures.
 
-The client id and secret are environment variables, like every secret the node reads; a grant whose variables are unset shows as `missing secret` in `inseam grants` and the other grants keep working. `inseam plugins` lists the variables with the reason each is needed; the macOS app's Secrets tab stores them in the Keychain.
+The client id and secret are environment variables, like every secret the node reads; a grant whose variables are unset shows as `missing secret` in `inseam grants` and the other grants keep working. A client identifies the *app*, not the account — the tokens stay on your node; today every grant is bring-your-own, and a bundled inseam client for the Google grant is planned for when inseam is commercialized ([../indexing/google-workspace.md](../indexing/google-workspace.md)). `inseam plugins` lists the variables with the reason each is needed; the macOS app's Secrets tab stores them in the Keychain.
 
 ## Authorize — from any client
 
