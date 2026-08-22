@@ -1,3 +1,5 @@
+- indexing should be incremental so we don't have to generate everything for experiments that turn off entity fragments for example
+
 ## WIP
 
 ## Todos
