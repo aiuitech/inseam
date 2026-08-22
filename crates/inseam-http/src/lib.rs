@@ -31,10 +31,11 @@ use axum::response::{Html, IntoResponse, Redirect as HttpRedirect, Response};
 use inseam_kernel::address::HostId;
 use inseam_seams::oauth::{AuthorizationCallback, GrantId, Redirect};
 use inseam_seams::operations::{
-    AuthorizeGrantRequest, ExpandRequest, ExpandResponse, FetchRequest, FetchResponse, GrantView,
-    HostView, IndexRequest, Operations, QueryRequest, QueryResponse, RevokeGrantRequest,
-    ScanRequest, ScanResponse, StatusReport,
+    AuthorizeGrantRequest, CatalogRequest, CatalogResponse, ExpandRequest, ExpandResponse,
+    FetchRequest, FetchResponse, GrantView, HostView, IndexRequest, Operations, QueryRequest,
+    QueryResponse, RevokeGrantRequest, ScanRequest, ScanResponse, StatusReport,
 };
+use inseam_seams::sweep::DeepBudget;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tower::limit::ConcurrencyLimitLayer;
@@ -179,6 +180,8 @@ struct HttpIndexRequest {
     root: String,
     #[serde(default)]
     rebuild: bool,
+    #[serde(default)]
+    deep_budget: Option<DeepBudget>,
 }
 
 pub async fn serve(
@@ -234,6 +237,7 @@ fn owner_router(state: &AppState) -> Router<AppState> {
     Router::new()
         .route("/info", get(info))
         .route("/status", get(status))
+        .route("/catalog", post(catalog))
         .route("/hosts", get(hosts))
         .route("/query", post(query))
         .route("/expand", post(expand))
@@ -416,6 +420,13 @@ async fn status(State(state): State<AppState>) -> Result<Json<StatusReport>, Api
     Ok(Json(state.operations.status().await?))
 }
 
+async fn catalog(
+    State(state): State<AppState>,
+    Json(request): Json<CatalogRequest>,
+) -> Result<Json<CatalogResponse>, ApiError> {
+    Ok(Json(state.operations.catalog(request).await?))
+}
+
 async fn hosts(State(state): State<AppState>) -> Result<Json<Vec<HostView>>, ApiError> {
     Ok(Json(state.operations.hosts().await?))
 }
@@ -465,6 +476,7 @@ async fn index(
             host: request.host,
             root: root.path.to_string_lossy().into_owned(),
             rebuild: request.rebuild,
+            deep_budget: request.deep_budget,
         })
         .await?;
     Ok(Json(response))
@@ -565,6 +577,15 @@ mod tests {
             Ok(Vec::new())
         }
 
+        async fn catalog(&self, _request: CatalogRequest) -> Result<CatalogResponse, SeamError> {
+            Ok(CatalogResponse {
+                sources: 3,
+                indexed: 2,
+                pending: 1,
+                entries: Vec::new(),
+            })
+        }
+
         async fn status(&self) -> Result<StatusReport, SeamError> {
             Ok(StatusReport {
                 sources: 3,
@@ -573,6 +594,8 @@ mod tests {
                 relations: 1,
                 keyed_fragments: 0,
                 search_rows: 7,
+                store_bytes: 4096,
+                content_bytes: 120,
                 embedding_model: None,
                 embedding_dimensions: 0,
                 reembed_pending: false,

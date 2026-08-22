@@ -13,7 +13,7 @@
 //! an in-place re-embed instead of refusing to open.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use libsql::params;
@@ -181,13 +181,57 @@ pub struct CatalogEntry<'a> {
     pub mark: CatalogMark,
 }
 
+/// A source is **deep-indexed** when its `indexed` mark is set *and* it
+/// carries a shape stamp; a catalog-only row is marked without a stamp
+/// (`CatalogMark::CatalogOnly`), which records the run saw it while keeping
+/// it dirty. Every count and listing of "indexed" sources uses this one
+/// predicate.
+const DEEP_INDEXED: &str = "indexed = 1 AND shape_stamp IS NOT NULL";
+
 #[derive(Debug, Clone, Copy, Default, serde::Serialize)]
 pub struct StoreStats {
     pub sources: u64,
+    /// Sources with a landed fragment subtree (deep-indexed), not the
+    /// catalog-only rows a run marked as seen.
     pub indexed_sources: u64,
     pub fragments: u64,
     pub relations: u64,
     pub keyed_fragments: u64,
+    /// Bytes the store occupies on disk: the database file plus its
+    /// write-ahead log, which holds commits not yet checkpointed.
+    pub store_bytes: u64,
+    /// Bytes of source content the catalog covers (the `raw_bytes` every
+    /// cataloged row carries, summed) — the hosts' size, not the node's.
+    pub content_bytes: u64,
+}
+
+/// Which cataloged sources a listing selects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CatalogSelection {
+    All,
+    Indexed,
+    /// Cataloged but with no landed subtree: catalog-only, past the cutoff,
+    /// or interrupted.
+    Pending,
+}
+
+/// One row of a catalog listing: what the catalog knows about a source
+/// without loading its envelope.
+#[derive(Debug, Clone)]
+pub struct CatalogRow {
+    pub address: Address,
+    pub indexed: bool,
+    pub content_type: Mimetype,
+    pub raw_bytes: u64,
+    pub modified: Option<Timestamp>,
+}
+
+/// Counts over one host selection of the catalog.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CatalogCounts {
+    pub sources: u64,
+    pub indexed: u64,
+    pub pending: u64,
 }
 
 /// The outcome of asking for a keyed fragment: the id it already had, or the
@@ -231,6 +275,9 @@ struct SearchState {
 pub struct IndexStore {
     #[expect(dead_code, reason = "keeps the database handle alive for its connections")]
     db: libsql::Database,
+    /// The database file; its size (with the WAL beside it) is the store's
+    /// footprint on disk.
+    database_path: PathBuf,
     catalog: libsql::Connection,
     search: Mutex<SearchState>,
     /// Serializes every write. One libSQL connection carries one open
@@ -250,9 +297,8 @@ impl IndexStore {
             path: dir.display().to_string(),
             source,
         })?;
-        let db = libsql::Builder::new_local(dir.join("catalog.sqlite3"))
-            .build()
-            .await?;
+        let database_path = dir.join("catalog.sqlite3");
+        let db = libsql::Builder::new_local(&database_path).build().await?;
         let catalog = db.connect()?;
         catalog.query("PRAGMA journal_mode = WAL", ()).await?;
         // WAL + NORMAL: a commit appends to the log without an fsync; the
@@ -267,6 +313,7 @@ impl IndexStore {
         converge_schema(&catalog).await?;
         Ok(Self {
             db,
+            database_path,
             catalog,
             search: Mutex::new(SearchState::default()),
             write_lock: tokio::sync::Mutex::new(()),
@@ -989,15 +1036,84 @@ impl IndexStore {
     }
 
     pub async fn stats(&self) -> Result<StoreStats, StoreError> {
+        let database_bytes = file_size_or_zero(&self.database_path).await;
+        let wal_bytes = file_size_or_zero(&self.database_path.with_extension("sqlite3-wal")).await;
         Ok(StoreStats {
             sources: self.count_of("SELECT COUNT(*) FROM sources").await?,
             indexed_sources: self
-                .count_of("SELECT COUNT(*) FROM sources WHERE indexed = 1")
+                .count_of(&format!("SELECT COUNT(*) FROM sources WHERE {DEEP_INDEXED}"))
                 .await?,
             fragments: self.count_of("SELECT COUNT(*) FROM fragments").await?,
             relations: self.count_of("SELECT COUNT(*) FROM relations").await?,
             keyed_fragments: self.count_of("SELECT COUNT(*) FROM keyed_fragments").await?,
+            store_bytes: database_bytes.saturating_add(wal_bytes),
+            content_bytes: self
+                .count_of("SELECT COALESCE(SUM(raw_bytes), 0) FROM sources")
+                .await?,
         })
+    }
+
+    /// Counts over the catalog, for one host or all of them.
+    pub async fn catalog_counts(&self, host: Option<&HostId>) -> Result<CatalogCounts, StoreError> {
+        let host_filter = host.map_or(String::new(), |h| h.as_str().to_string());
+        // An empty host filter selects every host: `?1 = ''` short-circuits
+        // the match, and a host id is never empty (`HostId::new` rejects it).
+        let row = self
+            .first_row(
+                &format!(
+                    "SELECT COUNT(*), COALESCE(SUM({DEEP_INDEXED}), 0)
+                     FROM sources WHERE (?1 = '' OR host = ?1)"
+                ),
+                params![host_filter],
+            )
+            .await?
+            .ok_or_else(|| StoreError::Corrupt(0, "COUNT(*) returned no row".into()))?;
+        let sources: i64 = row.get(0)?;
+        let indexed: i64 = row.get(1)?;
+        let sources = u64::try_from(sources).expect("row counts are non-negative");
+        let indexed = u64::try_from(indexed).expect("row counts are non-negative");
+        assert!(indexed <= sources);
+        Ok(CatalogCounts {
+            sources,
+            indexed,
+            pending: sources - indexed,
+        })
+    }
+
+    /// The first `limit` cataloged sources matching the selection, ordered
+    /// by host then locator so a listing is stable across runs.
+    pub async fn catalog_rows(
+        &self,
+        host: Option<&HostId>,
+        selection: CatalogSelection,
+        limit: u32,
+    ) -> Result<Vec<CatalogRow>, StoreError> {
+        let host_filter = host.map_or(String::new(), |h| h.as_str().to_string());
+        let selected = match selection {
+            CatalogSelection::All => "1".to_string(),
+            CatalogSelection::Indexed => DEEP_INDEXED.to_string(),
+            CatalogSelection::Pending => format!("NOT ({DEEP_INDEXED})"),
+        };
+        let mut rows = self
+            .catalog
+            .query(
+                &format!(
+                    "SELECT id, host, locator, content_type, raw_bytes,
+                            ({DEEP_INDEXED}), modified
+                     FROM sources
+                     WHERE (?1 = '' OR host = ?1) AND ({selected})
+                     ORDER BY host, locator
+                     LIMIT ?2"
+                ),
+                params![host_filter, i64::from(limit)],
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push(row_to_catalog_row(&row)?);
+        }
+        assert!(out.len() <= usize::try_from(limit).expect("u32 fits in usize"));
+        Ok(out)
     }
 
     async fn count_of(&self, sql: &str) -> Result<u64, StoreError> {
@@ -1533,6 +1649,35 @@ fn fts_match_expression(q: &str) -> String {
 const SOURCE_COLUMNS: &str =
     "id, host, locator, source_type, content_type, len_unit, len, created, modified, observed, \
      hint, properties, root_fragment, digest";
+
+/// A missing file is a zero-byte footprint: the WAL is absent between
+/// checkpoints, and the database itself only before the first open.
+async fn file_size_or_zero(path: &Path) -> u64 {
+    match tokio::fs::metadata(path).await {
+        Ok(meta) => meta.len(),
+        Err(_) => 0,
+    }
+}
+
+fn row_to_catalog_row(r: &libsql::Row) -> Result<CatalogRow, StoreError> {
+    let id: i64 = r.get(0)?;
+    let host: String = r.get(1)?;
+    let locator: String = r.get(2)?;
+    let content_type: String = r.get(3)?;
+    let raw_bytes: i64 = r.get(4)?;
+    let indexed: i64 = r.get(5)?;
+    let modified: Option<i64> = r.get(6)?;
+    Ok(CatalogRow {
+        address: Address::new(
+            HostId::new(host).map_err(|e| corrupt(id, e))?,
+            Locator::new(locator).map_err(|e| corrupt(id, e))?,
+        ),
+        indexed: indexed == 1,
+        content_type: Mimetype::parse(&content_type).map_err(|e| corrupt(id, e))?,
+        raw_bytes: u64::try_from(raw_bytes).unwrap_or(0),
+        modified: modified.map(Timestamp),
+    })
+}
 
 fn row_to_source(r: &libsql::Row) -> Result<StoredSource, StoreError> {
     let id: i64 = r.get(0)?;

@@ -26,7 +26,7 @@ mod grant;
 mod plan;
 
 use std::collections::HashSet;
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU32, NonZeroUsize};
 use std::sync::Arc;
 
 use futures_util::stream::{self, StreamExt};
@@ -43,7 +43,7 @@ use inseam_seams::connection::{Connections, EnumeratedSource, Registration as Co
 use inseam_seams::dates::parse_ymd_epoch;
 use inseam_seams::embedder::{Embedder, EMBEDDER};
 use inseam_seams::llm::{self, Llm, LLM};
-use inseam_seams::sweep::{IndexReport, Sweep, SweepRequest, SWEEP};
+use inseam_seams::sweep::{DeepBudget, IndexReport, Sweep, SweepRequest, SWEEP};
 use inseam_seams::transforms::{Registration, Transforms, TRANSFORMS};
 use inseam_seams::SeamError;
 
@@ -59,8 +59,10 @@ const CATALOG_CHUNK: usize = 1_000;
 #[serde(default, deny_unknown_fields)]
 pub struct SweepConfig {
     /// Sources to deep-index per run; the rest still enter the catalog.
-    /// 0 means unlimited. (Run-metering tier: bounds a run, not the shape.)
-    pub max_sources: usize,
+    /// 0 means unlimited — the composition's spelling of [`DeepBudget`],
+    /// which a request may override per run. (Run-metering tier: bounds a
+    /// run, not the shape.)
+    pub max_sources: u32,
     /// Sources planned at once — transform applications (LLM calls above
     /// all) in flight together. Run-metering tier: a throughput dial, never
     /// a shape one.
@@ -100,6 +102,15 @@ impl SweepConfig {
     /// The sweep's own contribution to every shape stamp: the decomposition
     /// dials that change what a subtree looks like. Run-metering fields stay
     /// out so tuning them never re-indexes.
+    /// The composition's deep budget, parsed once per run from the
+    /// `max_sources` dial: `0` is unlimited, anything else a per-run cap.
+    fn deep_budget(&self) -> DeepBudget {
+        match NonZeroU32::new(self.max_sources) {
+            None => DeepBudget::Unlimited,
+            Some(limit) => DeepBudget::Sources(limit),
+        }
+    }
+
     fn shape_fingerprint(&self) -> String {
         format!(
             "sweep-v1|depth={}|fragments={}|content_bytes={}",
@@ -240,8 +251,14 @@ impl Sweep for SweepService {
         let registrations = self.stamped_registrations();
         let sweep_shape = self.config.shape_fingerprint();
 
+        // A request's budget wins for this run only; the composition's dial
+        // is the steady state every unqualified run returns to.
+        let dials = RunDials {
+            rebuild: request.rebuild,
+            deep_budget: request.deep_budget.unwrap_or_else(|| self.config.deep_budget()),
+        };
         let decisions = self
-            .decide(&sources, cutoff, &registrations, &sweep_shape, request.rebuild, &mut report)
+            .decide(&sources, cutoff, &registrations, &sweep_shape, dials, &mut report)
             .await?;
         for chunk in decisions.catalog.chunks(CATALOG_CHUNK) {
             self.store.catalog_sources(chunk).await?;
@@ -275,6 +292,16 @@ impl Sweep for SweepService {
         }
         Ok(report)
     }
+}
+
+/// The per-run dials a request sets: what the dirtiness pass bends to beyond
+/// the composition (`design/index-maintenance.md`, run-metering tier).
+#[derive(Debug, Clone, Copy)]
+struct RunDials {
+    /// Re-index sources even when unchanged.
+    rebuild: bool,
+    /// How many sources this run may deep-index; the rest are cataloged.
+    deep_budget: DeepBudget,
 }
 
 /// What the dirtiness pass decided: rows that enter the catalog without a
@@ -336,7 +363,7 @@ impl SweepService {
         cutoff: Option<Timestamp>,
         registrations: &[Arc<Registration>],
         sweep_shape: &str,
-        rebuild: bool,
+        dials: RunDials,
         report: &mut IndexReport,
     ) -> Result<Decisions<'a>, SeamError> {
         let mut decisions = Decisions {
@@ -380,13 +407,13 @@ impl SweepService {
                 report.skipped_cutoff += 1;
                 continue;
             }
-            if !dirty && !rebuild {
+            if !dirty && !dials.rebuild {
                 report.unchanged += 1;
                 continue;
             }
-            let deep_budget_left =
-                self.config.max_sources == 0 || decisions.deep.len() < self.config.max_sources;
-            if !deep_budget_left {
+            let deep_count = u32::try_from(decisions.deep.len())
+                .map_err(|_| SeamError::failed("more than u32::MAX sources chosen for deep indexing"))?;
+            if !dials.deep_budget.allows(deep_count) {
                 // Catalog-only: no stamp is recorded, so the source stays
                 // dirty and is deep-indexed once a later run has budget.
                 decisions.catalog.push(entry(CatalogMark::CatalogOnly));

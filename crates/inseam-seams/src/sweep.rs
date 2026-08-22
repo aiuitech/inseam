@@ -4,13 +4,51 @@
 //! `transforms`, `embedder`, and the kernel store.
 
 use std::fmt;
+use std::num::NonZeroU32;
 
 use inseam_kernel::address::HostId;
 use inseam_kernel::substrate::ServiceKey;
+use serde::{Deserialize, Serialize};
 
 use crate::SeamError;
 
 pub const SWEEP: ServiceKey<dyn Sweep> = ServiceKey::new("sweep");
+
+/// How many sources one run may deep-index. Every enumerated source enters
+/// the catalog regardless; this only bounds the transform work, so it is a
+/// run-metering dial (`design/index-maintenance.md`) — changing it never
+/// invalidates anything. `CatalogOnly` is the "ingest now, index later"
+/// run: addresses and envelopes land, no fragment is built, and every
+/// catalog-only row stays dirty for a later run with budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeepBudget {
+    Unlimited,
+    Sources(NonZeroU32),
+    CatalogOnly,
+}
+
+impl DeepBudget {
+    /// Whether a run that has already chosen `deep_count` sources for deep
+    /// indexing may choose one more.
+    pub fn allows(self, deep_count: u32) -> bool {
+        match self {
+            Self::Unlimited => true,
+            Self::Sources(limit) => deep_count < limit.get(),
+            Self::CatalogOnly => false,
+        }
+    }
+}
+
+impl fmt::Display for DeepBudget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unlimited => write!(f, "unlimited"),
+            Self::Sources(limit) => write!(f, "{limit} sources"),
+            Self::CatalogOnly => write!(f, "catalog-only"),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct SweepRequest {
@@ -20,6 +58,10 @@ pub struct SweepRequest {
     pub root: String,
     /// Re-index sources even when unchanged.
     pub rebuild: bool,
+    /// This run's deep budget; `None` takes the composition's
+    /// (`sweep.max_sources`). A request-level override never outlives the
+    /// run.
+    pub deep_budget: Option<DeepBudget>,
 }
 
 #[async_trait::async_trait]

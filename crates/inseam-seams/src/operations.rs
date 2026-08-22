@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::connection::{Capabilities, HostKind};
 use crate::oauth::{AuthorizationCallback, AuthorizationStarted, GrantId, GrantState, Redirect};
-use crate::sweep::IndexReport;
+use crate::sweep::{DeepBudget, IndexReport};
 use crate::SeamError;
 
 pub const OPERATIONS: ServiceKey<dyn Operations> = ServiceKey::new("operations");
@@ -45,6 +45,9 @@ pub trait Operations: Send + Sync {
     async fn hosts(&self) -> Result<Vec<HostView>, SeamError>;
     /// Owner operation: index and catalog statistics.
     async fn status(&self) -> Result<StatusReport, SeamError>;
+    /// Owner operation: the catalog as this node holds it — every source it
+    /// knows about, deep-indexed or still waiting on budget.
+    async fn catalog(&self, request: CatalogRequest) -> Result<CatalogResponse, SeamError>;
     /// Owner operation: the OAuth grants this node holds and where each
     /// stands — what a "connect an account" surface lists.
     async fn grants(&self) -> Result<Vec<GrantView>, SeamError>;
@@ -213,6 +216,62 @@ pub struct IndexRequest {
     pub root: String,
     #[serde(default)]
     pub rebuild: bool,
+    /// This run's deep budget; `None` takes the composition's. `catalog_only`
+    /// is the ingest run: every source enters the catalog, none is
+    /// deep-indexed until a later run has budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deep_budget: Option<DeepBudget>,
+}
+
+/// Which cataloged sources a listing shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CatalogFilter {
+    #[default]
+    All,
+    /// Sources whose fragment subtree is built and searchable.
+    Indexed,
+    /// Cataloged sources with no subtree yet: catalog-only rows, sources
+    /// past the cutoff, and ones a prior run left interrupted.
+    Pending,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CatalogRequest {
+    /// Restrict to one host; `None` lists every host this node knows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<HostId>,
+    #[serde(default)]
+    pub filter: CatalogFilter,
+    /// Entries to return; the counts always cover the whole selection.
+    #[serde(default = "default_catalog_limit")]
+    pub limit: u32,
+}
+
+fn default_catalog_limit() -> u32 {
+    100
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CatalogResponse {
+    /// Counts over the host selection, regardless of `filter` and `limit`.
+    pub sources: u64,
+    pub indexed: u64,
+    pub pending: u64,
+    /// The first `limit` entries matching the filter, ordered by address.
+    pub entries: Vec<CatalogSourceView>,
+}
+
+/// One cataloged source as owner surfaces list it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CatalogSourceView {
+    pub address: Address,
+    pub indexed: bool,
+    pub content_type: String,
+    /// The source's size on its host as enumeration reported it.
+    pub raw_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modified: Option<String>,
 }
 
 /// One stewarded host as owner surfaces show it.
@@ -267,6 +326,12 @@ pub struct StatusReport {
     /// Index-wide fragments deduplicated by key (entities, for instance).
     pub keyed_fragments: u64,
     pub search_rows: usize,
+    /// Bytes the store occupies on the node's disk (database plus its
+    /// write-ahead log).
+    pub store_bytes: u64,
+    /// Bytes of source content the catalog covers, summed from enumeration's
+    /// raw sizes — what the hosts hold, not what the node stores.
+    pub content_bytes: u64,
     pub embedding_model: Option<String>,
     pub embedding_dimensions: usize,
     pub reembed_pending: bool,

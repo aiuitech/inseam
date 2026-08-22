@@ -9,7 +9,8 @@ mod common;
 
 use inseam_kernel::fragment::{FragmentKey, Mimetype, NewFragment, Relation, RelationKind};
 use inseam_seams::connection::CONNECTIONS;
-use inseam_seams::operations::{IndexRequest, QueryRequest};
+use inseam_seams::operations::{CatalogFilter, CatalogRequest, IndexRequest, QueryRequest};
+use inseam_seams::sweep::DeepBudget;
 
 async fn index(
     ops: &dyn inseam_seams::operations::Operations,
@@ -19,6 +20,7 @@ async fn index(
         host: None,
         root: root.display().to_string(),
         rebuild: false,
+        deep_budget: None,
     })
     .await
     .expect("sweeps")
@@ -299,6 +301,103 @@ async fn catalog_only_sources_converge_to_deep_indexed_across_runs() {
 
     let third = index(ops.as_ref(), corpus.path()).await;
     assert_eq!(third.unchanged, 2, "steady state: {third}");
+}
+
+#[tokio::test]
+async fn catalog_only_run_catalogs_everything_and_deep_indexes_nothing() {
+    let corpus = tempfile::tempdir().expect("tempdir");
+    let data = tempfile::tempdir().expect("tempdir");
+    std::fs::write(corpus.path().join("a.md"), "# A\n\nalpha\n").expect("writes");
+    std::fs::write(corpus.path().join("b.md"), "# B\n\nbeta\n").expect("writes");
+
+    let kernel = common::boot(data.path(), "").await;
+    let ops = common::ops(&kernel);
+    let ingest = ops
+        .index(IndexRequest {
+            host: None,
+            root: corpus.path().display().to_string(),
+            rebuild: false,
+            deep_budget: Some(DeepBudget::CatalogOnly),
+        })
+        .await
+        .expect("sweeps");
+    assert_eq!(ingest.catalog_only, 2, "{ingest}");
+    assert_eq!(ingest.indexed, 0);
+    assert_eq!(ingest.fragments, 0);
+
+    // The ingest is visible in the catalog listing: every address known,
+    // none searchable yet.
+    let listing = ops
+        .catalog(CatalogRequest {
+            host: None,
+            filter: CatalogFilter::Pending,
+            limit: 10,
+        })
+        .await
+        .expect("lists");
+    assert_eq!(listing.sources, 2);
+    assert_eq!(listing.indexed, 0);
+    assert_eq!(listing.pending, 2);
+    assert_eq!(listing.entries.len(), 2);
+    assert!(listing.entries.iter().all(|e| !e.indexed));
+    assert!(listing.entries.iter().all(|e| e.raw_bytes > 0));
+    assert_eq!(common::hits(ops.as_ref(), "alpha").await, 0);
+
+    // The request's budget never outlives its run: an unqualified run picks
+    // the composition's (unlimited) budget and finishes the job.
+    let second = index(ops.as_ref(), corpus.path()).await;
+    assert_eq!(second.indexed, 2, "{second}");
+    let listing = ops
+        .catalog(CatalogRequest {
+            host: None,
+            filter: CatalogFilter::Indexed,
+            limit: 1,
+        })
+        .await
+        .expect("lists");
+    assert_eq!(listing.indexed, 2);
+    assert_eq!(listing.pending, 0);
+    assert_eq!(listing.entries.len(), 1, "limit bounds entries, not counts");
+    assert_eq!(common::hits(ops.as_ref(), "alpha").await, 1);
+}
+
+#[tokio::test]
+async fn request_budget_overrides_the_composition_for_one_run() {
+    let corpus = tempfile::tempdir().expect("tempdir");
+    let data = tempfile::tempdir().expect("tempdir");
+    for name in ["a.md", "b.md", "c.md"] {
+        std::fs::write(corpus.path().join(name), format!("# {name}\n\ntext\n")).expect("writes");
+    }
+    let kernel = common::boot(data.path(), "").await;
+    let ops = common::ops(&kernel);
+    let report = ops
+        .index(IndexRequest {
+            host: None,
+            root: corpus.path().display().to_string(),
+            rebuild: false,
+            deep_budget: Some(DeepBudget::Sources(std::num::NonZeroU32::new(2).expect("non-zero"))),
+        })
+        .await
+        .expect("sweeps");
+    assert_eq!(report.indexed, 2, "{report}");
+    assert_eq!(report.catalog_only, 1);
+}
+
+#[tokio::test]
+async fn status_reports_store_and_content_sizes() {
+    let corpus = tempfile::tempdir().expect("tempdir");
+    let data = tempfile::tempdir().expect("tempdir");
+    let body = "# Note\n\nkitchen renovation budget\n";
+    std::fs::write(corpus.path().join("note.md"), body).expect("writes");
+    let kernel = common::boot(data.path(), "").await;
+    let ops = common::ops(&kernel);
+
+    let before = ops.status().await.expect("status");
+    assert_eq!(before.content_bytes, 0);
+    index(ops.as_ref(), corpus.path()).await;
+    let after = ops.status().await.expect("status");
+    assert_eq!(after.content_bytes, u64::try_from(body.len()).expect("fits"));
+    assert!(after.store_bytes > 0, "the database file exists on disk");
 }
 
 #[tokio::test]

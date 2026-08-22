@@ -48,6 +48,7 @@ async fn the_incremental_discovery_ladder_works_offline() {
             host: None,
             root: root.clone(),
             rebuild: false,
+            deep_budget: None,
         })
         .await
         .expect("indexes");
@@ -66,6 +67,7 @@ async fn the_incremental_discovery_ladder_works_offline() {
             host: None,
             root: root.clone(),
             rebuild: false,
+            deep_budget: None,
         })
         .await
         .expect("indexes");
@@ -188,6 +190,7 @@ async fn rebuild_reindexes_unchanged_sources() {
         host: None,
         root: root.clone(),
         rebuild: false,
+        deep_budget: None,
     })
     .await
     .expect("indexes");
@@ -196,6 +199,7 @@ async fn rebuild_reindexes_unchanged_sources() {
             host: None,
             root: root.clone(),
             rebuild: true,
+            deep_budget: None,
         })
         .await
         .expect("rebuilds");
@@ -220,6 +224,7 @@ async fn changed_sources_have_their_subtree_replaced() {
         host: None,
         root: root.clone(),
         rebuild: false,
+        deep_budget: None,
     })
     .await
     .expect("indexes");
@@ -230,6 +235,7 @@ async fn changed_sources_have_their_subtree_replaced() {
             host: None,
             root,
             rebuild: false,
+            deep_budget: None,
         })
         .await
         .expect("indexes");

@@ -11,6 +11,7 @@
 mod registry;
 
 use std::net::SocketAddr;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -26,9 +27,11 @@ use agent::{run_agent, AgentEvent};
 use inseam_seams::llm::{self, ModelInfo, LLM};
 use inseam_seams::oauth::{GrantId, GrantState, Redirect};
 use inseam_seams::operations::{
-    AuthorizeGrantRequest, AwaitAuthorizationRequest, ExpandRequest, FetchRequest, GrantView,
-    IndexRequest, QueryRequest, QueryResponse, RevokeGrantRequest, ScanRequest, OPERATIONS,
+    AuthorizeGrantRequest, AwaitAuthorizationRequest, CatalogFilter, CatalogRequest,
+    CatalogResponse, ExpandRequest, FetchRequest, GrantView, IndexRequest, QueryRequest,
+    QueryResponse, RevokeGrantRequest, ScanRequest, OPERATIONS,
 };
+use inseam_seams::sweep::DeepBudget;
 
 pub use inseam_kernel::substrate::PluginFactory;
 
@@ -203,6 +206,33 @@ enum Command {
         /// Re-index sources even when unchanged.
         #[arg(long)]
         rebuild: bool,
+        /// Catalog every source (address + envelope) and deep-index none —
+        /// the ingest run. Catalog-only sources stay pending and are
+        /// deep-indexed by a later run with budget.
+        #[arg(long, conflicts_with = "max_sources")]
+        catalog_only: bool,
+        /// Deep-index at most this many sources this run (the rest are
+        /// cataloged); overrides the composition's `sweep.max_sources`.
+        #[arg(long, value_name = "COUNT")]
+        max_sources: Option<NonZeroU32>,
+    },
+    /// The catalog: every source this node knows about, deep-indexed or
+    /// still pending, with counts.
+    Catalog {
+        /// Restrict to one host.
+        #[arg(long)]
+        host: Option<String>,
+        /// Only sources whose subtree is built and searchable.
+        #[arg(long, conflicts_with = "pending")]
+        indexed: bool,
+        /// Only sources cataloged but not yet deep-indexed.
+        #[arg(long)]
+        pending: bool,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+        /// Emit the operation response as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// The hosts this node stewards and what each connection supports.
     Hosts,
@@ -497,11 +527,48 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
             )
             .await?;
         }
-        Command::Index { root, host, rebuild } => {
+        Command::Index {
+            root,
+            host,
+            rebuild,
+            catalog_only,
+            max_sources,
+        } => {
             let ops = kernel.service(&OPERATIONS)?;
             let (host, root) = index_scope(&root, host.as_deref())?;
-            let report = ops.index(IndexRequest { host, root, rebuild }).await?;
+            let deep_budget = deep_budget_flag(catalog_only, max_sources);
+            let report = ops
+                .index(IndexRequest {
+                    host,
+                    root,
+                    rebuild,
+                    deep_budget,
+                })
+                .await?;
             println!("{report}");
+        }
+        Command::Catalog {
+            host,
+            indexed,
+            pending,
+            limit,
+            json,
+        } => {
+            let ops = kernel.service(&OPERATIONS)?;
+            let host = host.as_deref().map(HostId::new).transpose()?;
+            let filter = catalog_filter_flag(indexed, pending);
+            let response = ops
+                .catalog(CatalogRequest {
+                    host,
+                    filter,
+                    limit,
+                })
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            } else {
+                print_catalog(&response, filter);
+            }
         }
         Command::Hosts => {
             let ops = kernel.service(&OPERATIONS)?;
@@ -708,6 +775,14 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
             println!("relations      {}", status.relations);
             println!("keyed          {}", status.keyed_fragments);
             println!("search rows    {}", status.search_rows);
+            println!(
+                "store size     {} on disk",
+                human_bytes(status.store_bytes)
+            );
+            println!(
+                "content size   {} across cataloged sources",
+                human_bytes(status.content_bytes)
+            );
         }
         Command::Plugins => {
             for fiber in kernel.fibers() {
@@ -756,6 +831,72 @@ fn grant_status(grant: &GrantView) -> String {
 /// absolute, so `inseam index .` keeps meaning this directory. That
 /// convenience is the transport knowing it runs on a filesystem, nothing a
 /// connection is told.
+/// The `index` command's two budget flags, folded into one request value:
+/// neither flag means "the composition's budget"; clap rejects both at once.
+fn deep_budget_flag(catalog_only: bool, max_sources: Option<NonZeroU32>) -> Option<DeepBudget> {
+    if catalog_only {
+        assert!(max_sources.is_none(), "clap declares the flags mutually exclusive");
+        return Some(DeepBudget::CatalogOnly);
+    }
+    max_sources.map(DeepBudget::Sources)
+}
+
+/// The `catalog` command's two filter flags; clap rejects both at once.
+fn catalog_filter_flag(indexed: bool, pending: bool) -> CatalogFilter {
+    if indexed {
+        assert!(!pending, "clap declares the flags mutually exclusive");
+        return CatalogFilter::Indexed;
+    }
+    if pending {
+        return CatalogFilter::Pending;
+    }
+    CatalogFilter::All
+}
+
+fn print_catalog(response: &CatalogResponse, filter: CatalogFilter) {
+    println!(
+        "{} sources cataloged: {} indexed, {} pending",
+        response.sources, response.indexed, response.pending
+    );
+    for entry in &response.entries {
+        println!(
+            "{:8} {:>10} {:10} {:28} {}",
+            if entry.indexed { "indexed" } else { "pending" },
+            human_bytes(entry.raw_bytes),
+            entry.modified.as_deref().unwrap_or("-"),
+            entry.content_type,
+            entry.address
+        );
+    }
+    let shown = u64::try_from(response.entries.len()).expect("a listing fits in u64");
+    let matching = match filter {
+        CatalogFilter::All => response.sources,
+        CatalogFilter::Indexed => response.indexed,
+        CatalogFilter::Pending => response.pending,
+    };
+    assert!(shown <= matching);
+    if shown < matching {
+        println!("({shown} of {matching} shown; raise --limit for more)");
+    }
+}
+
+/// Bytes in the unit that keeps the number short, to one decimal place.
+/// Integer arithmetic throughout: the tenths are computed exactly.
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut divisor: u64 = 1;
+    let mut unit = 0;
+    while bytes / divisor >= 1000 && unit + 1 < UNITS.len() {
+        divisor *= 1000;
+        unit += 1;
+    }
+    if unit == 0 {
+        return format!("{bytes} B");
+    }
+    let tenths = bytes * 10 / divisor;
+    format!("{}.{} {}", tenths / 10, tenths % 10, UNITS[unit])
+}
+
 fn index_scope(root: &str, host: Option<&str>) -> anyhow::Result<(Option<HostId>, String)> {
     if root.starts_with("inseam://") {
         if host.is_some() {

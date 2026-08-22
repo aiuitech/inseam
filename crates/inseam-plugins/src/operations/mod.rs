@@ -8,7 +8,9 @@
 use std::sync::Arc;
 
 use inseam_kernel::address::{Address, HostId};
-use inseam_kernel::store::{IndexStore, StoredFragment, StoredSource};
+use inseam_kernel::store::{
+    CatalogRow, CatalogSelection, IndexStore, StoredFragment, StoredSource,
+};
 use inseam_kernel::substrate::{
     ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError, Verdict, STORE,
 };
@@ -21,7 +23,8 @@ use inseam_seams::oauth::{
     AuthorizationCallback, AuthorizationStarted, Grant, GrantId, OAuth, OAUTH,
 };
 use inseam_seams::operations::{
-    AuthorizeGrantRequest, AwaitAuthorizationRequest, EnvelopeView, ExpandRequest,
+    AuthorizeGrantRequest, AwaitAuthorizationRequest, CatalogFilter, CatalogRequest,
+    CatalogResponse, CatalogSourceView, EnvelopeView, ExpandRequest,
     ExpandResponse, FetchRequest, FetchResponse, FragmentHint, FragmentView, GrantView,
     HostView, IndexRequest, OperationRequest, Operations, QueryRequest, QueryResponse,
     QueryResult, RelationView, RevokeGrantRequest, ScanRequest, ScanResponse, StatusReport,
@@ -34,6 +37,8 @@ use inseam_seams::SeamError;
 
 /// Characters of fragment text shown in hints and expand views.
 const PREVIEW_CHARS: usize = 280;
+/// Catalog entries one listing may return; counts still cover everything.
+const CATALOG_LIMIT_MAX: u32 = 10_000;
 
 pub struct OperationsPlugin;
 
@@ -273,8 +278,30 @@ impl Operations for OperationsService {
                 host: steward.host.id.clone(),
                 root: request.root,
                 rebuild: request.rebuild,
+                deep_budget: request.deep_budget,
             })
             .await
+    }
+
+    async fn catalog(&self, request: CatalogRequest) -> Result<CatalogResponse, SeamError> {
+        // Owner operation: not boundary-guarded (local transports only).
+        let limit = request.limit.clamp(1, CATALOG_LIMIT_MAX);
+        let selection = match request.filter {
+            CatalogFilter::All => CatalogSelection::All,
+            CatalogFilter::Indexed => CatalogSelection::Indexed,
+            CatalogFilter::Pending => CatalogSelection::Pending,
+        };
+        let counts = self.store.catalog_counts(request.host.as_ref()).await?;
+        let rows = self
+            .store
+            .catalog_rows(request.host.as_ref(), selection, limit)
+            .await?;
+        Ok(CatalogResponse {
+            sources: counts.sources,
+            indexed: counts.indexed,
+            pending: counts.pending,
+            entries: rows.iter().map(catalog_source_view).collect(),
+        })
     }
 
     async fn hosts(&self) -> Result<Vec<HostView>, SeamError> {
@@ -333,6 +360,8 @@ impl Operations for OperationsService {
             relations: stats.relations,
             keyed_fragments: stats.keyed_fragments,
             search_rows,
+            store_bytes: stats.store_bytes,
+            content_bytes: stats.content_bytes,
             embedding_model: identity.as_ref().map(|(m, _)| m.clone()),
             embedding_dimensions: identity.map(|(_, d)| d).unwrap_or(0),
             reembed_pending: self.store.reembed_pending(),
@@ -349,6 +378,16 @@ async fn grant_view(grant: &dyn Grant) -> GrantView {
         client_id_env: spec.client_id_env.clone(),
         client_secret_env: spec.client_secret_env.clone(),
         state: grant.state().await,
+    }
+}
+
+fn catalog_source_view(row: &CatalogRow) -> CatalogSourceView {
+    CatalogSourceView {
+        address: row.address.clone(),
+        indexed: row.indexed,
+        content_type: row.content_type.to_string(),
+        raw_bytes: row.raw_bytes,
+        modified: row.modified.map(ymd),
     }
 }
 

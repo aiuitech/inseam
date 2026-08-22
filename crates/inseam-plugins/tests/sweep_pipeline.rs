@@ -69,6 +69,7 @@ async fn index_with(concurrency: usize, corpus: &std::path::Path) -> (inseam_ker
             host: None,
             root: corpus.display().to_string(),
             rebuild: false,
+            deep_budget: None,
         })
         .await
         .expect("sweeps");
@@ -111,6 +112,7 @@ async fn indexing_fills_the_envelope_content_digest_from_the_bytes_it_reads() {
             host: None,
             root: corpus.path().display().to_string(),
             rebuild: false,
+            deep_budget: None,
         })
         .await
         .expect("sweeps");

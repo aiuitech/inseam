@@ -18,7 +18,7 @@ inseam scan <address> --start 120 --end 160   # read a line range of a source
 inseam fetch <address>              # the whole source
 inseam agent "when did I ...?"      # a live LLM using query/expand/scan/fetch as tools
 inseam models [--embeddings]        # the endpoint's model catalog, cheapest first
-inseam status                       # store stats, embedding info, pending re-embeds
+inseam status                       # store stats, sizes (on disk; content cataloged), embedding info, pending re-embeds
 inseam plugins                      # every running plugin, its state, and its live effects
 inseam seams [--wit]                # seams that take loaded plugins; --wit prints the contract (plugins/authoring-cli.md)
 inseam capabilities                 # what a manifest may request, and what this node grants right now

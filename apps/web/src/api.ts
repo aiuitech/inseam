@@ -39,6 +39,8 @@ export type StatusReport = {
   relations: number
   keyed_fragments: number
   search_rows: number
+  store_bytes: number
+  content_bytes: number
   embedding_model: string | null
   embedding_dimensions: number
   reembed_pending: boolean

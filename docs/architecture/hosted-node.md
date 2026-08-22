@@ -49,6 +49,10 @@ inseam serve --index-root documents=/srv/inseam/hosts/documents
 
 The client sends `documents`; the transport resolves the configured path
 before it calls `operations.index`. At most 64 unique root IDs may be active.
+The same request may carry `deep_budget` (`"catalog_only"`, `{"sources": N}`,
+or `"unlimited"`) to override the composition's `sweep.max_sources` for that
+run; `POST /api/v1/owner/catalog` lists the catalog (`host`, `filter` =
+`all` | `indexed` | `pending`, `limit`).
 
 ## Web console
 

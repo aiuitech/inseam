@@ -202,6 +202,7 @@ async fn loaded_ocr_transcribes_images_through_the_seam() {
             host: None,
             root: corpus.path().display().to_string(),
             rebuild: false,
+            deep_budget: None,
         })
         .await
         .expect("indexes");
@@ -266,6 +267,7 @@ async fn loaded_ocr_transcribes_images_through_the_seam() {
             host: None,
             root: corpus.path().display().to_string(),
             rebuild: false,
+            deep_budget: None,
         })
         .await
         .expect("sweeps");

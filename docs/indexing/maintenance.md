@@ -13,12 +13,20 @@ Every `inseam index <scope>` run is a **reconciling sweep** over one host ([conn
 
 Deep indexing is a pipeline ([design/indexing.md](../../design/indexing.md)):
 
-1. **Decide** — one pass over the listing marks each source unchanged, past the cutoff, catalog-only (past `max_sources`), or dirty. Catalog-only rows are written in batches.
+1. **Decide** — one pass over the listing marks each source unchanged, past the cutoff, catalog-only (past the run's deep budget), or dirty. Catalog-only rows are written in batches.
 2. **Plan** — dirty sources are planned `concurrency` at a time (default 8). Planning is where the time goes: the content is read and every transform claiming a fragment runs — all claimants of one fragment at once, so a summary and an entity extraction of the same section are in flight together — producing the source's whole subtree as data, with no store writes.
 3. **Land** — each plan lands in one store transaction, in enumeration order regardless of which finished first, so the index a run builds (fragment ids included) does not depend on `concurrency`.
 4. **Embed** — the landed plan's text rows stream to the embedding stage, which embeds batches of 128 concurrently and lands them in order together with the `indexed` marks of the sources they complete. A source is marked indexed only once every one of its rows is searchable, so a crash mid-run leaves it dirty, never half-searchable.
 
 LLM budgets stay exact under concurrency: every application of a transform shares one per-run meter, and each call reserves against it atomically before it is made.
+
+## Ingest first, index later: the deep budget
+
+How many sources one run deep-indexes is the run's **deep budget**. The composition's `sweep.max_sources` is the steady state (`0` = unlimited); `inseam index` overrides it for one run with `--catalog-only` (deep-index nothing) or `--max-sources N`. The override never outlives the run — the next unqualified run is back on the composition's dial.
+
+`inseam index <scope> --catalog-only` is the ingest run: every enumerated source lands in the catalog as address + envelope (and so enters address sync), no transform runs, no LLM is spent, and every row is left catalog-only — no shape stamp — so the next run with budget deep-indexes it. There is no separate ingest command because there is no separate mechanism: cataloging is the first half of every sweep; the budget only decides whether the second half happens now.
+
+`inseam catalog` lists what the catalog holds — `--pending` for sources that are cataloged but not yet deep-indexed (catalog-only, past the cutoff, or interrupted), `--indexed` for the ones with a landed subtree — with counts over the whole selection whatever `--limit` shows.
 
 ## Shape staleness: re-index only what a change touches
 
@@ -34,7 +42,7 @@ On a later sweep, the expected stamp is recomputed from the *current* transforms
 Which entry changed decides how much re-work happens ([configuration.md](../configuration.md)):
 
 - **Query-time** (`finder`, the llm entry's models) — never re-indexes.
-- **Run limits** (`sweep.max_sources`, `sweep.concurrency`, per-transform `llm_call_budget`) — never re-indexes; they just bound or pace each run, so a big rebuild spreads across as many sweeps as the budgets allow.
+- **Run limits** (`sweep.max_sources` and the `--catalog-only` / `--max-sources` overrides, `sweep.concurrency`, per-transform `llm_call_budget`) — never re-indexes; they just bound or pace each run, so a big rebuild spreads across as many sweeps as the budgets allow.
 - **Shape** (transform configs, transform mounts/unmounts, the sweep's `max_depth`/`max_fragments_per_source`/`max_content_bytes`, the llm `transform_model` for transforms that use it) — stamps stop matching; affected sources re-index on their next sweep.
 - **Embedding** (the `embedder` entry) — only the in-place re-embed.
 

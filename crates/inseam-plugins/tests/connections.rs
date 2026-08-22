@@ -52,6 +52,7 @@ async fn a_node_stewards_several_hosts_and_scopes_are_explicit() {
             host: None,
             root: corpus.path().display().to_string(),
             rebuild: false,
+            deep_budget: None,
         })
         .await;
     assert!(matches!(ambiguous, Err(SeamError::AmbiguousHost(h)) if h.len() == 2));
@@ -62,6 +63,7 @@ async fn a_node_stewards_several_hosts_and_scopes_are_explicit() {
             host: Some(HostId::new("fs-two").expect("valid")),
             root: corpus.path().display().to_string(),
             rebuild: false,
+            deep_budget: None,
         })
         .await
         .expect("indexes");
@@ -77,6 +79,7 @@ async fn a_node_stewards_several_hosts_and_scopes_are_explicit() {
             host: Some(HostId::new("gmail-nobody").expect("valid")),
             root: "INBOX".to_string(),
             rebuild: false,
+            deep_budget: None,
         })
         .await;
     assert!(matches!(unknown, Err(SeamError::UnknownHost(_))));

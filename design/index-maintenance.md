@@ -65,6 +65,11 @@ Out-of-cutoff sources are still *cataloged* (address + envelope, no fragments) w
 - **Eviction on scope shrinkage.** Rejected — see above; deletion of valid, paid-for index data must be explicit.
 - **A composition-version counter instead of a stamp.** A counter invalidates on *any* composition edit, including query-time tiers; the stamp invalidates only on entries that change what a subtree looks like.
 
+## Settled since
+
+- **"Ingest" is a budget, not a process.** Cataloging every enumerated source — address + envelope, no fragments — is already the first half of every sweep; what was missing was a way to ask for *only* that half. The deep budget is now a value (`DeepBudget`: unlimited, *n* sources, or catalog-only) the composition sets steadily through `sweep.max_sources` and a request overrides for one run (`inseam index --catalog-only`, `--max-sources`). A catalog-only run lands every address into the catalog (and so into address sync) and leaves each row stamp-less, so later budgeted runs finish it — the same convergence a `max_sources` cap already relied on. It sits in the run-metering tier: changing it invalidates nothing. *Rejected:* a separate `ingest` command or stage — it would be a second maintenance system whose output the sweep then has to reconcile with; the sweep already has the catalog-only path, and one mechanism stays one. *Rejected:* keeping `0 = unlimited` as the only spelling — a sentinel cannot say "zero"; the config key keeps its documented shape and is parsed into the enum at the boundary.
+- **The catalog is listable.** `inseam catalog` (the `catalog` owner operation) shows what the node knows, split into deep-indexed and pending, with counts over the whole selection however many entries are shown. "Indexed" means one thing everywhere — a landed subtree with a shape stamp — so a catalog-only row (marked seen, no stamp) reads as pending in listings and in `status` alike.
+
 ## Open questions
 
 - Whether a loaded transform's version bump always invalidates (artifact version is in the stamp) or its manifest may declare a release shape-compatible ("output unchanged, bug fix only") to skip the re-spend — and whether trusting that claim is acceptable, since the cost of a lie is staleness, not compromise.
