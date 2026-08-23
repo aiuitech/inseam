@@ -1,0 +1,14 @@
+# The hosted profile stays useful without an external model endpoint. Add an
+# llm entry and switch the embedder to endpoint mode when the node has a key.
+[[entry]]
+id = "llm"
+disabled = true
+
+[[entry]]
+id = "embedder"
+plugin = "embedder"
+
+[entry.config]
+provider = "hashed"
+model = "hashed"
+dimensions = 384

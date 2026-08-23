@@ -1,0 +1,18 @@
+services:
+  node:
+    build:
+      context: ../..
+      dockerfile: deploy/hosted/Dockerfile
+    restart: unless-stopped
+    environment:
+      INSEAM_OWNER_TOKEN: ${INSEAM_OWNER_TOKEN:?set a random owner token of at least 32 bytes}
+      INSEAM_INDEX_ROOTS: documents=/srv/inseam/hosts/documents
+      INSEAM_COOKIE_SECURITY: ${INSEAM_COOKIE_SECURITY:-secure}
+    ports:
+      - "127.0.0.1:7337:7337"
+    volumes:
+      - node-data:/var/lib/inseam
+      - ./documents:/srv/inseam/hosts/documents:ro
+
+volumes:
+  node-data:

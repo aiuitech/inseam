@@ -20,7 +20,7 @@ Operations are typed request/response messages with no transport assumptions (no
 
 Adapters are transport [plugins](plugins.md) translating a wire protocol into operation calls and back. Shipping in the first distributions:
 
-- **HTTP/JSON** — `inseam serve` exposes the operations as a plain request/response API; the obvious integration path for external services.
+- **HTTP/JSON** — `inseam serve` exposes an authenticated owner API and may serve the shared Vite console. The external property-filtered boundary remains a separate route scope and is not built yet.
 - **MCP** — the same operations exposed as MCP tools (stdio for local agents, streamable HTTP for remote ones). This is how AI agents get inseam as a context engine without any custom integration.
 - **CLI** — the same binary invoking operations directly: in-process against the local data, or against a running node.
 
@@ -49,3 +49,11 @@ So the example flow: my external service calls `query("some topic", properties: 
 - Caller registration and credential scheme; scoping a caller's verifier trust.
 - Streaming large fetch results through adapters.
 - Boundary hardening: rate limits, quotas, audit logging of external access.
+
+## Settled since
+
+- **The first HTTP transport is owner-only.** It uses a signed `HttpOnly`
+  session cookie and route-level owner authentication. This makes the hosted
+  node useful without claiming that caller registration and verified-property
+  filtering are finished. Index calls name an operator-configured root ID;
+  the browser never sends an arbitrary server path.

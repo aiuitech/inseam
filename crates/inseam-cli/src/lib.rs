@@ -10,11 +10,12 @@
 
 mod registry;
 
-use std::path::PathBuf;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{bail, Context};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 mod agent;
 mod authoring;
@@ -149,6 +150,37 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Keep this node running and serve its authenticated owner web API.
+    Serve {
+        /// Address for the HTTP listener. The loopback default is safe for
+        /// local use; a hosted node opts into a public listener explicitly.
+        #[arg(long, env = "INSEAM_HTTP_BIND", default_value = "127.0.0.1:7337")]
+        bind: SocketAddr,
+        /// Owner token used only to create signed browser sessions. Prefer
+        /// INSEAM_OWNER_TOKEN so the value does not appear in process lists.
+        #[arg(long, env = "INSEAM_OWNER_TOKEN", hide_env_values = true)]
+        owner_token: String,
+        /// Approved indexing scope in `id=/absolute/path` form. The web API
+        /// accepts the id and never accepts a raw filesystem path.
+        #[arg(
+            long = "index-root",
+            env = "INSEAM_INDEX_ROOTS",
+            value_delimiter = ',',
+            value_name = "ID=PATH"
+        )]
+        index_roots: Vec<String>,
+        /// Built Vite directory to serve. Without it, only the API is served.
+        #[arg(long, env = "INSEAM_WEB_DIR")]
+        web_dir: Option<PathBuf>,
+        /// Cookie policy. Use local-http only for an HTTP development server.
+        #[arg(
+            long,
+            env = "INSEAM_COOKIE_SECURITY",
+            value_enum,
+            default_value_t = CookieMode::Secure
+        )]
+        cookie: CookieMode,
+    },
     /// Index a scope of one host this node stewards (read-only): a
     /// directory for the filesystem host, a label or folder for a service
     /// host. `root` may also be an address, `inseam://<host>/<root>`, which
@@ -240,6 +272,21 @@ enum Command {
         #[arg(long)]
         resolved: bool,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CookieMode {
+    Secure,
+    LocalHttp,
+}
+
+impl From<CookieMode> for inseam_http::CookieSecurity {
+    fn from(mode: CookieMode) -> Self {
+        match mode {
+            CookieMode::Secure => Self::Secure,
+            CookieMode::LocalHttp => Self::LocalHttp,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -411,6 +458,31 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
     }
 
     match cli.command {
+        Command::Serve {
+            bind,
+            owner_token,
+            index_roots,
+            web_dir,
+            cookie,
+        } => {
+            let roots = index_roots
+                .iter()
+                .map(|value| parse_http_index_root(value))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            let operations = kernel.service(&OPERATIONS)?;
+            inseam_http::serve(
+                inseam_http::ServerConfig {
+                    bind,
+                    owner_token,
+                    cookie_security: cookie.into(),
+                    index_roots: roots,
+                    web_dir,
+                },
+                operations,
+                shutdown_signal(),
+            )
+            .await?;
+        }
         Command::Index { root, host, rebuild } => {
             let ops = kernel.service(&OPERATIONS)?;
             let (host, root) = index_scope(&root, host.as_deref())?;
@@ -676,6 +748,22 @@ fn composition_path_of(cli: &Cli, data_dir: &std::path::Path) -> PathBuf {
     cli.composition
         .clone()
         .unwrap_or_else(|| data_dir.join("composition.toml"))
+}
+
+fn parse_http_index_root(value: &str) -> anyhow::Result<inseam_http::IndexRoot> {
+    let (id, path) = value
+        .split_once('=')
+        .with_context(|| format!("index root `{value}` must use ID=PATH"))?;
+    if !Path::new(path).is_absolute() {
+        bail!("index root `{id}` path must be absolute: `{path}`");
+    }
+    Ok(inseam_http::IndexRoot::new(id, path)?)
+}
+
+async fn shutdown_signal() {
+    if let Err(error) = tokio::signal::ctrl_c().await {
+        tracing::error!(%error, "could not listen for the shutdown signal");
+    }
 }
 
 fn load_composition(

@@ -3,6 +3,7 @@
 The `inseam` binary is a distribution: the first-party linked plugins, the WASM plugin host, and a base composition. Every command is a thin call on the node's `operations` interface ([design/node-api.md](../design/node-api.md)). Global flags: `--data-dir` (`INSEAM_DATA_DIR`), `--composition` (`INSEAM_COMPOSITION`); see [configuration.md](configuration.md).
 
 ```sh
+inseam serve                       # authenticated owner HTTP API; --web-dir also serves the Vite build
 inseam index ~/Data                 # index a scope of a host (read-only): picks up new, changed,
                                     # and deleted sources, plus config changes; --rebuild forces.
                                     # --host <id> names the host once several are mounted;
@@ -28,5 +29,14 @@ inseam plugin mount <artifact.wasm> # append a local artifact to the composition
 inseam plugin install <name>        # fetch from the registry, verify, check, mount (plugins/registry.md)
 inseam config [--resolved]          # the composition; --resolved = exactly what the node boots with
 ```
+
+`inseam serve` requires `INSEAM_OWNER_TOKEN` or `--owner-token` with at least
+32 bytes. It listens on `127.0.0.1:7337` by default. A browser may index only
+roots the operator names with repeated `--index-root id=/absolute/path` flags
+or comma-separated `INSEAM_INDEX_ROOTS`. `--cookie local-http` or
+`INSEAM_COOKIE_SECURITY=local-http` permits the session cookie on an HTTP
+development server; hosted nodes keep the secure default and terminate TLS in
+front of the listener. See
+[architecture/hosted-node.md](architecture/hosted-node.md).
 
 If part of the configuration can't start (say the default `endpoint` embedder with no API key set), the node prints a warning naming each waiting entry and what it's missing. Commands that need those parts fail with the same message; everything else keeps working. `inseam plugins` is the diagnostic view. The quickest offline setup is a `composition.toml` that switches the embedder to `hashed` ([configuration.md](configuration.md) has the example).

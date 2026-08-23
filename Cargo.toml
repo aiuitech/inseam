@@ -6,6 +6,7 @@ members = [
     "crates/inseam-plugins",
     "crates/inseam-conformance",
     "crates/inseam-wasm-host",
+    "crates/inseam-http",
     "crates/inseam-cli",
     "crates/inseam-ffi",
     "xtask",
@@ -17,6 +18,7 @@ edition = "2024"
 
 [workspace.dependencies]
 inseam-kernel = { path = "crates/inseam-kernel" }
+inseam-http = { path = "crates/inseam-http" }
 inseam-seams = { path = "crates/inseam-seams" }
 inseam-plugins = { path = "crates/inseam-plugins" }
 inseam-conformance = { path = "crates/inseam-conformance" }
@@ -24,12 +26,14 @@ inseam-wasm-host = { path = "crates/inseam-wasm-host" }
 
 anyhow = "1.0.104"
 async-trait = "0.1.89"
+axum = "0.8.6"
 base64 = "0.22.1"
 blake3 = "1.8.2"
 clap = { version = "4.6.6", features = ["derive", "env"] }
 dirs = "6.0.0"
 gethostname = "1.1.0"
 globset = "0.4.20"
+hmac = "0.12.1"
 ignore = "0.4.23"
 libsql = { version = "0.9.30", default-features = false, features = ["core"] }
 mime_guess = "2.0.5"
@@ -39,8 +43,11 @@ reqwest = { version = "0.13.4", default-features = false, features = ["json", "r
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.10.9"
+subtle = "2.6.1"
 thiserror = "2.0.20"
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "fs", "sync", "net", "io-util", "time"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "fs", "sync", "net", "io-util", "time", "signal"] }
+tower = { version = "0.5.2", features = ["limit", "util"] }
+tower-http = { version = "0.6.6", features = ["fs", "timeout", "trace"] }
 futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
 toml = "1.1.4"
 tracing = "0.1.44"
