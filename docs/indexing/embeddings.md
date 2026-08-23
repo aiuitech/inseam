@@ -67,4 +67,4 @@ vectors = "summaries"
 
 ## Wire format
 
-Embeddings are requested as base64 (`encoding_format: "base64"`): each vector arrives as one packed little-endian `f32` array instead of hundreds of decimal literals — less than half the bytes and a straight byte copy instead of float parsing. Endpoints that ignore the parameter (some OpenAI-compatible servers) still answer with JSON floats; both shapes are read. Requests carry 64 inputs each, and the sweep embeds four batches of 128 rows concurrently ([maintenance.md](maintenance.md)).
+Embeddings are requested as base64 (`encoding_format: "base64"`): each vector arrives as one packed little-endian `f32` array instead of hundreds of decimal literals — less than half the bytes and a straight byte copy instead of float parsing. Endpoints that ignore the parameter (some OpenAI-compatible servers) still answer with JSON floats; both shapes are read. Each request carries one complete 128-row sweep batch, and four requests run concurrently, so as many as 512 inputs can be in flight without splitting a batch across extra round trips ([maintenance.md](maintenance.md)).

@@ -37,8 +37,9 @@ use inseam_seams::SeamError;
 use ollama::{EmbeddingModelVerdict, OllamaApi};
 
 const RETRIES: u32 = 3;
-/// Inputs per embeddings request; keeps request bodies comfortably bounded.
-const EMBED_BATCH: usize = 64;
+/// Inputs per embeddings request; matches the sweep's row batch so one
+/// landed batch costs one endpoint round trip.
+const EMBED_BATCH: usize = 128;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]

@@ -7,13 +7,12 @@ The first benchmark is [EnterpriseRAG-Bench](https://github.com/onyx-dot-app/Ent
 - Python 3.10 or newer
 - `git`, `curl`, and `unzip` on `PATH`
 - the `inseam` CLI on `PATH`
-- Ollama on `localhost:11434` with `qwen3.5:9b` and `all-minilm:l6-v2` installed
 - `OPENROUTER_API_KEY`
 - enough local disk for the 1.26 GB download, its extracted files, and a fresh Inseam index. Reserve at least 20 GB before a full run.
 
-The indexed node is local: `qwen3.5:9b` handles summaries, entity extraction, and answers through Ollama, while `all-minilm:l6-v2` embeds one 200-character summary per source at its native 384 dimensions. Markdown splitting and chunking are disabled; source text still enters full-text search. `stealth/ox-alpha` remains the independent OpenRouter evaluator for citation cleanup, correctness scoring, and fact scoring, so `OPENROUTER_API_KEY` is still required.
+The harness uses `stealth/ox-alpha` through OpenRouter for summaries, entity extraction, answers, citation cleanup, correctness scoring, and fact scoring. `openai/text-embedding-3-small` embeds one 200-character summary per source at 384 dimensions. Markdown splitting and chunking are disabled; source text still enters full-text search.
 
-The default run limits summaries and entity extraction to 500 LLM calls each. Inseam uses its deterministic fallback after a transform spends its budget. Raise `--llm-call-budget` only after estimating the runtime. The composition requests base64 embedding responses through Inseam, reducing Ollama response bytes and JSON parsing without changing vector values.
+The default run limits summaries and entity extraction to 500 LLM calls each. Inseam uses its deterministic fallback after a transform spends its budget. Raise `--llm-call-budget` only after estimating the cost and runtime. Embeddings use base64 responses and 128 inputs per request, with four requests in flight. Chat summaries do not share a request; the source concurrency bounds those calls.
 
 ## Set up the fixture
 
@@ -36,7 +35,9 @@ python3 benchmarks/enterprise_rag_bench.py run
 
 A full run creates a fresh index and evaluates all 500 questions. It can take hours and makes many embedding and LLM requests. `--limit` limits questions and evaluator work, but indexing still covers the full corpus so retrieval scores remain meaningful.
 
-The runner prints each active phase immediately. Before questions it runs a timed `inseam repair` step named “Preparing libSQL vector search index”; this is normally instant, but on a node created before vector indexing it performs the one-time in-place conversion and DiskANN build. The repair reuses the resident vectors and does not rerun source indexing or embedding. While an `inseam` command is still running, the runner prints an elapsed-time heartbeat every five seconds; query progress also includes the question number and ID. The current phase is mirrored in `manifest.json`, so a second terminal can distinguish indexing, querying, and evaluation without inspecting processes.
+The runner prints each active phase immediately. During indexing it polls `inseam status` every 30 seconds and prints elapsed time, fully indexed sources against the fixture total, cataloged sources, and search rows. A failed status probe reports `status unavailable` but does not fail the index. Other long commands retain their five-second elapsed-time heartbeat.
+
+Before questions the runner runs a timed `inseam repair` step named “Preparing libSQL vector search index”; this is normally instant, but on a node created before vector indexing it performs the one-time in-place conversion and DiskANN build. The repair reuses the resident vectors and does not rerun source indexing or embedding. Query progress includes the question number and ID. The current phase is mirrored in `manifest.json`, so a second terminal can distinguish indexing, querying, and evaluation without inspecting processes.
 
 For a one-question harness check after setup:
 

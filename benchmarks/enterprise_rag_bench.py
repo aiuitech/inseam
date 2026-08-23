@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -28,10 +28,9 @@ UPSTREAM_URL = "https://github.com/onyx-dot-app/EnterpriseRAG-Bench.git"
 RELEASE_URL = f"https://github.com/onyx-dot-app/EnterpriseRAG-Bench/releases/download/{RELEASE}"
 ARCHIVE_SHA256 = "9d1174928696ad08bc15f3f104739519de633c1605a4ec2034e0e3c0087bc5cd"
 QUESTIONS_SHA256 = "f9524b9157cd43aae36b99333a124738804306ea6d07f332d49faa6d3d147905"
-NODE_MODEL = "qwen3.5:9b"
-EMBEDDING_MODEL = "all-minilm:l6-v2"
-EVALUATOR_MODEL = "stealth/ox-alpha"
-OLLAMA_BASE_URL = "http://localhost:11434/v1"
+MODEL = "stealth/ox-alpha"
+EMBEDDING_MODEL = "openai/text-embedding-3-small"
+EMBEDDING_DIMENSIONS = 384
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 MAX_QUESTIONS = 1_000
 MAX_TURNS = 64
@@ -47,8 +46,13 @@ AGENT_TIMEOUT_SECONDS = 1_800
 INDEX_TIMEOUT_SECONDS = 259_200
 EVALUATION_TIMEOUT_SECONDS = 604_800
 PROGRESS_INTERVAL_SECONDS = 5
+INDEX_PROGRESS_INTERVAL_SECONDS = 30
 DOCUMENT_ID_PATTERN = re.compile(r"dsid_[0-9a-f]{32}")
 RUN_ID_PATTERN = re.compile(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}")
+STATUS_SOURCE_PATTERN = re.compile(
+    r"^sources\s+(\d+) \((\d+) indexed\)$", re.MULTILINE
+)
+STATUS_SEARCH_ROWS_PATTERN = re.compile(r"^search rows\s+(\d+)$", re.MULTILINE)
 INDEX_SOURCE_PATTERN = re.compile(
     r"(\d+) sources seen: (\d+) indexed, (\d+) unchanged, (\d+) catalog-only, "
     r"(\d+) past cutoff, (\d+) ignored"
@@ -101,11 +105,14 @@ def run_capture(
     *,
     timeout_seconds: int,
     progress_label: str | None = None,
+    progress_probe: Callable[[float], str] | None = None,
+    progress_interval_seconds: int = PROGRESS_INTERVAL_SECONDS,
     cwd: Path = REPOSITORY_ROOT,
     environment: dict[str, str] | None = None,
 ) -> CommandResult:
     assert arguments
     assert timeout_seconds > 0
+    assert progress_interval_seconds > 0
     started = time.monotonic()
     if progress_label is not None:
         print(f"{progress_label}...", flush=True)
@@ -118,7 +125,14 @@ def run_capture(
         text=True,
     )
     try:
-        result = run_capture_wait(process, started, timeout_seconds, progress_label)
+        result = run_capture_wait(
+            process,
+            started,
+            timeout_seconds,
+            progress_label,
+            progress_probe,
+            progress_interval_seconds,
+        )
     except KeyboardInterrupt:
         process.terminate()
         run_capture_reap(process)
@@ -135,19 +149,28 @@ def run_capture_wait(
     started: float,
     timeout_seconds: int,
     progress_label: str | None,
+    progress_probe: Callable[[float], str] | None,
+    progress_interval_seconds: int,
 ) -> CommandResult:
-    heartbeat_count = (timeout_seconds + PROGRESS_INTERVAL_SECONDS - 1) // PROGRESS_INTERVAL_SECONDS
+    heartbeat_count = (
+        timeout_seconds + progress_interval_seconds - 1
+    ) // progress_interval_seconds
     assert heartbeat_count > 0
     for _heartbeat_index in range(heartbeat_count):
         elapsed_seconds = time.monotonic() - started
         remaining_seconds = timeout_seconds - elapsed_seconds
-        wait_seconds = min(PROGRESS_INTERVAL_SECONDS, max(0.001, remaining_seconds))
+        wait_seconds = min(progress_interval_seconds, max(0.001, remaining_seconds))
         try:
             stdout, stderr = process.communicate(timeout=wait_seconds)
         except subprocess.TimeoutExpired:
             if progress_label is not None:
                 elapsed_seconds = time.monotonic() - started
-                print(f"{progress_label}: {format_duration(elapsed_seconds)} elapsed", flush=True)
+                detail = (
+                    progress_probe(elapsed_seconds)
+                    if progress_probe is not None
+                    else f"{format_duration(elapsed_seconds)} elapsed"
+                )
+                print(f"{progress_label}: {detail}", flush=True)
         else:
             duration_seconds = time.monotonic() - started
             assert duration_seconds >= 0.0
@@ -181,12 +204,58 @@ def format_duration(duration_seconds: float) -> str:
     return f"{hours}h {minutes:02d}m"
 
 
+def format_index_progress(
+    status_output: str, document_count: int, elapsed_seconds: float
+) -> str:
+    assert document_count > 0
+    sources = STATUS_SOURCE_PATTERN.search(status_output)
+    search_rows = STATUS_SEARCH_ROWS_PATTERN.search(status_output)
+    if sources is None or search_rows is None:
+        raise BenchmarkError("`inseam status` output has no indexing counts")
+    cataloged = int(sources.group(1))
+    indexed = int(sources.group(2))
+    if indexed > cataloged or cataloged > document_count:
+        raise BenchmarkError("`inseam status` returned impossible indexing counts")
+    return (
+        f"{format_duration(elapsed_seconds)} elapsed · "
+        f"{indexed:,} / {document_count:,} indexed · "
+        f"{cataloged:,} cataloged · {int(search_rows.group(1)):,} search rows"
+    )
+
+
+def read_index_progress(
+    data_dir: Path,
+    composition: Path,
+    document_count: int,
+    elapsed_seconds: float,
+) -> str:
+    result = run_capture(
+        [
+            "inseam",
+            "--data-dir",
+            str(data_dir),
+            "--composition",
+            str(composition),
+            "status",
+        ],
+        timeout_seconds=METADATA_TIMEOUT_SECONDS,
+    )
+    if result.returncode != 0:
+        return f"{format_duration(elapsed_seconds)} elapsed · status unavailable"
+    try:
+        return format_index_progress(result.stdout, document_count, elapsed_seconds)
+    except BenchmarkError:
+        return f"{format_duration(elapsed_seconds)} elapsed · status unavailable"
+
+
 def run_logged(
     arguments: list[str],
     log_path: Path,
     *,
     timeout_seconds: int,
     progress_label: str | None = None,
+    progress_probe: Callable[[float], str] | None = None,
+    progress_interval_seconds: int = PROGRESS_INTERVAL_SECONDS,
     cwd: Path = REPOSITORY_ROOT,
     environment: dict[str, str] | None = None,
 ) -> CommandResult:
@@ -194,6 +263,8 @@ def run_logged(
         arguments,
         timeout_seconds=timeout_seconds,
         progress_label=progress_label,
+        progress_probe=progress_probe,
+        progress_interval_seconds=progress_interval_seconds,
         cwd=cwd,
         environment=environment,
     )
@@ -481,17 +552,17 @@ ignore = []
 [[entry]]
 id = "llm"
 [entry.config]
-base_url = "{OLLAMA_BASE_URL}"
-api_key_env = ""
-transform_model = "{NODE_MODEL}"
-transform_reasoning_effort = "none"
-agent_model = "{NODE_MODEL}"
+base_url = "{OPENROUTER_BASE_URL}"
+api_key_env = "OPENROUTER_API_KEY"
+transform_model = "{MODEL}"
+agent_model = "{MODEL}"
 
 [[entry]]
 id = "embedder"
 [entry.config]
 provider = "endpoint"
 model = "{EMBEDDING_MODEL}"
+dimensions = {EMBEDDING_DIMENSIONS}
 vectors = "summaries"
 
 [[entry]]
@@ -608,7 +679,7 @@ def question_commands(
             "agent",
             question_text,
             "--model",
-            NODE_MODEL,
+            MODEL,
             "--turns",
             str(options.turns),
         ],
@@ -762,11 +833,12 @@ def create_run(options: RunOptions) -> tuple[Path, Path, dict[str, Any]]:
             "questions_sha256": QUESTIONS_SHA256,
         },
         "models": {
-            "summarization": NODE_MODEL,
-            "entity_extraction": NODE_MODEL,
-            "answer_generation": NODE_MODEL,
-            "answer_evaluation": EVALUATOR_MODEL,
+            "summarization": MODEL,
+            "entity_extraction": MODEL,
+            "answer_generation": MODEL,
+            "answer_evaluation": MODEL,
             "embeddings": EMBEDDING_MODEL,
+            "embedding_dimensions": EMBEDDING_DIMENSIONS,
         },
         "timeouts_seconds": {
             "setup_command": SETUP_TIMEOUT_SECONDS,
@@ -776,6 +848,7 @@ def create_run(options: RunOptions) -> tuple[Path, Path, dict[str, Any]]:
             "evaluation": EVALUATION_TIMEOUT_SECONDS,
         },
         "progress_interval_seconds": PROGRESS_INTERVAL_SECONDS,
+        "index_progress_interval_seconds": INDEX_PROGRESS_INTERVAL_SECONDS,
         "options": vars(options),
         "system": system_specs(),
         "inseam": inseam_identity(),
@@ -793,8 +866,12 @@ def create_run(options: RunOptions) -> tuple[Path, Path, dict[str, Any]]:
 def index_documents(run_dir: Path, data_dir: Path, composition: Path) -> dict[str, Any]:
     document_count = fixture_document_count()
     progress_label = "Indexing benchmark documents"
+    progress_probe: Callable[[float], str] | None = None
     if document_count is not None:
         progress_label = f"Indexing {document_count:,} benchmark documents"
+        progress_probe = lambda elapsed_seconds: read_index_progress(
+            data_dir, composition, document_count, elapsed_seconds
+        )
     started_at = utc_now()
     result = run_logged(
         [
@@ -809,6 +886,8 @@ def index_documents(run_dir: Path, data_dir: Path, composition: Path) -> dict[st
         run_dir / "logs" / "index.log",
         timeout_seconds=INDEX_TIMEOUT_SECONDS,
         progress_label=progress_label,
+        progress_probe=progress_probe,
+        progress_interval_seconds=INDEX_PROGRESS_INTERVAL_SECONDS,
     )
     finished_at = utc_now()
     require_success(result, "indexing EnterpriseRAG-Bench")
@@ -957,8 +1036,8 @@ def evaluator_environment() -> dict[str, str]:
         {
             "LLM_PROVIDER": "openai",
             "LLM_API_KEY": api_key,
-            "LLM_MODEL_NAME": EVALUATOR_MODEL,
-            "CHEAP_LLM_MODEL_NAME": EVALUATOR_MODEL,
+            "LLM_MODEL_NAME": MODEL,
+            "CHEAP_LLM_MODEL_NAME": MODEL,
             "OPENAI_BASE_URL": OPENROUTER_BASE_URL,
         }
     )
@@ -1301,11 +1380,12 @@ def validate_resumable_manifest(run_id: str, manifest: dict[str, Any]) -> None:
     if benchmark != expected_benchmark:
         raise BenchmarkError(f"run `{run_id}` uses different benchmark inputs")
     expected_models = {
-        "summarization": NODE_MODEL,
-        "entity_extraction": NODE_MODEL,
-        "answer_generation": NODE_MODEL,
-        "answer_evaluation": EVALUATOR_MODEL,
+        "summarization": MODEL,
+        "entity_extraction": MODEL,
+        "answer_generation": MODEL,
+        "answer_evaluation": MODEL,
         "embeddings": EMBEDDING_MODEL,
+        "embedding_dimensions": EMBEDDING_DIMENSIONS,
     }
     if manifest.get("models") != expected_models:
         raise BenchmarkError(f"run `{run_id}` uses different models")

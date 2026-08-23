@@ -76,21 +76,66 @@ class EnterpriseRagBenchTests(unittest.TestCase):
         self.assertEqual(scores["document_hit_rate_pct"], 100.0)
         self.assertEqual(scores["mean_reciprocal_rank"], 0.75)
 
-    def test_composition_uses_lean_local_index(self) -> None:
+    def test_composition_uses_lean_remote_index(self) -> None:
         options = benchmark.RunOptions(1, 8, 12, 8, 500, 4, False)
 
         composition = benchmark.composition_text(options)
 
-        self.assertIn('base_url = "http://localhost:11434/v1"', composition)
-        self.assertIn('api_key_env = ""', composition)
-        self.assertIn('transform_model = "qwen3.5:9b"', composition)
-        self.assertIn('transform_reasoning_effort = "none"', composition)
-        self.assertIn('agent_model = "qwen3.5:9b"', composition)
-        self.assertIn('model = "all-minilm:l6-v2"', composition)
+        self.assertIn('base_url = "https://openrouter.ai/api/v1"', composition)
+        self.assertIn('api_key_env = "OPENROUTER_API_KEY"', composition)
+        self.assertIn('transform_model = "stealth/ox-alpha"', composition)
+        self.assertIn('agent_model = "stealth/ox-alpha"', composition)
+        self.assertNotIn("transform_reasoning_effort", composition)
+        self.assertIn('model = "openai/text-embedding-3-small"', composition)
+        self.assertIn('dimensions = 384', composition)
         self.assertIn('vectors = "summaries"', composition)
         self.assertIn('target_chars = 200', composition)
         self.assertEqual(composition.count("disabled = true"), 2)
         self.assertEqual(composition.count("llm_call_budget = 500"), 2)
+
+    def test_formats_index_progress_from_status(self) -> None:
+        status = (
+            "sources        12800 (12672 indexed)\n"
+            "search rows    12672\n"
+        )
+
+        progress = benchmark.format_index_progress(status, 511_962, 65.0)
+
+        self.assertEqual(
+            progress,
+            "1m 05s elapsed · 12,672 / 511,962 indexed · "
+            "12,800 cataloged · 12,672 search rows",
+        )
+
+    def test_index_uses_status_probe_every_thirty_seconds(self) -> None:
+        index_output = (
+            "1 sources seen: 1 indexed, 0 unchanged, 0 catalog-only, "
+            "0 past cutoff, 0 ignored\n"
+            "1 fragments, 0 relations, 0 keyed fragments anchored\n"
+            "summaries: 1 llm, 0 extractive, 0 envelope · "
+            "1 embedded · $0.001 spent\n"
+        )
+        command = benchmark.CommandResult(0, 1.0, index_output, "")
+        with mock.patch.object(
+            benchmark, "fixture_document_count", return_value=511_962
+        ):
+            with mock.patch.object(benchmark, "run_logged", return_value=command) as run:
+                benchmark.index_documents(Path("run"), Path("data"), Path("composition"))
+
+        self.assertEqual(
+            run.call_args.kwargs["progress_interval_seconds"],
+            benchmark.INDEX_PROGRESS_INTERVAL_SECONDS,
+        )
+        self.assertIsNotNone(run.call_args.kwargs["progress_probe"])
+
+    def test_failed_index_status_probe_keeps_heartbeat_alive(self) -> None:
+        failure = benchmark.CommandResult(1, 0.1, "", "store busy")
+        with mock.patch.object(benchmark, "run_capture", return_value=failure):
+            progress = benchmark.read_index_progress(
+                Path("data"), Path("composition"), 511_962, 30.0
+            )
+
+        self.assertEqual(progress, "30s elapsed · status unavailable")
 
     def test_formats_progress_durations_for_scanning(self) -> None:
         cases = [
@@ -175,6 +220,17 @@ class EnterpriseRagBenchTests(unittest.TestCase):
                 manifest["attempts"][0]["search_index_preparation"]
             )
             self.assertEqual(manifest["inseam"]["cli_version"], "inseam 9.9.9")
+            self.assertEqual(
+                manifest["models"],
+                {
+                    "summarization": "stealth/ox-alpha",
+                    "entity_extraction": "stealth/ox-alpha",
+                    "answer_generation": "stealth/ox-alpha",
+                    "answer_evaluation": "stealth/ox-alpha",
+                    "embeddings": "openai/text-embedding-3-small",
+                    "embedding_dimensions": 384,
+                },
+            )
             self.assertEqual(
                 manifest["scores"]["retrieval"]["average_document_recall_pct"],
                 100.0,
