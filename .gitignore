@@ -5,3 +5,5 @@ plugins/*/target
 .DS_Store
 .impeccable
 .claude
+/benchmark/fixtures/*
+!/benchmark/fixtures/.gitkeep

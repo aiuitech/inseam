@@ -1,0 +1,23 @@
+{
+  "skill_name": "inseam-benchmark",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Rerun EnterpriseRAG-Bench against the current inseam checkout and record a comparable full run.",
+      "expected_output": "Uses the pinned setup and run commands, refreshes the installed CLI if needed, verifies the completed manifest, and reports the recorded run without committing fixture data.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Do a one-question smoke check of our Inseam benchmark harness without paying for the upstream LLM judge.",
+      "expected_output": "Runs the harness with --limit 1 --skip-evaluation, explains that indexing still covers the full corpus, and verifies the retrieval-only run artifacts.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Compare our two latest EnterpriseRAG-Bench runs and tell me whether retrieval improved.",
+      "expected_output": "Checks comparability pins, options, dirty state, hardware, and question counts before comparing retrieval and upstream scores, index time, and per-query timings.",
+      "files": []
+    }
+  ]
+}

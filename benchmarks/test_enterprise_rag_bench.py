@@ -1,0 +1,163 @@
+"""Tests for the EnterpriseRAG-Bench harness boundary parsers and scores."""
+
+import json
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import enterprise_rag_bench as benchmark
+
+
+DOCUMENT_A = "dsid_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+DOCUMENT_B = "dsid_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+
+class EnterpriseRagBenchTests(unittest.TestCase):
+    def test_extracts_agent_answer_after_last_tool_result(self) -> None:
+        output = (
+            "· model stealth/ox-alpha\n\n"
+            "→ query {\"text\":\"question\"}\n"
+            "  ← query: 200 chars\n\n"
+            f"The answer cites inseam://enterprise-rag-bench/x/{DOCUMENT_A}_file.txt.\n\n"
+            "· 2 turns, 1 tool calls, $0.0000 spent\n"
+        )
+
+        answer = benchmark.extract_agent_answer(output)
+
+        self.assertEqual(
+            answer,
+            f"The answer cites inseam://enterprise-rag-bench/x/{DOCUMENT_A}_file.txt.",
+        )
+
+    def test_document_ids_keep_retrieval_order_and_dedupe(self) -> None:
+        values = [f"first {DOCUMENT_B}", f"repeat {DOCUMENT_B} then {DOCUMENT_A}"]
+
+        document_ids = benchmark.extract_document_ids(values)
+
+        self.assertEqual(document_ids, [DOCUMENT_B, DOCUMENT_A])
+
+    def test_parses_query_scores_without_changing_payload(self) -> None:
+        payload = {
+            "results": [
+                {
+                    "address": f"inseam://enterprise-rag-bench/x/{DOCUMENT_A}_file.txt",
+                    "score": 1.0,
+                }
+            ]
+        }
+
+        results = benchmark.parse_query_results(json.dumps(payload))
+
+        self.assertEqual(results, payload["results"])
+
+    def test_retrieval_scores_use_expected_documents(self) -> None:
+        questions = [
+            {"question_id": "qst_0001", "expected_doc_ids": [DOCUMENT_A]},
+            {"question_id": "qst_0002", "expected_doc_ids": [DOCUMENT_B]},
+            {"question_id": "qst_0003", "expected_doc_ids": []},
+        ]
+        queries = [
+            {"question_id": "qst_0001", "retrieved_document_ids": [DOCUMENT_A]},
+            {
+                "question_id": "qst_0002",
+                "retrieved_document_ids": [DOCUMENT_A, DOCUMENT_B],
+            },
+            {"question_id": "qst_0003", "retrieved_document_ids": []},
+        ]
+
+        scores = benchmark.retrieval_scores(queries, questions)
+
+        self.assertEqual(scores["questions_with_expected_documents"], 2)
+        self.assertEqual(scores["average_document_recall_pct"], 100.0)
+        self.assertEqual(scores["document_hit_rate_pct"], 100.0)
+        self.assertEqual(scores["mean_reciprocal_rank"], 0.75)
+
+    def test_composition_assigns_every_llm_role_to_ox_alpha(self) -> None:
+        options = benchmark.RunOptions(1, 8, 12, 8, 500, 4, False)
+
+        composition = benchmark.composition_text(options)
+
+        self.assertIn('transform_model = "stealth/ox-alpha"', composition)
+        self.assertIn('agent_model = "stealth/ox-alpha"', composition)
+        self.assertEqual(composition.count("llm_call_budget = 500"), 2)
+
+    def test_run_records_manifest_timings_results_and_scores(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_text:
+            temporary = Path(temporary_text)
+            fixture = temporary / "fixture"
+            runs = temporary / "runs"
+            fake_bin = temporary / "bin"
+            fixture.joinpath("documents").mkdir(parents=True)
+            fixture.joinpath("setup.json").write_text("{}\n")
+            fixture.joinpath("questions.jsonl").write_text(
+                json.dumps(
+                    {
+                        "question_id": "qst_0001",
+                        "question_type": "basic",
+                        "question": "What is recorded?",
+                        "expected_doc_ids": [DOCUMENT_A],
+                    }
+                )
+                + "\n"
+            )
+            fake_bin.mkdir()
+            inseam = fake_bin / "inseam"
+            inseam.write_text(fake_inseam_source())
+            inseam.chmod(0o755)
+            environment = {
+                "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+                "OPENROUTER_API_KEY": "test-key",
+            }
+            options = benchmark.RunOptions(1, 8, 12, 8, 500, 4, True)
+
+            with mock.patch.object(benchmark, "FIXTURE_ROOT", fixture):
+                with mock.patch.object(benchmark, "RUNS_ROOT", runs):
+                    with mock.patch.dict(os.environ, environment):
+                        benchmark.run_benchmark(options)
+
+            run_directories = list(runs.iterdir())
+            self.assertEqual(len(run_directories), 1)
+            manifest = json.loads(
+                run_directories[0].joinpath("manifest.json").read_text()
+            )
+            self.assertEqual(manifest["status"], "completed")
+            self.assertEqual(manifest["queries_completed"], 1)
+            self.assertEqual(manifest["inseam"]["cli_version"], "inseam 9.9.9")
+            self.assertEqual(
+                manifest["scores"]["retrieval"]["average_document_recall_pct"],
+                100.0,
+            )
+
+
+def fake_inseam_source() -> str:
+    query = json.dumps(
+        {
+            "results": [
+                {
+                    "address": f"inseam://enterprise-rag-bench/x/{DOCUMENT_A}_file.txt",
+                    "score": 1.0,
+                }
+            ]
+        }
+    )
+    return f'''#!/usr/bin/env python3
+import sys
+if "--version" in sys.argv:
+    print("inseam 9.9.9")
+elif "query" in sys.argv:
+    print({query!r})
+elif "agent" in sys.argv:
+    print("· model stealth/ox-alpha\\n")
+    print("answer from {DOCUMENT_A}\\n")
+    print("· 1 turns, 0 tool calls, $0.0000 spent")
+elif "index" in sys.argv:
+    print("1 sources seen: 1 indexed")
+else:
+    raise SystemExit(2)
+'''
+
+
+if __name__ == "__main__":
+    unittest.main()
