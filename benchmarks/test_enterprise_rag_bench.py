@@ -164,6 +164,9 @@ class EnterpriseRagBenchTests(unittest.TestCase):
             self.assertEqual(manifest["indexing"]["summary"]["sources_seen"], 1)
             self.assertEqual(len(manifest["attempts"]), 1)
             self.assertEqual(manifest["attempts"][0]["ending_queries_completed"], 1)
+            self.assertIsNotNone(
+                manifest["attempts"][0]["search_index_preparation"]
+            )
             self.assertEqual(manifest["inseam"]["cli_version"], "inseam 9.9.9")
             self.assertEqual(
                 manifest["scores"]["retrieval"]["average_document_recall_pct"],
@@ -171,6 +174,7 @@ class EnterpriseRagBenchTests(unittest.TestCase):
             )
             progress = output.getvalue()
             self.assertIn("Indexing 1 benchmark documents...", progress)
+            self.assertIn("Preparing libSQL vector search index...", progress)
             self.assertIn("Query checkpoint: 0/1 completed", progress)
             self.assertIn("[1/1] qst_0001 retrieval...", progress)
             self.assertIn("[1/1] qst_0001 answer...", progress)
@@ -317,6 +321,8 @@ elif "index" in sys.argv:
     print("1 sources seen: 1 indexed, 0 unchanged, 0 catalog-only, 0 past cutoff, 0 ignored")
     print("1 fragments, 0 relations, 0 keyed fragments anchored")
     print("summaries: 1 llm, 0 extractive, 0 envelope · 1 embedded · $0.001 spent")
+elif "status" in sys.argv:
+    print("search rows    1")
 else:
     raise SystemExit(2)
 '''

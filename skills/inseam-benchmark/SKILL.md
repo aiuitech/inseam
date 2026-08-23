@@ -43,7 +43,7 @@ python3 benchmarks/enterprise_rag_bench.py run --limit 1 --skip-evaluation
 
 Keep the defaults for a comparable rerun unless the user names a different experiment. Never silently reuse an index. Each invocation creates a fresh ignored node data directory and a new versioned run directory.
 
-The runner announces indexing, each question's retrieval and answer, and evaluation. Long external commands emit an elapsed-time heartbeat every five seconds. While heartbeats continue, do not diagnose a quiet upstream command as hung. For a live or interrupted run, inspect the newest `manifest.json`: `phase` identifies the active phase, and `queries_completed` shows durable progress. An intentional interruption records `status: interrupted` and preserves the partial run; do not commit it as a result.
+The runner announces indexing, search-index preparation, each question's retrieval and answer, and evaluation. Search-index preparation runs `inseam status` before questions so a legacy node's one-time compact-vector conversion and DiskANN build is visible, timed, logged, and resumable; it does not rerun source indexing or embeddings. Long external commands emit an elapsed-time heartbeat every five seconds. While heartbeats continue, do not diagnose a quiet upstream command as hung. For a live or interrupted run, inspect the newest `manifest.json`: `phase` identifies the active phase, `attempts[-1].search_index_preparation` records the optimization when complete, and `queries_completed` shows durable progress. An intentional interruption records `status: interrupted` and preserves the partial run; do not commit it as a result.
 
 If a run has `status: failed` or `status: interrupted` and `indexing.returncode: 0`, resume it instead of starting another index:
 
@@ -67,10 +67,11 @@ Open the new `benchmarks/runs/<run-id>/manifest.json` and check:
 1. `status` is `completed`.
 2. `queries_completed` matches the requested question count.
 3. `indexing.duration_seconds` is present and positive.
-4. System specifications and the Inseam CLI version, binary hash, repository revision, and dirty state are present.
-5. Every language-model entry is `stealth/ox-alpha`; only the embedding entry differs.
-6. `scores.retrieval` is present. Unless `--skip-evaluation` was requested, `scores.enterprise_rag_bench` and `enterprise-rag-bench-results.json` are also present.
-7. `queries.jsonl` has one row per question with retrieval, answer, and total durations plus raw Finder scores.
+4. The final attempt has `search_index_preparation.duration_seconds` and its log.
+5. System specifications and the Inseam CLI version, binary hash, repository revision, and dirty state are present.
+6. Every language-model entry is `stealth/ox-alpha`; only the embedding entry differs.
+7. `scores.retrieval` is present. Unless `--skip-evaluation` was requested, `scores.enterprise_rag_bench` and `enterprise-rag-bench-results.json` are also present.
+8. `queries.jsonl` has one row per question with retrieval, answer, and total durations plus raw Finder scores.
 
 Treat the upstream raw results file as authoritative. Compare runs only when dataset pins, evaluator revision, model assignments, question count, and relevant options match. Call out dirty source trees and hardware differences instead of hiding them.
 

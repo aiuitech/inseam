@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +37,10 @@ pub struct FinderConfig {
     /// Vector hits farther than this cosine distance are noise, not seeds:
     /// nearest-k always returns something, even when nothing is close.
     pub max_vector_distance: f64,
+    /// Relation hops loaded around the fused seeds before propagation.
+    pub graph_hops: u32,
+    /// Hard cap on relations in one query's local graph.
+    pub graph_relation_limit: u32,
     pub weights: RelationWeights,
 }
 
@@ -49,8 +54,31 @@ impl Default for FinderConfig {
             epsilon: 1e-6,
             max_hints: 3,
             max_vector_distance: 0.75,
+            graph_hops: 2,
+            graph_relation_limit: 20_000,
             weights: RelationWeights::default(),
         }
+    }
+}
+
+impl FinderConfig {
+    pub fn validate_query_bounds(&self) -> Result<(), String> {
+        if self.seed_k == 0 {
+            return Err("finder.seed_k must be greater than zero".to_string());
+        }
+        if self.graph_hops == 0 {
+            return Err("finder.graph_hops must be greater than zero".to_string());
+        }
+        if self.graph_hops > inseam_kernel::store::RELATION_HOPS_MAX {
+            return Err("finder.graph_hops must not exceed four".to_string());
+        }
+        if self.graph_relation_limit == 0 {
+            return Err("finder.graph_relation_limit must be greater than zero".to_string());
+        }
+        if self.graph_relation_limit > inseam_kernel::store::RELATION_LIMIT_MAX {
+            return Err("finder.graph_relation_limit must not exceed 100000".to_string());
+        }
+        Ok(())
     }
 }
 
@@ -110,6 +138,7 @@ pub struct FinderPlugin {
 impl FinderPlugin {
     pub fn from_config(config: &toml::Table) -> Result<Self, PluginError> {
         let mut config: FinderConfig = parse_config(config)?;
+        config.validate_query_bounds().map_err(PluginError)?;
         config.weights = config.weights.over_defaults();
         Ok(Self { config })
     }
@@ -170,30 +199,26 @@ impl FinderService {
 #[async_trait::async_trait]
 impl Finder for FinderService {
     async fn query(&self, text: &str, limit: usize) -> Result<Vec<RankedSource>, SeamError> {
-        let fts = self.store.search_fts(text, self.config.seed_k).await?;
-        let mut vector = match self.embedder.dimensions() {
-            Some(_) => {
-                let qvec = self.embedder.embed(&[text]).await?;
-                match qvec.first() {
-                    Some(v) => self.store.search_vector(v, self.config.seed_k).await?,
-                    None => Vec::new(),
-                }
-            }
-            None => Vec::new(),
-        };
-        // Nearest-k returns the k nearest whatever the distance; beyond the
-        // floor a "neighbor" is noise and must not seed the walk.
-        vector.retain(|(_, distance)| f64::from(*distance) <= self.config.max_vector_distance);
-
-        // Both lists arrive best-first; fusion cares only about rank.
-        let fts_ranked: Vec<i64> = fts.iter().map(|(id, _)| id.0).collect();
-        let vec_ranked: Vec<i64> = vector.iter().map(|(id, _)| id.0).collect();
-        let seeds = rrf_fuse(&[&fts_ranked, &vec_ranked], self.config.rrf_k);
+        let query_started = Instant::now();
+        let seeds = self.query_seeds(text).await?;
         if seeds.is_empty() {
             return Ok(Vec::new());
         }
-
-        let relations = self.store.all_relations().await?;
+        let graph_started = Instant::now();
+        let seed_ids: Vec<FragmentId> = seeds.keys().map(|id| FragmentId(*id)).collect();
+        let relations = self
+            .store
+            .relations_near(
+                &seed_ids,
+                self.config.graph_hops,
+                self.config.graph_relation_limit,
+            )
+            .await?;
+        tracing::info!(
+            relations = relations.len(),
+            elapsed_ms = graph_started.elapsed().as_millis(),
+            "finder loaded the local relation graph"
+        );
         let edges = weighted_edges(&relations, &self.config.weights);
         let boosted = personalized_pagerank(
             &seeds,
@@ -203,14 +228,18 @@ impl Finder for FinderService {
             self.config.epsilon,
         );
 
-        // Boost, never gate: activation adds to the seed score, so a
-        // fragment with no useful relations keeps its seed standing.
         let mut final_scores: HashMap<i64, f64> = seeds.clone();
         for (id, score) in boosted {
             *final_scores.entry(id).or_insert(0.0) += score;
         }
 
-        self.rollup(final_scores, limit).await
+        let results = self.rollup(final_scores, limit).await?;
+        tracing::info!(
+            results = results.len(),
+            elapsed_ms = query_started.elapsed().as_millis(),
+            "finder query completed"
+        );
+        Ok(results)
     }
 
     async fn expand(&self, source: &StoredSource) -> Result<Expansion, SeamError> {
@@ -231,6 +260,39 @@ impl Finder for FinderService {
             relations,
             neighbors,
         })
+    }
+}
+
+impl FinderService {
+    async fn query_seeds(&self, text: &str) -> Result<HashMap<i64, f64>, SeamError> {
+        let started = Instant::now();
+        let fts = self.store.search_fts(text, self.config.seed_k).await?;
+        let mut vector = match self.embedder.dimensions() {
+            Some(_) => {
+                let qvec = self.embedder.embed(&[text]).await?;
+                match qvec.first() {
+                    Some(v) => self.store.search_vector(v, self.config.seed_k).await?,
+                    None => Vec::new(),
+                }
+            }
+            None => Vec::new(),
+        };
+        // Nearest-k returns the k nearest whatever the distance; beyond the
+        // floor a "neighbor" is noise and must not seed the walk.
+        vector.retain(|(_, distance)| f64::from(*distance) <= self.config.max_vector_distance);
+
+        // Both lists arrive best-first; fusion cares only about rank.
+        let fts_ranked: Vec<i64> = fts.iter().map(|(id, _)| id.0).collect();
+        let vec_ranked: Vec<i64> = vector.iter().map(|(id, _)| id.0).collect();
+        let seeds = rrf_fuse(&[&fts_ranked, &vec_ranked], self.config.rrf_k);
+        tracing::info!(
+            fts = fts.len(),
+            vector = vector.len(),
+            fused = seeds.len(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "finder seed retrieval completed"
+        );
+        Ok(seeds)
     }
 }
 

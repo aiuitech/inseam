@@ -785,6 +785,14 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
             println!("keyed          {}", status.keyed_fragments);
             println!("search rows    {}", status.search_rows);
             println!(
+                "vector index   {}",
+                if status.vector_index_ready {
+                    "ready (libSQL DiskANN)"
+                } else {
+                    "not present"
+                }
+            );
+            println!(
                 "store size     {} on disk",
                 human_bytes(status.store_bytes)
             );

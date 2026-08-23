@@ -425,6 +425,7 @@ impl Operations for OperationsService {
     async fn status(&self) -> Result<StatusReport, SeamError> {
         let stats = self.store.stats().await?;
         let search_rows = self.store.search_rows_count().await.unwrap_or(0);
+        let vector_index_ready = self.store.search_vector_index_ready().await.unwrap_or(false);
         let identity = self.store.embedding_identity();
         Ok(StatusReport {
             sources: stats.sources,
@@ -433,6 +434,7 @@ impl Operations for OperationsService {
             relations: stats.relations,
             keyed_fragments: stats.keyed_fragments,
             search_rows,
+            vector_index_ready,
             store_bytes: stats.store_bytes,
             content_bytes: stats.content_bytes,
             embedding_model: identity.as_ref().map(|(m, _)| m.clone()),

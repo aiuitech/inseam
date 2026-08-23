@@ -3,15 +3,15 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use inseam_kernel::address::HostId;
-use inseam_kernel::substrate::{Composition, ENTRY_COUNT_MAX, Entry, parse_config};
+use inseam_kernel::substrate::{parse_config, Composition, Entry, ENTRY_COUNT_MAX};
 use inseam_plugins::connection_fs::{FsConnectionConfig, WalkConfig};
 use inseam_plugins::connection_google::{GoogleConnection, GoogleConnectionConfig};
 use inseam_plugins::embedder::{EmbedderConfig, Provider};
 use inseam_plugins::finder::FinderConfig;
 use inseam_plugins::llm_endpoint::LlmEndpointConfig;
 use inseam_plugins::oauth::{OAuthConfig, OAuthPlugin};
-use inseam_plugins::sweep::SweepConfig;
 use inseam_plugins::sweep::ignore::IgnoreSet;
+use inseam_plugins::sweep::SweepConfig;
 use inseam_plugins::transform_chunker::ChunkerConfig;
 use inseam_plugins::transform_entities::EntityExtractorConfig;
 use inseam_plugins::transform_summarizer::SummarizerConfig;
@@ -213,6 +213,7 @@ fn validate_transforms(settings: &SettingsDocument) -> Result<(), String> {
 }
 
 fn validate_finder(config: &FinderConfig) -> Result<(), String> {
+    config.validate_query_bounds()?;
     finite_positive("finder.rrf_k", config.rrf_k)?;
     finite_nonnegative("finder.damping", config.damping)?;
     if config.damping > 1.0 {
@@ -456,7 +457,10 @@ mod tests {
         settings["google"]["config"]["client_secret_env"] = serde_json::json!("");
         write(&path, &settings.to_string()).unwrap();
         let reread = serde_json::to_value(read(&path).unwrap()).unwrap();
-        assert_eq!(reread["google"]["config"]["services"], serde_json::json!(["gmail", "calendar"]));
+        assert_eq!(
+            reread["google"]["config"]["services"],
+            serde_json::json!(["gmail", "calendar"])
+        );
         assert_eq!(reread["google"]["config"]["client_secret_env"], "");
         settings["google"]["config"]["services"] = serde_json::json!([]);
         assert!(write(&path, &settings.to_string()).is_err());

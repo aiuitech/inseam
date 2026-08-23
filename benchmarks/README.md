@@ -33,7 +33,7 @@ python3 benchmarks/enterprise_rag_bench.py run
 
 A full run creates a fresh index and evaluates all 500 questions. It can take hours and makes many embedding and LLM requests. `--limit` limits questions and evaluator work, but indexing still covers the full corpus so retrieval scores remain meaningful.
 
-The runner prints each active phase immediately. While an `inseam` command is still running, it prints an elapsed-time heartbeat every five seconds; query progress also includes the question number and ID. The current phase is mirrored in `manifest.json`, so a second terminal can distinguish indexing, querying, and evaluation without inspecting processes.
+The runner prints each active phase immediately. Before questions it runs a timed “Preparing libSQL vector search index” step; this is normally instant, but on a node created before vector indexing it performs the one-time in-place conversion and DiskANN build. While an `inseam` command is still running, the runner prints an elapsed-time heartbeat every five seconds; query progress also includes the question number and ID. The current phase is mirrored in `manifest.json`, so a second terminal can distinguish indexing, querying, and evaluation without inspecting processes.
 
 For a one-question harness check after setup:
 
@@ -65,7 +65,7 @@ python3 benchmarks/enterprise_rag_bench.py resume <run-id>
 
 Use the directory name under `benchmarks/runs/` as `<run-id>`. Resume loads the original options and composition, verifies the dataset and model pins, checks that the index command completed successfully, and reuses that run's ignored data directory. It refuses a missing or incomplete index. It starts with the first question that has no durable record, or goes directly to evaluation when every question is complete.
 
-Each invocation is recorded in `manifest.json` under `attempts`, including its start and finish time, duration, Inseam binary identity, starting and ending question counts, status, error, and log directory. The top-level duration is the sum of attempt durations. The index record keeps its original duration and structured completion counts for sources, fragments, relations, transforms, embeddings, and spend.
+Each invocation is recorded in `manifest.json` under `attempts`, including its start and finish time, duration, Inseam binary identity, search-index preparation timing and log, starting and ending question counts, status, error, and log directory. The top-level duration is the sum of attempt durations. The index record keeps its original duration and structured completion counts for sources, fragments, relations, transforms, embeddings, and spend.
 
 ## Recorded runs
 

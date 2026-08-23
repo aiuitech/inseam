@@ -795,6 +795,33 @@ def index_documents(run_dir: Path, data_dir: Path, composition: Path) -> dict[st
     }
 
 
+def prepare_search_index(
+    data_dir: Path, composition: Path, log_dir: Path
+) -> dict[str, Any]:
+    started_at = utc_now()
+    result = run_logged(
+        [
+            "inseam",
+            "--data-dir",
+            str(data_dir),
+            "--composition",
+            str(composition),
+            "status",
+        ],
+        log_dir / "search-index.log",
+        timeout_seconds=INDEX_TIMEOUT_SECONDS,
+        progress_label="Preparing libSQL vector search index",
+    )
+    require_success(result, "preparing the vector search index")
+    return {
+        "started_at": started_at,
+        "finished_at": utc_now(),
+        "duration_seconds": round(result.duration_seconds, 6),
+        "returncode": result.returncode,
+        "log": str((log_dir / "search-index.log").relative_to(log_dir.parents[1])),
+    }
+
+
 def capture_index_summary(output: str) -> dict[str, Any]:
     try:
         return parse_index_summary(output)
@@ -1026,6 +1053,11 @@ def execute_benchmark(
             manifest["indexing"] = index_documents(run_dir, data_dir, composition)
         else:
             print_reused_index(manifest)
+        attempt = manifest["attempts"][-1]
+        attempt["search_index_preparation"] = prepare_search_index(
+            data_dir, composition, log_dir
+        )
+        write_json(run_dir / "manifest.json", manifest)
         update_run_phase(run_dir, manifest, "querying")
         queries = run_queries(
             run_dir,
@@ -1084,6 +1116,7 @@ def begin_attempt(
             "error": None,
             "inseam": identity,
             "log_directory": log_relative,
+            "search_index_preparation": None,
         }
     )
     manifest["status"] = "running"
@@ -1219,6 +1252,7 @@ def legacy_attempt(manifest: dict[str, Any], duration_seconds: float) -> dict[st
         "error": manifest.get("error"),
         "inseam": manifest.get("inseam"),
         "log_directory": "logs",
+        "search_index_preparation": None,
     }
 
 

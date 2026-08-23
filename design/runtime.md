@@ -16,7 +16,7 @@ The FFI boundary is deliberately thin: opaque node handle, blocking calls (the h
 
 The derived search surface is **libSQL** (Turso's production SQLite fork, embedded via the native Rust crate with local-only features):
 
-- Hybrid **full-text + vector** search in one embedded store: FTS5 for keyword seeds, native vector columns (`F32_BLOB`) with cosine distance for semantic seeds — exactly the index shape discovery calls for. DiskANN indexes (`libsql_vector_idx` / `vector_top_k`) are available in the same engine the day flat scans stop being fast enough; today's scale doesn't need them (the LanceDB era never built an ANN index either — every query was a flat scan).
+- Hybrid **full-text + vector** search in one embedded store: FTS5 for keyword seeds and a native DiskANN index (`libsql_vector_idx` / `vector_top_k`) for semantic seeds. Candidate vectors are float8 and neighbor vectors are one-bit compressed; Finder asks for four times its final seed count and orders that small candidate set by cosine distance. This keeps the ANN copy bounded enough for laptop indexes without returning to a corpus-wide scan.
 - **Embedded**, no server process — matches "a node is one binary" and works on small devices.
 - **Tiny dependency surface** — one bundled C library, replacing LanceDB's arrow/datafusion tree (~520 crates that dominated build times, `target/` size, and binary footprint while we used a fraction of them).
 
@@ -26,10 +26,16 @@ One engine is not just tidiness — it is forced. The catalog was rusqlite (vani
 
 The database runs WAL with `synchronous = NORMAL`, and every write goes through one store-level write lock. NORMAL drops the per-commit fsync (a power cut can lose the last commits, never corrupt the file) — acceptable because every table is derived or re-derivable and the sweep's `indexed` mark is written only when a source's rows are all in place, so lost commits are re-indexed, not silently missing. The write lock is what makes one connection safe under the sweep's concurrent stages: a libSQL connection carries one open transaction, and two tasks writing through it would interleave statements into each other's transactions.
 
+### Vector-index sizing
+
+DiskANN stores a node vector and neighbor data in addition to the search row. At 1.86 million 1,536-dimensional embeddings, indexing the resident float32 blobs directly would duplicate at least 10.7 GiB before graph edges. The search surface therefore retains an 8-bit candidate vector, uses one-bit neighbor compression, and caps each node at eight neighbors. The source embedding identity remains the same; this is storage quantization for candidate generation, not a different embedding model. A legacy float32 search surface converges in place from its existing vectors, releases the redundant blobs, and builds DiskANN without fetching sources or calling the embedder.
+
+The eight-neighbor graph is deliberately a laptop-space choice. Four-times candidate oversampling absorbs part of the recall cost, and benchmark retrieval scores decide whether the setting should move. A fresh index bulk-builds DiskANN at the end of its sweep; later row changes update it automatically. Opening a pre-DiskANN node has a one-time preparation cost; benchmark attempts time and log that step separately before their first query.
+
 ### Known risks
 
 - FTS5's BM25 replaces tantivy's; ranking differs in the tail. The finder only consumes rank order (RRF fusion), so this is contained by design.
-- Vector search is an exact scan (parity with the LanceDB usage, which never built an ANN index). The day it shows up in a profile, DiskANN (`libsql_vector_idx`) is one `CREATE INDEX` away in the same engine.
+- ANN recall now depends on float8 candidate quantization and the bounded DiskANN graph. EnterpriseRAG-Bench retrieval scores, not intuition, gate changes to compression, neighbor count, or candidate oversampling.
 
 ## Paths not taken
 

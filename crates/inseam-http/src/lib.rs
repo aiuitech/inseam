@@ -621,6 +621,7 @@ mod tests {
                 relations: 1,
                 keyed_fragments: 0,
                 search_rows: 7,
+                vector_index_ready: false,
                 store_bytes: 4096,
                 content_bytes: 120,
                 embedding_model: None,

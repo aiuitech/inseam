@@ -15,6 +15,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
+use std::time::Instant;
 
 use libsql::params;
 use thiserror::Error;
@@ -29,6 +30,10 @@ const SCHEMA_VERSION: &str = "6";
 /// Ids per `IN (...)` predicate: every id-list query and delete is issued in
 /// chunks of this many, so no caller can build unbounded SQL.
 const ID_LIST_CHUNK: usize = 400;
+const SEARCH_VECTOR_INDEX: &str = "search_rows_vector_idx";
+const SEARCH_VECTOR_CANDIDATE_MULTIPLIER: usize = 4;
+pub const RELATION_HOPS_MAX: u32 = 4;
+pub const RELATION_LIMIT_MAX: u32 = 100_000;
 
 /// Drops the derived search tables (and their sync triggers) — the inverse
 /// of [`search_schema_sql`], used by re-embeds and the schema converge.
@@ -356,6 +361,7 @@ impl IndexStore {
         // identity in place: searches refuse while the re-embed is pending,
         // and `begin_reembed` recreates them under the new dimensions.
         self.catalog.execute_batch(&search_schema_sql(dims)).await?;
+        ensure_search_vector_index(&self.catalog, dims).await?;
         let mut search = self.search();
         search.surface = Some(SearchSurface {
             dims,
@@ -729,7 +735,8 @@ async fn insert_search_rows_in(
             _ => libsql::Value::Null,
         };
         conn.execute(
-            "INSERT INTO search_rows (id, source, text, vector) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO search_rows (id, source, text, ann_vector)
+             VALUES (?1, ?2, ?3, CASE WHEN ?4 IS NULL THEN NULL ELSE vector8(?4) END)",
             libsql::params![row.fragment.0, source, row.text.as_str(), vector],
         )
         .await?;
@@ -951,6 +958,66 @@ impl IndexStore {
         Ok(out)
     }
 
+    /// A bounded neighborhood around `ids`, breadth-first. Finder queries use
+    /// this instead of materializing the entire graph for every request.
+    pub async fn relations_near(
+        &self,
+        ids: &[FragmentId],
+        hops: u32,
+        limit: u32,
+    ) -> Result<Vec<Relation>, StoreError> {
+        let hops = hops.min(RELATION_HOPS_MAX);
+        let limit = limit.min(RELATION_LIMIT_MAX);
+        if ids.is_empty() || hops == 0 || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut frontier: Vec<FragmentId> = ids.to_vec();
+        frontier.sort();
+        frontier.dedup();
+        let mut visited: HashSet<FragmentId> = frontier.iter().copied().collect();
+        let mut seen: HashSet<Relation> = HashSet::new();
+        let mut out = Vec::new();
+        for _ in 0..hops {
+            let remaining = usize::try_from(limit).expect("relation limit fits usize") - out.len();
+            if remaining == 0 {
+                break;
+            }
+            let level = self.relations_touching_limited(&frontier, remaining).await?;
+            frontier = relation_frontier(&level, &mut visited, &mut seen, &mut out);
+            if frontier.is_empty() {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    async fn relations_touching_limited(
+        &self,
+        ids: &[FragmentId],
+        limit: usize,
+    ) -> Result<Vec<Relation>, StoreError> {
+        let mut out = Vec::new();
+        for chunk in ids.chunks(ID_LIST_CHUNK) {
+            let remaining = limit - out.len();
+            if remaining == 0 {
+                break;
+            }
+            let list = id_list(chunk);
+            let mut rows = self.catalog.query(
+                &format!(
+                    "SELECT from_fragment, kind, to_fragment FROM relations
+                     WHERE from_fragment IN ({list}) OR to_fragment IN ({list})
+                     ORDER BY from_fragment, kind, to_fragment LIMIT ?1"
+                ),
+                params![bounded_limit(remaining)],
+            ).await?;
+            while let Some(row) = rows.next().await? {
+                out.push(row_to_relation(&row)?);
+            }
+        }
+        Ok(out)
+    }
+
     /// Which source each fragment belongs to (keyed fragments absent).
     pub async fn sources_of_fragments(
         &self,
@@ -1159,10 +1226,11 @@ impl IndexStore {
     /// it merges the incremental b-trees appended since the last index run.
     pub async fn rebuild_fts(&self) -> Result<(), StoreError> {
         let _write = self.write().await;
-        self.surface()?;
+        let surface = self.surface()?;
         self.catalog
             .execute("INSERT INTO search_fts (search_fts) VALUES ('optimize')", ())
             .await?;
+        ensure_search_vector_index(&self.catalog, surface.dims).await?;
         Ok(())
     }
 
@@ -1192,8 +1260,8 @@ impl IndexStore {
     }
 
     /// Vector seed search: fragment ids with cosine distances, best first.
-    /// An exact scan by design — see `design/runtime.md` for when DiskANN
-    /// (`libsql_vector_idx`) earns its place.
+    /// DiskANN retrieves a wider compact candidate set and orders it by
+    /// cosine distance instead of scanning every vector.
     pub async fn search_vector(
         &self,
         vector: &[f32],
@@ -1205,15 +1273,36 @@ impl IndexStore {
             return Ok(Vec::new());
         }
         check_dimensions(surface.dims, vector)?;
+        self.prepare_search_vector_index(surface.dims).await?;
+        if !search_vector_index_exists(&self.catalog).await? {
+            return Ok(Vec::new());
+        }
+        let candidate_k = k.saturating_mul(SEARCH_VECTOR_CANDIDATE_MULTIPLIER);
+        let query = libsql::Value::Blob(vector_blob(vector));
         let rows = self
             .catalog
             .query(
-                "SELECT id, vector_distance_cos(vector, ?1) AS distance FROM search_rows
-                 WHERE vector IS NOT NULL ORDER BY distance LIMIT ?2",
-                libsql::params![libsql::Value::Blob(vector_blob(vector)), bounded_limit(k)],
+                "SELECT search_rows.id,
+                        vector_distance_cos(search_rows.ann_vector, vector8(?1)) AS exact_distance
+                 FROM vector_top_k('search_rows_vector_idx', vector8(?1), ?2) AS candidates
+                 JOIN search_rows ON search_rows.id = candidates.id
+                 WHERE search_rows.ann_vector IS NOT NULL
+                 ORDER BY exact_distance LIMIT ?3",
+                libsql::params![query, bounded_limit(candidate_k), bounded_limit(k)],
             )
             .await?;
         collect_scored(rows, |raw| raw).await
+    }
+
+    async fn prepare_search_vector_index(&self, dims: usize) -> Result<(), StoreError> {
+        if search_vector_index_exists(&self.catalog).await? {
+            return Ok(());
+        }
+        let _write = self.write().await;
+        if search_vector_index_exists(&self.catalog).await? {
+            return Ok(());
+        }
+        ensure_search_vector_index(&self.catalog, dims).await
     }
 
     pub async fn search_rows_count(&self) -> Result<usize, StoreError> {
@@ -1227,6 +1316,14 @@ impl IndexStore {
         })?;
         let count: i64 = row.get(0)?;
         Ok(usize::try_from(count).expect("row counts are non-negative"))
+    }
+
+    pub async fn search_vector_index_ready(&self) -> Result<bool, StoreError> {
+        let surface = self.surface()?;
+        if surface.dims == 0 {
+            return Ok(false);
+        }
+        search_vector_index_exists(&self.catalog).await
     }
 
     // ------------------------------------------------------------------
@@ -1293,6 +1390,7 @@ impl IndexStore {
         self.catalog
             .execute_batch(&search_schema_sql(surface.dims))
             .await?;
+        ensure_search_vector_index(&self.catalog, surface.dims).await?;
         Ok(())
     }
 
@@ -1534,7 +1632,7 @@ async fn set_embedding_meta(
 /// at zero dims the surface is FTS-only.
 fn search_schema_sql(dims: usize) -> String {
     let vector_column = if dims > 0 {
-        format!(",\n           vector F32_BLOB({dims})")
+        format!(",\n           ann_vector F8_BLOB({dims})")
     } else {
         String::new()
     };
@@ -1560,6 +1658,113 @@ fn search_schema_sql(dims: usize) -> String {
                VALUES ('delete', old.id, old.text);
            END;"
     )
+}
+
+/// Bring an old float32 search surface forward without re-embedding. Search
+/// tables are derived state, so the compact candidate column can be populated
+/// from the vectors already present and the redundant blobs can be released.
+async fn ensure_search_vector_index(
+    conn: &libsql::Connection,
+    dims: usize,
+) -> Result<(), StoreError> {
+    if dims == 0 {
+        return Ok(());
+    }
+    let started = Instant::now();
+    if !search_column_exists(conn, "ann_vector").await? {
+        conn.execute(
+            &format!("ALTER TABLE search_rows ADD COLUMN ann_vector F8_BLOB({dims})"),
+            (),
+        )
+        .await?;
+    }
+    if search_column_exists(conn, "vector").await? {
+        conn.execute(
+            "UPDATE search_rows SET ann_vector = vector8(vector)
+             WHERE ann_vector IS NULL AND vector IS NOT NULL",
+            (),
+        )
+        .await?;
+        conn.execute(
+            "UPDATE search_rows SET vector = NULL
+             WHERE ann_vector IS NOT NULL AND vector IS NOT NULL",
+            (),
+        )
+        .await?;
+    }
+    if search_rows_count_in(conn).await? == 0 {
+        return Ok(());
+    }
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS search_rows_vector_idx
+         ON search_rows(libsql_vector_idx(
+           ann_vector, 'metric=cosine', 'compress_neighbors=float1bit', 'max_neighbors=8'
+         ))",
+        (),
+    )
+    .await?;
+    tracing::info!(
+        index = SEARCH_VECTOR_INDEX,
+        elapsed_ms = started.elapsed().as_millis(),
+        "vector search index is ready"
+    );
+    Ok(())
+}
+
+async fn search_vector_index_exists(conn: &libsql::Connection) -> Result<bool, StoreError> {
+    let mut rows = conn
+        .query(
+            "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1",
+            params![SEARCH_VECTOR_INDEX],
+        )
+        .await?;
+    Ok(rows.next().await?.is_some())
+}
+
+async fn search_rows_count_in(conn: &libsql::Connection) -> Result<u64, StoreError> {
+    let mut rows = conn.query("SELECT COUNT(*) FROM search_rows", ()).await?;
+    let row = rows
+        .next()
+        .await?
+        .ok_or_else(|| StoreError::Corrupt(0, "COUNT(*) returned no row".into()))?;
+    let count: i64 = row.get(0)?;
+    Ok(u64::try_from(count).expect("search row counts are non-negative"))
+}
+
+async fn search_column_exists(
+    conn: &libsql::Connection,
+    column: &str,
+) -> Result<bool, StoreError> {
+    let mut rows = conn.query("PRAGMA table_info(search_rows)", ()).await?;
+    while let Some(row) = rows.next().await? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn relation_frontier(
+    relations: &[Relation],
+    visited: &mut HashSet<FragmentId>,
+    seen: &mut HashSet<Relation>,
+    out: &mut Vec<Relation>,
+) -> Vec<FragmentId> {
+    let mut next = Vec::new();
+    for relation in relations {
+        if !seen.insert(relation.clone()) {
+            continue;
+        }
+        if visited.insert(relation.from) {
+            next.push(relation.from);
+        }
+        if visited.insert(relation.to) {
+            next.push(relation.to);
+        }
+        out.push(relation.clone());
+    }
+    next
 }
 
 /// Whether the derived search tables exist yet — they appear when an
@@ -2039,6 +2244,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn vector_index_converges_existing_float32_rows_without_reembedding() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        s.catalog
+            .execute("ALTER TABLE search_rows ADD COLUMN vector F32_BLOB(8)", ())
+            .await
+            .expect("adds legacy column");
+        let mut vector = vec![0.0_f32; 8];
+        vector[2] = 1.0;
+        s.catalog
+            .execute(
+                "INSERT INTO search_rows (id, source, text, vector)
+                 VALUES (41, NULL, 'legacy vector', ?1)",
+                params![libsql::Value::Blob(vector_blob(&vector))],
+            )
+            .await
+            .expect("inserts legacy row");
+
+        ensure_search_vector_index(&s.catalog, 8).await.expect("converges");
+        let hits = s.search_vector(&vector, 1).await.expect("searches");
+        assert_eq!(hits.first().map(|(id, _)| *id), Some(FragmentId(41)));
+        let row = s
+            .first_row("SELECT vector, ann_vector FROM search_rows WHERE id = 41", ())
+            .await
+            .expect("reads")
+            .expect("row exists");
+        assert!(row.get::<Option<Vec<u8>>>(0).expect("reads vector").is_none());
+        assert!(row.get::<Option<Vec<u8>>>(1).expect("reads ANN vector").is_some());
+    }
+
+    #[tokio::test]
     async fn embedding_change_pends_a_reembed_instead_of_refusing() {
         let dir = tempfile::tempdir().expect("tempdir");
         {
@@ -2153,6 +2389,39 @@ mod tests {
         let owners = s.sources_of_fragments(&ids).await.expect("ok");
         assert_eq!(owners.len(), 2);
         assert_eq!(owners.get(&b), Some(&sid));
+    }
+
+    #[tokio::test]
+    async fn relation_neighborhood_is_hop_and_size_bounded() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        let sid = s
+            .upsert_source(&addr("inseam://fs-test/tmp/note.md"), &envelope(1, 10), 10)
+            .await
+            .expect("upserts");
+        let fragment = || NewFragment {
+            mimetype: Mimetype::text_plain(),
+            text: Some("node".to_string()),
+            extent: None,
+        };
+        let mut ids = Vec::new();
+        for _ in 0..6_u32 {
+            ids.push(s.insert_fragment(sid, &fragment()).await.expect("inserts"));
+        }
+        for pair in ids[..4].windows(2) {
+            s.insert_relation(&Relation::new(pair[0], RelationKind::contains(), pair[1]))
+                .await
+                .expect("relates");
+        }
+        s.insert_relation(&Relation::new(ids[4], RelationKind::contains(), ids[5]))
+            .await
+            .expect("relates");
+
+        let near = s.relations_near(&[ids[0]], 2, 10).await.expect("reads");
+        assert_eq!(near.len(), 2);
+        assert!(near.iter().all(|relation| relation.from != ids[4]));
+        let capped = s.relations_near(&[ids[0]], 4, 1).await.expect("reads");
+        assert_eq!(capped.len(), 1);
     }
 
     #[tokio::test]

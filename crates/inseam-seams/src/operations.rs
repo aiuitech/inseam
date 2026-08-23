@@ -519,6 +519,7 @@ pub struct StatusReport {
     /// Index-wide fragments deduplicated by key (entities, for instance).
     pub keyed_fragments: u64,
     pub search_rows: usize,
+    pub vector_index_ready: bool,
     /// Bytes the store occupies on the node's disk (database plus its
     /// write-ahead log).
     pub store_bytes: u64,

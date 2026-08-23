@@ -21,6 +21,7 @@ Design choices within that frame:
 
 - **Relation kinds carry weights.** A `mentions` edge into a shared entity should conduct relevance differently than a structural `contains` edge or a speculative `links-to`. Kinds are an open vocabulary ([indexing](indexing.md)), so the finder weights them by name with a default for kinds it has never seen — a new plugin's relations conduct on day one and are tunable in the finder's config. Entity fragments are the highways: two sources mentioning the same person become one hop apart.
 - **Bounded propagation.** A damping factor and small iteration count (or hop limit) keep the boost local; unbounded spreading converges to global centrality — "important" fragments drowning out *relevant* ones.
+- **Bounded materialization.** Propagation loads only the relation neighborhood around fused seeds: two hops and at most 20,000 relations by default, with hard maxima of four hops and 100,000 relations. Loading every edge made query latency grow with the entire catalog even though the relevance walk is intentionally local.
 - **Boost, never gate.** A fragment with no useful relations keeps its seed score untouched.
 
 ## From fragments to sources
@@ -49,7 +50,7 @@ The Finder runs per node against that node's own index. Fan-out ([discovery](dis
 
 ## Settled since
 
-- **Weights and PPR parameters are configurable (finder entry config) with fixed defaults** (`[finder]`: damping 0.5, ≤12 iterations with ε early-exit, RRF k=60; weights by kind name — contains 1.0, transcribes 1.0, derives 0.9, mentions 0.8, links-to 0.4 — with `default` 0.5 for any other kind; configured entries layer over the table rather than replacing it). Learned weights remain future work.
+- **Weights and PPR parameters are configurable (finder entry config) with fixed defaults** (`[finder]`: damping 0.5, ≤12 iterations with ε early-exit, RRF k=60, `graph_hops=2`, `graph_relation_limit=20000`; weights by kind name — contains 1.0, transcribes 1.0, derives 0.9, mentions 0.8, links-to 0.4 — with `default` 0.5 for any other kind; configured entries layer over the table rather than replacing it). Learned weights remain future work.
 - **Boost, never gate — the formula**: final = seed + PPR score. Addition keeps every seed's standing (each retains ≥ (1−damping) of its normalized mass; property-tested).
 - **Rollup**: source = f1 + 0.1·f2 + 0.05·f3 over its fragments' final scores, best-first.
 - **Vector seeds carry a distance floor** (`max_vector_distance`, cosine): nearest-k always returns something, and beyond the floor a "neighbor" is noise, not a seed. Discovered the day flat similarity happily returned an orchid note for a fern query.

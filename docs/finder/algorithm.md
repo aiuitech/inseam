@@ -14,7 +14,7 @@ Merging by rank instead of score sidesteps the fact that BM25 scores and cosine 
 
 ## 2. Boost: spread relevance along the graph
 
-The seed scores, normalized into a distribution, become the restart vector for personalized PageRank over the **undirected** relation graph, with edge weights by relation kind name (`[finder.weights]`: `by_kind` plus a `default` for kinds not listed) and parallel edges summed:
+The seed scores, normalized into a distribution, become the restart vector for personalized PageRank over a seed-local slice of the **undirected** relation graph, with edge weights by relation kind name (`[finder.weights]`: `by_kind` plus a `default` for kinds not listed) and parallel edges summed. The default slice is two hops and at most 20,000 relations (`graph_hops`, `graph_relation_limit`), so retrieval work does not grow with every unrelated edge in the catalog:
 
 ```
 p ← (1 − damping) · seed  +  damping · (Wᵀ p + dangling · seed)
