@@ -10,9 +10,9 @@ The first benchmark is [EnterpriseRAG-Bench](https://github.com/onyx-dot-app/Ent
 - `OPENROUTER_API_KEY`
 - enough local disk for the 1.26 GB download, its extracted files, and a fresh Inseam index. Reserve at least 20 GB before a full run.
 
-The harness uses `stealth/ox-alpha` through OpenRouter for summaries, entity extraction, answers, citation cleanup, correctness scoring, and fact scoring. `openai/text-embedding-3-small` embeds one 200-character summary per source at 384 dimensions. Markdown splitting and chunking are disabled; source text still enters full-text search.
+The harness uses `google/gemini-2.5-flash-lite:batch` through OpenRouter for summaries and `stealth/ox-alpha` for answers, citation cleanup, correctness scoring, and fact scoring. Summary calls request low reasoning effort and exclude the reasoning trace from the response. Entity extraction, markdown splitting, and chunking are disabled. `openai/text-embedding-3-small` embeds one 200-character summary per source at 384 dimensions; source text still enters full-text search.
 
-The default run limits summaries and entity extraction to 500 LLM calls each. Inseam uses its deterministic fallback after a transform spends its budget. Raise `--llm-call-budget` only after estimating the cost and runtime. Embeddings use base64 responses and 128 inputs per request, with four requests in flight. Chat summaries do not share a request; the source concurrency bounds those calls.
+The default run limits summaries to 500 LLM calls. Inseam uses its deterministic fallback after the summarizer spends that budget. Raise `--llm-call-budget` only after estimating the cost and runtime. Embeddings use base64 responses and pack up to 128 inputs per request, with four batches in flight. The lean source-plus-summary shape fills a request from 256 search rows. Chat summaries do not share a request; the source concurrency bounds those calls.
 
 ## Set up the fixture
 

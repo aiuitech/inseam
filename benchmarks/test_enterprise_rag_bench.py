@@ -83,15 +83,17 @@ class EnterpriseRagBenchTests(unittest.TestCase):
 
         self.assertIn('base_url = "https://openrouter.ai/api/v1"', composition)
         self.assertIn('api_key_env = "OPENROUTER_API_KEY"', composition)
-        self.assertIn('transform_model = "stealth/ox-alpha"', composition)
+        self.assertIn(
+            'transform_model = "google/gemini-2.5-flash-lite:batch"', composition
+        )
+        self.assertIn('transform_reasoning_effort = "low"', composition)
         self.assertIn('agent_model = "stealth/ox-alpha"', composition)
-        self.assertNotIn("transform_reasoning_effort", composition)
         self.assertIn('model = "openai/text-embedding-3-small"', composition)
         self.assertIn('dimensions = 384', composition)
         self.assertIn('vectors = "summaries"', composition)
         self.assertIn('target_chars = 200', composition)
-        self.assertEqual(composition.count("disabled = true"), 2)
-        self.assertEqual(composition.count("llm_call_budget = 500"), 2)
+        self.assertEqual(composition.count("disabled = true"), 3)
+        self.assertEqual(composition.count("llm_call_budget = 500"), 1)
 
     def test_formats_index_progress_from_status(self) -> None:
         status = (
@@ -223,8 +225,8 @@ class EnterpriseRagBenchTests(unittest.TestCase):
             self.assertEqual(
                 manifest["models"],
                 {
-                    "summarization": "stealth/ox-alpha",
-                    "entity_extraction": "stealth/ox-alpha",
+                    "summarization": "google/gemini-2.5-flash-lite:batch",
+                    "entity_extraction": "disabled",
                     "answer_generation": "stealth/ox-alpha",
                     "answer_evaluation": "stealth/ox-alpha",
                     "embeddings": "openai/text-embedding-3-small",

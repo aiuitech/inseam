@@ -18,11 +18,11 @@ All loops and external commands have fixed limits. The harness accepts no more t
 
 ## Model policy
 
-`stealth/ox-alpha` handles summaries, entities, agent answers, and the upstream judge through OpenRouter. `openai/text-embedding-3-small` embeds summaries at 384 dimensions. The composition and run manifest state every assignment and the reduced width explicitly.
+`google/gemini-2.5-flash-lite:batch` handles summaries through OpenRouter, with low reasoning effort and the unused reasoning trace excluded. Entity extraction is disabled. `stealth/ox-alpha` handles agent answers and the upstream judge, while `openai/text-embedding-3-small` embeds summaries at 384 dimensions. The composition and run manifest state every assignment and the reduced width explicitly.
 
-Transform call budgets stay explicit. The default is 500 summary calls and 500 entity calls per indexing run, followed by Inseam's deterministic fallback. A full 500,000-call budget for both transforms would approach one million model requests before question answering, so the operator must opt into that cost.
+Transform call budgets stay explicit. The default is 500 summary calls per indexing run, followed by Inseam's deterministic fallback. A full 500,000-call budget therefore means at most one model request per source before question answering, and the operator must opt into that cost.
 
-The benchmark composition bounds the vector surface to one 200-character summary per source and disables markdown splitting and chunking. Full source text remains in full-text search, and the bounded entity transform remains mounted. This trades structural vector recall for predictable indexing time and storage; benchmark scores, not an assumption, decide whether that trade is acceptable.
+The benchmark composition bounds the vector surface to one 200-character summary per source and disables markdown splitting, chunking, and entities. Full source text remains in full-text search. This trades structural and graph recall for predictable indexing time and storage; benchmark scores, not an assumption, decide whether that trade is acceptable.
 
 ## Evidence in a run
 
@@ -32,6 +32,6 @@ The runner writes its current phase before indexing, querying, and evaluation. D
 
 ## Performance sketch
 
-The fixed network floor is a 1.26 GB dataset download. Extraction produces more than 500,000 files, so metadata operations and local disk latency dominate setup and cataloging. The lean composition asks for roughly one 384-dimensional vector per source: at 512,000 sources that is about 0.79 GB of raw `f32` values before database overhead, versus about 3.15 GB for one 1,536-dimensional vector per source and substantially more when structural fragments are embedded. Each endpoint request carries a complete 128-row batch as base64, and four requests run concurrently, for at most 512 embedding inputs in flight. A full run should start with at least 20 GB free and use local SSD storage.
+The fixed network floor is a 1.26 GB dataset download. Extraction produces more than 500,000 files, so metadata operations and local disk latency dominate setup and cataloging. The lean composition asks for roughly one 384-dimensional vector per source: at 512,000 sources that is about 0.79 GB of raw `f32` values before database overhead, versus about 3.15 GB for one 1,536-dimensional vector per source and substantially more when structural fragments are embedded. A 256-search-row sweep batch contains about 128 summary vectors and fills one base64 endpoint request; four batches run concurrently, for at most 512 embedding inputs in flight. A full run should start with at least 20 GB free and use local SSD storage.
 
 Question execution makes one timed Finder query and one timed agent loop per question. Vector retrieval is DiskANN candidate lookup rather than a scan over the raw 384-dimensional corpus, and graph propagation materializes only a bounded seed-local neighborhood. The default cap is 500 Finder queries and 6,000 agent turns. Evaluation then makes bounded upstream judge calls. The runner records these phases separately because combining them would hide whether a change affected search-index preparation, retrieval, answer generation, or judging.

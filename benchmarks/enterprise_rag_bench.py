@@ -28,7 +28,9 @@ UPSTREAM_URL = "https://github.com/onyx-dot-app/EnterpriseRAG-Bench.git"
 RELEASE_URL = f"https://github.com/onyx-dot-app/EnterpriseRAG-Bench/releases/download/{RELEASE}"
 ARCHIVE_SHA256 = "9d1174928696ad08bc15f3f104739519de633c1605a4ec2034e0e3c0087bc5cd"
 QUESTIONS_SHA256 = "f9524b9157cd43aae36b99333a124738804306ea6d07f332d49faa6d3d147905"
-MODEL = "stealth/ox-alpha"
+SUMMARIZATION_MODEL = "google/gemini-2.5-flash-lite:batch"
+ANSWER_MODEL = "stealth/ox-alpha"
+EVALUATION_MODEL = "stealth/ox-alpha"
 EMBEDDING_MODEL = "openai/text-embedding-3-small"
 EMBEDDING_DIMENSIONS = 384
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
@@ -554,8 +556,9 @@ id = "llm"
 [entry.config]
 base_url = "{OPENROUTER_BASE_URL}"
 api_key_env = "OPENROUTER_API_KEY"
-transform_model = "{MODEL}"
-agent_model = "{MODEL}"
+transform_model = "{SUMMARIZATION_MODEL}"
+transform_reasoning_effort = "low"
+agent_model = "{ANSWER_MODEL}"
 
 [[entry]]
 id = "embedder"
@@ -581,9 +584,7 @@ llm_call_budget = {options.llm_call_budget}
 
 [[entry]]
 id = "entities"
-[entry.config]
-max_per_source = 12
-llm_call_budget = {options.llm_call_budget}
+disabled = true
 
 [[entry]]
 id = "sweep"
@@ -679,7 +680,7 @@ def question_commands(
             "agent",
             question_text,
             "--model",
-            MODEL,
+            ANSWER_MODEL,
             "--turns",
             str(options.turns),
         ],
@@ -833,10 +834,10 @@ def create_run(options: RunOptions) -> tuple[Path, Path, dict[str, Any]]:
             "questions_sha256": QUESTIONS_SHA256,
         },
         "models": {
-            "summarization": MODEL,
-            "entity_extraction": MODEL,
-            "answer_generation": MODEL,
-            "answer_evaluation": MODEL,
+            "summarization": SUMMARIZATION_MODEL,
+            "entity_extraction": "disabled",
+            "answer_generation": ANSWER_MODEL,
+            "answer_evaluation": EVALUATION_MODEL,
             "embeddings": EMBEDDING_MODEL,
             "embedding_dimensions": EMBEDDING_DIMENSIONS,
         },
@@ -1036,8 +1037,8 @@ def evaluator_environment() -> dict[str, str]:
         {
             "LLM_PROVIDER": "openai",
             "LLM_API_KEY": api_key,
-            "LLM_MODEL_NAME": MODEL,
-            "CHEAP_LLM_MODEL_NAME": MODEL,
+            "LLM_MODEL_NAME": EVALUATION_MODEL,
+            "CHEAP_LLM_MODEL_NAME": EVALUATION_MODEL,
             "OPENAI_BASE_URL": OPENROUTER_BASE_URL,
         }
     )
@@ -1380,10 +1381,10 @@ def validate_resumable_manifest(run_id: str, manifest: dict[str, Any]) -> None:
     if benchmark != expected_benchmark:
         raise BenchmarkError(f"run `{run_id}` uses different benchmark inputs")
     expected_models = {
-        "summarization": MODEL,
-        "entity_extraction": MODEL,
-        "answer_generation": MODEL,
-        "answer_evaluation": MODEL,
+        "summarization": SUMMARIZATION_MODEL,
+        "entity_extraction": "disabled",
+        "answer_generation": ANSWER_MODEL,
+        "answer_evaluation": EVALUATION_MODEL,
         "embeddings": EMBEDDING_MODEL,
         "embedding_dimensions": EMBEDDING_DIMENSIONS,
     }

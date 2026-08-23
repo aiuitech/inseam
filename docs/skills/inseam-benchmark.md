@@ -56,10 +56,12 @@ Resume must target the same run. Do not copy its index into a new run or change 
 
 The model assignment is an invariant:
 
-- `stealth/ox-alpha` for summarization, entity extraction, agent answers, and EnterpriseRAG-Bench evaluation.
+- `google/gemini-2.5-flash-lite:batch` for summaries, with low reasoning effort and its reasoning trace excluded.
+- Entity extraction disabled.
+- `stealth/ox-alpha` for agent answers and EnterpriseRAG-Bench evaluation.
 - `openai/text-embedding-3-small` for embeddings.
 
-The default `--llm-call-budget 500` applies independently to summaries and entities. State the cost implication before raising it. A value of 500,000 can cause close to one million transform calls during indexing.
+The default `--llm-call-budget 500` applies to summaries. State the cost implication before raising it. A value of 500,000 can cause one transform call per source during indexing.
 
 ### Verify the run
 
@@ -70,7 +72,7 @@ Open the new `benchmarks/runs/<run-id>/manifest.json` and check:
 3. `indexing.duration_seconds` is present and positive.
 4. The final attempt has `search_index_preparation.duration_seconds` and its log.
 5. System specifications and the Inseam CLI version, binary hash, repository revision, and dirty state are present.
-6. Every language-model entry is `stealth/ox-alpha`; only the embedding entry differs.
+6. Every model entry matches the assignments above, including disabled entity extraction.
 7. `scores.retrieval` is present. Unless `--skip-evaluation` was requested, `scores.enterprise_rag_bench` and `enterprise-rag-bench-results.json` are also present.
 8. `queries.jsonl` has one row per question with retrieval, answer, and total durations plus raw Finder scores.
 

@@ -16,8 +16,9 @@ use inseam_kernel::store::{IndexStore, SearchRow, SourceCompletion, SourceId};
 use inseam_seams::embedder::Embedder;
 use inseam_seams::SeamError;
 
-/// Search rows per embed+land batch.
-pub(super) const FLUSH_AT: usize = 128;
+/// Search rows per embed+land batch. The lean source+summary shape yields
+/// one vector per two rows, filling a 128-input endpoint request.
+pub(super) const FLUSH_AT: usize = 256;
 /// Batches embedding at once; landing stays sequential and ordered.
 const EMBED_IN_FLIGHT: usize = 4;
 
@@ -41,12 +42,19 @@ pub(super) struct Batch {
 }
 
 /// The writer-side buffer: rows accumulate until a batch is full;
-/// completions are released only once every buffered row has been
-/// dispatched ahead of them.
+/// each completion remembers how many preceding rows still need dispatch.
 #[derive(Debug, Default)]
 pub(super) struct RowBuffer {
     rows: Vec<PendingRow>,
-    completed: Vec<SourceCompletion>,
+    completed: Vec<BufferedCompletion>,
+}
+
+/// A source completion's position in the ordered row stream. Once a drain
+/// crosses this boundary, every search row for that source has been sent.
+#[derive(Debug)]
+struct BufferedCompletion {
+    row_count_before: usize,
+    completion: SourceCompletion,
 }
 
 impl RowBuffer {
@@ -55,26 +63,19 @@ impl RowBuffer {
     }
 
     pub(super) fn push_completion(&mut self, completion: SourceCompletion) {
-        self.completed.push(completion);
+        self.completed.push(BufferedCompletion {
+            row_count_before: self.rows.len(),
+            completion,
+        });
     }
 
-    /// Full batches ready to dispatch, in order. Completions ride only when
-    /// no rows remain buffered behind them.
+    /// Full batches ready to dispatch, in order. A completion rides the
+    /// first batch that crosses its source's final-row boundary.
     pub(super) fn drain_ready(&mut self) -> Vec<Batch> {
-        let mut batches = Vec::new();
-        while self.rows.len() >= FLUSH_AT {
-            let rest = self.rows.split_off(FLUSH_AT);
-            let rows = std::mem::replace(&mut self.rows, rest);
-            batches.push(Batch {
-                rows,
-                completed: Vec::new(),
-            });
-        }
-        if self.rows.is_empty()
-            && !self.completed.is_empty()
-            && let Some(last) = batches.last_mut()
-        {
-            last.completed = std::mem::take(&mut self.completed);
+        let batch_count = self.rows.len() / FLUSH_AT;
+        let mut batches = Vec::with_capacity(batch_count);
+        for _batch_index in 0..batch_count {
+            batches.push(self.drain_batch(FLUSH_AT));
         }
         batches
     }
@@ -83,14 +84,44 @@ impl RowBuffer {
     /// if that is all that remains).
     pub(super) fn drain_all(&mut self) -> Vec<Batch> {
         let mut batches = self.drain_ready();
-        let rows = std::mem::take(&mut self.rows);
-        let completed = std::mem::take(&mut self.completed);
-        if !rows.is_empty() || !completed.is_empty() {
-            batches.push(Batch { rows, completed });
+        if self.rows.is_empty() {
+            let completed: Vec<SourceCompletion> = self
+                .completed
+                .drain(..)
+                .map(|buffered| buffered.completion)
+                .collect();
+            if !completed.is_empty() {
+                batches.push(Batch {
+                    rows: Vec::new(),
+                    completed,
+                });
+            }
+        } else {
+            batches.push(self.drain_batch(self.rows.len()));
         }
         assert!(self.rows.is_empty());
         assert!(self.completed.is_empty());
         batches
+    }
+
+    fn drain_batch(&mut self, row_count: usize) -> Batch {
+        assert!(row_count > 0);
+        assert!(row_count <= self.rows.len());
+        let rest = self.rows.split_off(row_count);
+        let rows = std::mem::replace(&mut self.rows, rest);
+        let completion_count = self
+            .completed
+            .partition_point(|buffered| buffered.row_count_before <= row_count);
+        let completed = self
+            .completed
+            .drain(..completion_count)
+            .map(|buffered| buffered.completion)
+            .collect();
+        for buffered in &mut self.completed {
+            assert!(buffered.row_count_before > row_count);
+            buffered.row_count_before -= row_count;
+        }
+        Batch { rows, completed }
     }
 }
 
@@ -114,10 +145,7 @@ impl EmbedStage {
     /// Queue a batch; waits while `EMBED_IN_FLIGHT` batches are already
     /// queued. A stage that has stopped refuses — `finish` has its error.
     pub(super) async fn submit(&self, batch: Batch) -> Result<(), SeamError> {
-        let sender = self
-            .sender
-            .as_ref()
-            .expect("submit before finish");
+        let sender = self.sender.as_ref().expect("submit before finish");
         sender
             .send(batch)
             .await
@@ -183,7 +211,11 @@ async fn embed_batch(
         let texts: Vec<&str> = wanted.iter().map(|&p| rows[p].text.as_str()).collect();
         match embedder.embed(&texts).await {
             Ok(embedded) => {
-                assert_eq!(embedded.len(), wanted.len(), "embedder returns one vector per text");
+                assert_eq!(
+                    embedded.len(),
+                    wanted.len(),
+                    "embedder returns one vector per text"
+                );
                 for (position, vector) in wanted.iter().zip(embedded) {
                     vectors[*position] = Some(vector);
                 }
@@ -294,7 +326,10 @@ mod tests {
         let ready = buffer.drain_ready();
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].rows.len(), FLUSH_AT);
-        assert!(ready[0].completed.is_empty(), "3 rows still buffered behind the completion");
+        assert!(
+            ready[0].completed.is_empty(),
+            "3 rows still buffered behind the completion"
+        );
         let rest = buffer.drain_all();
         assert_eq!(rest.len(), 1);
         assert_eq!(rest[0].rows.len(), 3);
@@ -311,6 +346,27 @@ mod tests {
         assert!(ready[0].completed.is_empty());
         assert_eq!(ready[1].completed.len(), 1);
         assert!(buffer.drain_all().is_empty());
+    }
+
+    #[test]
+    fn earlier_source_completes_while_later_source_rows_remain() {
+        let mut buffer = RowBuffer::default();
+        buffer.push_rows((0..10).map(row));
+        buffer.push_completion(completion(1));
+        buffer.push_rows((10..FLUSH_AT as i64 + 10).map(row));
+        buffer.push_completion(completion(2));
+
+        let ready = buffer.drain_ready();
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].rows.len(), FLUSH_AT);
+        assert_eq!(ready[0].completed.len(), 1);
+        assert_eq!(ready[0].completed[0].source, SourceId(1));
+
+        let rest = buffer.drain_all();
+        assert_eq!(rest.len(), 1);
+        assert_eq!(rest[0].rows.len(), 10);
+        assert_eq!(rest[0].completed.len(), 1);
+        assert_eq!(rest[0].completed[0].source, SourceId(2));
     }
 
     #[test]
