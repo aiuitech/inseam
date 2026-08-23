@@ -1377,6 +1377,35 @@ impl IndexStore {
         collect_scored(rows, |raw| raw).await
     }
 
+    /// Drop the DiskANN index ahead of a bulk landing, so the rows go in at
+    /// table speed and the index is rebuilt once over the whole table when
+    /// the sweep ends ([`Self::rebuild_fts`]). Measured on a laptop: a row
+    /// inserts ~36x slower through the index than without it, while a bulk
+    /// build costs under half an indexed insert per row — so once a run
+    /// lands a large share of the table, dropping first is the faster path.
+    /// Until the rebuild, a vector search builds the index itself (as on a
+    /// fresh node). Returns whether there was an index to drop.
+    pub async fn defer_search_vector_index(&self) -> Result<bool, StoreError> {
+        self.refuse_while_reembed_pending()?;
+        let surface = self.surface()?;
+        if surface.dimensions == 0 {
+            return Ok(false);
+        }
+        let _write = self.write().await;
+        if !search_vector_index_exists(&self.catalog).await? {
+            return Ok(false);
+        }
+        self.catalog
+            .execute(&format!("DROP INDEX IF EXISTS {SEARCH_VECTOR_INDEX}"), ())
+            .await?;
+        assert!(!search_vector_index_exists(&self.catalog).await?);
+        tracing::info!(
+            index = SEARCH_VECTOR_INDEX,
+            "vector search index deferred until the bulk landing ends"
+        );
+        Ok(true)
+    }
+
     pub async fn repair_search_index(
         &self,
         repair: SearchIndexRepair,
@@ -2487,6 +2516,38 @@ mod tests {
             .expect("rebuilds");
         assert_eq!(rebuilt.vectors_converted, 0);
         assert_eq!(rebuilt.outcome, SearchIndexRepairOutcome::Rebuilt);
+    }
+
+    #[tokio::test]
+    async fn deferring_the_vector_index_drops_it_and_rebuild_restores_search() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        assert!(!s.defer_search_vector_index().await.expect("nothing to defer"));
+        let vector = vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        s.add_search_rows(&[SearchRow {
+            fragment: FragmentId(7),
+            source: Some(SourceId(1)),
+            text: "deferred".into(),
+            vector: Some(vector.clone()),
+        }])
+        .await
+        .expect("adds");
+        s.repair_search_index(SearchIndexRepair::Ensure).await.expect("builds");
+        assert!(s.search_vector_index_ready().await.expect("ready"));
+        assert!(s.defer_search_vector_index().await.expect("defers"));
+        assert!(!s.search_vector_index_ready().await.expect("dropped"));
+        s.add_search_rows(&[SearchRow {
+            fragment: FragmentId(8),
+            source: Some(SourceId(1)),
+            text: "landed without the index".into(),
+            vector: Some(vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        }])
+        .await
+        .expect("adds under no index");
+        s.rebuild_fts().await.expect("rebuilds the index at the end");
+        assert!(s.search_vector_index_ready().await.expect("ready again"));
+        let hits = s.search_vector(&vector, 1).await.expect("searches");
+        assert_eq!(hits.first().map(|(id, _)| *id), Some(FragmentId(7)));
     }
 
     #[tokio::test]

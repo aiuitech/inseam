@@ -93,6 +93,9 @@ pub struct IndexReport {
     pub extractive_summaries: usize,
     pub envelope_summaries: usize,
     pub embedded: usize,
+    /// The DiskANN index was dropped before landing and rebuilt at the end,
+    /// because this run re-landed a large share of the search table.
+    pub vector_index_deferred: bool,
     /// LLM calls per consumer entry this run, from the granted handles.
     pub llm_calls: std::collections::BTreeMap<String, usize>,
     /// Dollars reported by the endpoint across the run's calls.
@@ -122,6 +125,9 @@ impl fmt::Display for IndexReport {
                 "maintenance: {} sources removed, {} keyed fragments collected, {} rows re-embedded",
                 self.removed, self.keyed_removed, self.reembedded
             )?;
+        }
+        if self.vector_index_deferred {
+            writeln!(f, "vector index: dropped before landing, rebuilt at the end")?;
         }
         write!(
             f,

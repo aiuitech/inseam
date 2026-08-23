@@ -54,6 +54,14 @@ use plan::{expected_stamp, PlanLimits, Planned, Planner};
 
 /// Catalog-only rows per transaction.
 const CATALOG_CHUNK: usize = 1_000;
+/// Deep-index sources this run, as a percentage of the sources already
+/// indexed, at or above which the DiskANN index is dropped before landing
+/// and rebuilt once at the end. Measured on a laptop, a search row inserts
+/// ~36x slower through the index than without it, and a bulk build costs
+/// under half an indexed insert per row: the break-even share is ~70%. The
+/// dial sits below it because landing is the sweep's serial stage and the
+/// rebuild runs once, after everything is in.
+const VECTOR_INDEX_DEFER_PERCENT: u64 = 50;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -263,6 +271,7 @@ impl Sweep for SweepService {
             rebuild: request.rebuild,
             deep_budget: request.deep_budget.unwrap_or_else(|| self.config.deep_budget()),
         };
+        let indexed_before = self.store.catalog_counts(None).await?.indexed;
         let decisions = self
             .decide(&sources, cutoff, &registrations, &sweep_shape, dials, &mut report)
             .await?;
@@ -284,6 +293,11 @@ impl Sweep for SweepService {
             sweep_shape,
             limits: self.config.limits(),
         });
+        if defers_vector_index(decisions.deep.len(), indexed_before) {
+            // The index comes back in `rebuild_fts` below; until then a
+            // vector search builds it itself, as it does on a fresh node.
+            report.vector_index_deferred = self.store.defer_search_vector_index().await?;
+        }
         self.index_deep(decisions.deep, planner, &mut report).await?;
 
         self.reconcile_vanished(&steward, &request.root, &sources, &mut report)
@@ -299,6 +313,18 @@ impl Sweep for SweepService {
         }
         Ok(report)
     }
+}
+
+/// Whether this run lands enough of the table that dropping the DiskANN
+/// index first and rebuilding it once is faster than inserting through it.
+/// A fresh node (nothing indexed yet) has no index to drop; the store
+/// answers that with `false` on its own.
+fn defers_vector_index(deep_sources: usize, indexed_before: u64) -> bool {
+    let deep_sources = u64::try_from(deep_sources).expect("a source count fits in u64");
+    if deep_sources == 0 {
+        return false;
+    }
+    deep_sources.saturating_mul(100) >= indexed_before.saturating_mul(VECTOR_INDEX_DEFER_PERCENT)
 }
 
 /// The per-run dials a request sets: what the dirtiness pass bends to beyond
@@ -646,5 +672,28 @@ mod tests {
         assert!(!scope_covers("Users/greg/Notes", "Users/greg"));
         assert!(scope_covers("", "any/locator/at/all"));
         assert!(scope_covers("", "1a2b3c"));
+    }
+}
+
+#[cfg(test)]
+mod defer_tests {
+    use super::defers_vector_index;
+
+    #[test]
+    fn defers_only_when_the_run_lands_a_large_share() {
+        // (deep sources this run, sources indexed before, defers?)
+        let cases: &[(usize, u64, bool)] = &[
+            (0, 0, false),
+            (0, 1_000, false),
+            (1, 0, true),
+            (1, 1_000, false),
+            (499, 1_000, false),
+            (500, 1_000, true),
+            (1_000, 1_000, true),
+            (usize::MAX, u64::MAX, true),
+        ];
+        for (deep, indexed, expected) in cases {
+            assert_eq!(defers_vector_index(*deep, *indexed), *expected, "deep={deep} indexed={indexed}");
+        }
     }
 }
