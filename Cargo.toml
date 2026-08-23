@@ -37,6 +37,10 @@ hmac = "0.12.1"
 ignore = "0.4.23"
 libsql = { version = "0.9.30", default-features = false, features = ["core"] }
 mime_guess = "2.0.5"
+minisign = "0.9.1"
+minisign-verify = "0.2.5"
+flate2 = "1.1.9"
+tar = "0.4.46"
 pulldown-cmark = "0.13.4"
 rand = "0.9.5"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }

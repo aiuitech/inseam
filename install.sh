@@ -11,7 +11,9 @@
 #   INSEAM_INSTALL_DIR  destination directory (default: ~/.local/bin)
 #
 # This script is served from docs.inseam.io and lives at the repo root;
-# release artifacts are built by .github/workflows/release.yml.
+# release artifacts are built by .github/workflows/release.yml and become
+# visible to `latest` only once a maintainer promotes the release
+# (`cargo xtask release promote`), so this script never sees an unsigned one.
 set -eu
 
 REPO="aiuitech/inseam"

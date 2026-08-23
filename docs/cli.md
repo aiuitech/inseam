@@ -31,6 +31,7 @@ inseam plugin check <artifact.wasm> # validate a plugin (plugins/validation.md)
 inseam plugin mount <artifact.wasm> # append a local artifact to the composition
 inseam plugin install <name>        # fetch from the registry, verify, check, mount (plugins/registry.md)
 inseam config [--resolved]          # the composition; --resolved = exactly what the node boots with
+inseam self update [--check]        # swap this binary for the release the signed manifest names (releases.md)
 ```
 
 `inseam status` only inspects index readiness. It does not hide a long
@@ -54,5 +55,15 @@ A serving node also applies composition edits submitted through the owner
 API — installing a loaded plugin from the console mounts it into the running
 node, while `plugin mount` / `plugin install` from a shell take effect on
 the next boot. See [architecture/hosted-node.md](architecture/hosted-node.md).
+
+`inseam self update` fetches `manifest.json` and its minisign signature from
+the distribution's release origin, verifies it against the key compiled into
+the binary, and if the cohort (`--cohort`, `INSEAM_RELEASE_COHORT`, default
+`stable`) names a version other than the running one, downloads that
+version's tarball for this platform, checks its sha256, and renames it over
+the running executable. Restart (or let the supervisor) to run it. `--check`
+only reports. `--origin` (`INSEAM_RELEASE_ORIGIN`) points at a mirror — a
+URL or a directory holding the same files — without changing which key is
+trusted. See [releases.md](releases.md).
 
 If part of the configuration can't start (say the default `endpoint` embedder with no API key set), the node prints a warning naming each waiting entry and what it's missing. Commands that need those parts fail with the same message; everything else keeps working. `inseam plugins` is the diagnostic view. The quickest offline setup is a `composition.toml` that switches the embedder to `hashed` ([configuration.md](configuration.md) has the example).

@@ -11,6 +11,7 @@ Start here:
 - [get-started.md](get-started.md) — install a node, index something, query it, modify it.
 - [cli.md](cli.md) — the `inseam` binary, command by command.
 - [configuration.md](configuration.md) — the composition file, the node's only config.
+- [releases.md](releases.md) — how a binary updates itself, and how a release is built, signed, and promoted.
 - [benchmarking.md](benchmarking.md) — set up EnterpriseRAG-Bench, run it through the CLI, and record comparable results.
 - [glossary.md](glossary.md) — the vocabulary, one page.
 

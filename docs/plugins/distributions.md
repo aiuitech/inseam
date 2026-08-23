@@ -31,6 +31,8 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
+Pin `inseam-cli` by **tag** so the binary is reproducible from one commit of each repository. Add `.with_update_channel(inseam_cli::UpdateChannel { origin, public_key })` to point `inseam self update` at your own signed manifest and key ([releases.md](../releases.md)); without it the binary follows the stock origin, whose manifests it would verify with inseam's key and whose tarballs would not contain your plugins.
+
 Provisioning a node is `git clone` + `cargo install --path .` — the same shape as installing the stock CLI. Your plugins are addressable from any `composition.toml` by bare name, exactly like the first-party set; `with_base_entries` turns them on by default, and a node's composition file overrides those entries by id like any base entry.
 
 ## The validation guarantee travels with you

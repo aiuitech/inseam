@@ -5,18 +5,25 @@
 //! wit-bindgen's markdown backend, and skill pages from `skills/*/SKILL.md`
 //! — so the prose docs tree stays the single serialization the doc site
 //! consumes (`docs/architecture/doc-generation.md`).
+//!
+//! `release` is the operator half of `design/releases.md`: `keygen` makes
+//! the signing keypair, `promote <tag>` signs a manifest for a CI-built
+//! draft release and publishes it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
+mod release;
+
 fn main() -> Result<()> {
-    let task = std::env::args().nth(1);
+    let args: Vec<String> = std::env::args().skip(1).collect();
     let root = repo_root()?;
-    match task.as_deref() {
+    match args.first().map(String::as_str) {
         Some("docs") => docs(&root),
-        _ => bail!("usage: cargo xtask docs"),
+        Some("release") => release::run(&args[1..]),
+        _ => bail!("usage: cargo xtask docs | cargo xtask release <keygen|promote>"),
     }
 }
 

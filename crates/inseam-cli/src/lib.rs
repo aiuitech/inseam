@@ -9,6 +9,9 @@
 //! seam; no command contains node logic.
 
 mod registry;
+mod release;
+
+pub use release::UpdateChannel;
 
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
@@ -110,6 +113,9 @@ const REPAIR_PROGRESS_TICKS_MAX: u32 = 51_840;
 pub struct Distribution {
     pub factories: Vec<Arc<dyn PluginFactory>>,
     pub base_composition: String,
+    /// Where `inseam self update` looks and which key it trusts
+    /// (`design/releases.md`).
+    pub update_channel: UpdateChannel,
 }
 
 impl Distribution {
@@ -118,7 +124,16 @@ impl Distribution {
         Self {
             factories: inseam_plugins::factories(),
             base_composition: BASE_COMPOSITION.to_string(),
+            update_channel: UpdateChannel::first_party(),
         }
+    }
+
+    /// Point `inseam self update` at this distribution's own origin and
+    /// signing key. A private distribution sets both; a stock binary that
+    /// only needs a mirror passes `--origin` at runtime instead.
+    pub fn with_update_channel(mut self, channel: UpdateChannel) -> Self {
+        self.update_channel = channel;
+        self
     }
 
     /// Link additional plugin factories into this distribution. Factories
@@ -163,6 +178,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Maintain this binary itself: check for or install the release the
+    /// distribution's origin names for a cohort.
+    #[command(name = "self")]
+    SelfMaintenance {
+        #[command(subcommand)]
+        command: SelfCommand,
+    },
     /// Keep this node running and serve its authenticated owner web API.
     Serve {
         /// Address for the HTTP listener. The loopback default is safe for
@@ -402,6 +424,26 @@ enum PluginCommand {
     },
 }
 
+#[derive(Subcommand)]
+enum SelfCommand {
+    /// Fetch the signed release manifest, and if the cohort names a version
+    /// other than the running one, swap this executable for it. Restart the
+    /// process (or let the supervisor) to run the new version.
+    Update {
+        /// Base URL or directory serving manifest.json and its artifacts.
+        /// Defaults to the distribution's origin; overriding it makes this
+        /// binary a mirror client — the signing key does not change.
+        #[arg(long, env = release::ORIGIN_ENV)]
+        origin: Option<String>,
+        /// Release cohort to follow.
+        #[arg(long, env = "INSEAM_RELEASE_COHORT", default_value = "stable")]
+        cohort: String,
+        /// Report what would change without downloading or installing.
+        #[arg(long)]
+        check: bool,
+    },
+}
+
 /// Run the CLI for a distribution: parse args, boot the kernel with the
 /// distribution's factories, dispatch the command. The whole `main` of any
 /// distribution binary.
@@ -430,6 +472,22 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
             .context("no platform data directory; pass --data-dir")?
             .join("inseam"),
     };
+    // `self update` never boots the kernel: it must work when the installed
+    // binary cannot, which is exactly when it is needed.
+    if let Command::SelfMaintenance { command } = &cli.command {
+        match command {
+            SelfCommand::Update { origin, cohort, check } => {
+                release::self_update(
+                    &distribution.update_channel,
+                    origin.as_deref(),
+                    cohort,
+                    *check,
+                )
+                .await?;
+            }
+        }
+        return Ok(());
+    }
     // `plugin check`/`plugin install` never boot the kernel: validating an
     // artifact is hermetic, and installing must work before the composition
     // it edits can settle.
@@ -845,7 +903,10 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
         }
         Command::Capabilities => authoring::capabilities(&kernel),
         Command::Claims { target } => authoring::claims(&kernel, &target)?,
-        Command::Config { .. } | Command::Plugin { .. } | Command::Seams { .. } => {
+        Command::Config { .. }
+        | Command::Plugin { .. }
+        | Command::Seams { .. }
+        | Command::SelfMaintenance { .. } => {
             unreachable!("handled before boot")
         }
     }
