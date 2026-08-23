@@ -17,7 +17,8 @@ use std::sync::Arc;
 
 use inseam_kernel::address::{Address, HostId};
 use inseam_kernel::store::{
-    CatalogRow, CatalogSelection, IndexStore, StoredFragment, StoredSource,
+    CatalogRow, CatalogSelection, IndexStore, SearchIndexRepair,
+    SearchIndexRepairOutcome, StoredFragment, StoredSource,
 };
 use inseam_kernel::substrate::{
     ApplyCx, CompositionEdit, CompositionEditor, Entry, EventBus, Facts, Inject, Manifest,
@@ -36,8 +37,8 @@ use inseam_seams::operations::{
     CatalogResponse, CatalogSourceView, EnvelopeView, ExpandRequest,
     ExpandResponse, FetchRequest, FetchResponse, FragmentHint, FragmentView, GrantView,
     HostView, IndexRequest, InstallPluginRequest, OperationRequest, Operations, PluginView,
-    QueryRequest, QueryResponse, QueryResult, RelationView, RevokeGrantRequest, ScanRequest,
-    ScanResponse, StatusReport, OPERATIONS,
+    QueryRequest, QueryResponse, QueryResult, RelationView, RepairOutcome, RepairReport,
+    RepairRequest, RevokeGrantRequest, ScanRequest, ScanResponse, StatusReport, OPERATIONS,
 };
 use inseam_seams::sweep::{IndexReport, Sweep, SweepRequest, SWEEP};
 use inseam_seams::dates::ymd;
@@ -440,6 +441,27 @@ impl Operations for OperationsService {
             embedding_model: identity.as_ref().map(|(m, _)| m.clone()),
             embedding_dimensions: identity.map(|(_, d)| d).unwrap_or(0),
             reembed_pending: self.store.reembed_pending(),
+        })
+    }
+
+    async fn repair(&self, request: RepairRequest) -> Result<RepairReport, SeamError> {
+        let repair = if request.rebuild {
+            SearchIndexRepair::Rebuild
+        } else {
+            SearchIndexRepair::Ensure
+        };
+        let report = self.store.repair_search_index(repair).await?;
+        let outcome = match report.outcome {
+            SearchIndexRepairOutcome::Empty => RepairOutcome::Empty,
+            SearchIndexRepairOutcome::AlreadyReady => RepairOutcome::AlreadyReady,
+            SearchIndexRepairOutcome::Built => RepairOutcome::Built,
+            SearchIndexRepairOutcome::Rebuilt => RepairOutcome::Rebuilt,
+        };
+        Ok(RepairReport {
+            search_rows: report.search_rows,
+            vectors_converted: report.vectors_converted,
+            outcome,
+            vector_index_ready: self.store.search_vector_index_ready().await?,
         })
     }
 }

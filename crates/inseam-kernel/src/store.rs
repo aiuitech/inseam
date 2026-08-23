@@ -32,6 +32,11 @@ const SCHEMA_VERSION: &str = "6";
 const ID_LIST_CHUNK: usize = 400;
 const SEARCH_VECTOR_INDEX: &str = "search_rows_vector_idx";
 const SEARCH_VECTOR_CANDIDATE_MULTIPLIER: usize = 4;
+#[cfg(not(test))]
+const SEARCH_VECTOR_MIGRATION_BATCH_ROWS: u64 = 4_096;
+#[cfg(test)]
+const SEARCH_VECTOR_MIGRATION_BATCH_ROWS: u64 = 1;
+const SEARCH_VECTOR_MIGRATION_BATCHES_MAX: u64 = 1_000_000;
 pub const RELATION_HOPS_MAX: u32 = 4;
 pub const RELATION_LIMIT_MAX: u32 = 100_000;
 
@@ -210,6 +215,27 @@ pub struct StoreStats {
     pub content_bytes: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchIndexRepair {
+    Ensure,
+    Rebuild,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchIndexRepairOutcome {
+    Empty,
+    AlreadyReady,
+    Built,
+    Rebuilt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SearchIndexRepairReport {
+    pub search_rows: u64,
+    pub vectors_converted: u64,
+    pub outcome: SearchIndexRepairOutcome,
+}
+
 /// Which cataloged sources a listing selects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CatalogSelection {
@@ -361,7 +387,7 @@ impl IndexStore {
         // identity in place: searches refuse while the re-embed is pending,
         // and `begin_reembed` recreates them under the new dimensions.
         self.catalog.execute_batch(&search_schema_sql(dims)).await?;
-        ensure_search_vector_index(&self.catalog, dims).await?;
+        ensure_search_vector_schema(&self.catalog, dims).await?;
         let mut search = self.search();
         search.surface = Some(SearchSurface {
             dims,
@@ -1230,7 +1256,7 @@ impl IndexStore {
         self.catalog
             .execute("INSERT INTO search_fts (search_fts) VALUES ('optimize')", ())
             .await?;
-        ensure_search_vector_index(&self.catalog, surface.dims).await?;
+        repair_search_vector_index(&self.catalog, surface.dims, SearchIndexRepair::Ensure).await?;
         Ok(())
     }
 
@@ -1273,7 +1299,9 @@ impl IndexStore {
             return Ok(Vec::new());
         }
         check_dimensions(surface.dims, vector)?;
-        self.prepare_search_vector_index(surface.dims).await?;
+        if !search_vector_index_exists(&self.catalog).await? {
+            self.repair_search_index(SearchIndexRepair::Ensure).await?;
+        }
         if !search_vector_index_exists(&self.catalog).await? {
             return Ok(Vec::new());
         }
@@ -1294,15 +1322,14 @@ impl IndexStore {
         collect_scored(rows, |raw| raw).await
     }
 
-    async fn prepare_search_vector_index(&self, dims: usize) -> Result<(), StoreError> {
-        if search_vector_index_exists(&self.catalog).await? {
-            return Ok(());
-        }
+    pub async fn repair_search_index(
+        &self,
+        repair: SearchIndexRepair,
+    ) -> Result<SearchIndexRepairReport, StoreError> {
+        self.refuse_while_reembed_pending()?;
+        let surface = self.surface()?;
         let _write = self.write().await;
-        if search_vector_index_exists(&self.catalog).await? {
-            return Ok(());
-        }
-        ensure_search_vector_index(&self.catalog, dims).await
+        repair_search_vector_index(&self.catalog, surface.dims, repair).await
     }
 
     pub async fn search_rows_count(&self) -> Result<usize, StoreError> {
@@ -1390,7 +1417,7 @@ impl IndexStore {
         self.catalog
             .execute_batch(&search_schema_sql(surface.dims))
             .await?;
-        ensure_search_vector_index(&self.catalog, surface.dims).await?;
+        ensure_search_vector_schema(&self.catalog, surface.dims).await?;
         Ok(())
     }
 
@@ -1660,17 +1687,13 @@ fn search_schema_sql(dims: usize) -> String {
     )
 }
 
-/// Bring an old float32 search surface forward without re-embedding. Search
-/// tables are derived state, so the compact candidate column can be populated
-/// from the vectors already present and the redundant blobs can be released.
-async fn ensure_search_vector_index(
+async fn ensure_search_vector_schema(
     conn: &libsql::Connection,
     dims: usize,
 ) -> Result<(), StoreError> {
     if dims == 0 {
         return Ok(());
     }
-    let started = Instant::now();
     if !search_column_exists(conn, "ann_vector").await? {
         conn.execute(
             &format!("ALTER TABLE search_rows ADD COLUMN ann_vector F8_BLOB({dims})"),
@@ -1678,37 +1701,121 @@ async fn ensure_search_vector_index(
         )
         .await?;
     }
-    if search_column_exists(conn, "vector").await? {
+    Ok(())
+}
+
+/// Bring an old float32 search surface forward without re-embedding, then
+/// ensure its compact DiskANN index exists. Each SQL statement commits on its
+/// own, so interruption leaves a state the next repair can continue.
+async fn repair_search_vector_index(
+    conn: &libsql::Connection,
+    dims: usize,
+    repair: SearchIndexRepair,
+) -> Result<SearchIndexRepairReport, StoreError> {
+    let started = Instant::now();
+    ensure_search_vector_schema(conn, dims).await?;
+    let search_rows = search_rows_count_in(conn).await?;
+    if dims == 0 {
+        return Ok(SearchIndexRepairReport {
+            search_rows,
+            vectors_converted: 0,
+            outcome: SearchIndexRepairOutcome::Empty,
+        });
+    }
+    let existed = search_vector_index_exists(conn).await?;
+    if existed && repair == SearchIndexRepair::Ensure {
+        return Ok(SearchIndexRepairReport {
+            search_rows,
+            vectors_converted: 0,
+            outcome: SearchIndexRepairOutcome::AlreadyReady,
+        });
+    }
+    let vectors_converted = if existed {
+        0
+    } else {
+        migrate_legacy_vectors(conn).await?
+    };
+    if search_rows == 0 {
+        return Ok(SearchIndexRepairReport {
+            search_rows,
+            vectors_converted,
+            outcome: SearchIndexRepairOutcome::Empty,
+        });
+    }
+    if existed {
+        conn.execute("REINDEX search_rows_vector_idx", ()).await?;
+    } else {
         conn.execute(
-            "UPDATE search_rows SET ann_vector = vector8(vector)
-             WHERE ann_vector IS NULL AND vector IS NOT NULL",
-            (),
-        )
-        .await?;
-        conn.execute(
-            "UPDATE search_rows SET vector = NULL
-             WHERE ann_vector IS NOT NULL AND vector IS NOT NULL",
+            "CREATE INDEX search_rows_vector_idx
+             ON search_rows(libsql_vector_idx(
+               ann_vector, 'metric=cosine', 'compress_neighbors=float1bit', 'max_neighbors=8'
+             ))",
             (),
         )
         .await?;
     }
-    if search_rows_count_in(conn).await? == 0 {
-        return Ok(());
-    }
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS search_rows_vector_idx
-         ON search_rows(libsql_vector_idx(
-           ann_vector, 'metric=cosine', 'compress_neighbors=float1bit', 'max_neighbors=8'
-         ))",
-        (),
-    )
-    .await?;
     tracing::info!(
         index = SEARCH_VECTOR_INDEX,
         elapsed_ms = started.elapsed().as_millis(),
         "vector search index is ready"
     );
-    Ok(())
+    let outcome = if existed {
+        SearchIndexRepairOutcome::Rebuilt
+    } else {
+        SearchIndexRepairOutcome::Built
+    };
+    Ok(SearchIndexRepairReport {
+        search_rows,
+        vectors_converted,
+        outcome,
+    })
+}
+
+async fn migrate_legacy_vectors(conn: &libsql::Connection) -> Result<u64, StoreError> {
+    if !search_column_exists(conn, "vector").await? {
+        return Ok(0);
+    }
+    let converted = count_of_in(
+        conn,
+        "SELECT COUNT(*) FROM search_rows
+         WHERE ann_vector IS NULL AND vector IS NOT NULL",
+    )
+    .await?;
+    let batch_count = converted
+        .checked_div(SEARCH_VECTOR_MIGRATION_BATCH_ROWS)
+        .and_then(|count| count.checked_add(1))
+        .expect("migration batch count fits u64");
+    assert!(batch_count <= SEARCH_VECTOR_MIGRATION_BATCHES_MAX);
+    let mut migrated = 0_u64;
+    for _ in 0..batch_count {
+        let changed = migrate_legacy_vectors_batch(conn).await?;
+        migrated = migrated
+            .checked_add(changed)
+            .expect("migrated row count fits u64");
+        if changed == 0 {
+            break;
+        }
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").await?;
+    }
+    assert_eq!(migrated, converted);
+    Ok(converted)
+}
+
+async fn migrate_legacy_vectors_batch(conn: &libsql::Connection) -> Result<u64, StoreError> {
+    let changed = conn
+        .execute(
+            "UPDATE search_rows
+             SET ann_vector = vector8(vector), vector = NULL
+             WHERE id IN (
+               SELECT id FROM search_rows
+               WHERE ann_vector IS NULL AND vector IS NOT NULL
+               ORDER BY id LIMIT ?1
+             )",
+            params![i64::try_from(SEARCH_VECTOR_MIGRATION_BATCH_ROWS)
+                .expect("migration batch size fits i64")],
+        )
+        .await?;
+    Ok(changed)
 }
 
 async fn search_vector_index_exists(conn: &libsql::Connection) -> Result<bool, StoreError> {
@@ -1722,7 +1829,11 @@ async fn search_vector_index_exists(conn: &libsql::Connection) -> Result<bool, S
 }
 
 async fn search_rows_count_in(conn: &libsql::Connection) -> Result<u64, StoreError> {
-    let mut rows = conn.query("SELECT COUNT(*) FROM search_rows", ()).await?;
+    count_of_in(conn, "SELECT COUNT(*) FROM search_rows").await
+}
+
+async fn count_of_in(conn: &libsql::Connection, sql: &str) -> Result<u64, StoreError> {
+    let mut rows = conn.query(sql, ()).await?;
     let row = rows
         .next()
         .await?
@@ -2262,7 +2373,22 @@ mod tests {
             .await
             .expect("inserts legacy row");
 
-        ensure_search_vector_index(&s.catalog, 8).await.expect("converges");
+        drop(s);
+        let s = store(dir.path()).await;
+        assert!(!s.search_vector_index_ready().await.expect("reads readiness"));
+        let legacy = s
+            .first_row("SELECT vector FROM search_rows WHERE id = 41", ())
+            .await
+            .expect("reads")
+            .expect("row exists");
+        assert!(legacy.get::<Option<Vec<u8>>>(0).expect("reads vector").is_some());
+        drop(legacy);
+        let report = s
+            .repair_search_index(SearchIndexRepair::Ensure)
+            .await
+            .expect("converges");
+        assert_eq!(report.vectors_converted, 1);
+        assert_eq!(report.outcome, SearchIndexRepairOutcome::Built);
         let hits = s.search_vector(&vector, 1).await.expect("searches");
         assert_eq!(hits.first().map(|(id, _)| *id), Some(FragmentId(41)));
         let row = s
@@ -2272,6 +2398,13 @@ mod tests {
             .expect("row exists");
         assert!(row.get::<Option<Vec<u8>>>(0).expect("reads vector").is_none());
         assert!(row.get::<Option<Vec<u8>>>(1).expect("reads ANN vector").is_some());
+        drop(row);
+        let rebuilt = s
+            .repair_search_index(SearchIndexRepair::Rebuild)
+            .await
+            .expect("rebuilds");
+        assert_eq!(rebuilt.vectors_converted, 0);
+        assert_eq!(rebuilt.outcome, SearchIndexRepairOutcome::Rebuilt);
     }
 
     #[tokio::test]

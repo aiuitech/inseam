@@ -321,8 +321,9 @@ elif "index" in sys.argv:
     print("1 sources seen: 1 indexed, 0 unchanged, 0 catalog-only, 0 past cutoff, 0 ignored")
     print("1 fragments, 0 relations, 0 keyed fragments anchored")
     print("summaries: 1 llm, 0 extractive, 0 envelope · 1 embedded · $0.001 spent")
-elif "status" in sys.argv:
+elif "repair" in sys.argv:
     print("search rows    1")
+    print("vector index  already ready")
 else:
     raise SystemExit(2)
 '''

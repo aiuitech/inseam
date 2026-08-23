@@ -544,7 +544,8 @@ mod tests {
     use inseam_seams::oauth::{AuthorizationStarted, GrantState};
     use inseam_seams::operations::{
         AwaitAuthorizationRequest, ExpandResponse, FetchResponse, IndexRequest, PluginState,
-        QueryResponse, ScanResponse, PLUGIN_UPLOAD_BYTES_MAX,
+        QueryResponse, RepairOutcome, RepairReport, RepairRequest, ScanResponse,
+        PLUGIN_UPLOAD_BYTES_MAX,
     };
     use inseam_seams::sweep::IndexReport;
     use tower::ServiceExt;
@@ -627,6 +628,15 @@ mod tests {
                 embedding_model: None,
                 embedding_dimensions: 0,
                 reembed_pending: false,
+            })
+        }
+
+        async fn repair(&self, _request: RepairRequest) -> Result<RepairReport, SeamError> {
+            Ok(RepairReport {
+                search_rows: 7,
+                vectors_converted: 0,
+                outcome: RepairOutcome::AlreadyReady,
+                vector_index_ready: true,
             })
         }
 

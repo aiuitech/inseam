@@ -33,7 +33,7 @@ python3 benchmarks/enterprise_rag_bench.py run
 
 A full run creates a fresh index and evaluates all 500 questions. It can take hours and makes many embedding and LLM requests. `--limit` limits questions and evaluator work, but indexing still covers the full corpus so retrieval scores remain meaningful.
 
-The runner prints each active phase immediately. Before questions it runs a timed “Preparing libSQL vector search index” step; this is normally instant, but on a node created before vector indexing it performs the one-time in-place conversion and DiskANN build. While an `inseam` command is still running, the runner prints an elapsed-time heartbeat every five seconds; query progress also includes the question number and ID. The current phase is mirrored in `manifest.json`, so a second terminal can distinguish indexing, querying, and evaluation without inspecting processes.
+The runner prints each active phase immediately. Before questions it runs a timed `inseam repair` step named “Preparing libSQL vector search index”; this is normally instant, but on a node created before vector indexing it performs the one-time in-place conversion and DiskANN build. The repair reuses the resident vectors and does not rerun source indexing or embedding. While an `inseam` command is still running, the runner prints an elapsed-time heartbeat every five seconds; query progress also includes the question number and ID. The current phase is mirrored in `manifest.json`, so a second terminal can distinguish indexing, querying, and evaluation without inspecting processes.
 
 For a one-question harness check after setup:
 

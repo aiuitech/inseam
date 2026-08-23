@@ -14,7 +14,7 @@ Operations are typed request/response messages with no transport assumptions (no
   - `verify` — initiate a property-verification flow (e.g. send a confirmation link), yielding a verified property the requester can subsequently present.
 
   `query` → `expand`/`scan` → `fetch` is the incremental-discovery ladder ([Finder](finder.md)): each rung costs more context than the last, and an AI client climbs only where the previous rung earned it.
-- **Owner operations** — managing the node itself: connections, hosts, plugins, index configuration, sync status. Same layer, separate scope; never exposed at the boundary.
+- **Owner operations** — managing the node itself: connections, hosts, plugins, index configuration and repair, sync status. Same layer, separate scope; never exposed at the boundary.
 
 ## Transport adapters
 

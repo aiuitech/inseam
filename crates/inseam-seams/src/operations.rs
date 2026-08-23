@@ -1,7 +1,8 @@
 //! The `operations` seam: typed, transport-neutral request/response messages
 //! (`design/node-api.md`). Transport plugins (CLI, HTTP, MCP, FFI) consume
 //! this seam and stay logic-free. `query -> expand`/`scan` -> `fetch` is the
-//! incremental-discovery ladder; `index` and `status` are owner operations.
+//! incremental-discovery ladder; `index`, `repair`, and `status` are owner
+//! operations.
 //!
 //! Boundary enforcement is a guard on dispatch: providers check
 //! [`OperationRequest`] before serving scoped operations, and denial is
@@ -45,6 +46,9 @@ pub trait Operations: Send + Sync {
     async fn hosts(&self) -> Result<Vec<HostView>, SeamError>;
     /// Owner operation: index and catalog statistics.
     async fn status(&self) -> Result<StatusReport, SeamError>;
+    /// Owner operation: converge the derived search index without fetching
+    /// sources or calling transforms and embedding providers.
+    async fn repair(&self, request: RepairRequest) -> Result<RepairReport, SeamError>;
     /// Owner operation: the catalog as this node holds it — every source it
     /// knows about, deep-indexed or still waiting on budget.
     async fn catalog(&self, request: CatalogRequest) -> Result<CatalogResponse, SeamError>;
@@ -529,6 +533,29 @@ pub struct StatusReport {
     pub embedding_model: Option<String>,
     pub embedding_dimensions: usize,
     pub reembed_pending: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct RepairRequest {
+    #[serde(default)]
+    pub rebuild: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RepairOutcome {
+    Empty,
+    AlreadyReady,
+    Built,
+    Rebuilt,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct RepairReport {
+    pub search_rows: u64,
+    pub vectors_converted: u64,
+    pub outcome: RepairOutcome,
+    pub vector_index_ready: bool,
 }
 
 #[cfg(test)]

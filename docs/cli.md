@@ -19,6 +19,8 @@ inseam fetch <address>              # the whole source
 inseam agent "when did I ...?"      # a live LLM using query/expand/scan/fetch as tools
 inseam models [--embeddings]        # the endpoint's model catalog, cheapest first
 inseam status                       # store stats, sizes, embedding and DiskANN readiness, pending re-embeds
+inseam repair                       # convert legacy vectors and build a missing DiskANN index
+inseam repair --rebuild             # reconstruct an existing DiskANN index
 inseam plugins                      # every running plugin, its state, and its live effects
 inseam seams [--wit]                # seams that take loaded plugins; --wit prints the contract (plugins/authoring-cli.md)
 inseam capabilities                 # what a manifest may request, and what this node grants right now
@@ -30,6 +32,14 @@ inseam plugin mount <artifact.wasm> # append a local artifact to the composition
 inseam plugin install <name>        # fetch from the registry, verify, check, mount (plugins/registry.md)
 inseam config [--resolved]          # the composition; --resolved = exactly what the node boots with
 ```
+
+`inseam status` only inspects index readiness. It does not hide a long
+maintenance operation inside node startup. Run `inseam repair` once when
+status says the vector index is absent, then use `inseam query ...` normally.
+Repair uses the existing resident vectors: it does not fetch sources, run
+transforms, or call the embedding provider. It prints an elapsed-time heartbeat
+every five seconds and can be interrupted and resumed. `--rebuild` is only for
+reconstructing an index that is already present.
 
 `inseam serve` requires `INSEAM_OWNER_TOKEN` or `--owner-token` with at least
 32 bytes. It listens on `127.0.0.1:7337` by default. A browser may index only

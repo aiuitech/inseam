@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -31,7 +32,8 @@ use inseam_seams::oauth::{GrantId, GrantState, Redirect};
 use inseam_seams::operations::{
     AuthorizeGrantRequest, AwaitAuthorizationRequest, CatalogFilter, CatalogRequest,
     CatalogResponse, ExpandRequest, FetchRequest, GrantView, IndexRequest, QueryRequest,
-    QueryResponse, RevokeGrantRequest, ScanRequest, OPERATIONS,
+    Operations, QueryResponse, RepairOutcome, RepairReport, RepairRequest, RevokeGrantRequest,
+    ScanRequest, OPERATIONS,
 };
 use inseam_seams::sweep::DeepBudget;
 
@@ -98,6 +100,8 @@ plugin = "sweep"
 id = "operations"
 plugin = "operations"
 "#;
+const REPAIR_PROGRESS_INTERVAL: Duration = Duration::from_secs(5);
+const REPAIR_PROGRESS_TICKS_MAX: u32 = 51_840;
 
 /// What a distribution contributes to the node: the linked plugin factories
 /// it ships and the base composition that activates them. Everything else —
@@ -291,6 +295,13 @@ enum Command {
     },
     /// Index and catalog statistics for this node.
     Status,
+    /// Repair the derived search index without fetching or re-embedding
+    /// sources. Use --rebuild to reconstruct an existing DiskANN index.
+    Repair {
+        /// Reconstruct the DiskANN index even when it is already ready.
+        #[arg(long)]
+        rebuild: bool,
+    },
     /// The plugin tree: every fiber, its state, and its live effects.
     Plugins,
     /// The seams that accept loaded plugins and their contract; --wit prints
@@ -477,8 +488,9 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
     // even when the composition is broken enough that boot would not.
     if let Command::Config { resolved } = &cli.command {
         if *resolved {
-            let mut flat = Composition::default();
-            flat.entries = composition.resolved();
+            let flat = Composition {
+                entries: composition.resolved(),
+            };
             println!("{}", flat.to_toml());
         } else {
             println!("{}", composition.to_toml());
@@ -789,7 +801,7 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 if status.vector_index_ready {
                     "ready (libSQL DiskANN)"
                 } else {
-                    "not present"
+                    "not present (run `inseam repair`)"
                 }
             );
             println!(
@@ -800,6 +812,11 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 "content size   {} across cataloged sources",
                 human_bytes(status.content_bytes)
             );
+        }
+        Command::Repair { rebuild } => {
+            let ops = kernel.service(&OPERATIONS)?;
+            let report = repair_with_progress(ops.as_ref(), rebuild).await?;
+            print_repair_report(&report);
         }
         Command::Plugins => {
             for fiber in kernel.fibers() {
@@ -822,6 +839,62 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
     }
     kernel.shutdown().await;
     Ok(())
+}
+
+async fn repair_with_progress(
+    operations: &dyn Operations,
+    rebuild: bool,
+) -> anyhow::Result<RepairReport> {
+    println!("Repairing derived search index...");
+    let started = Instant::now();
+    let repair = operations.repair(RepairRequest { rebuild });
+    tokio::pin!(repair);
+    let mut progress = tokio::time::interval(REPAIR_PROGRESS_INTERVAL);
+    progress.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    progress.tick().await;
+    for _ in 0..REPAIR_PROGRESS_TICKS_MAX {
+        tokio::select! {
+            result = &mut repair => return result.map_err(Into::into),
+            _ = progress.tick() => {
+                println!("Repairing derived search index: {} elapsed", format_duration(started.elapsed()));
+            }
+        }
+    }
+    bail!("search-index repair exceeded its 72 hour safety limit")
+}
+
+fn print_repair_report(report: &RepairReport) {
+    let outcome = match report.outcome {
+        RepairOutcome::Empty => "no vector rows to index",
+        RepairOutcome::AlreadyReady => "already ready",
+        RepairOutcome::Built => "built",
+        RepairOutcome::Rebuilt => "rebuilt",
+    };
+    println!("search rows    {}", report.search_rows);
+    println!("converted     {} legacy vectors", report.vectors_converted);
+    println!("vector index  {outcome}");
+    assert_eq!(
+        report.vector_index_ready,
+        matches!(
+            report.outcome,
+            RepairOutcome::AlreadyReady | RepairOutcome::Built | RepairOutcome::Rebuilt
+        )
+    );
+}
+
+fn format_duration(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    if seconds < 60 {
+        return format!("{seconds}s");
+    }
+    let minutes = seconds / 60;
+    let seconds = seconds % 60;
+    if minutes < 60 {
+        return format!("{minutes}m {seconds:02}s");
+    }
+    let hours = minutes / 60;
+    let minutes = minutes % 60;
+    format!("{hours}h {minutes:02}m")
 }
 
 /// One line of where a grant stands, with the next step when there is one.

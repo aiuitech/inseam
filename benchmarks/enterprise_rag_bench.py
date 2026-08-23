@@ -806,13 +806,13 @@ def prepare_search_index(
             str(data_dir),
             "--composition",
             str(composition),
-            "status",
+            "repair",
         ],
         log_dir / "search-index.log",
         timeout_seconds=INDEX_TIMEOUT_SECONDS,
         progress_label="Preparing libSQL vector search index",
     )
-    require_success(result, "preparing the vector search index")
+    require_success(result, "repairing the vector search index")
     return {
         "started_at": started_at,
         "finished_at": utc_now(),

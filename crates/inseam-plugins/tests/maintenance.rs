@@ -9,7 +9,9 @@ mod common;
 
 use inseam_kernel::fragment::{FragmentKey, Mimetype, NewFragment, Relation, RelationKind};
 use inseam_seams::connection::CONNECTIONS;
-use inseam_seams::operations::{CatalogFilter, CatalogRequest, IndexRequest, QueryRequest};
+use inseam_seams::operations::{
+    CatalogFilter, CatalogRequest, IndexRequest, QueryRequest, RepairOutcome, RepairRequest,
+};
 use inseam_seams::sweep::DeepBudget;
 
 async fn index(
@@ -398,6 +400,12 @@ async fn status_reports_store_and_content_sizes() {
     let after = ops.status().await.expect("status");
     assert_eq!(after.content_bytes, u64::try_from(body.len()).expect("fits"));
     assert!(after.store_bytes > 0, "the database file exists on disk");
+    let repaired = ops
+        .repair(RepairRequest { rebuild: false })
+        .await
+        .expect("repairs");
+    assert_eq!(repaired.outcome, RepairOutcome::AlreadyReady);
+    assert!(repaired.vector_index_ready);
 }
 
 #[tokio::test]
