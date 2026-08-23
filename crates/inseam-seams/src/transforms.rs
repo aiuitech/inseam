@@ -16,6 +16,7 @@ use inseam_kernel::fragment::{FragmentKey, Mimetype, NewFragment, RelationKind, 
 use inseam_kernel::store::InventoryEntry;
 use inseam_kernel::substrate::{fnv1a, ApplyCx, PluginError, ServiceKey};
 
+use crate::llm::LlmLane;
 use crate::SeamError;
 
 pub const TRANSFORMS: ServiceKey<dyn Transforms> = ServiceKey::new("transforms");
@@ -158,6 +159,10 @@ pub struct Registration {
     pub transform: Arc<dyn Transform>,
     /// LLM calls this transform may make per index run (0 = never granted).
     pub llm_call_budget: usize,
+    /// The lane its LLM calls ride: interactive requests, or the endpoint's
+    /// batch API when the transform's work is large and not time-sensitive.
+    /// A run may override it for every transform (`SweepRequest::llm_lane`).
+    pub llm_lane: LlmLane,
     /// Digest input capturing everything that changes this transform's
     /// output shape: its config, and for loaded transforms the artifact
     /// version. Two mounts with equal fingerprints build equal subtrees.
@@ -269,6 +274,7 @@ mod tests {
             name: entry.to_string(),
             transform: Arc::new(Claimer(claims, true)),
             llm_call_budget: 0,
+            llm_lane: LlmLane::Interactive,
             shape_fingerprint: fingerprint.to_string(),
         })
     }

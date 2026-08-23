@@ -36,7 +36,7 @@ Config edits partition into four tiers by blast radius, and the tier is a proper
 | Tier | Entries | Invalidates |
 | --- | --- | --- |
 | **Query-time** | finder config, agent model, endpoint | Nothing — read at query/call time |
-| **Run-metering** | sweep budgets (`max_sources`, per-transform LLM call budgets) | Nothing — they bound how much work a *run* does, not what output looks like |
+| **Run-metering** | sweep budgets (`max_sources`, per-transform LLM call budgets, the LLM lane and its concurrency) | Nothing — they bound how much work a *run* does, not what output looks like |
 | **Shape** | transform entries: which are mounted and their configs (transform model, summary lengths, entity caps, decomposition budgets) | The fragment subtrees built under the old shape, source by source |
 | **Embedding** | embedder entry (provider, model, dimensions, vector scope) | Vectors only — the graph is untouched |
 

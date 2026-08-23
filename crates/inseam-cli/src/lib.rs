@@ -30,7 +30,7 @@ use inseam_kernel::substrate::{
     Composition, CompositionEdits, FiberState, Kernel, SubstrateError,
 };
 use agent::{run_agent, AgentEvent};
-use inseam_seams::llm::{self, ModelInfo, LLM};
+use inseam_seams::llm::{self, LlmLane, ModelInfo, LLM};
 use inseam_seams::oauth::{GrantId, GrantState, Redirect};
 use inseam_seams::operations::{
     AuthorizeGrantRequest, AwaitAuthorizationRequest, CatalogFilter, CatalogRequest,
@@ -243,6 +243,12 @@ enum Command {
         /// cataloged); overrides the composition's `sweep.max_sources`.
         #[arg(long, value_name = "COUNT")]
         max_sources: Option<NonZeroU32>,
+        /// Put every LLM-using transform on the endpoint's batch lane for
+        /// this run: summaries collect into large batch-API jobs at the
+        /// provider's discount instead of one request apiece. Minutes to
+        /// hours of latency — for large, time-insensitive runs.
+        #[arg(long)]
+        batch: bool,
     },
     /// The catalog: every source this node knows about, deep-indexed or
     /// still pending, with counts.
@@ -612,16 +618,19 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
             rebuild,
             catalog_only,
             max_sources,
+            batch,
         } => {
             let ops = kernel.service(&OPERATIONS)?;
             let (host, root) = index_scope(&root, host.as_deref())?;
             let deep_budget = deep_budget_flag(catalog_only, max_sources);
+            let llm_lane = batch.then_some(LlmLane::Batch);
             let report = ops
                 .index(IndexRequest {
                     host,
                     root,
                     rebuild,
                     deep_budget,
+                    llm_lane,
                 })
                 .await?;
             println!("{report}");

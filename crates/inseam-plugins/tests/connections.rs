@@ -53,6 +53,7 @@ async fn a_node_stewards_several_hosts_and_scopes_are_explicit() {
             root: corpus.path().display().to_string(),
             rebuild: false,
             deep_budget: None,
+            llm_lane: None,
         })
         .await;
     assert!(matches!(ambiguous, Err(SeamError::AmbiguousHost(h)) if h.len() == 2));
@@ -64,6 +65,7 @@ async fn a_node_stewards_several_hosts_and_scopes_are_explicit() {
             root: corpus.path().display().to_string(),
             rebuild: false,
             deep_budget: None,
+            llm_lane: None,
         })
         .await
         .expect("indexes");
@@ -80,6 +82,7 @@ async fn a_node_stewards_several_hosts_and_scopes_are_explicit() {
             root: "INBOX".to_string(),
             rebuild: false,
             deep_budget: None,
+            llm_lane: None,
         })
         .await;
     assert!(matches!(unknown, Err(SeamError::UnknownHost(_))));

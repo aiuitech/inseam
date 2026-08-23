@@ -28,7 +28,10 @@ UPSTREAM_URL = "https://github.com/onyx-dot-app/EnterpriseRAG-Bench.git"
 RELEASE_URL = f"https://github.com/onyx-dot-app/EnterpriseRAG-Bench/releases/download/{RELEASE}"
 ARCHIVE_SHA256 = "9d1174928696ad08bc15f3f104739519de633c1605a4ec2034e0e3c0087bc5cd"
 QUESTIONS_SHA256 = "f9524b9157cd43aae36b99333a124738804306ea6d07f332d49faa6d3d147905"
-SUMMARIZATION_MODEL = "google/gemini-2.5-flash-lite:batch"
+SUMMARIZATION_MODEL = "google/gemini-2.5-flash-lite"
+# Summaries ride the llm endpoint's batch lane: the sweep parks every
+# planner on its summary call and one OpenRouter batch job carries them.
+SUMMARIZATION_LANE = "batch"
 ANSWER_MODEL = "stealth/ox-alpha"
 EVALUATION_MODEL = "stealth/ox-alpha"
 EMBEDDING_MODEL = "openai/text-embedding-3-small"
@@ -581,6 +584,7 @@ id = "summarizer"
 [entry.config]
 target_chars = 200
 llm_call_budget = {options.llm_call_budget}
+llm_lane = "{SUMMARIZATION_LANE}"
 
 [[entry]]
 id = "entities"
@@ -835,6 +839,7 @@ def create_run(options: RunOptions) -> tuple[Path, Path, dict[str, Any]]:
         },
         "models": {
             "summarization": SUMMARIZATION_MODEL,
+            "summarization_lane": SUMMARIZATION_LANE,
             "entity_extraction": "disabled",
             "answer_generation": ANSWER_MODEL,
             "answer_evaluation": EVALUATION_MODEL,
@@ -1382,6 +1387,7 @@ def validate_resumable_manifest(run_id: str, manifest: dict[str, Any]) -> None:
         raise BenchmarkError(f"run `{run_id}` uses different benchmark inputs")
     expected_models = {
         "summarization": SUMMARIZATION_MODEL,
+        "summarization_lane": SUMMARIZATION_LANE,
         "entity_extraction": "disabled",
         "answer_generation": ANSWER_MODEL,
         "answer_evaluation": EVALUATION_MODEL,

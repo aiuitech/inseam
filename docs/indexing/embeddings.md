@@ -65,7 +65,33 @@ vectors = "summaries"
 
 `transform_reasoning_effort` matters for thinking models: left to itself, qwen3.5 spends the whole reply thinking and returns an empty summary (the summarizer then falls back to extractive — visible in the index report's `summaries:` line). `none` makes it answer directly; the value is whatever the endpoint spells (`none`, `low`, `minimal`, …) and is sent only when set, since endpoints reject values their models don't know. OpenRouter receives its native nested `reasoning` object and `exclude = true`, because transforms consume the answer but never the reasoning trace. Other OpenAI-compatible endpoints retain the top-level `reasoning_effort` spelling.
 
-An OpenRouter model ending in `:batch` uses `/api/beta/batches`; it is not sent to the synchronous chat-completions endpoint, which rejects batch-only models. Concurrent transform calls coalesce for 50 ms into jobs of up to 128 requests. Results are polled every five seconds and restored to request order by their stable ids. The bound is 24 hours per job, matching the provider's completion window.
+## The batch lane
+
+Transform LLM calls ride one of two lanes. The **interactive** lane (default) answers each call with its own request. The **batch** lane parks calls and submits them together through the endpoint's batch API — OpenRouter's `/api/beta/batches`, billed at half the model's price, answered within a 24-hour window. It is for large, time-insensitive runs: a first index of a big catalog, a full `--rebuild`. A few changed files would wait minutes for a job that carries three requests.
+
+Ask for it per run or per transform:
+
+```sh
+inseam index ~/Data --batch          # every LLM-using transform rides the batch lane this run
+```
+
+```toml
+[[entry]]
+id = "summarizer"
+[entry.config]
+llm_lane = "batch"                   # summaries always ride the batch lane (entities: same key)
+llm_call_budget = 100000             # the default 500 would cap a large run's LLM summaries
+```
+
+What happens on the batch lane:
+
+- The endpoint plugin declares `transform_batch_model` — `<transform_model>:batch`, OpenRouter's batch variant of the same model (set `transform_batch_model` to name another). An endpoint without a batch API (ollama, vLLM) declares none, and a batch request is served interactively with a warning.
+- The sweep plans `batch_concurrency` sources at once (4,096 instead of `concurrency`'s 8). Each planner parks on its summary call, so the parked set is what one job gathers. The dial also bounds the parked sources' content held in memory.
+- The endpoint's batch lane submits a job when it is full (`batch_requests_max`, default 10,000, or 64 MiB of requests), when no call has arrived for two seconds, or when the oldest parked call has waited two minutes. Jobs run concurrently (eight at most) while later planners keep parking. Each job is polled every five seconds for its first minute, then every thirty.
+- Results return to their callers by stable id. A failed item fails only its own call — that source's summary falls back to extractive — and a failed job fails every call in it the same way; the run continues.
+- The index report counts jobs: `llm batch lane: N jobs`.
+
+The shape stamp names the base model, never the lane: switching a composition between lanes, or running `--batch` once, re-indexes nothing. A `transform_model` that already ends in `:batch` is itself the batch lane for every call.
 
 ## Wire format
 

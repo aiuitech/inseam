@@ -23,6 +23,7 @@ async fn index(
         root: root.display().to_string(),
         rebuild: false,
         deep_budget: None,
+        llm_lane: None,
     })
     .await
     .expect("sweeps")
@@ -320,6 +321,7 @@ async fn catalog_only_run_catalogs_everything_and_deep_indexes_nothing() {
             root: corpus.path().display().to_string(),
             rebuild: false,
             deep_budget: Some(DeepBudget::CatalogOnly),
+            llm_lane: None,
         })
         .await
         .expect("sweeps");
@@ -378,6 +380,7 @@ async fn request_budget_overrides_the_composition_for_one_run() {
             root: corpus.path().display().to_string(),
             rebuild: false,
             deep_budget: Some(DeepBudget::Sources(std::num::NonZeroU32::new(2).expect("non-zero"))),
+            llm_lane: None,
         })
         .await
         .expect("sweeps");

@@ -13,6 +13,7 @@ use inseam_kernel::substrate::{
     parse_config, ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory,
 };
 use inseam_seams::text::is_indexable_text;
+use inseam_seams::llm::LlmLane;
 use inseam_seams::transforms::{
     register_as_effect, Registration, Transform, TransformCtx, TransformKind, TransformOutput,
 };
@@ -69,6 +70,7 @@ impl Plugin for ChunkerPlugin {
                     target_chars: self.config.target_chars,
                 }),
                 llm_call_budget: 0,
+                llm_lane: LlmLane::Interactive,
                 shape_fingerprint: format!("chunker-v1|target={}", self.config.target_chars),
             },
         )

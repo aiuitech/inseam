@@ -10,6 +10,7 @@ use inseam_kernel::address::HostId;
 use inseam_kernel::substrate::ServiceKey;
 use serde::{Deserialize, Serialize};
 
+use crate::llm::LlmLane;
 use crate::SeamError;
 
 pub const SWEEP: ServiceKey<dyn Sweep> = ServiceKey::new("sweep");
@@ -62,6 +63,11 @@ pub struct SweepRequest {
     /// (`sweep.max_sources`). A request-level override never outlives the
     /// run.
     pub deep_budget: Option<DeepBudget>,
+    /// Put every LLM-using transform on this lane for the run; `None` lets
+    /// each registration's own lane stand. `Some(Batch)` is the large,
+    /// time-insensitive run: summaries collect into the endpoint's batch
+    /// jobs instead of one request apiece.
+    pub llm_lane: Option<LlmLane>,
 }
 
 #[async_trait::async_trait]
@@ -100,6 +106,9 @@ pub struct IndexReport {
     pub llm_calls: std::collections::BTreeMap<String, usize>,
     /// Dollars reported by the endpoint across the run's calls.
     pub spent: f64,
+    /// Batch-API jobs the endpoint created across the run's calls (the
+    /// batch lane's unit of work; zero on the interactive lane).
+    pub llm_batch_jobs: u64,
 }
 
 impl fmt::Display for IndexReport {
@@ -128,6 +137,9 @@ impl fmt::Display for IndexReport {
         }
         if self.vector_index_deferred {
             writeln!(f, "vector index: dropped before landing, rebuilt at the end")?;
+        }
+        if self.llm_batch_jobs > 0 {
+            writeln!(f, "llm batch lane: {} jobs", self.llm_batch_jobs)?;
         }
         write!(
             f,

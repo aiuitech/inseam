@@ -17,6 +17,7 @@ use inseam_kernel::fragment::{Mimetype, NewFragment};
 use inseam_kernel::substrate::{
     parse_config, ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory,
 };
+use inseam_seams::llm::LlmLane;
 use inseam_seams::transforms::{
     register_as_effect, Anchor, KeyedSprout, Registration, Transform, TransformCtx,
     TransformKind, TransformOutput,
@@ -29,6 +30,11 @@ pub struct EntityExtractorConfig {
     pub max_per_source: usize,
     /// Extraction LLM calls per index run (run-metering tier).
     pub llm_call_budget: usize,
+    /// The lane extraction calls ride: `interactive` (one request each) or
+    /// `batch` (collected into the endpoint's batch-API jobs — cheaper and
+    /// slower, for large runs). Run-metering tier: a lane change never
+    /// re-indexes.
+    pub llm_lane: LlmLane,
 }
 
 impl Default for EntityExtractorConfig {
@@ -36,6 +42,7 @@ impl Default for EntityExtractorConfig {
         Self {
             max_per_source: 12,
             llm_call_budget: 500,
+            llm_lane: LlmLane::Interactive,
         }
     }
 }
@@ -79,6 +86,7 @@ impl Plugin for EntityExtractorPlugin {
                     max_per_source: self.config.max_per_source,
                 }),
                 llm_call_budget: self.config.llm_call_budget,
+                llm_lane: self.config.llm_lane,
                 shape_fingerprint: format!("entities-v1|max={}", self.config.max_per_source),
             },
         )

@@ -297,6 +297,7 @@ impl Operations for OperationsService {
                 root: request.root,
                 rebuild: request.rebuild,
                 deep_budget: request.deep_budget,
+                llm_lane: request.llm_lane,
             })
             .await
     }

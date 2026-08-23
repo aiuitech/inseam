@@ -18,15 +18,15 @@ How merging works: when your entry matches a base entry's id, your `config` **re
 | `fs` | `connection-fs` | `host_id` (default `fs-<hostname>`), `skip_hidden` (true), `gitignore` (true), `ignore` (gitignore-syntax patterns; [indexing/ignore.md](indexing/ignore.md)) |
 | `oauth` | `oauth` | `callback_port` (47781), `authorization_timeout_secs` (300), `credentials_dir` (the node's private `oauth/` directory), `grants` (generic grants: provider URLs, scopes, client environment variables, and authorization parameters; connections such as `google` register their own) |
 | `google` | `connection-google` | `grant` (`google`), `client_id_env` (`GOOGLE_CLIENT_ID`), `client_secret_env` (`GOOGLE_CLIENT_SECRET`; `""` for none), `services` (all five), `sources_max` (5000) — one Google account as one host per service ([indexing/google-workspace.md](indexing/google-workspace.md)) |
-| `llm` | `llm-endpoint` | `base_url` (OpenRouter), `api_key_env` (`OPENROUTER_API_KEY`; `""` for a keyless endpoint such as a local ollama), `transform_model` (`:batch` uses OpenRouter's Batch API), `transform_reasoning_effort` (unset; `"none"` for thinking models), `agent_model` |
+| `llm` | `llm-endpoint` | `base_url` (OpenRouter), `api_key_env` (`OPENROUTER_API_KEY`; `""` for a keyless endpoint such as a local ollama), `transform_model`, `transform_reasoning_effort` (unset; `"none"` for thinking models), `agent_model`, `batches_url` (derived: OpenRouter's `/api/beta/batches`; other endpoints have no batch lane), `transform_batch_model` (derived: `<transform_model>:batch`), `batch_requests_max` (10000 per batch-API job) — the batch lane is in [indexing/embeddings.md](indexing/embeddings.md#the-batch-lane) |
 | `embedder` | `embedder` | `provider` = `endpoint` \| `hashed` \| `none`, `model`, `dimensions` (unset = the model's native width; validated against the model), `vectors` = `all` \| `summaries` ([indexing/embeddings.md](indexing/embeddings.md)) |
 | `transforms` | `transforms` | — (the registry) |
 | `markdown` | `transform-markdown` | — |
 | `chunker` | `transform-chunker` | `target_chars` (1600) |
-| `summarizer` | `transform-summarizer` | `target_chars` (400), `llm_call_budget` (500) |
-| `entities` | `transform-entities` | `max_per_source` (12), `llm_call_budget` (500) |
+| `summarizer` | `transform-summarizer` | `target_chars` (400), `llm_call_budget` (500), `llm_lane` (`interactive`; `batch` parks summaries into batch-API jobs — `inseam index --batch` does it per run) |
+| `entities` | `transform-entities` | `max_per_source` (12), `llm_call_budget` (500), `llm_lane` (`interactive`) |
 | `finder` | `finder` | `seed_k`, `rrf_k`, `damping`, `iterations`, `epsilon`, `max_hints`, `max_vector_distance`, `graph_hops` (default 2, max 4), `graph_relation_limit` (default 20000, max 100000), `[weights]` (`default` + `by_kind` by relation kind name) |
-| `sweep` | `sweep` | `max_sources` (0 = unlimited; `inseam index --catalog-only` / `--max-sources` override it per run), `concurrency` (8; sources planned at once — transform applications, LLM calls included, in flight together), `max_fragments_per_source` (400), `max_depth` (6), `max_content_bytes` (2 MB), `modified_after` (`YYYY-MM-DD`), `ignore` (rules over addresses and envelopes; [indexing/ignore.md](indexing/ignore.md)) |
+| `sweep` | `sweep` | `max_sources` (0 = unlimited; `inseam index --catalog-only` / `--max-sources` override it per run), `concurrency` (8; sources planned at once — transform applications, LLM calls included, in flight together), `batch_concurrency` (4096; sources planned at once when LLM calls ride the batch lane — what one batch job gathers), `max_fragments_per_source` (400), `max_depth` (6), `max_content_bytes` (2 MB), `modified_after` (`YYYY-MM-DD`), `ignore` (rules over addresses and envelopes; [indexing/ignore.md](indexing/ignore.md)) |
 | `operations` | `operations` | — |
 
 Example `composition.toml` — an offline node with a loaded OCR plugin:

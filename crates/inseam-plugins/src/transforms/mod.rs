@@ -131,6 +131,7 @@ mod tests {
             name: entry.to_string(),
             transform: Arc::new(Stub(kind)),
             llm_call_budget: 0,
+            llm_lane: inseam_seams::llm::LlmLane::Interactive,
             shape_fingerprint: "x".into(),
         };
         // Disposers are held, not run: dropping one must not unregister.

@@ -37,6 +37,7 @@ use inseam_kernel::substrate::{
     fnv1a, parse_config, ApplyCx, Inject, Manifest as PluginManifest, Plugin, PluginError,
     SchemeFactory, STATE,
 };
+use inseam_seams::llm::LlmLane;
 use inseam_seams::transforms::{
     register_as_effect, GrantedLlm, Registration, Transform, TransformCtx, TransformKind,
     TransformOutput,
@@ -403,6 +404,10 @@ impl Plugin for WasmTransformPlugin {
                 } else {
                     0
                 },
+                // Loaded transforms ride the interactive lane; a run-level
+                // `--batch` still moves them, since the lane is the
+                // grantor's choice, not the transform's.
+                llm_lane: LlmLane::Interactive,
                 // The artifact version and content hash are in the shape
                 // fingerprint: an upgraded loaded transform dirties exactly
                 // the sources it built (`design/index-maintenance.md`).

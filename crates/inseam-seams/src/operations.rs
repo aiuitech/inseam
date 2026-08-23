@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::connection::{Capabilities, HostKind};
 use crate::oauth::{AuthorizationCallback, AuthorizationStarted, GrantId, GrantState, Redirect};
+use crate::llm::LlmLane;
 use crate::sweep::{DeepBudget, IndexReport};
 use crate::SeamError;
 
@@ -235,6 +236,11 @@ pub struct IndexRequest {
     /// deep-indexed until a later run has budget.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deep_budget: Option<DeepBudget>,
+    /// Put every LLM-using transform on this lane for the run (`batch` is
+    /// the large, time-insensitive run); `None` keeps each transform's
+    /// configured lane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_lane: Option<LlmLane>,
 }
 
 /// Which cataloged sources a listing shows.

@@ -4,6 +4,8 @@
 //! enforced without the consumer's cooperation — a budget listener denies,
 //! and denial is monotonic.
 
+use std::fmt;
+
 use inseam_kernel::substrate::{Guard, ServiceKey};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -22,6 +24,35 @@ pub mod facts {
     pub const TRANSFORM_REASONING_EFFORT: &str = "transform_reasoning_effort";
     /// string: model for agent-grade tool-calling loops.
     pub const AGENT_MODEL: &str = "agent_model";
+    /// string: the model transform-grade calls on the batch lane use
+    /// ([`LlmLane::Batch`]) — the same model as `transform_model`, served
+    /// through the endpoint's asynchronous batch API at its discount. Absent
+    /// when the endpoint has no batch API; the batch lane then rides the
+    /// interactive model.
+    pub const TRANSFORM_BATCH_MODEL: &str = "transform_batch_model";
+}
+
+/// Which lane a transform-grade LLM call rides. The interactive lane answers
+/// each call with its own request. The batch lane parks calls until a large
+/// job fills and submits them together through the endpoint's batch API —
+/// minutes to hours of latency bought at a provider discount, the right trade
+/// for a large, time-insensitive indexing run and the wrong one for a few
+/// changed files (`design/indexing.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmLane {
+    #[default]
+    Interactive,
+    Batch,
+}
+
+impl fmt::Display for LlmLane {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Interactive => write!(f, "interactive"),
+            Self::Batch => write!(f, "batch"),
+        }
+    }
 }
 
 /// Guard event dispatched before an LLM call is made on a consumer's behalf.
@@ -60,6 +91,12 @@ pub trait Llm: Send + Sync {
 
     /// Dollars spent through this provider so far, as reported by usage.
     fn spent(&self) -> f64;
+
+    /// Batch-API jobs this provider has created so far; zero for a provider
+    /// without a batch lane.
+    fn batch_jobs(&self) -> u64 {
+        0
+    }
 }
 
 /// One embeddings call. `dimensions` is sent only when set: a model that

@@ -83,9 +83,8 @@ class EnterpriseRagBenchTests(unittest.TestCase):
 
         self.assertIn('base_url = "https://openrouter.ai/api/v1"', composition)
         self.assertIn('api_key_env = "OPENROUTER_API_KEY"', composition)
-        self.assertIn(
-            'transform_model = "google/gemini-2.5-flash-lite:batch"', composition
-        )
+        self.assertIn('transform_model = "google/gemini-2.5-flash-lite"', composition)
+        self.assertIn('llm_lane = "batch"', composition)
         self.assertIn('transform_reasoning_effort = "low"', composition)
         self.assertIn('agent_model = "stealth/ox-alpha"', composition)
         self.assertIn('model = "openai/text-embedding-3-small"', composition)
@@ -225,7 +224,8 @@ class EnterpriseRagBenchTests(unittest.TestCase):
             self.assertEqual(
                 manifest["models"],
                 {
-                    "summarization": "google/gemini-2.5-flash-lite:batch",
+                    "summarization": "google/gemini-2.5-flash-lite",
+                    "summarization_lane": "batch",
                     "entity_extraction": "disabled",
                     "answer_generation": "stealth/ox-alpha",
                     "answer_evaluation": "stealth/ox-alpha",

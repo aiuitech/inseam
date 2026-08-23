@@ -14,6 +14,7 @@ use inseam_kernel::fragment::{Mimetype, NewFragment, RelationKind, Sprout};
 use inseam_kernel::substrate::{
     parse_config, ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory,
 };
+use inseam_seams::llm::LlmLane;
 use inseam_seams::transforms::{
     register_as_effect, Registration, Transform, TransformCtx, TransformKind, TransformOutput,
 };
@@ -30,6 +31,13 @@ pub struct SummarizerConfig {
     /// stamp); beyond it the summarizer falls back to extractive summaries
     /// so the mandatory-summary invariant still holds.
     pub llm_call_budget: usize,
+    /// The lane summary calls ride. `interactive` answers each summary with
+    /// its own request. `batch` parks summaries until a large batch-API job
+    /// fills and submits them together at the provider's discount — minutes
+    /// to hours of latency, for large, time-insensitive runs; `inseam index
+    /// --batch` asks for it per run instead. Run-metering tier: a lane
+    /// change never re-indexes.
+    pub llm_lane: LlmLane,
 }
 
 impl Default for SummarizerConfig {
@@ -37,6 +45,7 @@ impl Default for SummarizerConfig {
         Self {
             target_chars: 400,
             llm_call_budget: 500,
+            llm_lane: LlmLane::Interactive,
         }
     }
 }
@@ -80,6 +89,7 @@ impl Plugin for SummarizerPlugin {
                     target_chars: self.config.target_chars,
                 }),
                 llm_call_budget: self.config.llm_call_budget,
+                llm_lane: self.config.llm_lane,
                 shape_fingerprint: format!(
                     "summarizer-v1|target_chars={}",
                     self.config.target_chars

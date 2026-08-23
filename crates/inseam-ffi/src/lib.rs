@@ -280,6 +280,7 @@ pub unsafe extern "C" fn inseam_node_index_dir(
         root: dir.to_string(),
         rebuild,
         deep_budget: None,
+        llm_lane: None,
     }));
     json_result(report, error_out)
 }

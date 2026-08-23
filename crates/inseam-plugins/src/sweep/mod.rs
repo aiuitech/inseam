@@ -13,7 +13,9 @@
 //!
 //! The run is a pipeline: dirty sources are **planned** concurrently
 //! ([`plan`] — transforms are the slow part, so `concurrency` of them run at
-//! once, each claimant of a fragment in flight together), each plan is
+//! once, each claimant of a fragment in flight together; `batch_concurrency`
+//! of them when the LLM calls ride the batch lane, so one batch-API job
+//! fills before it is submitted), each plan is
 //! **landed** in one store transaction in enumeration order (deterministic
 //! ids), and its search rows flow to the **embedding stage** ([`embed`]),
 //! which embeds batches concurrently and lands them in order with the
@@ -42,7 +44,7 @@ use inseam_kernel::substrate::{
 use inseam_seams::connection::{Connections, EnumeratedSource, Registration as ConnectionRegistration, CONNECTIONS};
 use inseam_seams::dates::parse_ymd_epoch;
 use inseam_seams::embedder::{Embedder, EMBEDDER};
-use inseam_seams::llm::{self, Llm, LLM};
+use inseam_seams::llm::{self, Llm, LlmLane, LLM};
 use inseam_seams::sweep::{DeepBudget, IndexReport, Sweep, SweepRequest, SWEEP};
 use inseam_seams::transforms::{Registration, Transforms, TRANSFORMS};
 use inseam_seams::SeamError;
@@ -75,6 +77,12 @@ pub struct SweepConfig {
     /// all) in flight together. Run-metering tier: a throughput dial, never
     /// a shape one.
     pub concurrency: NonZeroUsize,
+    /// Sources planned at once when transform LLM calls ride the batch lane
+    /// (`design/indexing.md`). Each planner parks on its batch call, so this
+    /// is how many requests one batch-API job can gather from a run before
+    /// the endpoint submits it; it also bounds the parked sources' content
+    /// held in memory. Run-metering tier.
+    pub batch_concurrency: NonZeroUsize,
     /// Fragment cap per source (shape tier).
     pub max_fragments_per_source: usize,
     /// Decomposition depth cap (shape tier).
@@ -97,6 +105,7 @@ impl Default for SweepConfig {
         Self {
             max_sources: 0,
             concurrency: NonZeroUsize::new(8).expect("8 is non-zero"),
+            batch_concurrency: NonZeroUsize::new(4_096).expect("4096 is non-zero"),
             max_fragments_per_source: 400,
             max_depth: 6,
             max_content_bytes: 2_000_000,
@@ -198,6 +207,10 @@ impl Plugin for SweepPlugin {
             .facts(&LLM)
             .and_then(|f| f.str(llm::facts::TRANSFORM_REASONING_EFFORT))
             .map(str::to_string);
+        let transform_batch_model = cx
+            .facts(&LLM)
+            .and_then(|f| f.str(llm::facts::TRANSFORM_BATCH_MODEL))
+            .map(str::to_string);
         let service = SweepService {
             store: cx.get(&STORE)?,
             connections: cx.get(&CONNECTIONS)?,
@@ -206,6 +219,7 @@ impl Plugin for SweepPlugin {
             llm: cx.try_get(&LLM)?,
             transform_model,
             transform_reasoning_effort,
+            transform_batch_model,
             bus: cx.bus().clone(),
             config: self.config.clone(),
             ignore,
@@ -223,6 +237,8 @@ pub struct SweepService {
     llm: Option<Arc<dyn Llm>>,
     transform_model: String,
     transform_reasoning_effort: Option<String>,
+    /// The endpoint's batch-lane model, when it has a batch API.
+    transform_batch_model: Option<String>,
     bus: EventBus,
     config: SweepConfig,
     ignore: IgnoreSet,
@@ -272,6 +288,7 @@ impl Sweep for SweepService {
             deep_budget: request.deep_budget.unwrap_or_else(|| self.config.deep_budget()),
         };
         let indexed_before = self.store.catalog_counts(None).await?.indexed;
+        let batch_jobs_before = self.llm.as_ref().map_or(0, |llm| llm.batch_jobs());
         let decisions = self
             .decide(&sources, cutoff, &registrations, &sweep_shape, dials, &mut report)
             .await?;
@@ -282,10 +299,13 @@ impl Sweep for SweepService {
         let grantor = Arc::new(Grantor {
             llm: self.llm.clone(),
             model: self.transform_model.clone(),
+            batch_model: self.transform_batch_model.clone(),
+            lane_override: request.llm_lane,
             reasoning_effort: self.transform_reasoning_effort.clone(),
             bus: self.bus.clone(),
             meters: RunMeters::for_registrations(&registrations),
         });
+        let planning = self.planning_concurrency(&grantor, &registrations, request.llm_lane);
         let planner = Arc::new(Planner {
             connection: Arc::clone(&steward.connection),
             registrations,
@@ -298,7 +318,7 @@ impl Sweep for SweepService {
             // vector search builds it itself, as it does on a fresh node.
             report.vector_index_deferred = self.store.defer_search_vector_index().await?;
         }
-        self.index_deep(decisions.deep, planner, &mut report).await?;
+        self.index_deep(decisions.deep, planner, planning, &mut report).await?;
 
         self.reconcile_vanished(&steward, &request.root, &sources, &mut report)
             .await?;
@@ -310,9 +330,20 @@ impl Sweep for SweepService {
         }
         if let Some(llm) = &self.llm {
             report.spent = llm.spent();
+            report.llm_batch_jobs = llm.batch_jobs().saturating_sub(batch_jobs_before);
         }
         Ok(report)
     }
+}
+
+/// The model a shape stamp names for a configured transform model: the
+/// OpenRouter `:batch` variant is the same model on the batch lane, so the
+/// suffix is dropped — an index built through either lane has one stamp.
+fn lane_independent_model(transform_model: &str) -> &str {
+    transform_model
+        .strip_suffix(":batch")
+        .filter(|base| !base.is_empty())
+        .unwrap_or(transform_model)
 }
 
 /// Whether this run lands enough of the table that dropping the DiskANN
@@ -362,13 +393,17 @@ impl SweepService {
         Ok(steward)
     }
 
-    /// Registry snapshot with model-sensitive fingerprints resolved.
+    /// Registry snapshot with model-sensitive fingerprints resolved. The
+    /// stamp names the model, never the lane: the batch lane serves the same
+    /// model through another door, so `--batch` and a lane change never
+    /// re-index a source (`design/index-maintenance.md`, run-metering tier).
     fn stamped_registrations(&self) -> Vec<Arc<Registration>> {
+        let stamp_model = lane_independent_model(&self.transform_model);
         self.transforms
             .snapshot()
             .into_iter()
             .map(|r| {
-                if r.llm_call_budget == 0 || self.transform_model.is_empty() {
+                if r.llm_call_budget == 0 || stamp_model.is_empty() {
                     r
                 } else {
                     Arc::new(Registration {
@@ -376,14 +411,39 @@ impl SweepService {
                         name: r.name.clone(),
                         transform: Arc::clone(&r.transform),
                         llm_call_budget: r.llm_call_budget,
-                        shape_fingerprint: format!(
-                            "{}|model={}",
-                            r.shape_fingerprint, self.transform_model
-                        ),
+                        llm_lane: r.llm_lane,
+                        shape_fingerprint: format!("{}|model={stamp_model}", r.shape_fingerprint),
                     })
                 }
             })
             .collect()
+    }
+
+    /// How many sources this run plans at once: `batch_concurrency` when
+    /// granted calls ride the batch lane — every planner parks on its call,
+    /// and the parked set is what fills one batch job — `concurrency`
+    /// otherwise. A batch lane asked for without an endpoint batch model is
+    /// said once, then served interactively.
+    fn planning_concurrency(
+        &self,
+        grantor: &Grantor,
+        registrations: &[Arc<Registration>],
+        requested: Option<LlmLane>,
+    ) -> NonZeroUsize {
+        if grantor.plans_on_batch_lane(registrations) {
+            tracing::info!(
+                concurrency = self.config.batch_concurrency.get(),
+                "transform llm calls ride the batch lane"
+            );
+            return self.config.batch_concurrency;
+        }
+        if requested == Some(LlmLane::Batch) && self.llm.is_some() {
+            tracing::warn!(
+                "the batch lane was requested but the llm endpoint declares no batch model; \
+                 calls ride the interactive lane"
+            );
+        }
+        self.config.concurrency
     }
 
     /// The dirtiness pass (`design/index-maintenance.md`): per source, is it
@@ -467,6 +527,7 @@ impl SweepService {
         &self,
         deep: Vec<EnumeratedSource>,
         planner: Arc<Planner>,
+        concurrency: NonZeroUsize,
         report: &mut IndexReport,
     ) -> Result<(), SeamError> {
         let stage = EmbedStage::start(Arc::clone(&self.embedder), Arc::clone(&self.store));
@@ -476,7 +537,7 @@ impl SweepService {
                 let planner = Arc::clone(&planner);
                 Spawned(tokio::spawn(async move { planner.plan(&source).await }))
             })
-            .buffered(self.config.concurrency.get());
+            .buffered(concurrency.get());
         futures_util::pin_mut!(planned);
         while let Some(joined) = planned.next().await {
             let planned = joined??;
@@ -662,7 +723,21 @@ impl<T> std::future::Future for Spawned<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::scope_covers;
+    use super::{lane_independent_model, scope_covers};
+
+    #[test]
+    fn the_stamp_model_drops_the_batch_lane_suffix() {
+        assert_eq!(
+            lane_independent_model("google/gemini-2.5-flash-lite:batch"),
+            "google/gemini-2.5-flash-lite"
+        );
+        assert_eq!(
+            lane_independent_model("google/gemini-2.5-flash-lite"),
+            "google/gemini-2.5-flash-lite"
+        );
+        assert_eq!(lane_independent_model(":batch"), ":batch");
+        assert_eq!(lane_independent_model(""), "");
+    }
 
     #[test]
     fn scope_covers_the_prefix_its_children_and_everything_for_the_empty_prefix() {

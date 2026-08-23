@@ -36,6 +36,7 @@ use inseam_seams::operations::{
     Operations, PluginView, QueryRequest, QueryResponse, RevokeGrantRequest, ScanRequest,
     ScanResponse, StatusReport,
 };
+use inseam_seams::llm::LlmLane;
 use inseam_seams::sweep::DeepBudget;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
@@ -189,6 +190,10 @@ struct HttpIndexRequest {
     rebuild: bool,
     #[serde(default)]
     deep_budget: Option<DeepBudget>,
+    /// `batch` puts every LLM-using transform on the endpoint's batch lane
+    /// for this run.
+    #[serde(default)]
+    llm_lane: Option<LlmLane>,
 }
 
 pub async fn serve(
@@ -503,6 +508,7 @@ async fn index(
             root: root.path.to_string_lossy().into_owned(),
             rebuild: request.rebuild,
             deep_budget: request.deep_budget,
+            llm_lane: request.llm_lane,
         })
         .await?;
     Ok(Json(response))

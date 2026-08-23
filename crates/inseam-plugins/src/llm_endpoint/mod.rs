@@ -12,10 +12,16 @@
 //! literals — less than half the bytes, and a `memcpy`-grade decode instead
 //! of float parsing. A server that ignores the parameter still answers in
 //! JSON floats, and both shapes are accepted ([`EmbeddingVector`]).
+//!
+//! Chat calls for a `:batch` model ride the batch lane ([`batch`]): parked
+//! and submitted together through the endpoint's batch API, for the large,
+//! time-insensitive indexing run (`design/indexing.md`).
 
+mod batch;
 mod ollama;
 
-use std::collections::VecDeque;
+use std::num::NonZeroU32;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -24,7 +30,6 @@ use base64::Engine;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
 use inseam_kernel::substrate::{
     parse_config, ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, SecretNeed,
@@ -36,23 +41,39 @@ use inseam_seams::llm::{
 use inseam_seams::text::truncate_chars;
 use inseam_seams::SeamError;
 
+use batch::{ChatBatcher, ChatBatching};
 use ollama::{EmbeddingModelVerdict, OllamaApi};
 
 const RETRIES: u32 = 3;
 /// Inputs per embeddings request. The sweep may hand us more or fewer
 /// vector-covered rows; this is the endpoint-sized network batch.
 const EMBED_BATCH: usize = 128;
-/// Concurrent batch-only chat calls coalesced into one OpenRouter job.
-const CHAT_BATCH_MAX: usize = 128;
-/// Pending batch calls waiting behind the active OpenRouter job.
-const CHAT_BATCH_QUEUE_MAX: usize = 1_024;
-/// Brief collection window so concurrently planned sources share a job.
-const CHAT_BATCH_COLLECTION_MS: u64 = 50;
-/// OpenRouter batch status polling cadence and 24-hour hard bound.
-const CHAT_BATCH_POLL_SECONDS: u64 = 5;
-const CHAT_BATCH_POLL_MAX: u32 = 17_280;
-/// Bounds one leader's drain loop even if callers continuously refill it.
-const CHAT_BATCH_DRAIN_MAX: u32 = 1_000_000;
+/// One synchronous request's deadline.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
+/// A batch job's serialized requests, the upper bound per job. A summary
+/// request is under 10 KB, so the request cap is reached first on summary
+/// work; this bounds the one upload when requests are larger.
+const CHAT_BATCH_BYTES_MAX: usize = 64 * 1024 * 1024;
+/// Arrivals quiet for this long submit what is parked: the run's planners
+/// park within moments of each other, and a job waits minutes anyway.
+const CHAT_BATCH_QUIESCENCE: Duration = Duration::from_secs(2);
+/// The oldest parked call waits at most this long, however steady the
+/// trickle of new arrivals (planners refilling as landed sources free
+/// slots); by then what is parked is worth a job of its own.
+const CHAT_BATCH_AGE_MAX: Duration = Duration::from_secs(120);
+const CHAT_BATCH_TICK: Duration = Duration::from_millis(250);
+/// Status polls: every five seconds for the first minute, then every thirty,
+/// bounded at the provider's 24-hour completion window.
+const CHAT_BATCH_POLL_INITIAL: Duration = Duration::from_secs(5);
+const CHAT_BATCH_POLL_STEADY: Duration = Duration::from_secs(30);
+const CHAT_BATCH_POLL_STEADY_AFTER: u32 = 12;
+const CHAT_BATCH_POLL_MAX: u32 = 2_900;
+/// Jobs in flight at once per endpoint.
+const CHAT_BATCH_JOBS_IN_FLIGHT_MAX: usize = 8;
+/// Parked calls the lane holds; beyond it a call is refused.
+const CHAT_BATCH_QUEUE_MAX: usize = 65_536;
+/// One job-creation upload's deadline: tens of megabytes on a slow uplink.
+const CHAT_BATCH_CREATE_TIMEOUT: Duration = Duration::from_secs(900);
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -73,6 +94,19 @@ pub struct LlmEndpointConfig {
     pub transform_reasoning_effort: Option<String>,
     /// Model for agent-grade tool-calling loops. Declared as a fact.
     pub agent_model: String,
+    /// The batch-API collection URL (`POST` creates a job, `GET <url>/<id>`
+    /// polls it). Unset derives it from the endpoint: OpenRouter's
+    /// `/api/beta/batches`; other endpoints have no batch lane and the
+    /// `transform_batch_model` fact is not declared.
+    pub batches_url: Option<String>,
+    /// The model the batch lane names — declared as the
+    /// `transform_batch_model` fact. Unset derives `<transform_model>:batch`,
+    /// OpenRouter's batch variant of the same model.
+    pub transform_batch_model: Option<String>,
+    /// Requests per batch-API job, the upper bound. The provider documents
+    /// no cap and stream-parses the upload; this bounds one job's upload
+    /// and its inline results.
+    pub batch_requests_max: NonZeroU32,
 }
 
 impl Default for LlmEndpointConfig {
@@ -83,6 +117,9 @@ impl Default for LlmEndpointConfig {
             transform_model: "google/gemini-2.5-flash-lite".to_string(),
             transform_reasoning_effort: None,
             agent_model: "openai/gpt-5-mini".to_string(),
+            batches_url: None,
+            transform_batch_model: None,
+            batch_requests_max: NonZeroU32::new(10_000).expect("10000 is non-zero"),
         }
     }
 }
@@ -92,6 +129,51 @@ impl LlmEndpointConfig {
     /// endpoint is keyless.
     fn api_key_env(&self) -> Option<&str> {
         Some(self.api_key_env.trim()).filter(|env| !env.is_empty())
+    }
+
+    /// The batch-API collection URL: configured, derived for OpenRouter, or
+    /// none.
+    fn batches_url(&self) -> Option<String> {
+        if let Some(url) = self.batches_url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+            return Some(url.trim_end_matches('/').to_string());
+        }
+        if endpoint_host(&self.base_url) == "openrouter.ai" {
+            return Some(format!("{}/api/beta/batches", endpoint_origin(&self.base_url)));
+        }
+        None
+    }
+
+    /// The batch lane's model: configured, or the transform model's `:batch`
+    /// variant (itself, when it already is one).
+    fn transform_batch_model(&self) -> String {
+        if let Some(model) = self.transform_batch_model.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
+            return model.to_string();
+        }
+        match batch_base_model(&self.transform_model) {
+            Some(_) => self.transform_model.clone(),
+            None => format!("{}:batch", self.transform_model),
+        }
+    }
+
+    /// The batch lane's dials, when the endpoint has one.
+    fn batching(&self) -> Option<ChatBatching> {
+        let batches_url = self.batches_url()?;
+        let requests_max = usize::try_from(self.batch_requests_max.get()).expect("u32 fits usize");
+        Some(ChatBatching {
+            batches_url,
+            requests_max,
+            bytes_max: CHAT_BATCH_BYTES_MAX,
+            quiescence: CHAT_BATCH_QUIESCENCE,
+            age_max: CHAT_BATCH_AGE_MAX,
+            tick: CHAT_BATCH_TICK,
+            poll_initial: CHAT_BATCH_POLL_INITIAL,
+            poll_steady: CHAT_BATCH_POLL_STEADY,
+            poll_steady_after: CHAT_BATCH_POLL_STEADY_AFTER,
+            poll_max: CHAT_BATCH_POLL_MAX,
+            jobs_in_flight_max: CHAT_BATCH_JOBS_IN_FLIGHT_MAX,
+            queue_max: CHAT_BATCH_QUEUE_MAX.max(requests_max),
+            create_timeout: CHAT_BATCH_CREATE_TIMEOUT,
+        })
     }
 }
 
@@ -140,7 +222,8 @@ impl Plugin for LlmEndpoint {
             .map(ApiKey::from_env)
             .transpose()
             .map_err(PluginError)?;
-        let client = LlmClient::new(key, &self.config.base_url);
+        let batching = self.config.batching();
+        let client = LlmClient::with_batching(key, &self.config.base_url, batching.clone());
         let mut facts = Facts::new()
             .with(
                 llm::facts::TRANSFORM_MODEL,
@@ -149,6 +232,12 @@ impl Plugin for LlmEndpoint {
             .with(llm::facts::AGENT_MODEL, self.config.agent_model.as_str());
         if let Some(effort) = self.config.transform_reasoning_effort.as_deref() {
             facts = facts.with(llm::facts::TRANSFORM_REASONING_EFFORT, effort);
+        }
+        if batching.is_some() {
+            facts = facts.with(
+                llm::facts::TRANSFORM_BATCH_MODEL,
+                self.config.transform_batch_model().as_str(),
+            );
         }
         cx.provide(&LLM, Arc::new(client) as Arc<dyn Llm>, facts)?;
         Ok(())
@@ -222,218 +311,28 @@ impl std::fmt::Debug for ApiKey {
     }
 }
 
-pub struct LlmClient {
+/// The wire: one HTTP client, the key, the base URL, and the running
+/// tallies. Shared by the synchronous paths and the batch lane's tasks.
+pub(crate) struct Transport {
     http: reqwest::Client,
     /// `None` for a keyless endpoint: no `Authorization` header is sent.
     key: Option<ApiKey>,
     base_url: String,
     /// Dollars spent across all calls this process, from response usage.
     spent: Mutex<f64>,
-    batch_queue: AsyncMutex<ChatBatchQueue>,
+    /// Batch-API jobs created this process.
+    batch_jobs: AtomicU64,
 }
 
-#[derive(Default)]
-struct ChatBatchQueue {
-    pending: VecDeque<PendingBatchChat>,
-    draining: bool,
-}
-
-struct PendingBatchChat {
-    request: ChatRequest,
-    response: oneshot::Sender<Result<ChatMessage, SeamError>>,
-}
-
-impl LlmClient {
-    pub fn new(key: Option<ApiKey>, base_url: impl Into<String>) -> Self {
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(180))
-            .build()
-            .expect("reqwest client with static config builds");
-        Self {
-            http,
-            key,
-            base_url: base_url.into().trim_end_matches('/').to_string(),
-            spent: Mutex::new(0.0),
-            batch_queue: AsyncMutex::new(ChatBatchQueue::default()),
-        }
-    }
-
+impl Transport {
     fn record_cost(&self, usage: Option<&Usage>) {
         if let Some(cost) = usage.and_then(|u| u.cost) {
             *self.spent.lock().unwrap_or_else(|e| e.into_inner()) += cost;
         }
     }
 
-    /// Provider-specific reasoning wire shape. OpenRouter takes a nested
-    /// object and can omit the unused trace; other compatible endpoints
-    /// (including ollama) retain the top-level `reasoning_effort` field.
-    fn chat_body(&self, request: &ChatRequest) -> Result<Value, SeamError> {
-        let mut body = serde_json::to_value(request)
-            .map_err(|e| SeamError::failed(format!("unserializable request: {e}")))?;
-        apply_reasoning_wire(
-            &mut body,
-            &self.base_url,
-            request.reasoning_effort.as_deref(),
-        );
-        Ok(body)
-    }
-
-    async fn chat_via_batch(&self, request: &ChatRequest) -> Result<ChatMessage, SeamError> {
-        let (sender, receiver) = oneshot::channel();
-        let leads_drain = {
-            let mut queue = self.batch_queue.lock().await;
-            if queue.pending.len() >= CHAT_BATCH_QUEUE_MAX {
-                return Err(SeamError::failed("OpenRouter chat batch queue is full"));
-            }
-            queue.pending.push_back(PendingBatchChat {
-                request: request.clone(),
-                response: sender,
-            });
-            let leads = !queue.draining;
-            queue.draining = true;
-            leads
-        };
-        if leads_drain {
-            self.drain_chat_batches().await;
-        }
-        receiver
-            .await
-            .map_err(|_| SeamError::failed("OpenRouter chat batch stopped before replying"))?
-    }
-
-    async fn drain_chat_batches(&self) {
-        for _batch_index in 0..CHAT_BATCH_DRAIN_MAX {
-            tokio::time::sleep(Duration::from_millis(CHAT_BATCH_COLLECTION_MS)).await;
-            let pending = self.take_chat_batch().await;
-            if pending.is_empty() {
-                return;
-            }
-            let outcomes = self.submit_chat_batch(&pending).await;
-            deliver_chat_batch(pending, outcomes);
-        }
-        self.fail_pending_chat_batches("OpenRouter chat batch drain limit reached")
-            .await;
-    }
-
-    async fn take_chat_batch(&self) -> Vec<PendingBatchChat> {
-        let mut queue = self.batch_queue.lock().await;
-        let Some(first) = queue.pending.front() else {
-            queue.draining = false;
-            return Vec::new();
-        };
-        let model = first.request.model.clone();
-        let count = queue
-            .pending
-            .iter()
-            .take(CHAT_BATCH_MAX)
-            .take_while(|pending| pending.request.model == model)
-            .count();
-        assert!(count > 0);
-        queue.pending.drain(..count).collect()
-    }
-
-    async fn fail_pending_chat_batches(&self, reason: &str) {
-        let mut queue = self.batch_queue.lock().await;
-        let pending = std::mem::take(&mut queue.pending);
-        queue.draining = false;
-        drop(queue);
-        for item in pending {
-            let _ = item.response.send(Err(SeamError::failed(reason)));
-        }
-    }
-
-    async fn submit_chat_batch(
-        &self,
-        pending: &[PendingBatchChat],
-    ) -> Result<Vec<ChatMessage>, SeamError> {
-        assert!(!pending.is_empty());
-        assert!(pending.len() <= CHAT_BATCH_MAX);
-        let model = batch_base_model(&pending[0].request.model)
-            .expect("batch dispatch only receives :batch models");
-        let requests = self.chat_batch_requests(pending, model)?;
-        let body = json!({
-            "endpoint": "/v1/chat/completions",
-            "model": model,
-            "requests": requests,
-        });
-        let url = format!("{}/api/beta/batches", endpoint_origin(&self.base_url));
-        let created: OpenRouterBatch = self
-            .request_url_json(
-                reqwest::Method::POST,
-                &url,
-                "creating OpenRouter batch",
-                Some(&body),
-            )
-            .await?;
-        let completed = self.poll_chat_batch(&url, &created.id).await?;
-        self.record_cost(completed.usage.as_ref());
-        self.chat_batch_messages(completed, pending.len())
-    }
-
-    fn chat_batch_requests(
-        &self,
-        pending: &[PendingBatchChat],
-        model: &str,
-    ) -> Result<Vec<Value>, SeamError> {
-        pending
-            .iter()
-            .enumerate()
-            .map(|(index, pending)| {
-                let mut body = self.chat_body(&pending.request)?;
-                body["model"] = json!(model);
-                Ok(json!({"custom_id": format!("inseam-{index}"), "body": body}))
-            })
-            .collect()
-    }
-
-    async fn poll_chat_batch(
-        &self,
-        collection_url: &str,
-        batch_id: &str,
-    ) -> Result<OpenRouterBatch, SeamError> {
-        let url = format!("{collection_url}/{batch_id}");
-        for _poll_index in 0..CHAT_BATCH_POLL_MAX {
-            tokio::time::sleep(Duration::from_secs(CHAT_BATCH_POLL_SECONDS)).await;
-            let batch: OpenRouterBatch = self
-                .request_url_json(reqwest::Method::GET, &url, "polling OpenRouter batch", None)
-                .await?;
-            match batch.status.as_str() {
-                "completed" => return Ok(batch),
-                "failed" | "cancelled" | "expired" => {
-                    return Err(SeamError::failed(format!(
-                        "OpenRouter batch {}: {}",
-                        batch.status,
-                        batch.error.unwrap_or(Value::Null)
-                    )));
-                }
-                "validating" | "in_progress" | "finalizing" => {}
-                status => {
-                    return Err(SeamError::failed(format!(
-                        "OpenRouter batch returned unknown status `{status}`"
-                    )));
-                }
-            }
-        }
-        Err(SeamError::failed(
-            "OpenRouter batch exceeded its 24-hour poll limit",
-        ))
-    }
-
-    fn chat_batch_messages(
-        &self,
-        batch: OpenRouterBatch,
-        expected_count: usize,
-    ) -> Result<Vec<ChatMessage>, SeamError> {
-        let results = batch
-            .results
-            .ok_or_else(|| SeamError::failed("completed OpenRouter batch has no results"))?;
-        if results.len() != expected_count {
-            return Err(SeamError::failed(format!(
-                "OpenRouter batch returned {} of {expected_count} results",
-                results.len()
-            )));
-        }
-        reorder_chat_batch_results(results, expected_count)
+    fn record_batch_job(&self) {
+        self.batch_jobs.fetch_add(1, Ordering::Relaxed);
     }
 
     async fn request_json<T: DeserializeOwned>(
@@ -443,15 +342,17 @@ impl LlmClient {
         body: Option<&Value>,
     ) -> Result<T, SeamError> {
         let url = format!("{}{path}", self.base_url);
-        self.request_url_json(method, &url, path, body).await
+        self.request_url_json(method, &url, path, body, REQUEST_TIMEOUT).await
     }
 
+    /// One request with bounded retries on transport errors, 429, and 5xx.
     async fn request_url_json<T: DeserializeOwned>(
         &self,
         method: reqwest::Method,
         url: &str,
         operation: &str,
         body: Option<&Value>,
+        timeout: Duration,
     ) -> Result<T, SeamError> {
         let mut last_err = None;
         for attempt in 0..RETRIES {
@@ -461,6 +362,7 @@ impl LlmClient {
             let mut req = self
                 .http
                 .request(method.clone(), url)
+                .timeout(timeout)
                 .header("HTTP-Referer", "https://github.com/aiui/inseam")
                 .header("X-Title", "inseam");
             if let Some(key) = &self.key {
@@ -499,10 +401,90 @@ impl LlmClient {
     }
 }
 
+pub struct LlmClient {
+    transport: Arc<Transport>,
+    /// The batch lane, when the endpoint has a batch API.
+    batcher: Option<Arc<ChatBatcher>>,
+}
+
+impl LlmClient {
+    pub fn new(key: Option<ApiKey>, base_url: impl Into<String>) -> Self {
+        Self::with_batching(key, base_url, None)
+    }
+
+    pub(crate) fn with_batching(
+        key: Option<ApiKey>,
+        base_url: impl Into<String>,
+        batching: Option<ChatBatching>,
+    ) -> Self {
+        let http = reqwest::Client::builder()
+            .timeout(REQUEST_TIMEOUT)
+            .build()
+            .expect("reqwest client with static config builds");
+        let transport = Arc::new(Transport {
+            http,
+            key,
+            base_url: base_url.into().trim_end_matches('/').to_string(),
+            spent: Mutex::new(0.0),
+            batch_jobs: AtomicU64::new(0),
+        });
+        let batcher = batching.map(|tuning| Arc::new(ChatBatcher::new(Arc::clone(&transport), tuning)));
+        Self { transport, batcher }
+    }
+
+    fn base_url(&self) -> &str {
+        &self.transport.base_url
+    }
+
+    fn record_cost(&self, usage: Option<&Usage>) {
+        self.transport.record_cost(usage);
+    }
+
+    /// Provider-specific reasoning wire shape. OpenRouter takes a nested
+    /// object and can omit the unused trace; other compatible endpoints
+    /// (including ollama) retain the top-level `reasoning_effort` field.
+    fn chat_body(&self, request: &ChatRequest) -> Result<Value, SeamError> {
+        let mut body = serde_json::to_value(request)
+            .map_err(|e| SeamError::failed(format!("unserializable request: {e}")))?;
+        apply_reasoning_wire(
+            &mut body,
+            self.base_url(),
+            request.reasoning_effort.as_deref(),
+        );
+        Ok(body)
+    }
+
+    /// The batch lane: park the call under the job's base model and wait
+    /// for its job to answer.
+    async fn chat_via_batch(
+        &self,
+        batcher: &Arc<ChatBatcher>,
+        request: &ChatRequest,
+        base_model: &str,
+    ) -> Result<ChatMessage, SeamError> {
+        let mut body = self.chat_body(request)?;
+        body["model"] = json!(base_model);
+        let receiver = batcher.submit(base_model, body)?;
+        receiver
+            .await
+            .map_err(|_| SeamError::failed("the llm batch lane stopped before replying"))?
+    }
+
+    async fn request_json<T: DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&Value>,
+    ) -> Result<T, SeamError> {
+        self.transport.request_json(method, path, body).await
+    }
+}
+
 impl std::fmt::Debug for LlmClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LlmClient")
-            .field("base_url", &self.base_url)
+            .field("base_url", &self.transport.base_url)
+            .field("batch_lane", &self.batcher.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -510,13 +492,10 @@ impl std::fmt::Debug for LlmClient {
 #[async_trait::async_trait]
 impl Llm for LlmClient {
     async fn chat(&self, request: &ChatRequest) -> Result<ChatMessage, SeamError> {
-        match (
-            endpoint_host(&self.base_url),
-            batch_base_model(&request.model),
-        ) {
-            ("openrouter.ai", Some(_)) => return self.chat_via_batch(request).await,
-            ("openrouter.ai", None) => {}
-            (_, _) => {}
+        // A `:batch` model on an endpoint without a batch lane goes out as
+        // named: the endpoint decides whether it knows the variant.
+        if let (Some(batcher), Some(base_model)) = (&self.batcher, batch_base_model(&request.model)) {
+            return self.chat_via_batch(batcher, request, base_model).await;
         }
         let body = self.chat_body(request)?;
         let resp: ChatResponse = self
@@ -562,7 +541,7 @@ impl Llm for LlmClient {
     }
 
     async fn embedding_model(&self, model: &str) -> Result<Option<EmbeddingModel>, SeamError> {
-        match OllamaApi::new(&self.http, &self.base_url)
+        match OllamaApi::new(&self.transport.http, self.base_url())
             .embedding_model(model)
             .await
         {
@@ -594,7 +573,7 @@ impl Llm for LlmClient {
             }],
             "usage": { "include": true }
         });
-        apply_reasoning_wire(&mut body, &self.base_url, request.reasoning_effort);
+        apply_reasoning_wire(&mut body, self.base_url(), request.reasoning_effort);
         let resp: ChatResponse = self
             .request_json(reqwest::Method::POST, "/chat/completions", Some(&body))
             .await?;
@@ -610,7 +589,7 @@ impl Llm for LlmClient {
         // A local ollama introspects its installed models (capabilities,
         // vector widths) through its native API; `/v1/models` alone cannot
         // tell an embedder from a chat model.
-        if let Some(models) = OllamaApi::new(&self.http, &self.base_url)
+        if let Some(models) = OllamaApi::new(&self.transport.http, self.base_url())
             .models(embeddings)
             .await
         {
@@ -629,7 +608,11 @@ impl Llm for LlmClient {
     }
 
     fn spent(&self) -> f64 {
-        *self.spent.lock().unwrap_or_else(|e| e.into_inner())
+        *self.transport.spent.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn batch_jobs(&self) -> u64 {
+        self.transport.batch_jobs.load(Ordering::Relaxed)
     }
 }
 
@@ -658,121 +641,17 @@ fn batch_base_model(model: &str) -> Option<&str> {
     model.strip_suffix(":batch").filter(|base| !base.is_empty())
 }
 
-fn deliver_chat_batch(
-    pending: Vec<PendingBatchChat>,
-    outcomes: Result<Vec<ChatMessage>, SeamError>,
-) {
-    match outcomes {
-        Ok(messages) => {
-            assert_eq!(messages.len(), pending.len());
-            for (item, message) in pending.into_iter().zip(messages) {
-                let _ = item.response.send(Ok(message));
-            }
-        }
-        Err(error) => {
-            let reason = error.to_string();
-            for item in pending {
-                let _ = item.response.send(Err(SeamError::failed(reason.clone())));
-            }
-        }
-    }
-}
-
-fn reorder_chat_batch_results(
-    results: Vec<OpenRouterBatchResult>,
-    expected_count: usize,
-) -> Result<Vec<ChatMessage>, SeamError> {
-    let mut ordered: Vec<Option<ChatMessage>> = (0..expected_count).map(|_| None).collect();
-    for result in results {
-        let index = batch_result_index(&result.custom_id, expected_count)?;
-        if ordered[index].is_some() {
-            return Err(SeamError::failed(format!(
-                "OpenRouter batch repeated `{}`",
-                result.custom_id
-            )));
-        }
-        let response = result.response.ok_or_else(|| {
-            SeamError::failed(format!(
-                "OpenRouter batch `{}` failed: {}",
-                result.custom_id,
-                result.error.unwrap_or(Value::Null)
-            ))
-        })?;
-        if !(200..300).contains(&response.status_code) {
-            return Err(SeamError::failed(format!(
-                "OpenRouter batch `{}` returned status {}",
-                result.custom_id, response.status_code
-            )));
-        }
-        ordered[index] = response
-            .body
-            .choices
-            .into_iter()
-            .next()
-            .map(|choice| choice.message);
-    }
-    ordered
-        .into_iter()
-        .enumerate()
-        .map(|(index, message)| {
-            message.ok_or_else(|| {
-                SeamError::failed(format!("OpenRouter batch omitted inseam-{index}"))
-            })
-        })
-        .collect()
-}
-
-fn batch_result_index(custom_id: &str, expected_count: usize) -> Result<usize, SeamError> {
-    let index = custom_id
-        .strip_prefix("inseam-")
-        .and_then(|value| value.parse::<usize>().ok())
-        .ok_or_else(|| SeamError::failed(format!("invalid OpenRouter batch id `{custom_id}`")))?;
-    if index >= expected_count {
-        return Err(SeamError::failed(format!(
-            "OpenRouter batch id `{custom_id}` is out of range"
-        )));
-    }
-    Ok(index)
+#[derive(Debug, Deserialize)]
+pub(crate) struct ChatResponse {
+    #[serde(default)]
+    pub(crate) choices: Vec<Choice>,
+    #[serde(default)]
+    pub(crate) usage: Option<Usage>,
 }
 
 #[derive(Debug, Deserialize)]
-struct ChatResponse {
-    #[serde(default)]
-    choices: Vec<Choice>,
-    #[serde(default)]
-    usage: Option<Usage>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenRouterBatch {
-    id: String,
-    status: String,
-    #[serde(default)]
-    results: Option<Vec<OpenRouterBatchResult>>,
-    #[serde(default)]
-    usage: Option<Usage>,
-    #[serde(default)]
-    error: Option<Value>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenRouterBatchResult {
-    custom_id: String,
-    #[serde(default)]
-    response: Option<OpenRouterBatchItemResponse>,
-    #[serde(default)]
-    error: Option<Value>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenRouterBatchItemResponse {
-    status_code: u16,
-    body: ChatResponse,
-}
-
-#[derive(Debug, Deserialize)]
-struct Choice {
-    message: ChatMessage,
+pub(crate) struct Choice {
+    pub(crate) message: ChatMessage,
 }
 
 #[derive(Debug, Deserialize)]
@@ -826,9 +705,9 @@ fn decode_f32_base64(text: &str) -> Result<Vec<f32>, SeamError> {
 }
 
 #[derive(Debug, Deserialize)]
-struct Usage {
+pub(crate) struct Usage {
     #[serde(default)]
-    cost: Option<f64>,
+    pub(crate) cost: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -917,47 +796,37 @@ mod tests {
     }
 
     #[test]
-    fn batch_requests_strip_suffix_and_keep_reasoning_control() {
-        let client = LlmClient::new(None, "https://openrouter.ai/api/v1");
-        let request = ChatRequest::new(
-            "google/gemini-2.5-flash-lite:batch",
-            vec![ChatMessage::user("summarize")],
-        )
-        .with_reasoning_effort(Some("low"));
-        let (sender, _receiver) = oneshot::channel();
-        let pending = vec![PendingBatchChat {
-            request,
-            response: sender,
-        }];
-
-        let requests = client
-            .chat_batch_requests(&pending, "google/gemini-2.5-flash-lite")
-            .unwrap();
-
+    fn the_batch_lane_is_derived_for_openrouter_and_absent_elsewhere() {
+        let openrouter = LlmEndpointConfig::default();
         assert_eq!(
-            batch_base_model(&pending[0].request.model),
-            Some("google/gemini-2.5-flash-lite")
+            openrouter.batches_url().as_deref(),
+            Some("https://openrouter.ai/api/beta/batches")
         );
-        assert_eq!(requests[0]["custom_id"], "inseam-0");
-        assert_eq!(requests[0]["body"]["model"], "google/gemini-2.5-flash-lite");
-        assert_eq!(requests[0]["body"]["reasoning"]["effort"], "low");
-        assert_eq!(requests[0]["body"]["reasoning"]["exclude"], true);
-        assert!(requests[0]["body"].get("reasoning_effort").is_none());
+        assert_eq!(openrouter.transform_batch_model(), "google/gemini-2.5-flash-lite:batch");
+        assert!(openrouter.batching().is_some());
+
+        let ollama = LlmEndpointConfig {
+            base_url: "http://localhost:11434/v1".to_string(),
+            api_key_env: String::new(),
+            ..LlmEndpointConfig::default()
+        };
+        assert_eq!(ollama.batches_url(), None);
+        assert!(ollama.batching().is_none());
+
+        let gateway = LlmEndpointConfig {
+            base_url: "https://gateway.example/v1".to_string(),
+            batches_url: Some("https://gateway.example/batches/".to_string()),
+            transform_model: "google/gemini-2.5-flash-lite:batch".to_string(),
+            ..LlmEndpointConfig::default()
+        };
+        assert_eq!(gateway.batches_url().as_deref(), Some("https://gateway.example/batches"));
+        assert_eq!(gateway.transform_batch_model(), "google/gemini-2.5-flash-lite:batch");
     }
 
     #[test]
-    fn batch_results_return_in_request_order() {
-        let results: Vec<OpenRouterBatchResult> = serde_json::from_str(
-            r#"[
-              {"custom_id":"inseam-1","response":{"status_code":200,"body":{"choices":[{"message":{"role":"assistant","content":"second"}}]}},"error":null},
-              {"custom_id":"inseam-0","response":{"status_code":200,"body":{"choices":[{"message":{"role":"assistant","content":"first"}}]}},"error":null}
-            ]"#,
-        )
-        .unwrap();
-
-        let messages = reorder_chat_batch_results(results, 2).unwrap();
-
-        assert_eq!(messages[0].content.as_deref(), Some("first"));
-        assert_eq!(messages[1].content.as_deref(), Some("second"));
+    fn batch_base_model_strips_only_a_real_suffix() {
+        assert_eq!(batch_base_model("google/gemini-2.5-flash-lite:batch"), Some("google/gemini-2.5-flash-lite"));
+        assert_eq!(batch_base_model("google/gemini-2.5-flash-lite"), None);
+        assert_eq!(batch_base_model(":batch"), None);
     }
 }

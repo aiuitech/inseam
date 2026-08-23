@@ -7,7 +7,9 @@ inseam serve                       # authenticated owner HTTP API; --web-dir als
 inseam index ~/Data                 # index a scope of a host (read-only): picks up new, changed,
                                     # and deleted sources, plus config changes; --rebuild forces.
                                     # --host <id> names the host once several are mounted;
-                                    # an address (inseam://<host>/<root>) names it too
+                                    # an address (inseam://<host>/<root>) names it too.
+                                    # --batch puts summaries on the endpoint's batch lane:
+                                    # large cheap jobs, minutes to hours (indexing/embeddings.md)
 inseam hosts                        # the hosts this node stewards and what each connection supports
 inseam grants                       # the OAuth grants this node holds and where each stands
 inseam authorize <grant>            # sign in to a provider: prints the URL, waits for the browser
