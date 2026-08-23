@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -46,7 +46,7 @@ impl UpdateChannel {
 /// maintainer's machine, never in CI (`design/releases.md`). Until a
 /// maintainer runs `cargo xtask release keygen` and pastes the result here,
 /// the stock binary refuses every manifest, which is the safe failure.
-const FIRST_PARTY_PUBLIC_KEY: &str = "REPLACE-WITH-cargo-xtask-release-keygen";
+const FIRST_PARTY_PUBLIC_KEY: &str = "RWSurch1AVFj0KaQ7WxNWGK3f+LIsqtYBi44fpT2e11kbA/3IP6+ko/l";
 
 /// Environment variable naming an alternative origin; `--origin` wins over it.
 pub const ORIGIN_ENV: &str = "INSEAM_RELEASE_ORIGIN";
@@ -92,7 +92,11 @@ pub enum Decision {
     /// The cohort names the version already running.
     Current { version: String },
     /// The cohort names a different version; `artifact` is what to fetch.
-    Change { from: String, to: String, artifact: Artifact },
+    Change {
+        from: String,
+        to: String,
+        artifact: Artifact,
+    },
 }
 
 /// An origin that serves bytes by relative path; one code path for the
@@ -132,7 +136,10 @@ impl Origin {
             }
         };
         if bytes.len() > bytes_max {
-            bail!("{relative} is {} bytes, over the {bytes_max} byte limit", bytes.len());
+            bail!(
+                "{relative} is {} bytes, over the {bytes_max} byte limit",
+                bytes.len()
+            );
         }
         Ok(bytes)
     }
@@ -163,7 +170,9 @@ fn join_url(base: &str, relative: &str) -> String {
 pub async fn fetch_manifest(origin: &str, public_key: &str) -> anyhow::Result<Manifest> {
     let source = Origin::parse(origin);
     let manifest_bytes = source.fetch("manifest.json", MANIFEST_BYTES_MAX).await?;
-    let signature_bytes = source.fetch("manifest.json.minisig", MANIFEST_BYTES_MAX).await?;
+    let signature_bytes = source
+        .fetch("manifest.json.minisig", MANIFEST_BYTES_MAX)
+        .await?;
     let signature_text = String::from_utf8(signature_bytes).context("signature is not UTF-8")?;
     verify_manifest(&manifest_bytes, &signature_text, public_key)?;
     parse_manifest(&manifest_bytes)
@@ -172,11 +181,10 @@ pub async fn fetch_manifest(origin: &str, public_key: &str) -> anyhow::Result<Ma
 /// Verify the signature before parsing: bytes that fail the key are never
 /// handed to a parser.
 pub fn verify_manifest(manifest: &[u8], signature: &str, public_key: &str) -> anyhow::Result<()> {
-    let key = minisign_verify::PublicKey::from_base64(public_key)
-        .context(
-            "release public key compiled into this binary is malformed; the distribution was \
+    let key = minisign_verify::PublicKey::from_base64(public_key).context(
+        "release public key compiled into this binary is malformed; the distribution was \
              built without a key from `cargo xtask release keygen`",
-        )?;
+    )?;
     let signature = minisign_verify::Signature::decode(signature)
         .context("manifest.json.minisig is not a minisign signature")?;
     key.verify(manifest, &signature, false)
@@ -206,7 +214,9 @@ pub fn decide(
         bail!("cohort {cohort:?} is not in the manifest");
     };
     if cohort_entry.version == running_version {
-        return Ok(Decision::Current { version: cohort_entry.version });
+        return Ok(Decision::Current {
+            version: cohort_entry.version,
+        });
     }
     let Some(artifact) = cohort_entry.artifacts.remove(target) else {
         bail!(
@@ -250,7 +260,9 @@ fn extract_binary(tarball: &[u8]) -> anyhow::Result<Vec<u8>> {
         let is_binary = path.file_name().is_some_and(|name| name == BINARY_NAME);
         if is_binary {
             let mut bytes = Vec::new();
-            entry.read_to_end(&mut bytes).context("reading binary from tarball")?;
+            entry
+                .read_to_end(&mut bytes)
+                .context("reading binary from tarball")?;
             return Ok(bytes);
         }
     }
@@ -302,13 +314,19 @@ pub async fn self_update(
             println!("inseam {version} is current (cohort {cohort}, origin {origin})");
         }
         Decision::Change { from, to, artifact } if check_only => {
-            println!("inseam {from} -> {to} available (cohort {cohort}, {})", artifact.path);
+            println!(
+                "inseam {from} -> {to} available (cohort {cohort}, {})",
+                artifact.path
+            );
         }
         Decision::Change { from, to, artifact } => {
             let binary = fetch_binary(origin, &artifact).await?;
             let destination = std::env::current_exe().context("locating the running executable")?;
             replace_executable(&destination, &binary)?;
-            println!("inseam {from} -> {to} installed at {}; restart to run it", destination.display());
+            println!(
+                "inseam {from} -> {to} installed at {}; restart to run it",
+                destination.display()
+            );
         }
     }
     Ok(())
@@ -355,18 +373,24 @@ mod tests {
         fn publish_tarball(&self, relative: &str, binary: &[u8]) -> String {
             let mut tar_bytes = Vec::new();
             {
-                let encoder = flate2::write::GzEncoder::new(&mut tar_bytes, flate2::Compression::fast());
+                let encoder =
+                    flate2::write::GzEncoder::new(&mut tar_bytes, flate2::Compression::fast());
                 let mut builder = tar::Builder::new(encoder);
                 let mut header = tar::Header::new_gnu();
                 header.set_size(binary.len() as u64);
                 header.set_mode(0o755);
                 header.set_cksum();
-                builder.append_data(&mut header, BINARY_NAME, binary).unwrap();
+                builder
+                    .append_data(&mut header, BINARY_NAME, binary)
+                    .unwrap();
                 builder.into_inner().unwrap().finish().unwrap();
             }
             let path = self.dir.path().join(relative);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::File::create(&path).unwrap().write_all(&tar_bytes).unwrap();
+            std::fs::File::create(&path)
+                .unwrap()
+                .write_all(&tar_bytes)
+                .unwrap();
             hex(&Sha256::digest(&tar_bytes))
         }
     }
@@ -385,7 +409,9 @@ mod tests {
     async fn verifies_and_parses_a_signed_manifest() {
         let origin = SignedOrigin::new();
         origin.publish_manifest(&manifest_json("9.9.9", "t", "9.9.9/x.tar.gz", "00"));
-        let manifest = fetch_manifest(&origin.origin(), &origin.public_key).await.unwrap();
+        let manifest = fetch_manifest(&origin.origin(), &origin.public_key)
+            .await
+            .unwrap();
         assert_eq!(manifest.cohorts["stable"].version, "9.9.9");
     }
 
@@ -394,7 +420,9 @@ mod tests {
         let origin = SignedOrigin::new();
         let other = SignedOrigin::new();
         origin.publish_manifest(&manifest_json("9.9.9", "t", "x", "00"));
-        let error = fetch_manifest(&origin.origin(), &other.public_key).await.unwrap_err();
+        let error = fetch_manifest(&origin.origin(), &other.public_key)
+            .await
+            .unwrap_err();
         assert!(error.to_string().contains("signature"), "{error:#}");
     }
 
@@ -407,14 +435,20 @@ mod tests {
             manifest_json("6.6.6", "t", "x", "00"),
         )
         .unwrap();
-        assert!(fetch_manifest(&origin.origin(), &origin.public_key).await.is_err());
+        assert!(
+            fetch_manifest(&origin.origin(), &origin.public_key)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
     async fn rejects_an_unknown_schema() {
         let origin = SignedOrigin::new();
         origin.publish_manifest(r#"{"schema":2,"cohorts":{}}"#);
-        let error = fetch_manifest(&origin.origin(), &origin.public_key).await.unwrap_err();
+        let error = fetch_manifest(&origin.origin(), &origin.public_key)
+            .await
+            .unwrap_err();
         assert!(error.to_string().contains("schema"), "{error:#}");
     }
 
@@ -422,15 +456,23 @@ mod tests {
     fn decides_current_when_versions_match() {
         let manifest = parse_manifest(manifest_json("1.0.0", "t", "p", "00").as_bytes()).unwrap();
         let decision = decide(manifest, "stable", "t", "1.0.0").unwrap();
-        assert_eq!(decision, Decision::Current { version: "1.0.0".into() });
+        assert_eq!(
+            decision,
+            Decision::Current {
+                version: "1.0.0".into()
+            }
+        );
     }
 
     #[test]
     fn decides_change_in_either_direction() {
         for running in ["0.9.0", "1.1.0"] {
-            let manifest = parse_manifest(manifest_json("1.0.0", "t", "p", "00").as_bytes()).unwrap();
+            let manifest =
+                parse_manifest(manifest_json("1.0.0", "t", "p", "00").as_bytes()).unwrap();
             let decision = decide(manifest, "stable", "t", running).unwrap();
-            let Decision::Change { from, to, .. } = decision else { panic!("expected change") };
+            let Decision::Change { from, to, .. } = decision else {
+                panic!("expected change")
+            };
             assert_eq!(from, running);
             assert_eq!(to, "1.0.0");
         }
@@ -448,14 +490,22 @@ mod tests {
     async fn downloads_verifies_and_replaces_the_binary() {
         let origin = SignedOrigin::new();
         let sha = origin.publish_tarball("1.0.0/inseam-t.tar.gz", b"#!/bin/sh\necho new\n");
-        let artifact = Artifact { path: "1.0.0/inseam-t.tar.gz".into(), sha256: sha };
+        let artifact = Artifact {
+            path: "1.0.0/inseam-t.tar.gz".into(),
+            sha256: sha,
+        };
         let binary = fetch_binary(&origin.origin(), &artifact).await.unwrap();
         let destination = origin.dir.path().join("bin").join("inseam");
         std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
         std::fs::write(&destination, b"old").unwrap();
         replace_executable(&destination, &binary).unwrap();
-        assert_eq!(std::fs::read(&destination).unwrap(), b"#!/bin/sh\necho new\n");
-        let leftovers: Vec<_> = std::fs::read_dir(destination.parent().unwrap()).unwrap().collect();
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"#!/bin/sh\necho new\n"
+        );
+        let leftovers: Vec<_> = std::fs::read_dir(destination.parent().unwrap())
+            .unwrap()
+            .collect();
         assert_eq!(leftovers.len(), 1, "staged file must not remain");
     }
 
@@ -463,7 +513,10 @@ mod tests {
     async fn rejects_a_tarball_whose_hash_differs() {
         let origin = SignedOrigin::new();
         origin.publish_tarball("x.tar.gz", b"bytes");
-        let artifact = Artifact { path: "x.tar.gz".into(), sha256: "00".repeat(32) };
+        let artifact = Artifact {
+            path: "x.tar.gz".into(),
+            sha256: "00".repeat(32),
+        };
         let error = fetch_binary(&origin.origin(), &artifact).await.unwrap_err();
         assert!(error.to_string().contains("sha256 mismatch"), "{error:#}");
     }
@@ -471,9 +524,15 @@ mod tests {
     #[tokio::test]
     async fn refuses_paths_that_escape_a_directory_origin() {
         let origin = SignedOrigin::new();
-        let artifact = Artifact { path: "../etc/passwd".into(), sha256: "00".into() };
+        let artifact = Artifact {
+            path: "../etc/passwd".into(),
+            sha256: "00".into(),
+        };
         let error = fetch_binary(&origin.origin(), &artifact).await.unwrap_err();
-        assert!(error.to_string().contains("outside the origin"), "{error:#}");
+        assert!(
+            error.to_string().contains("outside the origin"),
+            "{error:#}"
+        );
     }
 
     #[test]
@@ -483,7 +542,13 @@ mod tests {
             join_url(base, "../../download/v1.2.3/inseam-x.tar.gz"),
             "https://github.com/aiuitech/inseam/releases/download/v1.2.3/inseam-x.tar.gz"
         );
-        assert_eq!(join_url("https://r.example/hosted", "1.0.0/a.tar.gz"), "https://r.example/hosted/1.0.0/a.tar.gz");
-        assert_eq!(join_url("https://r.example/a", "../../../../b"), "https://r.example/b");
+        assert_eq!(
+            join_url("https://r.example/hosted", "1.0.0/a.tar.gz"),
+            "https://r.example/hosted/1.0.0/a.tar.gz"
+        );
+        assert_eq!(
+            join_url("https://r.example/a", "../../../../b"),
+            "https://r.example/b"
+        );
     }
 }
