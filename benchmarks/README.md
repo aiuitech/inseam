@@ -53,18 +53,30 @@ python3 benchmarks/enterprise_rag_bench.py run \
   --evaluation-parallelism 4
 ```
 
-Every invocation creates a new ignored index under `benchmark/fixtures/enterprise-rag-bench/nodes/`. This prevents a warm index from being reported as a fresh indexing result. Failed and interrupted runs remain on disk with their partial logs and a non-completed manifest.
+Every `run` invocation creates a new ignored index under `benchmark/fixtures/enterprise-rag-bench/nodes/`. This prevents a warm index from being reported as a fresh indexing result. Failed and interrupted runs remain on disk with their partial logs and a non-completed manifest.
+
+## Resume a run
+
+If indexing completed but a later query, answer, or evaluation failed, resume the same run:
+
+```sh
+python3 benchmarks/enterprise_rag_bench.py resume <run-id>
+```
+
+Use the directory name under `benchmarks/runs/` as `<run-id>`. Resume loads the original options and composition, verifies the dataset and model pins, checks that the index command completed successfully, and reuses that run's ignored data directory. It refuses a missing or incomplete index. It starts with the first question that has no durable record, or goes directly to evaluation when every question is complete.
+
+Each invocation is recorded in `manifest.json` under `attempts`, including its start and finish time, duration, Inseam binary identity, starting and ending question counts, status, error, and log directory. The top-level duration is the sum of attempt durations. The index record keeps its original duration and structured completion counts for sources, fragments, relations, transforms, embeddings, and spend.
 
 ## Recorded runs
 
 Commit completed runs under `benchmarks/runs/<UTC timestamp>-<inseam commit>/`. Each run contains:
 
-- `manifest.json`: start and finish time, total duration, current phase, OS, CPU, RAM, disk, Inseam CLI version, binary hash, source revision and dirty state, dataset pins, model names, command timeouts, options, index duration, score summaries, and completion status.
+- `manifest.json`: start and finish time, attempt history, total active duration, current phase, OS, CPU, RAM, disk, Inseam CLI version, binary hash, source revision and dirty state, dataset pins, model names, command timeouts, options, index duration and completion counts, score summaries, and completion status.
 - `composition.toml`: the exact Inseam composition used.
 - `queries.jsonl`: per-question start and finish time, retrieval time, answer time, total time, answer, initial Finder document IDs, agent-cited document IDs, the combined evaluator document set, and every raw Finder result with its address and score.
 - `answers.jsonl`: the candidate file sent to EnterpriseRAG-Bench.
 - `enterprise-rag-bench-results.json`: the evaluator's per-question results and aggregate scores.
 - `evaluator-dependencies.txt`: installed evaluator package versions.
-- `logs/`: index, query, agent, and evaluator output.
+- `logs/`: the one-time index log plus attempt-specific query, agent, and evaluator output.
 
 The manifest's `scores.retrieval` block is computed from the initial ranked Finder results without an LLM. `scores.enterprise_rag_bench` evaluates the combined initial and agent-cited document set and records the upstream correctness, completeness, document recall, and invalid-extra-document aggregates. The raw result file remains authoritative.

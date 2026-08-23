@@ -45,6 +45,14 @@ Keep the defaults for a comparable rerun unless the user names a different exper
 
 The runner announces indexing, each question's retrieval and answer, and evaluation. Long external commands emit an elapsed-time heartbeat every five seconds. While heartbeats continue, do not diagnose a quiet upstream command as hung. For a live or interrupted run, inspect the newest `manifest.json`: `phase` identifies the active phase, and `queries_completed` shows durable progress. An intentional interruption records `status: interrupted` and preserves the partial run; do not commit it as a result.
 
+If a run has `status: failed` or `status: interrupted` and `indexing.returncode: 0`, resume it instead of starting another index:
+
+```sh
+python3 benchmarks/enterprise_rag_bench.py resume <run-id>
+```
+
+Resume must target the same run. Do not copy its index into a new run or change its original options. The command verifies the stored pins and composition, restores the durable query checkpoint, and records a new attempt with separate timings, Inseam identity, errors, and logs. If the index completion record is absent, report that the run cannot skip indexing.
+
 The model assignment is an invariant:
 
 - `stealth/ox-alpha` for summarization, entity extraction, agent answers, and EnterpriseRAG-Bench evaluation.

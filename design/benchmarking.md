@@ -10,7 +10,7 @@ EnterpriseRAG-Bench release `v1.0.0` is the first fixture. The harness uses the 
 
 ## Fresh runs
 
-Every run gets a fresh Inseam data directory under the ignored fixture tree. Reusing an index would make indexing time meaningless and could mix schema or configuration state from another revision. A run directory under `benchmarks/runs/` stores the small, reviewable evidence and points at its ignored data directory.
+Every new run gets a fresh Inseam data directory under the ignored fixture tree. Reusing an index in a different run would make indexing time meaningless and could mix schema or configuration state from another revision. Resuming the same run is different: the runner verifies that its index completed, preserves the original indexing record, and continues from its durable question checkpoint. A run directory under `benchmarks/runs/` stores the small, reviewable evidence and points at its ignored data directory.
 
 The runner uses one query at a time. Query concurrency would make individual latency depend on scheduling and provider contention. Indexing keeps Inseam's configured source concurrency because that is a product throughput control and the run records its value.
 
@@ -24,9 +24,9 @@ Transform call budgets stay explicit. The default is 500 summary calls and 500 e
 
 ## Evidence in a run
 
-`manifest.json` is the index for a run. It records time, machine specifications, dataset and evaluator pins, model assignments, exact Inseam identity, options, indexing duration, completed query count, aggregate scores, and terminal status. The exact composition, raw per-result Finder scores, per-query and per-answer durations, answer file, upstream results, dependency versions, and command logs sit beside it.
+`manifest.json` is the index for a run. It records time, machine specifications, dataset and evaluator pins, model assignments, exact Inseam identity, options, indexing duration and completion counts, completed query count, aggregate scores, and terminal status. Each invocation has an attempt record with its own timing, Inseam identity, checkpoint counts, error, and log directory. The exact composition, raw per-result Finder scores, per-query and per-answer durations, answer file, upstream results, dependency versions, and command logs sit beside it.
 
-The runner writes its current phase before indexing, querying, and evaluation, then updates the manifest after every question. It also emits a five-second elapsed-time heartbeat around each external command. A crash leaves a useful failed, interrupted, or running record instead of an apparently complete score. Only a manifest whose status is `completed` should enter comparisons.
+The runner writes its current phase before indexing, querying, and evaluation. After every answer, it atomically rewrites the query and answer checkpoints before updating the manifest count. It also emits a five-second elapsed-time heartbeat around each external command. A crash leaves a useful failed, interrupted, or running record instead of an apparently complete score. Only a manifest whose status is `completed` should enter comparisons.
 
 ## Performance sketch
 

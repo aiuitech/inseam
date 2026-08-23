@@ -97,6 +97,23 @@ class EnterpriseRagBenchTests(unittest.TestCase):
             with self.subTest(duration_seconds=duration_seconds):
                 self.assertEqual(benchmark.format_duration(duration_seconds), expected)
 
+    def test_parses_index_completion_numbers(self) -> None:
+        output = (
+            "511963 sources seen: 511963 indexed, 0 unchanged, 0 catalog-only, "
+            "0 past cutoff, 0 ignored\n"
+            "2376344 fragments, 1868268 relations, 5667 keyed fragments anchored\n"
+            "summaries: 492 llm, 511470 extractive, 1 envelope · "
+            "1864381 embedded · $13.0042 spent\n"
+        )
+
+        summary = benchmark.parse_index_summary(output)
+
+        self.assertEqual(summary["sources_seen"], 511_963)
+        self.assertEqual(summary["fragments"], 2_376_344)
+        self.assertEqual(summary["relations"], 1_868_268)
+        self.assertEqual(summary["embeddings"], 1_864_381)
+        self.assertEqual(summary["cost_usd"], 13.0042)
+
     def test_run_records_manifest_timings_results_and_scores(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_text:
             temporary = Path(temporary_text)
@@ -144,6 +161,9 @@ class EnterpriseRagBenchTests(unittest.TestCase):
             self.assertEqual(manifest["status"], "completed")
             self.assertEqual(manifest["phase"], "completed")
             self.assertEqual(manifest["queries_completed"], 1)
+            self.assertEqual(manifest["indexing"]["summary"]["sources_seen"], 1)
+            self.assertEqual(len(manifest["attempts"]), 1)
+            self.assertEqual(manifest["attempts"][0]["ending_queries_completed"], 1)
             self.assertEqual(manifest["inseam"]["cli_version"], "inseam 9.9.9")
             self.assertEqual(
                 manifest["scores"]["retrieval"]["average_document_recall_pct"],
@@ -151,9 +171,48 @@ class EnterpriseRagBenchTests(unittest.TestCase):
             )
             progress = output.getvalue()
             self.assertIn("Indexing 1 benchmark documents...", progress)
+            self.assertIn("Query checkpoint: 0/1 completed", progress)
             self.assertIn("[1/1] qst_0001 retrieval...", progress)
             self.assertIn("[1/1] qst_0001 answer...", progress)
             self.assertIn("Benchmark run recorded", progress)
+
+    def test_resume_reuses_legacy_completed_index(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_text:
+            temporary = Path(temporary_text)
+            fixture, runs, environment = prepare_fake_fixture(temporary)
+            options = benchmark.RunOptions(1, 8, 12, 8, 500, 4, True)
+
+            with mock.patch.object(benchmark, "FIXTURE_ROOT", fixture):
+                with mock.patch.object(benchmark, "RUNS_ROOT", runs):
+                    with mock.patch.dict(os.environ, environment):
+                        run_dir, data_dir, manifest = benchmark.create_run(options)
+                        composition = run_dir / "composition.toml"
+                        composition.write_text(benchmark.composition_text(options))
+                        manifest["indexing"] = benchmark.index_documents(
+                            run_dir, data_dir, composition
+                        )
+                        manifest["status"] = "failed"
+                        manifest["phase"] = "failed"
+                        manifest["finished_at"] = benchmark.utc_now()
+                        manifest["duration_seconds"] = 1.0
+                        manifest["schema_version"] = 1
+                        manifest.pop("attempts")
+                        benchmark.write_json(run_dir / "manifest.json", manifest)
+                        with mock.patch.object(
+                            benchmark,
+                            "index_documents",
+                            side_effect=AssertionError("index must not run"),
+                        ):
+                            with redirect_stdout(io.StringIO()) as output:
+                                benchmark.resume_benchmark(manifest["run_id"])
+
+            resumed = json.loads(run_dir.joinpath("manifest.json").read_text())
+            self.assertEqual(resumed["status"], "completed")
+            self.assertEqual(resumed["queries_completed"], 1)
+            self.assertEqual(len(resumed["attempts"]), 2)
+            self.assertTrue(resumed["attempts"][1]["resumed"])
+            self.assertEqual(resumed["indexing"]["summary"]["sources_seen"], 1)
+            self.assertIn("Reusing completed index: 1 sources", output.getvalue())
 
     def test_interruption_records_the_terminal_phase(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_text:
@@ -165,7 +224,14 @@ class EnterpriseRagBenchTests(unittest.TestCase):
             run_dir.mkdir()
             data_dir.mkdir()
             fixture.joinpath("setup.json").write_text("{}\n")
-            manifest = {"run_id": "test-run", "status": "running", "phase": "starting"}
+            manifest = {
+                "run_id": "test-run",
+                "status": "running",
+                "phase": "starting",
+                "queries_completed": 0,
+                "attempts": [],
+                "inseam": {},
+            }
             options = benchmark.RunOptions(1, 8, 12, 8, 500, 4, True)
 
             with redirect_stdout(io.StringIO()):
@@ -193,6 +259,39 @@ class EnterpriseRagBenchTests(unittest.TestCase):
             self.assertEqual(recorded["error"], "interrupted by user")
 
 
+def prepare_fake_fixture(
+    temporary: Path,
+) -> tuple[Path, Path, dict[str, str]]:
+    fixture = temporary / "fixture"
+    runs = temporary / "runs"
+    fake_bin = temporary / "bin"
+    fixture.joinpath("documents").mkdir(parents=True)
+    fixture.joinpath("documents.json").write_text(
+        json.dumps({"text_file_count": 1}) + "\n"
+    )
+    fixture.joinpath("setup.json").write_text("{}\n")
+    fixture.joinpath("questions.jsonl").write_text(
+        json.dumps(
+            {
+                "question_id": "qst_0001",
+                "question_type": "basic",
+                "question": "What is recorded?",
+                "expected_doc_ids": [DOCUMENT_A],
+            }
+        )
+        + "\n"
+    )
+    fake_bin.mkdir()
+    inseam = fake_bin / "inseam"
+    inseam.write_text(fake_inseam_source())
+    inseam.chmod(0o755)
+    environment = {
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        "OPENROUTER_API_KEY": "test-key",
+    }
+    return fixture, runs, environment
+
+
 def fake_inseam_source() -> str:
     query = json.dumps(
         {
@@ -215,7 +314,9 @@ elif "agent" in sys.argv:
     print("answer from {DOCUMENT_A}\\n")
     print("· 1 turns, 0 tool calls, $0.0000 spent")
 elif "index" in sys.argv:
-    print("1 sources seen: 1 indexed")
+    print("1 sources seen: 1 indexed, 0 unchanged, 0 catalog-only, 0 past cutoff, 0 ignored")
+    print("1 fragments, 0 relations, 0 keyed fragments anchored")
+    print("summaries: 1 llm, 0 extractive, 0 envelope · 1 embedded · $0.001 spent")
 else:
     raise SystemExit(2)
 '''
