@@ -14,7 +14,9 @@ use std::sync::Arc;
 use inseam_kernel::substrate::{
     ApplyCx, Composition, Facts, Kernel, Manifest, Plugin, PluginError, PluginFactory,
 };
-use inseam_seams::llm::{ChatMessage, ChatRequest, Llm, ModelInfo, Role, LLM};
+use inseam_seams::llm::{
+    ChatMessage, ChatRequest, EmbedRequest, Llm, ModelInfo, Role, VisionRequest, LLM,
+};
 use inseam_seams::operations::{ExpandRequest, IndexRequest, QueryRequest, OPERATIONS};
 use inseam_seams::SeamError;
 use inseam_wasm_host::WasmSchemeFactory;
@@ -41,19 +43,19 @@ impl Llm for FakeLlm {
         })
     }
 
-    async fn embed(&self, _model: &str, _inputs: &[&str]) -> Result<Vec<Vec<f32>>, SeamError> {
+    async fn embed(&self, _request: &EmbedRequest<'_>) -> Result<Vec<Vec<f32>>, SeamError> {
         Err(SeamError::Unavailable("fake llm has no embeddings".into()))
     }
 
-    async fn describe_image(
-        &self,
-        _model: &str,
-        _prompt: &str,
-        mimetype: &str,
-        image: &[u8],
-    ) -> Result<String, SeamError> {
-        assert_eq!(mimetype, "image/png", "the bridge passes the real mimetype");
-        assert!(!image.is_empty(), "the bridge passes the source bytes");
+    async fn describe_image(&self, request: &VisionRequest<'_>) -> Result<String, SeamError> {
+        assert_eq!(
+            request.mimetype, "image/png",
+            "the bridge passes the real mimetype"
+        );
+        assert!(
+            !request.image.is_empty(),
+            "the bridge passes the source bytes"
+        );
         Ok(CANNED_OCR.to_string())
     }
 

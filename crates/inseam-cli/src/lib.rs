@@ -769,9 +769,19 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                     .unwrap_or_else(|| "unpriced".to_string());
                 let ctx = m
                     .context_length
-                    .map(|c| format!("{}k ctx", c / 1000))
+                    .map(|c| {
+                        if c >= 1000 {
+                            format!("{}k ctx", c / 1000)
+                        } else {
+                            format!("{c} ctx")
+                        }
+                    })
                     .unwrap_or_default();
-                println!("  {:52} {:28} {}", m.id, pricing, ctx);
+                let dims = m
+                    .embedding_dimensions
+                    .map(|d| format!("{d} dims"))
+                    .unwrap_or_default();
+                println!("  {:52} {:28} {:10} {}", m.id, pricing, ctx, dims);
             }
         }
         Command::Status => {
@@ -780,8 +790,10 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
             println!("data dir       {}", data_dir.display());
             match &status.embedding_model {
                 Some(model) => println!(
-                    "embedding      {} ({} dims)",
-                    model, status.embedding_dimensions
+                    "embedding      {} ({} dims, vectors: {})",
+                    model,
+                    status.embedding_dimensions,
+                    status.embedding_vectors.as_str()
                 ),
                 None => println!("embedding      none (no embedder mounted)"),
             }

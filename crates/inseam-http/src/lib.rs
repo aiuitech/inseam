@@ -627,6 +627,7 @@ mod tests {
                 content_bytes: 120,
                 embedding_model: None,
                 embedding_dimensions: 0,
+                embedding_vectors: inseam_kernel::store::VectorScope::All,
                 reembed_pending: false,
             })
         }

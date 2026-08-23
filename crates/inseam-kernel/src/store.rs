@@ -57,15 +57,12 @@ pub enum StoreError {
         source: std::io::Error,
     },
     #[error(
-        "index was embedded with `{stored_model}` ({stored_dims} dims), the mounted embedder \
-         declares `{declared_model}` ({declared_dims} dims); run `inseam index <dir>` to re-embed \
-         the search index"
+        "index was embedded with {stored}, the mounted embedder declares {declared}; \
+         run `inseam index <dir>` to re-embed the search index"
     )]
     ReembedRequired {
-        stored_model: String,
-        stored_dims: usize,
-        declared_model: String,
-        declared_dims: usize,
+        stored: EmbeddingIdentity,
+        declared: EmbeddingIdentity,
     },
     #[error("no embedder has declared a search surface; mount an embedder plugin first")]
     NoSearchSurface,
@@ -281,13 +278,78 @@ impl KeyedFragment {
     }
 }
 
-/// The live search surface: the embedding identity the search tables are
-/// bound to once an embedder declares it. The tables themselves live in the
-/// one store database alongside the catalog.
-#[derive(Clone)]
-struct SearchSurface {
-    dims: usize,
-    model: String,
+/// Which text-bearing fragments get vectors. Every text fragment enters the
+/// full-text index regardless; the scope decides which of them also pay for
+/// a vector — summaries alone make a lean index whose vector bulk is one
+/// bounded row per source (`design/indexing.md`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VectorScope {
+    /// Every text-bearing fragment gets a vector.
+    #[default]
+    All,
+    /// Only summary fragments (`text/x-inseam-summary`) get vectors.
+    Summaries,
+}
+
+impl VectorScope {
+    /// The stable spelling persisted in the store's meta table.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Summaries => "summaries",
+        }
+    }
+
+    /// Parse the persisted spelling. An unknown spelling can only come from
+    /// a newer store; it reads as the widest scope so the mismatch pends a
+    /// re-embed instead of silently narrowing the search surface.
+    fn parse(value: &str) -> Self {
+        match value {
+            "summaries" => Self::Summaries,
+            _ => Self::All,
+        }
+    }
+
+    /// Whether a fragment gets a vector under this scope.
+    pub fn covers(self, is_summary: bool) -> bool {
+        match self {
+            Self::All => true,
+            Self::Summaries => is_summary,
+        }
+    }
+}
+
+/// The embedding identity the search tables are bound to: the model, the
+/// vector width, and which fragments carry vectors. The store compares the
+/// identity it was built under with the one the mounted embedder declares;
+/// any difference pends an in-place re-embed (`design/index-maintenance.md`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbeddingIdentity {
+    pub model: String,
+    pub dimensions: usize,
+    pub vectors: VectorScope,
+}
+
+impl std::fmt::Display for EmbeddingIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "`{}` ({} dims", self.model, self.dimensions)?;
+        match self.vectors {
+            VectorScope::All => f.write_str(")"),
+            VectorScope::Summaries => f.write_str(", summaries only)"),
+        }
+    }
+}
+
+/// One text-bearing fragment to re-populate the search table with: what the
+/// indexer would have buffered when it built the subtree, plus the one fact
+/// the vector scope branches on.
+#[derive(Debug, Clone)]
+pub struct ReembedTarget {
+    pub fragment: FragmentId,
+    pub source: Option<SourceId>,
+    pub text: String,
+    pub is_summary: bool,
 }
 
 /// What the store knows about its search surface, under one lock so the two
@@ -296,11 +358,11 @@ struct SearchSurface {
 struct SearchState {
     /// `None` until an embedder plugin declares the embedding identity; the
     /// search surface belongs to that identity, not to the store's opening.
-    surface: Option<SearchSurface>,
-    /// `Some((model, dims))` the index was embedded with when that differs
-    /// from the declared identity: search refuses until an index run
-    /// re-embeds (`design/index-maintenance.md`).
-    reembed_from: Option<(String, usize)>,
+    surface: Option<EmbeddingIdentity>,
+    /// The identity the index was embedded with when that differs from the
+    /// declared identity: search refuses until an index run re-embeds
+    /// (`design/index-maintenance.md`).
+    reembed_from: Option<EmbeddingIdentity>,
 }
 
 pub struct IndexStore {
@@ -367,32 +429,27 @@ impl IndexStore {
     /// the embedder provider when it activates. A mismatch with the identity
     /// the index was built under pends an in-place re-embed rather than
     /// refusing; searches refuse until an index run performs it.
-    pub async fn declare_embedding(&self, model: &str, dims: usize) -> Result<(), StoreError> {
+    pub async fn declare_embedding(&self, identity: EmbeddingIdentity) -> Result<(), StoreError> {
         let _write = self.write().await;
         let stored = read_embedding_meta(&self.catalog).await?;
         let pending = match stored {
             None => {
-                set_embedding_meta(&self.catalog, dims, model).await?;
+                set_embedding_meta(&self.catalog, &identity).await?;
                 None
             }
-            Some((stored_model, stored_dims))
-                if stored_model == model && stored_dims == dims =>
-            {
-                None
-            }
+            Some(stored) if stored == identity => None,
             Some(mismatch) => Some(mismatch),
         };
 
         // `IF NOT EXISTS` deliberately leaves tables built under a different
         // identity in place: searches refuse while the re-embed is pending,
         // and `begin_reembed` recreates them under the new dimensions.
-        self.catalog.execute_batch(&search_schema_sql(dims)).await?;
-        ensure_search_vector_schema(&self.catalog, dims).await?;
+        self.catalog
+            .execute_batch(&search_schema_sql(identity.dimensions))
+            .await?;
+        ensure_search_vector_schema(&self.catalog, identity.dimensions).await?;
         let mut search = self.search();
-        search.surface = Some(SearchSurface {
-            dims,
-            model: model.to_string(),
-        });
+        search.surface = Some(identity);
         search.reembed_from = pending;
         Ok(())
     }
@@ -403,7 +460,7 @@ impl IndexStore {
         self.search().surface = None;
     }
 
-    fn surface(&self) -> Result<SearchSurface, StoreError> {
+    fn surface(&self) -> Result<EmbeddingIdentity, StoreError> {
         self.search().surface.clone().ok_or(StoreError::NoSearchSurface)
     }
 
@@ -564,7 +621,7 @@ impl IndexStore {
         let _write = self.write().await;
         let tx = self.catalog.transaction().await?;
         if !rows.is_empty() {
-            let dims = self.surface()?.dims;
+            let dims = self.surface()?.dimensions;
             insert_search_rows_in(&tx, rows, dims).await?;
         }
         for completion in completed {
@@ -1224,15 +1281,12 @@ impl IndexStore {
 
     /// Vector width of the bound surface; 0 when no vectors (or none bound).
     pub fn dimensions(&self) -> usize {
-        self.search().surface.as_ref().map_or(0, |s| s.dims)
+        self.search().surface.as_ref().map_or(0, |s| s.dimensions)
     }
 
     /// The embedding identity the search surface is bound to, if any.
-    pub fn embedding_identity(&self) -> Option<(String, usize)> {
-        self.search()
-            .surface
-            .as_ref()
-            .map(|s| (s.model.clone(), s.dims))
+    pub fn embedding_identity(&self) -> Option<EmbeddingIdentity> {
+        self.search().surface.clone()
     }
 
     pub async fn add_search_rows(&self, rows: &[SearchRow]) -> Result<(), StoreError> {
@@ -1240,7 +1294,7 @@ impl IndexStore {
             return Ok(());
         }
         let _write = self.write().await;
-        let dims = self.surface()?.dims;
+        let dims = self.surface()?.dimensions;
         let tx = self.catalog.transaction().await?;
         insert_search_rows_in(&tx, rows, dims).await?;
         tx.commit().await?;
@@ -1256,7 +1310,8 @@ impl IndexStore {
         self.catalog
             .execute("INSERT INTO search_fts (search_fts) VALUES ('optimize')", ())
             .await?;
-        repair_search_vector_index(&self.catalog, surface.dims, SearchIndexRepair::Ensure).await?;
+        repair_search_vector_index(&self.catalog, surface.dimensions, SearchIndexRepair::Ensure)
+            .await?;
         Ok(())
     }
 
@@ -1295,10 +1350,10 @@ impl IndexStore {
     ) -> Result<Vec<(FragmentId, f32)>, StoreError> {
         self.refuse_while_reembed_pending()?;
         let surface = self.surface()?;
-        if surface.dims == 0 {
+        if surface.dimensions == 0 {
             return Ok(Vec::new());
         }
-        check_dimensions(surface.dims, vector)?;
+        check_dimensions(surface.dimensions, vector)?;
         if !search_vector_index_exists(&self.catalog).await? {
             self.repair_search_index(SearchIndexRepair::Ensure).await?;
         }
@@ -1329,7 +1384,7 @@ impl IndexStore {
         self.refuse_while_reembed_pending()?;
         let surface = self.surface()?;
         let _write = self.write().await;
-        repair_search_vector_index(&self.catalog, surface.dims, repair).await
+        repair_search_vector_index(&self.catalog, surface.dimensions, repair).await
     }
 
     pub async fn search_rows_count(&self) -> Result<usize, StoreError> {
@@ -1347,7 +1402,7 @@ impl IndexStore {
 
     pub async fn search_vector_index_ready(&self) -> Result<bool, StoreError> {
         let surface = self.surface()?;
-        if surface.dims == 0 {
+        if surface.dimensions == 0 {
             return Ok(false);
         }
         search_vector_index_exists(&self.catalog).await
@@ -1367,42 +1422,44 @@ impl IndexStore {
         let search = self.search();
         match search.reembed_from.as_ref() {
             None => Ok(()),
-            Some((stored_model, stored_dims)) => {
-                let (declared_model, declared_dims) = search
-                    .surface
-                    .as_ref()
-                    .map(|s| (s.model.clone(), s.dims))
-                    .unwrap_or_default();
+            Some(stored) => {
+                // A pending re-embed is only ever set alongside a declared
+                // surface (`declare_embedding`), so the empty identity is
+                // unreachable; it exists so this path needs no panic.
+                let declared = search.surface.clone().unwrap_or(EmbeddingIdentity {
+                    model: String::new(),
+                    dimensions: 0,
+                    vectors: VectorScope::All,
+                });
                 Err(StoreError::ReembedRequired {
-                    stored_model: stored_model.clone(),
-                    stored_dims: *stored_dims,
-                    declared_model,
-                    declared_dims,
+                    stored: stored.clone(),
+                    declared,
                 })
             }
         }
     }
 
     /// Every text-bearing fragment, for re-populating the search table from
-    /// the catalog: `(fragment, source, text)`. Exactly the rows the indexer
-    /// would have buffered when it built each subtree.
-    pub async fn reembed_targets(
-        &self,
-    ) -> Result<Vec<(FragmentId, Option<SourceId>, String)>, StoreError> {
+    /// the catalog: exactly the rows the indexer would have buffered when it
+    /// built each subtree.
+    pub async fn reembed_targets(&self) -> Result<Vec<ReembedTarget>, StoreError> {
         let mut rows = self
             .catalog
             .query(
-                "SELECT id, source, text FROM fragments WHERE text IS NOT NULL AND TRIM(text) != ''",
+                "SELECT id, source, text, mimetype FROM fragments \
+                 WHERE text IS NOT NULL AND TRIM(text) != ''",
                 (),
             )
             .await?;
         let mut out = Vec::new();
         while let Some(row) = rows.next().await? {
-            out.push((
-                FragmentId(row.get(0)?),
-                row.get::<Option<i64>>(1)?.map(SourceId),
-                row.get::<String>(2)?,
-            ));
+            let mimetype: String = row.get(3)?;
+            out.push(ReembedTarget {
+                fragment: FragmentId(row.get(0)?),
+                source: row.get::<Option<i64>>(1)?.map(SourceId),
+                text: row.get::<String>(2)?,
+                is_summary: Mimetype::parse(&mimetype).is_ok_and(|m| m.is_summary()),
+            });
         }
         Ok(out)
     }
@@ -1415,9 +1472,9 @@ impl IndexStore {
         let surface = self.surface()?;
         self.catalog.execute_batch(SEARCH_SCHEMA_DROP_SQL).await?;
         self.catalog
-            .execute_batch(&search_schema_sql(surface.dims))
+            .execute_batch(&search_schema_sql(surface.dimensions))
             .await?;
-        ensure_search_vector_schema(&self.catalog, surface.dims).await?;
+        ensure_search_vector_schema(&self.catalog, surface.dimensions).await?;
         Ok(())
     }
 
@@ -1427,8 +1484,8 @@ impl IndexStore {
     /// the pass.
     pub async fn finish_reembed(&self) -> Result<(), StoreError> {
         let _write = self.write().await;
-        let (model, dims) = self.embedding_identity().ok_or(StoreError::NoSearchSurface)?;
-        set_embedding_meta(&self.catalog, dims, &model).await?;
+        let identity = self.embedding_identity().ok_or(StoreError::NoSearchSurface)?;
+        set_embedding_meta(&self.catalog, &identity).await?;
         self.search().reembed_from = None;
         Ok(())
     }
@@ -1611,15 +1668,19 @@ const CATALOG_SCHEMA_DROP_SQL: &str = "DROP TABLE IF EXISTS relations;
      DROP TABLE IF EXISTS plugin_state_meta;
      DROP TABLE IF EXISTS meta;";
 
-/// The embedding identity the index was built with, if one is recorded.
+/// The embedding identity the index was built with, if one is recorded. An
+/// index built before the vector scope existed recorded none; it embedded
+/// every fragment, so it reads as `all` and pends no re-embed for merely
+/// predating the dial.
 async fn read_embedding_meta(
     conn: &libsql::Connection,
-) -> Result<Option<(String, usize)>, StoreError> {
+) -> Result<Option<EmbeddingIdentity>, StoreError> {
     let mut rows = conn
         .query(
             "SELECT
                (SELECT value FROM meta WHERE key = 'embedding_model'),
-               (SELECT value FROM meta WHERE key = 'embedding_dims')",
+               (SELECT value FROM meta WHERE key = 'embedding_dims'),
+               (SELECT value FROM meta WHERE key = 'embedding_vectors')",
             (),
         )
         .await?;
@@ -1628,25 +1689,36 @@ async fn read_embedding_meta(
     };
     let model: Option<String> = row.get(0)?;
     let dims: Option<String> = row.get(1)?;
+    let vectors: Option<String> = row.get(2)?;
     match (model, dims) {
-        (Some(model), Some(dims)) => Ok(Some((model, dims.parse().unwrap_or(0)))),
+        (Some(model), Some(dims)) => Ok(Some(EmbeddingIdentity {
+            model,
+            dimensions: dims.parse().unwrap_or(0),
+            vectors: vectors
+                .as_deref()
+                .map_or(VectorScope::All, VectorScope::parse),
+        })),
         _ => Ok(None),
     }
 }
 
 async fn set_embedding_meta(
     conn: &libsql::Connection,
-    dims: usize,
-    model: &str,
+    identity: &EmbeddingIdentity,
 ) -> Result<(), StoreError> {
     conn.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('embedding_model', ?1)",
-        params![model],
+        params![identity.model.as_str()],
     )
     .await?;
     conn.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('embedding_dims', ?1)",
-        params![dims.to_string()],
+        params![identity.dimensions.to_string()],
+    )
+    .await?;
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('embedding_vectors', ?1)",
+        params![identity.vectors.as_str()],
     )
     .await?;
     Ok(())
@@ -2146,9 +2218,19 @@ mod tests {
         s.parse().expect("test address parses")
     }
 
+    fn identity(model: &str, dimensions: usize) -> EmbeddingIdentity {
+        EmbeddingIdentity {
+            model: model.to_string(),
+            dimensions,
+            vectors: VectorScope::All,
+        }
+    }
+
     async fn store(dir: &Path) -> IndexStore {
         let s = IndexStore::open(dir).await.expect("opens");
-        s.declare_embedding("test-model", 8).await.expect("declares");
+        s.declare_embedding(identity("test-model", 8))
+            .await
+            .expect("declares");
         s
     }
 
@@ -2424,7 +2506,7 @@ mod tests {
         }
 
         let s = IndexStore::open(dir.path()).await.expect("opens");
-        s.declare_embedding("other-model", 16)
+        s.declare_embedding(identity("other-model", 16))
             .await
             .expect("declares despite the change");
         assert!(s.reembed_pending());
@@ -2461,8 +2543,85 @@ mod tests {
         // A fresh open + declaration under the new identity is clean.
         drop(s);
         let s = IndexStore::open(dir.path()).await.expect("opens");
-        s.declare_embedding("other-model", 16).await.expect("declares");
+        s.declare_embedding(identity("other-model", 16))
+            .await
+            .expect("declares");
         assert!(!s.reembed_pending());
+    }
+
+    #[tokio::test]
+    async fn narrowing_the_vector_scope_pends_a_reembed_and_widening_it_back_clears() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        {
+            let _s = store(dir.path()).await;
+        }
+        let s = IndexStore::open(dir.path()).await.expect("opens");
+        s.declare_embedding(EmbeddingIdentity {
+            vectors: VectorScope::Summaries,
+            ..identity("test-model", 8)
+        })
+        .await
+        .expect("declares");
+        assert!(s.reembed_pending());
+        let Err(StoreError::ReembedRequired { stored, declared }) = s.search_fts("x", 1).await
+        else {
+            panic!("search must refuse while a re-embed is pending");
+        };
+        assert_eq!(stored.vectors, VectorScope::All);
+        assert_eq!(declared.vectors, VectorScope::Summaries);
+        assert!(declared.to_string().contains("summaries only"));
+        s.begin_reembed().await.expect("recreates");
+        s.finish_reembed().await.expect("records the scope");
+        assert!(!s.reembed_pending());
+
+        drop(s);
+        let s = IndexStore::open(dir.path()).await.expect("opens");
+        s.declare_embedding(identity("test-model", 8))
+            .await
+            .expect("declares");
+        assert!(s.reembed_pending(), "widening back is a change too");
+    }
+
+    #[tokio::test]
+    async fn an_index_recorded_without_a_vector_scope_reads_as_all() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        {
+            let _s = store(dir.path()).await;
+        }
+        let s = IndexStore::open(dir.path()).await.expect("opens");
+        s.catalog
+            .execute("DELETE FROM meta WHERE key = 'embedding_vectors'", ())
+            .await
+            .expect("simulates a pre-scope index");
+        s.declare_embedding(identity("test-model", 8))
+            .await
+            .expect("declares");
+        assert!(!s.reembed_pending());
+    }
+
+    #[tokio::test]
+    async fn reembed_targets_flag_summaries() {
+        use crate::subtree::{PlanNode, PlannedFragment};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        let mut plan = plan_for("inseam://fs-test/tmp/a.md", &["body"]);
+        plan.fragments.push(PlannedFragment {
+            parent: PlanNode::Root,
+            relation: RelationKind::derives(),
+            fragment: NewFragment {
+                mimetype: Mimetype::summary().with_param("via", "extractive"),
+                text: Some("summary".into()),
+                extent: None,
+            },
+        });
+        s.write_subtree(&plan).await.expect("lands");
+        let mut targets = s.reembed_targets().await.expect("lists");
+        targets.sort_by(|a, b| a.text.cmp(&b.text));
+        let flags: Vec<(&str, bool)> = targets
+            .iter()
+            .map(|t| (t.text.as_str(), t.is_summary))
+            .collect();
+        assert_eq!(flags, vec![("body", false), ("summary", true)]);
     }
 
     #[tokio::test]
@@ -2565,7 +2724,9 @@ mod tests {
             s.search_fts("anything", 5).await,
             Err(StoreError::NoSearchSurface)
         ));
-        s.declare_embedding("test-model", 8).await.expect("declares");
+        s.declare_embedding(identity("test-model", 8))
+            .await
+            .expect("declares");
         assert!(s.search_fts("anything", 5).await.is_ok());
         s.withdraw_embedding();
         assert!(matches!(

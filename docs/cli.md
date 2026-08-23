@@ -17,8 +17,8 @@ inseam expand <address>             # one source's fragments, relations, connect
 inseam scan <address> --start 120 --end 160   # read a line range of a source
 inseam fetch <address>              # the whole source
 inseam agent "when did I ...?"      # a live LLM using query/expand/scan/fetch as tools
-inseam models [--embeddings]        # the endpoint's model catalog, cheapest first
-inseam status                       # store stats, sizes, embedding and DiskANN readiness, pending re-embeds
+inseam models [--embeddings]        # the endpoint's model catalog, cheapest first; against ollama, installed models with widths
+inseam status                       # store stats, sizes, embedding identity (model, dims, vector scope), DiskANN readiness, pending re-embeds
 inseam repair                       # convert legacy vectors and build a missing DiskANN index
 inseam repair --rebuild             # reconstruct an existing DiskANN index
 inseam plugins                      # every running plugin, its state, and its live effects

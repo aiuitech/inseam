@@ -11,6 +11,7 @@
 
 use inseam_kernel::address::{Address, HostId};
 use inseam_kernel::fragment::{FragmentId, Relation};
+use inseam_kernel::store::VectorScope;
 use inseam_kernel::substrate::{FiberState, FiberView, Guard, SecretNeed, ServiceKey};
 use serde::{Deserialize, Serialize};
 
@@ -532,6 +533,8 @@ pub struct StatusReport {
     pub content_bytes: u64,
     pub embedding_model: Option<String>,
     pub embedding_dimensions: usize,
+    /// Which fragments carry vectors under the bound identity.
+    pub embedding_vectors: VectorScope,
     pub reembed_pending: bool,
 }
 

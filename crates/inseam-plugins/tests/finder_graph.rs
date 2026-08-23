@@ -43,7 +43,14 @@ fn addr(name: &str) -> Address {
 
 async fn open_store(dir: &std::path::Path) -> Arc<IndexStore> {
     let store = IndexStore::open(dir).await.expect("opens");
-    store.declare_embedding("hashed", DIMS).await.expect("declares");
+    store
+        .declare_embedding(inseam_kernel::store::EmbeddingIdentity {
+            model: "hashed".to_string(),
+            dimensions: DIMS,
+            vectors: inseam_kernel::store::VectorScope::All,
+        })
+        .await
+        .expect("declares");
     Arc::new(store)
 }
 

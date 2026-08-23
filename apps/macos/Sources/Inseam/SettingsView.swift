@@ -497,6 +497,10 @@ private struct ModelConfigurationView: View {
                 SettingsTextField("Base URL", text: $settings.llm.config.baseUrl)
                 SettingsTextField("API key variable", text: $settings.llm.config.apiKeyEnv)
                 SettingsTextField("Transform model", text: $settings.llm.config.transformModel)
+                OptionalSettingsTextField(
+                    "Transform reasoning effort",
+                    text: $settings.llm.config.transformReasoningEffort
+                )
                 SettingsTextField("Agent model", text: $settings.llm.config.agentModel)
             }
             .disabled(!settings.llm.enabled)
@@ -521,7 +525,20 @@ private struct ModelConfigurationView: View {
                     .frame(width: 260)
                 }
                 SettingsTextField("Model", text: $settings.embedder.config.model)
-                SettingsNumberField("Dimensions", value: $settings.embedder.config.dimensions)
+                OptionalSettingsNumberField(
+                    "Dimensions",
+                    placeholder: "Model's native width",
+                    value: $settings.embedder.config.dimensions
+                )
+                LabeledContent("Vectors") {
+                    Picker("", selection: $settings.embedder.config.vectors) {
+                        ForEach(VectorScope.allCases) { scope in
+                            Text(scope.label).tag(scope)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 260)
+                }
             }
             .disabled(!settings.embedder.enabled)
         }
@@ -859,6 +876,26 @@ private struct OptionalSettingsTextField: View {
     }
 }
 
+/// A number that may be left blank: blank is `nil`, which the core reads as
+/// "decide for me" (the embedding model's native width, for instance).
+private struct OptionalSettingsNumberField: View {
+    let label: String
+    let placeholder: String
+    @Binding var value: Int?
+
+    init(_ label: String, placeholder: String, value: Binding<Int?>) {
+        self.label = label
+        self.placeholder = placeholder
+        _value = value
+    }
+
+    var body: some View {
+        LabeledContent(label) {
+            TextField(placeholder, text: optionalNumber($value)).frame(width: 260)
+        }
+    }
+}
+
 private struct SettingsNumberField<Value: ParseableFormatStyle>: View
 where Value.FormatInput: Equatable, Value.FormatOutput == String {
     let label: String
@@ -890,6 +927,13 @@ where Value.FormatInput: Equatable, Value.FormatOutput == String {
                 .frame(width: 120)
         }
     }
+}
+
+private func optionalNumber(_ value: Binding<Int?>) -> Binding<String> {
+    Binding(
+        get: { value.wrappedValue.map(String.init) ?? "" },
+        set: { value.wrappedValue = Int($0.trimmingCharacters(in: .whitespaces)) }
+    )
 }
 
 private func optionalText(_ value: Binding<String?>) -> Binding<String> {

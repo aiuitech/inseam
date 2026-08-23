@@ -187,14 +187,18 @@ fn validate_models(llm: &LlmEndpointConfig, embedder: &EmbedderConfig) -> Result
     if llm.base_url.trim().is_empty() {
         return Err("llm.base_url must not be empty".to_string());
     }
-    if !is_environment_name(&llm.api_key_env) {
+    // An empty name is a keyless endpoint (a local ollama), not a bad name.
+    if !llm.api_key_env.trim().is_empty() && !is_environment_name(llm.api_key_env.trim()) {
         return Err(format!(
             "llm.api_key_env `{}` is not a valid name",
             llm.api_key_env
         ));
     }
-    if embedder.provider != Provider::None && embedder.dimensions == 0 {
-        return Err("embedder.dimensions must be greater than zero".to_string());
+    if embedder.provider != Provider::None && embedder.dimensions == Some(0) {
+        return Err(
+            "embedder.dimensions must be greater than zero, or unset for the model's native width"
+                .to_string(),
+        );
     }
     Ok(())
 }
@@ -398,7 +402,7 @@ mod tests {
         assert!(settings.google.enabled);
         assert_eq!(settings.google.config.client_id_env, "GOOGLE_CLIENT_ID");
         assert_eq!(settings.google.config.services.len(), 5);
-        assert_eq!(settings.embedder.config.dimensions, 1536);
+        assert_eq!(settings.embedder.config.dimensions, None);
         assert_eq!(settings.finder.config.weights.by_kind["mentions"], 0.8);
     }
 

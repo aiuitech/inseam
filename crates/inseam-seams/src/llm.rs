@@ -16,6 +16,10 @@ pub const LLM: ServiceKey<dyn Llm> = ServiceKey::new("llm");
 pub mod facts {
     /// string: model consumers should use for transform-grade calls.
     pub const TRANSFORM_MODEL: &str = "transform_model";
+    /// string: reasoning effort transform-grade calls should request
+    /// (`none` keeps a thinking model from spending its whole reply on
+    /// thought); absent means the endpoint's default.
+    pub const TRANSFORM_REASONING_EFFORT: &str = "transform_reasoning_effort";
     /// string: model for agent-grade tool-calling loops.
     pub const AGENT_MODEL: &str = "agent_model";
 }
@@ -37,22 +41,56 @@ pub trait Llm: Send + Sync {
     async fn chat(&self, request: &ChatRequest) -> Result<ChatMessage, SeamError>;
 
     /// Embed texts in order; the output index matches the input index.
-    async fn embed(&self, model: &str, inputs: &[&str]) -> Result<Vec<Vec<f32>>, SeamError>;
+    async fn embed(&self, request: &EmbedRequest<'_>) -> Result<Vec<Vec<f32>>, SeamError>;
+
+    /// What the endpoint itself knows about an embedding model — its native
+    /// vector width and whether it honors a smaller `dimensions`. `None`
+    /// when the endpoint cannot say (most hosted catalogs report no width);
+    /// the embedder then relies on its own catalog or explicit config.
+    async fn embedding_model(&self, model: &str) -> Result<Option<EmbeddingModel>, SeamError> {
+        let _ = model;
+        Ok(None)
+    }
 
     /// Describe an image (OCR, captioning) with a vision-capable model.
-    async fn describe_image(
-        &self,
-        model: &str,
-        prompt: &str,
-        mimetype: &str,
-        image: &[u8],
-    ) -> Result<String, SeamError>;
+    async fn describe_image(&self, request: &VisionRequest<'_>) -> Result<String, SeamError>;
 
     /// The endpoint's model catalog (embedding models when `embeddings`).
     async fn models(&self, embeddings: bool) -> Result<Vec<ModelInfo>, SeamError>;
 
     /// Dollars spent through this provider so far, as reported by usage.
     fn spent(&self) -> f64;
+}
+
+/// One embeddings call. `dimensions` is sent only when set: a model that
+/// supports reduced widths (Matryoshka-trained) truncates to it; the
+/// embedder only sets it for such models, because every OpenAI-compatible
+/// server will happily truncate any model's vectors to nonsense.
+#[derive(Debug, Clone)]
+pub struct EmbedRequest<'a> {
+    pub model: &'a str,
+    pub inputs: &'a [&'a str],
+    pub dimensions: Option<usize>,
+}
+
+/// What an endpoint reports about one embedding model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmbeddingModel {
+    /// The width the model produces when no `dimensions` is requested.
+    pub dimensions: usize,
+    /// Whether a smaller `dimensions` yields a meaningful vector.
+    pub reducible: bool,
+}
+
+/// One vision call: the prompt plus one image, with the same reasoning
+/// control transform-grade chat calls carry.
+#[derive(Debug, Clone)]
+pub struct VisionRequest<'a> {
+    pub model: &'a str,
+    pub prompt: &'a str,
+    pub mimetype: &'a str,
+    pub image: &'a [u8],
+    pub reasoning_effort: Option<&'a str>,
 }
 
 // ---------------------------------------------------------------------------
@@ -157,6 +195,11 @@ pub struct ChatRequest {
     pub tools: Option<Vec<Tool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    /// OpenAI-style reasoning control (`none`, `low`, …). Sent only when
+    /// set: a thinking model told nothing spends its budget thinking and
+    /// may return an empty reply; one told `none` answers directly.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     /// Ask the endpoint to report cost in usage so `spent()` stays accurate.
     pub usage: UsageInclude,
 }
@@ -168,12 +211,18 @@ impl ChatRequest {
             messages,
             tools: None,
             max_tokens: None,
+            reasoning_effort: None,
             usage: UsageInclude { include: true },
         }
     }
 
     pub fn with_tools(mut self, tools: Vec<Tool>) -> Self {
         self.tools = Some(tools);
+        self
+    }
+
+    pub fn with_reasoning_effort(mut self, effort: Option<&str>) -> Self {
+        self.reasoning_effort = effort.map(str::to_string);
         self
     }
 }
@@ -194,6 +243,10 @@ pub struct ModelInfo {
     pub pricing: Option<ModelPricing>,
     #[serde(default)]
     pub supported_parameters: Option<Vec<String>>,
+    /// Vector width, when the endpoint reports one (a local server that
+    /// can introspect its models does; hosted catalogs usually do not).
+    #[serde(default)]
+    pub embedding_dimensions: Option<usize>,
 }
 
 impl ModelInfo {
@@ -244,6 +297,15 @@ mod tests {
         assert_eq!(v["tools"][0]["type"], "function");
         assert_eq!(v["usage"]["include"], true);
         assert!(v["messages"][0].get("tool_calls").is_none());
+        assert!(v.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn reasoning_effort_rides_the_wire_only_when_set() {
+        let req = ChatRequest::new("qwen3.5:9b", vec![ChatMessage::user("hi")])
+            .with_reasoning_effort(Some("none"));
+        let v = serde_json::to_value(&req).expect("serializes");
+        assert_eq!(v["reasoning_effort"], "none");
     }
 
     #[test]

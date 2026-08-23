@@ -110,8 +110,12 @@ struct FilesystemConfig: Codable {
 
 struct LanguageModelConfig: Codable {
     var baseUrl: String
+    /// Empty for a keyless endpoint (a local ollama).
     var apiKeyEnv: String
     var transformModel: String
+    /// Reasoning effort for transform calls as the endpoint spells it
+    /// (`none` keeps a thinking model from answering with an empty reply).
+    var transformReasoningEffort: String?
     var agentModel: String
 }
 
@@ -131,10 +135,26 @@ enum EmbedderProvider: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum VectorScope: String, Codable, CaseIterable, Identifiable {
+    case all
+    case summaries
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: "Every fragment"
+        case .summaries: "Summaries only"
+        }
+    }
+}
+
 struct EmbedderConfig: Codable {
     var provider: EmbedderProvider
     var model: String
-    var dimensions: Int
+    /// Nil takes the model's native width.
+    var dimensions: Int?
+    var vectors: VectorScope
 }
 
 struct ChunkerConfig: Codable {

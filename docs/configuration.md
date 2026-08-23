@@ -18,8 +18,8 @@ How merging works: when your entry matches a base entry's id, your `config` **re
 | `fs` | `connection-fs` | `host_id` (default `fs-<hostname>`), `skip_hidden` (true), `gitignore` (true), `ignore` (gitignore-syntax patterns; [indexing/ignore.md](indexing/ignore.md)) |
 | `oauth` | `oauth` | `callback_port` (47781), `authorization_timeout_secs` (300), `credentials_dir` (the node's private `oauth/` directory), `grants` (generic grants: provider URLs, scopes, client environment variables, and authorization parameters; connections such as `google` register their own) |
 | `google` | `connection-google` | `grant` (`google`), `client_id_env` (`GOOGLE_CLIENT_ID`), `client_secret_env` (`GOOGLE_CLIENT_SECRET`; `""` for none), `services` (all five), `sources_max` (5000) — one Google account as one host per service ([indexing/google-workspace.md](indexing/google-workspace.md)) |
-| `llm` | `llm-endpoint` | `base_url` (OpenRouter), `api_key_env` (`OPENROUTER_API_KEY`), `transform_model`, `agent_model` |
-| `embedder` | `embedder` | `provider` = `endpoint` \| `hashed` \| `none`, `model`, `dimensions` |
+| `llm` | `llm-endpoint` | `base_url` (OpenRouter), `api_key_env` (`OPENROUTER_API_KEY`; `""` for a keyless endpoint such as a local ollama), `transform_model`, `transform_reasoning_effort` (unset; `"none"` for thinking models), `agent_model` |
+| `embedder` | `embedder` | `provider` = `endpoint` \| `hashed` \| `none`, `model`, `dimensions` (unset = the model's native width; validated against the model), `vectors` = `all` \| `summaries` ([indexing/embeddings.md](indexing/embeddings.md)) |
 | `transforms` | `transforms` | — (the registry) |
 | `markdown` | `transform-markdown` | — |
 | `chunker` | `transform-chunker` | `target_chars` (1600) |
@@ -38,6 +38,7 @@ id = "embedder"
 provider = "hashed"
 model = "hashed"
 dimensions = 256
+vectors = "summaries"   # vectors for summaries only; full-text still covers every fragment
 
 [[entry]]
 id = "entities"
@@ -61,6 +62,6 @@ Which entry you change decides how much work the next `inseam index` does ([inde
 - `finder` and the llm `agent_model` only affect query time — free.
 - Budgets (`max_sources`, `llm_call_budget`) and the sweep's `concurrency` only shape each run — free.
 - Transform configs and the sweep's size/depth dials change what the index would build, so affected sources re-index.
-- The `embedder` entry re-computes vectors in place, without re-running transforms.
+- The `embedder` entry (model, dimensions, `vectors`) re-computes vectors in place, without re-running transforms.
 - Mounting or unmounting a transform plugin re-indexes only the sources that plugin applies to.
 - Ignore rules (the `fs` entry's patterns, the `sweep` entry's rules) remove sources they newly cover and readmit sources they stop covering ([indexing/ignore.md](indexing/ignore.md)).

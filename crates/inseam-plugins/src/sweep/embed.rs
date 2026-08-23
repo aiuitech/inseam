@@ -21,12 +21,15 @@ pub(super) const FLUSH_AT: usize = 128;
 /// Batches embedding at once; landing stays sequential and ordered.
 const EMBED_IN_FLIGHT: usize = 4;
 
-/// A text-bearing fragment bound for the search tables.
+/// A text-bearing fragment bound for the search tables. Every row enters
+/// the full-text index; whether it also gets a vector is the embedder's
+/// vector scope's call, and `is_summary` is the one fact that call needs.
 #[derive(Debug, Clone)]
 pub(super) struct PendingRow {
     pub(super) fragment: FragmentId,
     pub(super) source: Option<SourceId>,
     pub(super) text: String,
+    pub(super) is_summary: bool,
 }
 
 /// One unit of stage work: rows to embed and land, and the sources whose
@@ -157,29 +160,41 @@ async fn run(
     Ok(embedded)
 }
 
-/// Embed one batch's rows. Never fails: an embedding error leaves the rows
+/// Embed one batch's rows — those the vector scope covers; the rest land
+/// text-only by design. Never fails: an embedding error leaves the rows
 /// text-searchable only, with a warning, rather than gating the sweep.
 async fn embed_batch(
     embedder: &dyn Embedder,
     batch: Batch,
 ) -> (Vec<SearchRow>, Vec<SourceCompletion>, usize) {
     let Batch { rows, completed } = batch;
-    let vectors: Vec<Option<Vec<f32>>> = if embedder.dimensions().is_some() && !rows.is_empty() {
-        let texts: Vec<&str> = rows.iter().map(|r| r.text.as_str()).collect();
+    let scope = embedder.vectors();
+    let wanted: Vec<usize> = if embedder.dimensions().is_some() {
+        rows.iter()
+            .enumerate()
+            .filter(|(_, row)| scope.covers(row.is_summary))
+            .map(|(position, _)| position)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let mut vectors: Vec<Option<Vec<f32>>> = vec![None; rows.len()];
+    if !wanted.is_empty() {
+        let texts: Vec<&str> = wanted.iter().map(|&p| rows[p].text.as_str()).collect();
         match embedder.embed(&texts).await {
-            Ok(vectors) => {
-                assert_eq!(vectors.len(), rows.len(), "embedder returns one vector per text");
-                vectors.into_iter().map(Some).collect()
+            Ok(embedded) => {
+                assert_eq!(embedded.len(), wanted.len(), "embedder returns one vector per text");
+                for (position, vector) in wanted.iter().zip(embedded) {
+                    vectors[*position] = Some(vector);
+                }
             }
             Err(e) => {
                 tracing::warn!("embedding failed; rows stay text-searchable only: {e}");
-                vec![None; rows.len()]
             }
         }
-    } else {
-        vec![None; rows.len()]
-    };
+    }
     let embedded = vectors.iter().filter(|v| v.is_some()).count();
+    assert!(embedded <= rows.len());
     let search_rows: Vec<SearchRow> = rows
         .into_iter()
         .zip(vectors)
@@ -196,13 +211,71 @@ async fn embed_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use inseam_kernel::store::VectorScope;
 
     fn row(n: i64) -> PendingRow {
         PendingRow {
             fragment: FragmentId(n),
             source: Some(SourceId(1)),
             text: format!("row {n}"),
+            is_summary: n % 2 == 0,
         }
+    }
+
+    struct ScopedHashed {
+        scope: VectorScope,
+    }
+
+    #[async_trait::async_trait]
+    impl Embedder for ScopedHashed {
+        fn dimensions(&self) -> Option<usize> {
+            Some(8)
+        }
+
+        fn vectors(&self) -> VectorScope {
+            self.scope
+        }
+
+        async fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, SeamError> {
+            Ok(texts.iter().map(|_| vec![1.0; 8]).collect())
+        }
+    }
+
+    #[tokio::test]
+    async fn summaries_scope_embeds_only_summary_rows_and_keeps_the_rest_text_only() {
+        let batch = Batch {
+            rows: (0..6).map(row).collect(),
+            completed: Vec::new(),
+        };
+        let (rows, _, embedded) = embed_batch(
+            &ScopedHashed {
+                scope: VectorScope::Summaries,
+            },
+            batch,
+        )
+        .await;
+        assert_eq!(embedded, 3);
+        assert_eq!(rows.len(), 6);
+        for (i, r) in rows.iter().enumerate() {
+            assert_eq!(r.vector.is_some(), i % 2 == 0, "row {i}");
+        }
+    }
+
+    #[tokio::test]
+    async fn all_scope_embeds_every_row() {
+        let batch = Batch {
+            rows: (0..6).map(row).collect(),
+            completed: Vec::new(),
+        };
+        let (rows, _, embedded) = embed_batch(
+            &ScopedHashed {
+                scope: VectorScope::All,
+            },
+            batch,
+        )
+        .await;
+        assert_eq!(embedded, 6);
+        assert!(rows.iter().all(|r| r.vector.is_some()));
     }
 
     fn completion(n: i64) -> SourceCompletion {

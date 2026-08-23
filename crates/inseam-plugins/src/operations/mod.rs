@@ -18,7 +18,7 @@ use std::sync::Arc;
 use inseam_kernel::address::{Address, HostId};
 use inseam_kernel::store::{
     CatalogRow, CatalogSelection, IndexStore, SearchIndexRepair,
-    SearchIndexRepairOutcome, StoredFragment, StoredSource,
+    SearchIndexRepairOutcome, StoredFragment, StoredSource, VectorScope,
 };
 use inseam_kernel::substrate::{
     ApplyCx, CompositionEdit, CompositionEditor, Entry, EventBus, Facts, Inject, Manifest,
@@ -438,8 +438,9 @@ impl Operations for OperationsService {
             vector_index_ready,
             store_bytes: stats.store_bytes,
             content_bytes: stats.content_bytes,
-            embedding_model: identity.as_ref().map(|(m, _)| m.clone()),
-            embedding_dimensions: identity.map(|(_, d)| d).unwrap_or(0),
+            embedding_model: identity.as_ref().map(|i| i.model.clone()),
+            embedding_dimensions: identity.as_ref().map_or(0, |i| i.dimensions),
+            embedding_vectors: identity.map_or(VectorScope::All, |i| i.vectors),
             reembed_pending: self.store.reembed_pending(),
         })
     }

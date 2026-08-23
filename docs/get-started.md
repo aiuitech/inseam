@@ -57,7 +57,7 @@ inseam status                   # store stats, embedding info
 inseam agent "when did I ...?"  # a live LLM searching for you
 ```
 
-No API key? The node still starts, tells you which parts are waiting on one, and everything else works. For a fully offline node, switch the embedder to `hashed` in `composition.toml` — [configuration.md](configuration.md) has the exact file.
+No API key? The node still starts, tells you which parts are waiting on one, and everything else works. For a fully offline node, switch the embedder to `hashed` in `composition.toml` — [configuration.md](configuration.md) has the exact file — or point the `llm` entry at a local ollama and pick an installed embedding model ([indexing/embeddings.md](indexing/embeddings.md)).
 
 ## Self-modify
 

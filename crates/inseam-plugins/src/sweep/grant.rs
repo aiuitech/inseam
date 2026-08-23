@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use inseam_kernel::substrate::{EventBus, Verdict};
-use inseam_seams::llm::{ChatMessage, ChatRequest, Llm, LlmCall};
+use inseam_seams::llm::{ChatMessage, ChatRequest, Llm, LlmCall, VisionRequest};
 use inseam_seams::transforms::{GrantedLlm, Registration};
 use inseam_seams::SeamError;
 
@@ -78,10 +78,14 @@ impl RunMeters {
 }
 
 /// What a planner needs to grant the LLM: the node's provider (when mounted),
-/// the transform model, the guard bus, and the run's meters.
+/// the transform model and its reasoning control, the guard bus, and the
+/// run's meters.
 pub(super) struct Grantor {
     pub(super) llm: Option<Arc<dyn Llm>>,
     pub(super) model: String,
+    /// Sent with every transform-grade call when set (`design/indexing.md`:
+    /// transforms want the cheapest direct answer, never a thinking trace).
+    pub(super) reasoning_effort: Option<String>,
     pub(super) bus: EventBus,
     pub(super) meters: RunMeters,
 }
@@ -144,7 +148,8 @@ impl GrantedLlm for MeteredLlm {
         let request = ChatRequest::new(
             self.grantor.model.clone(),
             vec![ChatMessage::system(system), ChatMessage::user(user)],
-        );
+        )
+        .with_reasoning_effort(self.grantor.reasoning_effort.as_deref());
         let reply = self.llm.chat(&request).await?;
         Ok(reply.content.unwrap_or_default())
     }
@@ -157,7 +162,13 @@ impl GrantedLlm for MeteredLlm {
     ) -> Result<String, SeamError> {
         self.charge()?;
         self.llm
-            .describe_image(&self.grantor.model, prompt, mimetype, image)
+            .describe_image(&VisionRequest {
+                model: &self.grantor.model,
+                prompt,
+                mimetype,
+                image,
+                reasoning_effort: self.grantor.reasoning_effort.as_deref(),
+            })
             .await
     }
 }

@@ -186,6 +186,10 @@ impl Plugin for SweepPlugin {
             .and_then(|f| f.str(llm::facts::TRANSFORM_MODEL))
             .unwrap_or_default()
             .to_string();
+        let transform_reasoning_effort = cx
+            .facts(&LLM)
+            .and_then(|f| f.str(llm::facts::TRANSFORM_REASONING_EFFORT))
+            .map(str::to_string);
         let service = SweepService {
             store: cx.get(&STORE)?,
             connections: cx.get(&CONNECTIONS)?,
@@ -193,6 +197,7 @@ impl Plugin for SweepPlugin {
             embedder: cx.get(&EMBEDDER)?,
             llm: cx.try_get(&LLM)?,
             transform_model,
+            transform_reasoning_effort,
             bus: cx.bus().clone(),
             config: self.config.clone(),
             ignore,
@@ -209,6 +214,7 @@ pub struct SweepService {
     embedder: Arc<dyn Embedder>,
     llm: Option<Arc<dyn Llm>>,
     transform_model: String,
+    transform_reasoning_effort: Option<String>,
     bus: EventBus,
     config: SweepConfig,
     ignore: IgnoreSet,
@@ -267,6 +273,7 @@ impl Sweep for SweepService {
         let grantor = Arc::new(Grantor {
             llm: self.llm.clone(),
             model: self.transform_model.clone(),
+            reasoning_effort: self.transform_reasoning_effort.clone(),
             bus: self.bus.clone(),
             meters: RunMeters::for_registrations(&registrations),
         });
@@ -504,11 +511,12 @@ impl SweepService {
         self.store.begin_reembed().await?;
         let stage = EmbedStage::start(Arc::clone(&self.embedder), Arc::clone(&self.store));
         let mut buffer = RowBuffer::default();
-        for (fragment, source, text) in targets {
+        for target in targets {
             buffer.push_rows([PendingRow {
-                fragment,
-                source,
-                text,
+                fragment: target.fragment,
+                source: target.source,
+                text: target.text,
+                is_summary: target.is_summary,
             }]);
             for batch in buffer.drain_ready() {
                 stage.submit(batch).await?;
@@ -575,6 +583,7 @@ fn search_rows_of(planned: &Planned, written: &SubtreeWritten) -> Vec<PendingRow
                     fragment: *id,
                     source: Some(written.source),
                     text: t.clone(),
+                    is_summary: p.fragment.mimetype.is_summary(),
                 })
         });
     let keyed = planned
@@ -592,6 +601,7 @@ fn search_rows_of(planned: &Planned, written: &SubtreeWritten) -> Vec<PendingRow
                     fragment: *id,
                     source: None,
                     text: t.clone(),
+                    is_summary: p.fragment.mimetype.is_summary(),
                 }),
             KeyedFragment::Existing(_) => None,
         });

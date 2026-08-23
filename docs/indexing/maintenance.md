@@ -4,7 +4,7 @@ Every `inseam index <scope>` run is a **reconciling sweep** over one host ([conn
 
 ## What one sweep does, in order
 
-1. **Re-embed, if pending** — if the embedding model changed, vectors are rebuilt in the search tables from the text already in the catalog. No transforms re-run, no LLM spend; search refuses (with instructions) until this finishes. An interrupted re-embed restarts.
+1. **Re-embed, if pending** — if the embedding identity changed (model, dimensions, or which fragments get vectors — [embeddings.md](embeddings.md)), vectors are rebuilt in the search tables from the text already in the catalog. No transforms re-run, no LLM spend; search refuses (with instructions) until this finishes. An interrupted re-embed restarts.
 2. **Per-source reconciliation** — a source re-indexes (its index subtree deleted and rebuilt with the full mounted transform set) when its content changed (`modified` + byte size), its previous run was interrupted, or it is **shape-stale** (see below). Catalog-only rows (past `max_sources`, or first seen outside the date cutoff) carry no stamp, so they're picked up automatically once the budget or cutoff allows.
 3. **Vanished-source removal** — cataloged sources under the swept scope that the listing no longer shows are deleted outright. No tombstones; a file that reappears is simply new. Sources the ignore rules now cover ([ignore.md](ignore.md)) leave the listing the same way and are removed by this step.
 4. **Keyed-fragment cleanup** — keyed fragments (entities, for instance) left with no relations are dropped.
@@ -16,7 +16,7 @@ Deep indexing is a pipeline ([design/indexing.md](../../design/indexing.md)):
 1. **Decide** — one pass over the listing marks each source unchanged, past the cutoff, catalog-only (past the run's deep budget), or dirty. Catalog-only rows are written in batches.
 2. **Plan** — dirty sources are planned `concurrency` at a time (default 8). Planning is where the time goes: the content is read and every transform claiming a fragment runs — all claimants of one fragment at once, so a summary and an entity extraction of the same section are in flight together — producing the source's whole subtree as data, with no store writes.
 3. **Land** — each plan lands in one store transaction, in enumeration order regardless of which finished first, so the index a run builds (fragment ids included) does not depend on `concurrency`.
-4. **Embed** — the landed plan's text rows stream to the embedding stage, which embeds batches of 128 concurrently and lands them in order together with the `indexed` marks of the sources they complete. A source is marked indexed only once every one of its rows is searchable, so a crash mid-run leaves it dirty, never half-searchable.
+4. **Embed** — the landed plan's text rows stream to the embedding stage, which embeds batches of 128 concurrently (the rows the embedder's vector scope covers; the rest land text-only) and lands them in order together with the `indexed` marks of the sources they complete. A source is marked indexed only once every one of its rows is searchable, so a crash mid-run leaves it dirty, never half-searchable.
 
 LLM budgets stay exact under concurrency: every application of a transform shares one per-run meter, and each call reserves against it atomically before it is made.
 
@@ -44,7 +44,7 @@ Which entry changed decides how much re-work happens ([configuration.md](../conf
 - **Query-time** (`finder`, the llm entry's models) — never re-indexes.
 - **Run limits** (`sweep.max_sources` and the `--catalog-only` / `--max-sources` overrides, `sweep.concurrency`, per-transform `llm_call_budget`) — never re-indexes; they just bound or pace each run, so a big rebuild spreads across as many sweeps as the budgets allow.
 - **Shape** (transform configs, transform mounts/unmounts, the sweep's `max_depth`/`max_fragments_per_source`/`max_content_bytes`, the llm `transform_model` for transforms that use it) — stamps stop matching; affected sources re-index on their next sweep.
-- **Embedding** (the `embedder` entry) — only the in-place re-embed.
+- **Embedding** (the `embedder` entry: provider, model, dimensions, `vectors`) — only the in-place re-embed.
 
 ## Shrinking scope never deletes — ignoring does
 
