@@ -1,4 +1,5 @@
 - indexing should be incremental so we don't have to generate everything for experiments that turn off entity fragments for example
+- explore "dependency graphs" for discovery. We implicitly form dependency graphs in our mind before approaching how to solve a subject. That might be useful. 
 
 ## WIP
 
