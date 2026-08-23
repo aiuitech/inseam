@@ -28,7 +28,10 @@ UPSTREAM_URL = "https://github.com/onyx-dot-app/EnterpriseRAG-Bench.git"
 RELEASE_URL = f"https://github.com/onyx-dot-app/EnterpriseRAG-Bench/releases/download/{RELEASE}"
 ARCHIVE_SHA256 = "9d1174928696ad08bc15f3f104739519de633c1605a4ec2034e0e3c0087bc5cd"
 QUESTIONS_SHA256 = "f9524b9157cd43aae36b99333a124738804306ea6d07f332d49faa6d3d147905"
-MODEL = "stealth/ox-alpha"
+NODE_MODEL = "qwen3.5:9b"
+EMBEDDING_MODEL = "all-minilm:l6-v2"
+EVALUATOR_MODEL = "stealth/ox-alpha"
+OLLAMA_BASE_URL = "http://localhost:11434/v1"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 MAX_QUESTIONS = 1_000
 MAX_TURNS = 64
@@ -478,15 +481,31 @@ ignore = []
 [[entry]]
 id = "llm"
 [entry.config]
-base_url = "{OPENROUTER_BASE_URL}"
-api_key_env = "OPENROUTER_API_KEY"
-transform_model = "{MODEL}"
-agent_model = "{MODEL}"
+base_url = "{OLLAMA_BASE_URL}"
+api_key_env = ""
+transform_model = "{NODE_MODEL}"
+transform_reasoning_effort = "none"
+agent_model = "{NODE_MODEL}"
+
+[[entry]]
+id = "embedder"
+[entry.config]
+provider = "endpoint"
+model = "{EMBEDDING_MODEL}"
+vectors = "summaries"
+
+[[entry]]
+id = "markdown"
+disabled = true
+
+[[entry]]
+id = "chunker"
+disabled = true
 
 [[entry]]
 id = "summarizer"
 [entry.config]
-target_chars = 400
+target_chars = 200
 llm_call_budget = {options.llm_call_budget}
 
 [[entry]]
@@ -584,7 +603,15 @@ def question_commands(
     require_success(query, f"querying {question_id}")
     query_results = parse_query_results(query.stdout)
     agent = run_logged(
-        [*base, "agent", question_text, "--model", MODEL, "--turns", str(options.turns)],
+        [
+            *base,
+            "agent",
+            question_text,
+            "--model",
+            NODE_MODEL,
+            "--turns",
+            str(options.turns),
+        ],
         log_dir / f"{question_id}-agent.log",
         timeout_seconds=AGENT_TIMEOUT_SECONDS,
         progress_label=f"{progress_prefix} answer",
@@ -735,11 +762,11 @@ def create_run(options: RunOptions) -> tuple[Path, Path, dict[str, Any]]:
             "questions_sha256": QUESTIONS_SHA256,
         },
         "models": {
-            "summarization": MODEL,
-            "entity_extraction": MODEL,
-            "answer_generation": MODEL,
-            "answer_evaluation": MODEL,
-            "embeddings": "openai/text-embedding-3-small",
+            "summarization": NODE_MODEL,
+            "entity_extraction": NODE_MODEL,
+            "answer_generation": NODE_MODEL,
+            "answer_evaluation": EVALUATOR_MODEL,
+            "embeddings": EMBEDDING_MODEL,
         },
         "timeouts_seconds": {
             "setup_command": SETUP_TIMEOUT_SECONDS,
@@ -930,8 +957,8 @@ def evaluator_environment() -> dict[str, str]:
         {
             "LLM_PROVIDER": "openai",
             "LLM_API_KEY": api_key,
-            "LLM_MODEL_NAME": MODEL,
-            "CHEAP_LLM_MODEL_NAME": MODEL,
+            "LLM_MODEL_NAME": EVALUATOR_MODEL,
+            "CHEAP_LLM_MODEL_NAME": EVALUATOR_MODEL,
             "OPENAI_BASE_URL": OPENROUTER_BASE_URL,
         }
     )
@@ -1274,11 +1301,11 @@ def validate_resumable_manifest(run_id: str, manifest: dict[str, Any]) -> None:
     if benchmark != expected_benchmark:
         raise BenchmarkError(f"run `{run_id}` uses different benchmark inputs")
     expected_models = {
-        "summarization": MODEL,
-        "entity_extraction": MODEL,
-        "answer_generation": MODEL,
-        "answer_evaluation": MODEL,
-        "embeddings": "openai/text-embedding-3-small",
+        "summarization": NODE_MODEL,
+        "entity_extraction": NODE_MODEL,
+        "answer_generation": NODE_MODEL,
+        "answer_evaluation": EVALUATOR_MODEL,
+        "embeddings": EMBEDDING_MODEL,
     }
     if manifest.get("models") != expected_models:
         raise BenchmarkError(f"run `{run_id}` uses different models")

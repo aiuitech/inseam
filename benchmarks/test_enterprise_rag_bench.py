@@ -76,13 +76,20 @@ class EnterpriseRagBenchTests(unittest.TestCase):
         self.assertEqual(scores["document_hit_rate_pct"], 100.0)
         self.assertEqual(scores["mean_reciprocal_rank"], 0.75)
 
-    def test_composition_assigns_every_llm_role_to_ox_alpha(self) -> None:
+    def test_composition_uses_lean_local_index(self) -> None:
         options = benchmark.RunOptions(1, 8, 12, 8, 500, 4, False)
 
         composition = benchmark.composition_text(options)
 
-        self.assertIn('transform_model = "stealth/ox-alpha"', composition)
-        self.assertIn('agent_model = "stealth/ox-alpha"', composition)
+        self.assertIn('base_url = "http://localhost:11434/v1"', composition)
+        self.assertIn('api_key_env = ""', composition)
+        self.assertIn('transform_model = "qwen3.5:9b"', composition)
+        self.assertIn('transform_reasoning_effort = "none"', composition)
+        self.assertIn('agent_model = "qwen3.5:9b"', composition)
+        self.assertIn('model = "all-minilm:l6-v2"', composition)
+        self.assertIn('vectors = "summaries"', composition)
+        self.assertIn('target_chars = 200', composition)
+        self.assertEqual(composition.count("disabled = true"), 2)
         self.assertEqual(composition.count("llm_call_budget = 500"), 2)
 
     def test_formats_progress_durations_for_scanning(self) -> None:

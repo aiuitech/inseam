@@ -7,10 +7,13 @@ The first benchmark is [EnterpriseRAG-Bench](https://github.com/onyx-dot-app/Ent
 - Python 3.10 or newer
 - `git`, `curl`, and `unzip` on `PATH`
 - the `inseam` CLI on `PATH`
+- Ollama on `localhost:11434` with `qwen3.5:9b` and `all-minilm:l6-v2` installed
 - `OPENROUTER_API_KEY`
 - enough local disk for the 1.26 GB download, its extracted files, and a fresh Inseam index. Reserve at least 20 GB before a full run.
 
-The harness sends embeddings to `openai/text-embedding-3-small`. It uses `stealth/ox-alpha` for summaries, entity extraction, answer generation, citation cleanup, correctness scoring, and fact scoring. The default run limits summaries and entity extraction to 500 LLM calls each. Inseam uses its deterministic fallback after a transform spends its budget. Raise `--llm-call-budget` only after estimating the cost and runtime.
+The indexed node is local: `qwen3.5:9b` handles summaries, entity extraction, and answers through Ollama, while `all-minilm:l6-v2` embeds one 200-character summary per source at its native 384 dimensions. Markdown splitting and chunking are disabled; source text still enters full-text search. `stealth/ox-alpha` remains the independent OpenRouter evaluator for citation cleanup, correctness scoring, and fact scoring, so `OPENROUTER_API_KEY` is still required.
+
+The default run limits summaries and entity extraction to 500 LLM calls each. Inseam uses its deterministic fallback after a transform spends its budget. Raise `--llm-call-budget` only after estimating the runtime. The composition requests base64 embedding responses through Inseam, reducing Ollama response bytes and JSON parsing without changing vector values.
 
 ## Set up the fixture
 

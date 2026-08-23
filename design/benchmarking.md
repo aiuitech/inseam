@@ -18,9 +18,11 @@ All loops and external commands have fixed limits. The harness accepts no more t
 
 ## Model policy
 
-`stealth/ox-alpha` handles every language-model role in this benchmark: summaries, entities, agent answers, and the upstream LLM judge. The composition and run manifest state that assignment explicitly. Embeddings are a separate model class and remain `openai/text-embedding-3-small`.
+The indexed node runs locally through Ollama: `qwen3.5:9b` handles summaries, entities, and agent answers, and `all-minilm:l6-v2` embeds summaries at its native 384 dimensions. The upstream judge remains `stealth/ox-alpha` through OpenRouter, keeping evaluation independent of the system under test. The composition and run manifest state every assignment explicitly.
 
 Transform call budgets stay explicit. The default is 500 summary calls and 500 entity calls per indexing run, followed by Inseam's deterministic fallback. A full 500,000-call budget for both transforms would approach one million model requests before question answering, so the operator must opt into that cost.
+
+The benchmark composition bounds the vector surface to one 200-character summary per source and disables markdown splitting and chunking. Full source text remains in full-text search, and the bounded entity transform remains mounted. This trades structural vector recall for predictable indexing time and storage; benchmark scores, not an assumption, decide whether that trade is acceptable.
 
 ## Evidence in a run
 
@@ -30,6 +32,6 @@ The runner writes its current phase before indexing, querying, and evaluation. B
 
 ## Performance sketch
 
-The fixed network floor is a 1.26 GB dataset download. Extraction produces more than 500,000 files, so metadata operations and local disk latency dominate setup and cataloging. Endpoint embeddings dominate indexing network traffic and typically dominate elapsed indexing time; the LLM transforms add at most twice the configured call budget. At 1,536 float dimensions, one vector per document already represents about 3.1 GB of raw `f32` values before fragment vectors and database overhead. A full run should start with at least 20 GB free, use local SSD storage, and optimize embedding batching and disk writes before query execution.
+The fixed network floor is a 1.26 GB dataset download. Extraction produces more than 500,000 files, so metadata operations and local disk latency dominate setup and cataloging. The lean composition asks for roughly one 384-dimensional vector per source: at 512,000 sources that is about 0.79 GB of raw `f32` values before database overhead, versus about 3.15 GB for one 1,536-dimensional vector per source and substantially more when structural fragments are embedded. Ollama receives batches of 64 inputs as base64 responses, and Inseam schedules four 128-row batches concurrently; more source concurrency cannot make the local GPU execute embeddings faster once those queues are full. A full run should start with at least 20 GB free and use local SSD storage.
 
-Question execution makes one timed Finder query and one timed agent loop per question. Vector retrieval is DiskANN candidate lookup rather than a scan over the raw 1,536-dimensional corpus, and graph propagation materializes only a bounded seed-local neighborhood. The default cap is 500 Finder queries and 6,000 agent turns. Evaluation then makes bounded upstream judge calls. The runner records these phases separately because combining them would hide whether a change affected search-index preparation, retrieval, answer generation, or judging.
+Question execution makes one timed Finder query and one timed agent loop per question. Vector retrieval is DiskANN candidate lookup rather than a scan over the raw 384-dimensional corpus, and graph propagation materializes only a bounded seed-local neighborhood. The default cap is 500 Finder queries and 6,000 agent turns. Evaluation then makes bounded upstream judge calls. The runner records these phases separately because combining them would hide whether a change affected search-index preparation, retrieval, answer generation, or judging.
