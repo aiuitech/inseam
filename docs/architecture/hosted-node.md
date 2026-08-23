@@ -33,10 +33,29 @@ reports the resulting callback URL, which must be registered on the OAuth
 client. `GET /owner/grants` and `POST /owner/grants/revoke` complete the set
 ([../plugins/oauth.md](../plugins/oauth.md)).
 
-Requests are limited to 64 KiB, 64 concurrent calls, and 60 seconds. The
-server binds to `127.0.0.1:7337` unless the operator chooses another address.
+Requests are limited to 64 KiB, 64 concurrent calls, and 60 seconds — except
+the one route that carries files, `POST /api/v1/owner/plugins/install`, which
+takes up to 44 MiB (a 32 MiB plugin directory, base64 in JSON). The server
+binds to `127.0.0.1:7337` unless the operator chooses another address.
 API responses disable caching, and the server applies a restrictive content
 security policy and browser capability policy to the console.
+
+## Installing plugins into the running node
+
+`GET /api/v1/owner/plugins` lists every composition entry as the kernel runs
+it (id, plugin ref, `active` | `pending` | `failed` with the reason, live
+effects, missing services and secrets). `POST /api/v1/owner/plugins/install`
+takes `{ "id", "files": [{ "path", "bytes" }], "config"? }` — the plugin
+directory as the registry lays it out (`<name>.wasm`, its manifest and
+checks, any fixtures), each file's bytes in standard base64 — and mounts it
+**without restarting the node**: the files land under
+`<data-dir>/plugins/<id>/`, the entry is appended to the node's
+`composition.toml`, and the kernel reconciles; the response is the new
+entry's state. An entry that fails to activate (admission, a bad manifest)
+is rolled back — file, tree, and uploaded files — and the failure is the
+error. The same mount-time gates as any `wasm:` entry apply
+([../plugins/loaded.md](../plugins/loaded.md)); `serve` is the transport
+that applies such edits, because it owns the running kernel.
 
 ## Filesystem scopes
 
@@ -59,7 +78,9 @@ run; `POST /api/v1/owner/catalog` lists the catalog (`host`, `filter` =
 `apps/web` is a React, TypeScript, Vite, and shadcn client. It shows node
 statistics and mounted hosts, searches the index, expands and fetches a
 source, connects and disconnects accounts (the Connections panel lists every
-grant and the hosts it stewards), and triggers a sweep over an approved root. Vite proxies `/api` to a
+grant and the hosts it stewards), installs a loaded plugin from a chosen
+plugin directory and lists what the node runs (the Plugins panel), and
+triggers a sweep over an approved root. Vite proxies `/api` to a
 local node during development. A production build can be served by the node
 from the same origin.
 

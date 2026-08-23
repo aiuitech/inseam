@@ -67,3 +67,12 @@ So the example flow: my external service calls `query("some topic", properties: 
   `SameSite=Strict` cookie never rides a cross-site redirect, safe because the
   operation accepts nothing but the `state` it issued, and addressed by an
   explicit public URL (`--public-url`) rather than a trusted `Host` header.
+- **Plugins are owner operations too.** `plugins` (every entry as the
+  kernel runs it) and `install_plugin` (a plugin directory's files, mounted
+  into the running node) ride the seam, so the console, the CLI, and any
+  future transport share one install path and one vocabulary for "what is
+  this node running" ([composition](composition.md) has the mechanism).
+  The upload is the operation message itself — files as standard base64 in
+  JSON, bounded in count and bytes — not a transport-specific multipart
+  form; the HTTP adapter's only contribution is a larger body limit on that
+  one route. Upgrading a mounted plugin is remove-then-install for now.

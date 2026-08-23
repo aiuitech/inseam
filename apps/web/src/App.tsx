@@ -9,6 +9,8 @@ import {
   type Host,
   type IndexReport,
   type OwnerInfo,
+  type Plugin,
+  type PluginFile,
   type QueryResult,
   type StatusReport,
 } from "@/api"
@@ -16,6 +18,7 @@ import { ConnectionsPanel } from "@/components/connections-panel"
 import { IndexControl } from "@/components/index-control"
 import { LoginScreen } from "@/components/login-screen"
 import { NodeSidebar } from "@/components/node-sidebar"
+import { PluginsPanel } from "@/components/plugins-panel"
 import { SearchWorkspace } from "@/components/search-workspace"
 
 type NodeSnapshot = {
@@ -23,6 +26,7 @@ type NodeSnapshot = {
   info: OwnerInfo
   status: StatusReport
   grants: Grant[]
+  plugins: Plugin[]
 }
 
 type Notice = { kind: "ok" | "error"; text: string }
@@ -95,6 +99,7 @@ function OwnerConsole({ onExpired }: { onExpired: () => void }) {
   const [report, setReport] = useState<IndexReport | null>(null)
   const [pending, setPending] = useState(true)
   const [notice, setNotice] = useState<Notice | null>(() => takeCallbackNotice())
+  const [pluginNotice, setPluginNotice] = useState<Notice | null>(null)
 
   const run = useCallback(
     async <T,>(operation: () => Promise<T>): Promise<T | null> => {
@@ -114,9 +119,15 @@ function OwnerConsole({ onExpired }: { onExpired: () => void }) {
   )
 
   useEffect(() => {
-    Promise.all([api.info(), api.status(), api.hosts(), api.grants()])
-      .then(([info, status, hosts, grants]) =>
-        setSnapshot({ info, status, hosts, grants })
+    Promise.all([
+      api.info(),
+      api.status(),
+      api.hosts(),
+      api.grants(),
+      api.plugins(),
+    ])
+      .then(([info, status, hosts, grants, plugins]) =>
+        setSnapshot({ info, status, hosts, grants, plugins })
       )
       .catch((reason: unknown) => {
         if (reason instanceof ApiError && reason.status === 401) onExpired()
@@ -133,6 +144,36 @@ function OwnerConsole({ onExpired }: { onExpired: () => void }) {
         .catch((reason) => setError(errorMessage(reason))),
     []
   )
+
+  /** A mounted plugin may steward nothing but changes what the node runs:
+   * the plugin list is the one thing to re-read. */
+  const refreshPlugins = useCallback(
+    (current: NodeSnapshot) =>
+      api
+        .plugins()
+        .then((plugins) => setSnapshot({ ...current, plugins }))
+        .catch((reason) => setError(errorMessage(reason))),
+    []
+  )
+
+  function installPlugin(id: string, files: PluginFile[]) {
+    if (!snapshot) return
+    setPluginNotice(null)
+    void run(() => api.installPlugin(id, files)).then((value) => {
+      if (!value) return
+      const state = value.state.state
+      setPluginNotice({
+        kind: state === "failed" ? "error" : "ok",
+        text:
+          state === "active"
+            ? `installed ${value.id}: active`
+            : state === "pending"
+              ? `installed ${value.id}: waiting for ${value.missing.join(", ")}`
+              : `installed ${value.id} but it failed: ${value.state.state === "failed" ? value.state.reason : ""}`,
+      })
+      void refreshPlugins(snapshot)
+    })
+  }
 
   if (!snapshot) {
     return <div className="boot-screen">{error ?? "reading node state..."}</div>
@@ -201,6 +242,12 @@ function OwnerConsole({ onExpired }: { onExpired: () => void }) {
               void refreshConnections(snapshot)
             })
           }
+        />
+        <PluginsPanel
+          plugins={snapshot.plugins}
+          pending={pending}
+          notice={pluginNotice}
+          onInstall={installPlugin}
         />
         <IndexControl
           hosts={snapshot.hosts}

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::composition::{Composition, Entry};
+use super::edits::{CompositionEditor, CompositionEdits, COMPOSITION};
 use super::error::SubstrateError;
 use super::events::EventBus;
 use super::fiber::{EntryId, Fiber, FiberState, FiberView};
@@ -18,7 +19,8 @@ use super::service::{Binding, Facts, Provider, ServiceKey};
 use crate::state::StateStore;
 use crate::store::IndexStore;
 
-/// The kernel-provided services every plugin may consume.
+/// The kernel-provided services every plugin may consume (`composition`, the
+/// third, lives in `edits.rs`).
 pub const STORE: ServiceKey<IndexStore> = ServiceKey::new("store");
 pub const STATE: ServiceKey<StateStore> = ServiceKey::new("state");
 
@@ -40,6 +42,9 @@ pub struct Kernel {
     /// keep files that are neither config nor store (credential files,
     /// artifact caches). Handed to plugins through `ApplyCx::data_dir`.
     data_dir: PathBuf,
+    /// The applying end of the `composition` service, until the
+    /// distribution takes it ([`Kernel::take_composition_edits`]).
+    composition_edits: Option<CompositionEdits>,
 }
 
 impl Kernel {
@@ -52,7 +57,12 @@ impl Kernel {
         scheme_factories: Vec<Arc<dyn SchemeFactory>>,
     ) -> Result<Self, SubstrateError> {
         let store = Arc::new(IndexStore::open(data_dir).await?);
+        let (composition_editor, composition_edits) = CompositionEditor::pair();
         let mut bindings = HashMap::new();
+        bindings.insert(
+            COMPOSITION.name().to_string(),
+            Binding::new(Provider::Kernel, Arc::new(composition_editor), Facts::new()),
+        );
         bindings.insert(
             STORE.name().to_string(),
             Binding::new(Provider::Kernel, Arc::clone(&store), Facts::new()),
@@ -76,7 +86,17 @@ impl Kernel {
             bus: EventBus::new(),
             store,
             data_dir: data_dir.to_path_buf(),
+            composition_edits: Some(composition_edits),
         })
+    }
+
+    /// The applying end of composition edits — taken once by the
+    /// distribution that owns this kernel and services edits beside its
+    /// transport; `None` after that. A distribution that never takes it
+    /// leaves submitters failing loudly ([`SubstrateError::EditsUnserviced`])
+    /// rather than hanging.
+    pub fn take_composition_edits(&mut self) -> Option<CompositionEdits> {
+        self.composition_edits.take()
     }
 
     pub fn store(&self) -> &Arc<IndexStore> {

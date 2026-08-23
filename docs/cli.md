@@ -40,6 +40,9 @@ development server; hosted nodes keep the secure default and terminate TLS in
 front of the listener. `--public-url` (`INSEAM_PUBLIC_URL`) is the origin
 owners reach the node at — what OAuth providers redirect back to when a grant
 is authorized from the web console; it is derived from `--bind` when unset.
-See [architecture/hosted-node.md](architecture/hosted-node.md).
+A serving node also applies composition edits submitted through the owner
+API — installing a loaded plugin from the console mounts it into the running
+node, while `plugin mount` / `plugin install` from a shell take effect on
+the next boot. See [architecture/hosted-node.md](architecture/hosted-node.md).
 
 If part of the configuration can't start (say the default `endpoint` embedder with no API key set), the node prints a warning naming each waiting entry and what it's missing. Commands that need those parts fail with the same message; everything else keeps working. `inseam plugins` is the diagnostic view. The quickest offline setup is a `composition.toml` that switches the embedder to `hashed` ([configuration.md](configuration.md) has the example).

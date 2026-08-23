@@ -32,8 +32,9 @@ use inseam_kernel::address::HostId;
 use inseam_seams::oauth::{AuthorizationCallback, GrantId, Redirect};
 use inseam_seams::operations::{
     AuthorizeGrantRequest, CatalogRequest, CatalogResponse, ExpandRequest, ExpandResponse,
-    FetchRequest, FetchResponse, GrantView, HostView, IndexRequest, Operations, QueryRequest,
-    QueryResponse, RevokeGrantRequest, ScanRequest, ScanResponse, StatusReport,
+    FetchRequest, FetchResponse, GrantView, HostView, IndexRequest, InstallPluginRequest,
+    Operations, PluginView, QueryRequest, QueryResponse, RevokeGrantRequest, ScanRequest,
+    ScanResponse, StatusReport,
 };
 use inseam_seams::sweep::DeepBudget;
 use serde::{Deserialize, Serialize};
@@ -44,10 +45,16 @@ use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
 pub use auth::CookieSecurity;
+pub use error::ConfigError;
 use auth::{Auth, login, logout, require_owner, session};
-use error::{ApiError, ConfigError};
+use error::ApiError;
 
 const BODY_BYTES_MAX: usize = 64 * 1024;
+/// The one route that carries files: a plugin upload, base64 in JSON, so
+/// the wire holds four thirds of the decoded bound plus the envelope
+/// (asserted against `PLUGIN_UPLOAD_BYTES_MAX` in the tests). Every other
+/// route keeps the small limit.
+const PLUGIN_UPLOAD_BODY_BYTES_MAX: usize = 44 * 1024 * 1024;
 const REQUESTS_IN_FLIGHT_MAX: usize = 64;
 const REQUEST_TIMEOUT_SECS: u64 = 60;
 const INDEX_ROOTS_MAX: usize = 64;
@@ -247,6 +254,11 @@ fn owner_router(state: &AppState) -> Router<AppState> {
         .route("/grants", get(grants))
         .route("/grants/authorize", post(authorize_grant))
         .route("/grants/revoke", post(revoke_grant))
+        .route("/plugins", get(plugins))
+        .route(
+            "/plugins/install",
+            post(install_plugin).layer(DefaultBodyLimit::max(PLUGIN_UPLOAD_BODY_BYTES_MAX)),
+        )
         .route_layer(middleware::from_fn_with_state(state.clone(), require_owner))
 }
 
@@ -416,6 +428,20 @@ fn callback_page(title: &str, message: &str) -> String {
     )
 }
 
+async fn plugins(State(state): State<AppState>) -> Result<Json<Vec<PluginView>>, ApiError> {
+    Ok(Json(state.operations.plugins().await?))
+}
+
+/// Install a loaded plugin into the running node. The request is the
+/// operation message verbatim — the plugin's files, base64 in JSON — so the
+/// transport adds nothing but its larger body limit.
+async fn install_plugin(
+    State(state): State<AppState>,
+    Json(request): Json<InstallPluginRequest>,
+) -> Result<Json<PluginView>, ApiError> {
+    Ok(Json(state.operations.install_plugin(request).await?))
+}
+
 async fn status(State(state): State<AppState>) -> Result<Json<StatusReport>, ApiError> {
     Ok(Json(state.operations.status().await?))
 }
@@ -517,8 +543,8 @@ mod tests {
     use inseam_seams::SeamError;
     use inseam_seams::oauth::{AuthorizationStarted, GrantState};
     use inseam_seams::operations::{
-        AwaitAuthorizationRequest, ExpandResponse, FetchResponse, IndexRequest, QueryResponse,
-        ScanResponse,
+        AwaitAuthorizationRequest, ExpandResponse, FetchResponse, IndexRequest, PluginState,
+        QueryResponse, ScanResponse, PLUGIN_UPLOAD_BYTES_MAX,
     };
     use inseam_seams::sweep::IndexReport;
     use tower::ServiceExt;
@@ -532,6 +558,7 @@ mod tests {
         indexed: Mutex<Option<IndexRequest>>,
         authorized: Mutex<Option<AuthorizeGrantRequest>>,
         completed: Mutex<Option<AuthorizationCallback>>,
+        installed: Mutex<Option<InstallPluginRequest>>,
     }
 
     fn grant_view(state: GrantState) -> GrantView {
@@ -637,6 +664,30 @@ mod tests {
 
         async fn revoke_grant(&self, _request: RevokeGrantRequest) -> Result<GrantView, SeamError> {
             Ok(grant_view(GrantState::Unauthorized))
+        }
+
+        async fn plugins(&self) -> Result<Vec<PluginView>, SeamError> {
+            Ok(vec![PluginView {
+                id: "finder".to_string(),
+                plugin: "finder".to_string(),
+                state: PluginState::Active,
+                effects: vec!["provide finder".to_string()],
+                missing: Vec::new(),
+                missing_secrets: Vec::new(),
+            }])
+        }
+
+        async fn install_plugin(&self, request: InstallPluginRequest) -> Result<PluginView, SeamError> {
+            let id = request.id.to_string();
+            *self.installed.lock().unwrap_or_else(|error| error.into_inner()) = Some(request);
+            Ok(PluginView {
+                id,
+                plugin: "wasm:/data/plugins/demo/demo.wasm".to_string(),
+                state: PluginState::Active,
+                effects: Vec::new(),
+                missing: Vec::new(),
+                missing_secrets: Vec::new(),
+            })
         }
     }
 
@@ -852,5 +903,56 @@ mod tests {
             .await
             .expect("response")
             .status()
+    }
+
+    #[test]
+    fn the_upload_body_limit_covers_the_decoded_bound_in_base64() {
+        let decoded = u64::try_from(PLUGIN_UPLOAD_BODY_BYTES_MAX).expect("fits") / 4 * 3;
+        assert!(decoded >= PLUGIN_UPLOAD_BYTES_MAX + 64 * 1024 / 4 * 3);
+        assert!(decoded < PLUGIN_UPLOAD_BYTES_MAX * 2);
+    }
+
+    #[tokio::test]
+    async fn plugin_uploads_get_their_own_body_limit() {
+        let operations = Arc::new(StubOperations::default());
+        let app = test_router(Arc::clone(&operations), Vec::new());
+        let cookie = login_cookie(&app).await;
+        // Well past the 64 KiB every other route allows.
+        let bytes = "A".repeat(300 * 1024);
+        let body = format!(
+            r#"{{"id":"demo","files":[{{"path":"demo.wasm","bytes":"{bytes}"}},{{"path":"demo.manifest.toml","bytes":"bmFtZQ=="}}]}}"#
+        );
+        let request = Request::post("/api/v1/owner/plugins/install")
+            .header(CONTENT_TYPE, "application/json")
+            .header(COOKIE, cookie.clone())
+            .body(Body::from(body))
+            .expect("valid request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let installed = operations.installed.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let installed = installed.expect("the operation saw the upload");
+        assert_eq!(installed.id.as_str(), "demo");
+        assert_eq!(installed.files.len(), 2);
+        assert_eq!(installed.files[0].bytes.0.len(), 300 * 1024 / 4 * 3);
+
+        // The same body on an ordinary route is still too large.
+        let request = Request::post("/api/v1/owner/query")
+            .header(CONTENT_TYPE, "application/json")
+            .header(COOKIE, cookie.clone())
+            .body(Body::from(format!(r#"{{"text":"{bytes}"}}"#)))
+            .expect("valid request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+        let request = Request::get("/api/v1/owner/plugins")
+            .header(COOKIE, cookie)
+            .body(Body::empty())
+            .expect("valid request");
+        let response = app.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), 4096).await.expect("body");
+        let body: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON");
+        assert_eq!(body[0]["id"], "finder");
+        assert_eq!(body[0]["state"]["state"], "active");
     }
 }

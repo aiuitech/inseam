@@ -10,6 +10,8 @@ The tenant boundary is a machine boundary, not a namespace. A hosted node holds 
 
 The upside is that the hosted node becomes literally the thing a self-hoster runs, which is what makes "an ordinary node" a mechanism rather than a claim.
 
+It also settles how a tenant extends their node: not by rebuilding the image — that is the operator's lever, for releases — but by uploading a loaded plugin through the console, which the node mounts into itself at runtime ([composition](composition.md), [plugins](plugins.md)). The control plane is not involved, which is the point: the plugin, like the index, is the tenant's.
+
 ## The volume is the tenant; the server is cattle
 
 The node's data directory lives on an attached block volume, never on the server's boot disk. Every operation an operator needs is then one primitive over that split:

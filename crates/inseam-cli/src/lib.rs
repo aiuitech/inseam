@@ -22,7 +22,9 @@ mod agent;
 mod authoring;
 
 use inseam_kernel::address::{Address, HostId};
-use inseam_kernel::substrate::{Composition, FiberState, Kernel, SubstrateError};
+use inseam_kernel::substrate::{
+    Composition, CompositionEdits, FiberState, Kernel, SubstrateError,
+};
 use agent::{run_agent, AgentEvent};
 use inseam_seams::llm::{self, ModelInfo, LLM};
 use inseam_seams::oauth::{GrantId, GrantState, Redirect};
@@ -484,6 +486,9 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
         return Ok(());
     }
 
+    // Resolved before `cli.command` is taken apart below: the edit loop a
+    // running node services needs the overlay path after that.
+    let overlay_path = composition_path_of(&cli, &data_dir);
     let mut kernel = Kernel::boot(
         &data_dir,
         distribution.factories,
@@ -513,7 +518,11 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 .map(|value| parse_http_index_root(value))
                 .collect::<anyhow::Result<Vec<_>>>()?;
             let operations = kernel.service(&OPERATIONS)?;
-            inseam_http::serve(
+            let edits = kernel
+                .take_composition_edits()
+                .expect("a freshly booted kernel hands out its edits once");
+            let base = base_composition(&distribution.base_composition)?;
+            let transport = tokio::spawn(inseam_http::serve(
                 inseam_http::ServerConfig {
                     bind,
                     owner_token,
@@ -524,8 +533,8 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 },
                 operations,
                 shutdown_signal(),
-            )
-            .await?;
+            ));
+            serve_composition_edits(&mut kernel, &base, &overlay_path, edits, transport).await?;
         }
         Command::Index {
             root,
@@ -937,13 +946,55 @@ async fn shutdown_signal() {
     }
 }
 
+/// Keep a running node editable: apply composition edits submitted through
+/// the `composition` service (an owner installing a plugin) until the
+/// transport finishes. The kernel stays here, on the node's own task, so a
+/// reconcile never runs concurrently with itself; each edit is applied
+/// whole, replied to, and the next one taken.
+async fn serve_composition_edits(
+    kernel: &mut Kernel,
+    base: &Composition,
+    overlay_path: &Path,
+    mut edits: CompositionEdits,
+    mut transport: tokio::task::JoinHandle<Result<(), inseam_http::ConfigError>>,
+) -> anyhow::Result<()> {
+    loop {
+        tokio::select! {
+            served = &mut transport => {
+                served.context("the owner HTTP server task")??;
+                return Ok(());
+            }
+            pending = edits.next() => {
+                let Some(pending) = pending else {
+                    // The kernel holds the submitting end, so this cannot
+                    // happen while it lives; fall back to the transport.
+                    transport.await.context("the owner HTTP server task")??;
+                    return Ok(());
+                };
+                tracing::info!(edit = ?pending.edit(), "applying a composition edit");
+                let outcome = kernel
+                    .apply_composition_edit(base, overlay_path, pending.edit())
+                    .await;
+                if let Err(error) = &outcome {
+                    tracing::warn!("composition edit not applied: {error}");
+                }
+                pending.reply(outcome);
+            }
+        }
+    }
+}
+
+fn base_composition(base_composition: &str) -> anyhow::Result<Composition> {
+    Composition::parse(base_composition, "<distribution base>")
+        .context("the distribution base composition must be valid")
+}
+
 fn load_composition(
     cli: &Cli,
     data_dir: &std::path::Path,
     base_composition: &str,
 ) -> anyhow::Result<Composition> {
-    let base = Composition::parse(base_composition, "<distribution base>")
-        .context("the distribution base composition must be valid")?;
+    let base = self::base_composition(base_composition)?;
     let overlay_path = match &cli.composition {
         Some(path) => Some(path.clone()),
         None => {

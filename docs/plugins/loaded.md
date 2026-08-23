@@ -18,6 +18,8 @@ cooldown_days = 7    # wait period for new versions (see below); 0 by default fo
 
 Next to the artifact sits its manifest (`<name>.manifest.toml`): identity, version, seam, declared claims, and requested capabilities (`llm`, `source_bytes`, `llm_call_budget`). The manifest is what an owner reviews; the bridge guarantees the component gets nothing beyond it.
 
+Three ways the entry gets there: by hand, as above; `inseam plugin mount` / `plugin install` ([authoring-cli.md](authoring-cli.md), [registry.md](registry.md)), which append it before the node boots; and, on a **running** node, the `install_plugin` owner operation — the web console's Plugins panel, `POST /api/v1/owner/plugins/install` ([../architecture/hosted-node.md](../architecture/hosted-node.md)) — which uploads the plugin directory, writes it under `<data-dir>/plugins/<id>/`, appends the entry, and reconciles the kernel in place, no restart. A mount that fails is rolled back and named; the gates below apply to all three identically.
+
 ## The contract
 
 `crates/inseam-wasm-host/wit/transform.wit` — the `transforms` seam expressed in WIT. Exports: `claims()` and `apply(envelope, mimetype, is-root, text)`. Imports (the only ones besides core WASI, which is given an **empty** environment — no files, env vars, args, or sockets):

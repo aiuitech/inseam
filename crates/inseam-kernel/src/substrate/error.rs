@@ -56,4 +56,19 @@ pub enum SubstrateError {
     Unsettled { waiting: Vec<(String, Vec<String>)> },
     #[error(transparent)]
     Store(#[from] crate::store::StoreError),
+    #[error(transparent)]
+    Composition(#[from] super::composition::CompositionError),
+    // Composition edits at runtime (`edits.rs`).
+    #[error("composition already has an entry `{0}`")]
+    EntryExists(String),
+    #[error("entry `{entry}` did not activate and was rolled back: {reason}")]
+    MountFailed { entry: String, reason: String },
+    #[error("could not write composition overlay `{path}`: {source}")]
+    OverlayIo { path: String, source: std::io::Error },
+    #[error(
+        "this node's runtime did not apply the composition edit; only a running node          (`inseam serve`) applies edits — a one-shot command edits the file directly"
+    )]
+    EditsUnserviced,
+    #[error("too many composition edits are waiting to be applied; retry shortly")]
+    EditQueueFull,
 }

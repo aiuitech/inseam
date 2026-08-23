@@ -10,7 +10,7 @@
 
 use inseam_kernel::address::{Address, HostId};
 use inseam_kernel::fragment::{FragmentId, Relation};
-use inseam_kernel::substrate::{Guard, ServiceKey};
+use inseam_kernel::substrate::{FiberState, FiberView, Guard, SecretNeed, ServiceKey};
 use serde::{Deserialize, Serialize};
 
 use crate::connection::{Capabilities, HostKind};
@@ -65,6 +65,15 @@ pub trait Operations: Send + Sync {
     async fn complete_authorization(&self, callback: AuthorizationCallback) -> Result<GrantView, SeamError>;
     /// Owner operation: forget a grant's tokens; hosts behind it withdraw.
     async fn revoke_grant(&self, request: RevokeGrantRequest) -> Result<GrantView, SeamError>;
+    /// Owner operation: every composition entry as the kernel runs it —
+    /// what `inseam plugins` prints, for every transport.
+    async fn plugins(&self) -> Result<Vec<PluginView>, SeamError>;
+    /// Owner operation: install a loaded plugin from its files and mount it
+    /// into the running node now — no restart. The files land under the
+    /// node's data directory, the composition gains the entry, and the
+    /// kernel reconciles; an entry that fails to activate (admission, a
+    /// bad manifest) is rolled back and the failure is the error.
+    async fn install_plugin(&self, request: InstallPluginRequest) -> Result<PluginView, SeamError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -317,6 +326,190 @@ pub struct RevokeGrantRequest {
     pub grant: GrantId,
 }
 
+// ---------------------------------------------------------------------------
+// Plugins: listing and runtime installation
+// ---------------------------------------------------------------------------
+
+/// Most files one plugin upload may carry: the artifact, its manifest and
+/// checks, and the fixtures the checks name. `usize` because it bounds a
+/// `Vec` length.
+pub const PLUGIN_FILES_MAX: usize = 64;
+/// Most bytes one plugin upload may carry in total, decoded.
+pub const PLUGIN_UPLOAD_BYTES_MAX: u64 = 32 * 1024 * 1024;
+/// Longest a plugin id (the composition entry id and install directory).
+pub const PLUGIN_ID_CHARS_MAX: usize = 64;
+
+/// A composition entry id chosen for an installed plugin: lowercase ASCII
+/// letters, digits, `-` and `_`, starting with a letter or digit, at most
+/// [`PLUGIN_ID_CHARS_MAX`] characters — safe as a directory name and as an
+/// entry id anywhere the composition is rendered.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct PluginId(String);
+
+impl PluginId {
+    pub fn new(id: &str) -> Result<Self, SeamError> {
+        if id.is_empty() {
+            return Err(SeamError::Refused("plugin id is empty".to_string()));
+        }
+        if id.chars().count() > PLUGIN_ID_CHARS_MAX {
+            return Err(SeamError::Refused(format!(
+                "plugin id `{id}` is longer than {PLUGIN_ID_CHARS_MAX} characters"
+            )));
+        }
+        let well_formed = id.chars().all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || character == '-'
+                || character == '_'
+        });
+        if !well_formed {
+            return Err(SeamError::Refused(format!(
+                "plugin id `{id}` may only use lowercase letters, digits, `-` and `_`"
+            )));
+        }
+        let starts_plainly = id
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_alphanumeric());
+        if !starts_plainly {
+            return Err(SeamError::Refused(format!(
+                "plugin id `{id}` must start with a letter or digit"
+            )));
+        }
+        Ok(Self(id.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for PluginId {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(&value).map_err(|error| error.to_string())
+    }
+}
+
+impl From<PluginId> for String {
+    fn from(id: PluginId) -> Self {
+        id.0
+    }
+}
+
+impl std::fmt::Display for PluginId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// File contents on the wire: standard base64 in JSON, so an artifact
+/// travels inside the same typed message as everything else.
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct FileBytes(pub Vec<u8>);
+
+impl std::fmt::Debug for FileBytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "FileBytes({} bytes)", self.0.len())
+    }
+}
+
+impl Serialize for FileBytes {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use base64::Engine as _;
+        serializer.serialize_str(&base64::engine::general_purpose::STANDARD.encode(&self.0))
+    }
+}
+
+impl<'de> Deserialize<'de> for FileBytes {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use base64::Engine as _;
+        let encoded = String::deserialize(deserializer)?;
+        base64::engine::general_purpose::STANDARD
+            .decode(encoded.as_bytes())
+            .map(Self)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+/// One file of a plugin directory: the artifact (`<name>.wasm`), its
+/// manifest and golden checks (`<name>.manifest.toml`, `<name>.checks.toml`),
+/// and any fixtures the checks name — paths relative to the plugin
+/// directory, as the registry lays them out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginFile {
+    pub path: String,
+    pub bytes: FileBytes,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InstallPluginRequest {
+    /// The composition entry id, and the directory name under the node's
+    /// `plugins/`.
+    pub id: PluginId,
+    pub files: Vec<PluginFile>,
+    /// The entry's config (`cooldown_days`, `fuel`, `admission`…); empty
+    /// takes the bridge's defaults.
+    #[serde(default, skip_serializing_if = "toml::Table::is_empty")]
+    pub config: toml::Table,
+}
+
+/// Where a fiber stands, as owner surfaces show it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum PluginState {
+    Active,
+    /// Waiting on services nothing provides yet (`PluginView::missing`).
+    Pending,
+    /// `apply` failed; contained to this entry.
+    Failed { reason: String },
+}
+
+/// One declared secret a parked plugin waits for, with the owner-facing
+/// reason.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretNeedView {
+    pub env: String,
+    pub purpose: String,
+}
+
+/// One composition entry as the kernel runs it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginView {
+    pub id: String,
+    /// The plugin ref: a linked plugin's name or `wasm:<artifact>`.
+    pub plugin: String,
+    pub state: PluginState,
+    /// Labels of the fiber's live effects — what it owns right now.
+    pub effects: Vec<String>,
+    /// Services a pending fiber waits on.
+    pub missing: Vec<String>,
+    pub missing_secrets: Vec<SecretNeedView>,
+}
+
+impl From<FiberView> for PluginView {
+    fn from(fiber: FiberView) -> Self {
+        Self {
+            id: fiber.id,
+            plugin: fiber.plugin,
+            state: match fiber.state {
+                FiberState::Active => PluginState::Active,
+                FiberState::Pending => PluginState::Pending,
+                FiberState::Failed(reason) => PluginState::Failed { reason },
+            },
+            effects: fiber.effects,
+            missing: fiber.missing,
+            missing_secrets: fiber
+                .missing_secrets
+                .into_iter()
+                .map(|SecretNeed { env, purpose }| SecretNeedView { env, purpose })
+                .collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusReport {
     pub sources: u64,
@@ -335,4 +528,61 @@ pub struct StatusReport {
     pub embedding_model: Option<String>,
     pub embedding_dimensions: usize,
     pub reembed_pending: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plugin_ids_are_directory_safe() {
+        let accepted = ["ocr", "my-plugin_2", "a", "0abc"];
+        for id in accepted {
+            assert!(PluginId::new(id).is_ok(), "{id} should be accepted");
+        }
+        let refused = ["", "-ocr", "Ocr", "ocr/evil", "../x", "o c r", "ocr."];
+        for id in refused {
+            assert!(PluginId::new(id).is_err(), "{id} should be refused");
+        }
+        let long = "a".repeat(PLUGIN_ID_CHARS_MAX + 1);
+        assert!(PluginId::new(&long).is_err());
+    }
+
+    #[test]
+    fn file_bytes_travel_as_base64() {
+        let file = PluginFile {
+            path: "ocr.wasm".to_string(),
+            bytes: FileBytes(vec![0, 97, 115, 109]),
+        };
+        let json = serde_json::to_string(&file).expect("serializes");
+        assert_eq!(json, r#"{"path":"ocr.wasm","bytes":"AGFzbQ=="}"#);
+        let back: PluginFile = serde_json::from_str(&json).expect("deserializes");
+        assert_eq!(back, file);
+        assert!(serde_json::from_str::<PluginFile>(r#"{"path":"x","bytes":"!!"}"#).is_err());
+    }
+
+    #[test]
+    fn a_failed_fiber_reports_its_reason() {
+        let view = PluginView::from(FiberView {
+            id: "ocr".to_string(),
+            plugin: "wasm:/p/ocr.wasm".to_string(),
+            state: FiberState::Failed("admission".to_string()),
+            effects: Vec::new(),
+            missing: Vec::new(),
+            missing_secrets: vec![SecretNeed {
+                env: "KEY".to_string(),
+                purpose: "why".to_string(),
+            }],
+        });
+        assert_eq!(
+            view.state,
+            PluginState::Failed {
+                reason: "admission".to_string()
+            }
+        );
+        assert_eq!(view.missing_secrets[0].env, "KEY");
+        let json = serde_json::to_value(&view).expect("serializes");
+        assert_eq!(json["state"]["state"], "failed");
+        assert_eq!(json["state"]["reason"], "admission");
+    }
 }

@@ -28,6 +28,11 @@ impl Greeter for FixedGreeter {
     }
 }
 
+/// The kernel's own bindings — what remains when no fiber provides anything.
+fn is_kernel_binding(key: &str) -> bool {
+    key == "store" || key == "state" || key == "composition"
+}
+
 /// Journal shared by all test plugins so tests can assert order and effects.
 type Journal = Arc<Mutex<Vec<String>>>;
 
@@ -387,7 +392,7 @@ async fn provide_cycle_is_contained_as_a_fiber_failure() {
     let b = fibers.iter().find(|f| f.id == "b").expect("present");
     assert_eq!(b.state, FiberState::Pending);
     assert_eq!(b.missing, vec!["greeter".to_string()]);
-    assert!(kernel.providers().iter().all(|(k, _)| k == "store" || k == "state"));
+    assert!(kernel.providers().iter().all(|(k, _)| is_kernel_binding(k)));
 }
 
 #[tokio::test]
@@ -420,7 +425,7 @@ async fn shutdown_unwinds_everything_consumers_first() {
         ]
     );
     assert!(kernel.fibers().is_empty());
-    assert!(kernel.providers().iter().all(|(k, _)| k == "store" || k == "state"));
+    assert!(kernel.providers().iter().all(|(k, _)| is_kernel_binding(k)));
 }
 
 #[tokio::test]

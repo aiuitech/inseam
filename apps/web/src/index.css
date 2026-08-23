@@ -665,3 +665,83 @@ body::before {
   color: var(--primary);
   font-size: 0.8rem;
 }
+
+.plugins-panel {
+  display: grid;
+  gap: 0.9rem;
+  margin-top: 1.5rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1.25rem;
+}
+.plugins-panel h2 {
+  margin: 0.2rem 0 0;
+  font-size: 1.1rem;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+.plugin-upload {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.75rem;
+  align-items: end;
+}
+.plugin-upload label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--muted-foreground);
+  font-size: 0.6rem;
+  text-transform: uppercase;
+}
+.plugin-upload input[type="file"] {
+  height: 2.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #111310;
+  padding: 0.4rem 0.6rem;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.68rem;
+}
+.plugin-upload input[type="file"]::file-selector-button {
+  margin-right: 0.6rem;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  font-size: 0.68rem;
+  cursor: pointer;
+}
+.plugin-footnote {
+  grid-column: 1 / -1;
+  color: var(--muted-foreground);
+  font-size: 0.65rem;
+}
+.plugin-upload .form-error {
+  grid-column: 1 / -1;
+}
+.plugin-linked summary {
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+.plugin-linked-row {
+  display: grid;
+  grid-template-columns: 10rem 12rem 1fr;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+}
+.plugin-linked-row strong {
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+@media (max-width: 850px) {
+  .plugin-upload {
+    grid-template-columns: 1fr;
+  }
+  .plugin-linked-row {
+    grid-template-columns: 1fr;
+  }
+}

@@ -4,7 +4,15 @@
 //! (CLI, FFI, HTTP) consume this seam and stay logic-free. Boundary
 //! enforcement is the [`OperationRequest`] guard on dispatch:
 //! access-control listeners deny, and denial is monotonic.
+//!
+//! The plugin operations (`plugins`, `install_plugin`) reach the kernel
+//! through the `composition` service: this provider runs inside the tree
+//! and cannot hold the kernel, so it submits edits the distribution
+//! applies (`design/composition.md`).
 
+mod install;
+
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use inseam_kernel::address::{Address, HostId};
@@ -12,7 +20,8 @@ use inseam_kernel::store::{
     CatalogRow, CatalogSelection, IndexStore, StoredFragment, StoredSource,
 };
 use inseam_kernel::substrate::{
-    ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError, Verdict, STORE,
+    ApplyCx, CompositionEdit, CompositionEditor, Entry, EventBus, Facts, Inject, Manifest,
+    Plugin, PluginError, SubstrateError, Verdict, COMPOSITION, STORE,
 };
 use inseam_seams::connection::{
     resolve_default, Connection, Connections, Registration as ConnectionRegistration,
@@ -26,9 +35,9 @@ use inseam_seams::operations::{
     AuthorizeGrantRequest, AwaitAuthorizationRequest, CatalogFilter, CatalogRequest,
     CatalogResponse, CatalogSourceView, EnvelopeView, ExpandRequest,
     ExpandResponse, FetchRequest, FetchResponse, FragmentHint, FragmentView, GrantView,
-    HostView, IndexRequest, OperationRequest, Operations, QueryRequest, QueryResponse,
-    QueryResult, RelationView, RevokeGrantRequest, ScanRequest, ScanResponse, StatusReport,
-    OPERATIONS,
+    HostView, IndexRequest, InstallPluginRequest, OperationRequest, Operations, PluginView,
+    QueryRequest, QueryResponse, QueryResult, RelationView, RevokeGrantRequest, ScanRequest,
+    ScanResponse, StatusReport, OPERATIONS,
 };
 use inseam_seams::sweep::{IndexReport, Sweep, SweepRequest, SWEEP};
 use inseam_seams::dates::ymd;
@@ -62,6 +71,7 @@ impl Plugin for OperationsPlugin {
             Inject::required("connections"),
             Inject::required("finder"),
             Inject::required("sweep"),
+            Inject::required("composition"),
             Inject::optional("oauth"),
         ];
         Manifest {
@@ -78,6 +88,8 @@ impl Plugin for OperationsPlugin {
             finder: cx.get(&FINDER)?,
             sweep: cx.get(&SWEEP)?,
             oauth: cx.try_get(&OAUTH)?,
+            composition: cx.get(&COMPOSITION)?,
+            data_dir: cx.data_dir().to_path_buf(),
             bus: cx.bus().clone(),
         };
         cx.provide(
@@ -97,6 +109,11 @@ pub struct OperationsService {
     /// Absent when no oauth entry is active: the grant operations then say
     /// so instead of pretending there are no grants.
     oauth: Option<Arc<dyn OAuth>>,
+    /// The kernel's edit channel: how a plugin asks the distribution to
+    /// change the composition of the node it runs in.
+    composition: Arc<CompositionEditor>,
+    /// Where installed plugins live: `<data-dir>/plugins/<id>/`.
+    data_dir: PathBuf,
     bus: EventBus,
 }
 
@@ -349,6 +366,62 @@ impl Operations for OperationsService {
         Ok(grant_view(grant.as_ref()).await)
     }
 
+    async fn plugins(&self) -> Result<Vec<PluginView>, SeamError> {
+        // Owner operation: not boundary-guarded (local transports only).
+        let fibers = self
+            .composition
+            .submit(CompositionEdit::Inspect)
+            .await
+            .map_err(edit_error)?;
+        Ok(fibers.into_iter().map(PluginView::from).collect())
+    }
+
+    async fn install_plugin(&self, request: InstallPluginRequest) -> Result<PluginView, SeamError> {
+        // Owner operation: not boundary-guarded (local transports only).
+        let id = request.id.clone();
+        let config = request.config.clone();
+        let plan = install::plan(request)?;
+        // The kernel already runs an entry with this id: refuse before any
+        // file is written. The distribution checks the composition file
+        // again when it applies the edit (pair assertion across the channel).
+        let running = self.plugins().await?;
+        if running.iter().any(|plugin| plugin.id == id.as_str()) {
+            return Err(SeamError::Refused(format!(
+                "this node already runs an entry `{id}`; remove it from the composition first"
+            )));
+        }
+        let directory = self.data_dir.join("plugins").join(id.as_str());
+        if directory.exists() {
+            return Err(SeamError::Refused(format!(
+                "{} already exists; remove that directory (and any entry naming it) first",
+                directory.display()
+            )));
+        }
+        let artifact = install::write(&directory, &plan).map_err(|error| {
+            SeamError::failed(format!("writing plugin files under {}: {error}", directory.display()))
+        })?;
+        let entry = Entry::new(id.as_str(), &format!("wasm:{}", artifact.display())).with_config(config);
+        match self.composition.submit(CompositionEdit::Mount(entry)).await {
+            Ok(fibers) => fibers
+                .into_iter()
+                .find(|fiber| fiber.id == id.as_str())
+                .map(PluginView::from)
+                .ok_or_else(|| {
+                    SeamError::failed(format!("entry `{id}` was mounted but is missing from the snapshot"))
+                }),
+            Err(error) => {
+                // The entry never took: the files we wrote are ours to remove.
+                if let Err(remove_error) = std::fs::remove_dir_all(&directory) {
+                    tracing::warn!(
+                        directory = %directory.display(),
+                        "could not remove the files of a plugin that failed to mount: {remove_error}"
+                    );
+                }
+                Err(edit_error(error))
+            }
+        }
+    }
+
     async fn status(&self) -> Result<StatusReport, SeamError> {
         let stats = self.store.stats().await?;
         let search_rows = self.store.search_rows_count().await.unwrap_or(0);
@@ -366,6 +439,21 @@ impl Operations for OperationsService {
             embedding_dimensions: identity.map(|(_, d)| d).unwrap_or(0),
             reembed_pending: self.store.reembed_pending(),
         })
+    }
+}
+
+/// A composition edit's failure in seam vocabulary: a mount the node
+/// refused or rolled back is a refusal the owner acts on; a runtime that
+/// does not apply edits is a missing capability; the rest failed.
+fn edit_error(error: SubstrateError) -> SeamError {
+    match error {
+        SubstrateError::EntryExists(_) | SubstrateError::MountFailed { .. } => {
+            SeamError::Refused(error.to_string())
+        }
+        SubstrateError::EditsUnserviced | SubstrateError::EditQueueFull => {
+            SeamError::Unavailable(error.to_string())
+        }
+        other => SeamError::failed(other.to_string()),
     }
 }
 

@@ -94,6 +94,23 @@ export type FetchResponse = {
   content_type: string
   text: string
 }
+export type PluginState =
+  | { state: "active" }
+  | { state: "pending" }
+  | { state: "failed"; reason: string }
+
+export type Plugin = {
+  id: string
+  plugin: string
+  state: PluginState
+  effects: string[]
+  missing: string[]
+  missing_secrets: Array<{ env: string; purpose: string }>
+}
+
+/** One file of a plugin directory, contents as standard base64. */
+export type PluginFile = { path: string; bytes: string }
+
 export type IndexReport = {
   sources_seen: number
   indexed: number
@@ -161,4 +178,7 @@ export const api = {
     post<AuthorizationStarted>("/owner/grants/authorize", { grant }),
   revokeGrant: (grant: string) =>
     post<Grant>("/owner/grants/revoke", { grant }),
+  plugins: () => request<Plugin[]>("/owner/plugins"),
+  installPlugin: (id: string, files: PluginFile[]) =>
+    post<Plugin>("/owner/plugins/install", { id, files }),
 }
