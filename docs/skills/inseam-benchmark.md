@@ -56,7 +56,7 @@ Resume must target the same run. Do not copy its index into a new run or change 
 
 The model assignment is an invariant:
 
-- `google/gemini-2.5-flash-lite:batch` for summaries, with low reasoning effort and its reasoning trace excluded.
+- `google/gemini-2.5-flash-lite:batch` for summaries through OpenRouter's Batch API, with low reasoning effort and its reasoning trace excluded.
 - Entity extraction disabled.
 - `stealth/ox-alpha` for agent answers and EnterpriseRAG-Bench evaluation.
 - `openai/text-embedding-3-small` for embeddings.

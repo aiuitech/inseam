@@ -460,7 +460,7 @@ impl LlmClient {
             }
             let mut req = self
                 .http
-                .request(method.clone(), &url)
+                .request(method.clone(), url)
                 .header("HTTP-Referer", "https://github.com/aiui/inseam")
                 .header("X-Title", "inseam");
             if let Some(key) = &self.key {
@@ -510,10 +510,13 @@ impl std::fmt::Debug for LlmClient {
 #[async_trait::async_trait]
 impl Llm for LlmClient {
     async fn chat(&self, request: &ChatRequest) -> Result<ChatMessage, SeamError> {
-        if endpoint_host(&self.base_url) == "openrouter.ai" {
-            if batch_base_model(&request.model).is_some() {
-                return self.chat_via_batch(request).await;
-            }
+        match (
+            endpoint_host(&self.base_url),
+            batch_base_model(&request.model),
+        ) {
+            ("openrouter.ai", Some(_)) => return self.chat_via_batch(request).await,
+            ("openrouter.ai", None) => {}
+            (_, _) => {}
         }
         let body = self.chat_body(request)?;
         let resp: ChatResponse = self
@@ -911,5 +914,50 @@ mod tests {
 
         assert_eq!(body["reasoning_effort"], "none");
         assert!(body.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn batch_requests_strip_suffix_and_keep_reasoning_control() {
+        let client = LlmClient::new(None, "https://openrouter.ai/api/v1");
+        let request = ChatRequest::new(
+            "google/gemini-2.5-flash-lite:batch",
+            vec![ChatMessage::user("summarize")],
+        )
+        .with_reasoning_effort(Some("low"));
+        let (sender, _receiver) = oneshot::channel();
+        let pending = vec![PendingBatchChat {
+            request,
+            response: sender,
+        }];
+
+        let requests = client
+            .chat_batch_requests(&pending, "google/gemini-2.5-flash-lite")
+            .unwrap();
+
+        assert_eq!(
+            batch_base_model(&pending[0].request.model),
+            Some("google/gemini-2.5-flash-lite")
+        );
+        assert_eq!(requests[0]["custom_id"], "inseam-0");
+        assert_eq!(requests[0]["body"]["model"], "google/gemini-2.5-flash-lite");
+        assert_eq!(requests[0]["body"]["reasoning"]["effort"], "low");
+        assert_eq!(requests[0]["body"]["reasoning"]["exclude"], true);
+        assert!(requests[0]["body"].get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn batch_results_return_in_request_order() {
+        let results: Vec<OpenRouterBatchResult> = serde_json::from_str(
+            r#"[
+              {"custom_id":"inseam-1","response":{"status_code":200,"body":{"choices":[{"message":{"role":"assistant","content":"second"}}]}},"error":null},
+              {"custom_id":"inseam-0","response":{"status_code":200,"body":{"choices":[{"message":{"role":"assistant","content":"first"}}]}},"error":null}
+            ]"#,
+        )
+        .unwrap();
+
+        let messages = reorder_chat_batch_results(results, 2).unwrap();
+
+        assert_eq!(messages[0].content.as_deref(), Some("first"));
+        assert_eq!(messages[1].content.as_deref(), Some("second"));
     }
 }

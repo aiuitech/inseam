@@ -12,7 +12,7 @@ The first benchmark is [EnterpriseRAG-Bench](https://github.com/onyx-dot-app/Ent
 
 The harness uses `google/gemini-2.5-flash-lite:batch` through OpenRouter for summaries and `stealth/ox-alpha` for answers, citation cleanup, correctness scoring, and fact scoring. Summary calls request low reasoning effort and exclude the reasoning trace from the response. Entity extraction, markdown splitting, and chunking are disabled. `openai/text-embedding-3-small` embeds one 200-character summary per source at 384 dimensions; source text still enters full-text search.
 
-The default run limits summaries to 500 LLM calls. Inseam uses its deterministic fallback after the summarizer spends that budget. Raise `--llm-call-budget` only after estimating the cost and runtime. Embeddings use base64 responses and pack up to 128 inputs per request, with four batches in flight. The lean source-plus-summary shape fills a request from 256 search rows. Chat summaries do not share a request; the source concurrency bounds those calls.
+The default run limits summaries to 500 LLM calls. Inseam uses its deterministic fallback after the summarizer spends that budget. Raise `--llm-call-budget` only after estimating the cost and runtime. Concurrent `:batch` summary calls are collected for 50 ms and submitted through OpenRouter's Batch API in jobs of up to 128 requests, then polled every five seconds. Embeddings use base64 responses and pack up to 128 inputs per request, with four batches in flight. The lean source-plus-summary shape fills an embedding request from 256 search rows.
 
 ## Set up the fixture
 

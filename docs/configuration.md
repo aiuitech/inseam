@@ -18,7 +18,7 @@ How merging works: when your entry matches a base entry's id, your `config` **re
 | `fs` | `connection-fs` | `host_id` (default `fs-<hostname>`), `skip_hidden` (true), `gitignore` (true), `ignore` (gitignore-syntax patterns; [indexing/ignore.md](indexing/ignore.md)) |
 | `oauth` | `oauth` | `callback_port` (47781), `authorization_timeout_secs` (300), `credentials_dir` (the node's private `oauth/` directory), `grants` (generic grants: provider URLs, scopes, client environment variables, and authorization parameters; connections such as `google` register their own) |
 | `google` | `connection-google` | `grant` (`google`), `client_id_env` (`GOOGLE_CLIENT_ID`), `client_secret_env` (`GOOGLE_CLIENT_SECRET`; `""` for none), `services` (all five), `sources_max` (5000) — one Google account as one host per service ([indexing/google-workspace.md](indexing/google-workspace.md)) |
-| `llm` | `llm-endpoint` | `base_url` (OpenRouter), `api_key_env` (`OPENROUTER_API_KEY`; `""` for a keyless endpoint such as a local ollama), `transform_model`, `transform_reasoning_effort` (unset; `"none"` for thinking models), `agent_model` |
+| `llm` | `llm-endpoint` | `base_url` (OpenRouter), `api_key_env` (`OPENROUTER_API_KEY`; `""` for a keyless endpoint such as a local ollama), `transform_model` (`:batch` uses OpenRouter's Batch API), `transform_reasoning_effort` (unset; `"none"` for thinking models), `agent_model` |
 | `embedder` | `embedder` | `provider` = `endpoint` \| `hashed` \| `none`, `model`, `dimensions` (unset = the model's native width; validated against the model), `vectors` = `all` \| `summaries` ([indexing/embeddings.md](indexing/embeddings.md)) |
 | `transforms` | `transforms` | — (the registry) |
 | `markdown` | `transform-markdown` | — |
