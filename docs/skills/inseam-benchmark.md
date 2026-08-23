@@ -44,6 +44,8 @@ python3 benchmarks/enterprise_rag_bench.py run --limit 1 --skip-evaluation
 
 Keep the defaults for a comparable rerun unless the user names a different experiment. Never silently reuse an index. Each invocation creates a fresh ignored node data directory and a new versioned run directory.
 
+The runner announces indexing, each question's retrieval and answer, and evaluation. Long external commands emit an elapsed-time heartbeat every five seconds. While heartbeats continue, do not diagnose a quiet upstream command as hung. For a live or interrupted run, inspect the newest `manifest.json`: `phase` identifies the active phase, and `queries_completed` shows durable progress. An intentional interruption records `status: interrupted` and preserves the partial run; do not commit it as a result.
+
 The model assignment is an invariant:
 
 - `stealth/ox-alpha` for summarization, entity extraction, agent answers, and EnterpriseRAG-Bench evaluation.

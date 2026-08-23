@@ -26,7 +26,7 @@ Transform call budgets stay explicit. The default is 500 summary calls and 500 e
 
 `manifest.json` is the index for a run. It records time, machine specifications, dataset and evaluator pins, model assignments, exact Inseam identity, options, indexing duration, completed query count, aggregate scores, and terminal status. The exact composition, raw per-result Finder scores, per-query and per-answer durations, answer file, upstream results, dependency versions, and command logs sit beside it.
 
-The runner writes the manifest after indexing and after every question. A crash leaves a useful failed or running record instead of an apparently complete score. Only a manifest whose status is `completed` should enter comparisons.
+The runner writes its current phase before indexing, querying, and evaluation, then updates the manifest after every question. It also emits a five-second elapsed-time heartbeat around each external command. A crash leaves a useful failed, interrupted, or running record instead of an apparently complete score. Only a manifest whose status is `completed` should enter comparisons.
 
 ## Performance sketch
 

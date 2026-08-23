@@ -33,6 +33,8 @@ python3 benchmarks/enterprise_rag_bench.py run
 
 A full run creates a fresh index and evaluates all 500 questions. It can take hours and makes many embedding and LLM requests. `--limit` limits questions and evaluator work, but indexing still covers the full corpus so retrieval scores remain meaningful.
 
+The runner prints each active phase immediately. While an `inseam` command is still running, it prints an elapsed-time heartbeat every five seconds; query progress also includes the question number and ID. The current phase is mirrored in `manifest.json`, so a second terminal can distinguish indexing, querying, and evaluation without inspecting processes.
+
 For a one-question harness check after setup:
 
 ```sh
@@ -57,7 +59,7 @@ Every invocation creates a new ignored index under `benchmark/fixtures/enterpris
 
 Commit completed runs under `benchmarks/runs/<UTC timestamp>-<inseam commit>/`. Each run contains:
 
-- `manifest.json`: start and finish time, total duration, OS, CPU, RAM, disk, Inseam CLI version, binary hash, source revision and dirty state, dataset pins, model names, command timeouts, options, index duration, score summaries, and completion status.
+- `manifest.json`: start and finish time, total duration, current phase, OS, CPU, RAM, disk, Inseam CLI version, binary hash, source revision and dirty state, dataset pins, model names, command timeouts, options, index duration, score summaries, and completion status.
 - `composition.toml`: the exact Inseam composition used.
 - `queries.jsonl`: per-question start and finish time, retrieval time, answer time, total time, answer, initial Finder document IDs, agent-cited document IDs, the combined evaluator document set, and every raw Finder result with its address and score.
 - `answers.jsonl`: the candidate file sent to EnterpriseRAG-Bench.

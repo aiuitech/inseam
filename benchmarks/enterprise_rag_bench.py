@@ -42,6 +42,7 @@ QUERY_TIMEOUT_SECONDS = 600
 AGENT_TIMEOUT_SECONDS = 1_800
 INDEX_TIMEOUT_SECONDS = 259_200
 EVALUATION_TIMEOUT_SECONDS = 604_800
+PROGRESS_INTERVAL_SECONDS = 5
 DOCUMENT_ID_PATTERN = re.compile(r"dsid_[0-9a-f]{32}")
 
 
@@ -83,31 +84,85 @@ def run_capture(
     arguments: list[str],
     *,
     timeout_seconds: int,
+    progress_label: str | None = None,
     cwd: Path = REPOSITORY_ROOT,
     environment: dict[str, str] | None = None,
 ) -> CommandResult:
     assert arguments
     assert timeout_seconds > 0
     started = time.monotonic()
+    if progress_label is not None:
+        print(f"{progress_label}...", flush=True)
+    process = subprocess.Popen(
+        arguments,
+        cwd=cwd,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
     try:
-        completed = subprocess.run(
-            arguments,
-            cwd=cwd,
-            env=environment,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout_seconds,
-        )
-    except subprocess.TimeoutExpired as error:
-        duration_seconds = time.monotonic() - started
-        stdout = timeout_output(error.stdout)
-        stderr = timeout_output(error.stderr)
-        stderr += f"\ncommand timed out after {timeout_seconds} seconds"
-        return CommandResult(124, duration_seconds, stdout, stderr)
+        result = run_capture_wait(process, started, timeout_seconds, progress_label)
+    except KeyboardInterrupt:
+        process.terminate()
+        run_capture_reap(process)
+        raise
+    if progress_label is not None:
+        outcome = "done" if result.returncode == 0 else "failed"
+        duration = format_duration(result.duration_seconds)
+        print(f"{progress_label}: {outcome} in {duration}", flush=True)
+    return result
+
+
+def run_capture_wait(
+    process: subprocess.Popen[str],
+    started: float,
+    timeout_seconds: int,
+    progress_label: str | None,
+) -> CommandResult:
+    heartbeat_count = (timeout_seconds + PROGRESS_INTERVAL_SECONDS - 1) // PROGRESS_INTERVAL_SECONDS
+    assert heartbeat_count > 0
+    for _heartbeat_index in range(heartbeat_count):
+        elapsed_seconds = time.monotonic() - started
+        remaining_seconds = timeout_seconds - elapsed_seconds
+        wait_seconds = min(PROGRESS_INTERVAL_SECONDS, max(0.001, remaining_seconds))
+        try:
+            stdout, stderr = process.communicate(timeout=wait_seconds)
+        except subprocess.TimeoutExpired:
+            if progress_label is not None:
+                elapsed_seconds = time.monotonic() - started
+                print(f"{progress_label}: {format_duration(elapsed_seconds)} elapsed", flush=True)
+        else:
+            duration_seconds = time.monotonic() - started
+            assert duration_seconds >= 0.0
+            assert process.returncode is not None
+            return CommandResult(process.returncode, duration_seconds, stdout, stderr)
+    process.kill()
+    stdout, stderr = process.communicate()
     duration_seconds = time.monotonic() - started
     assert duration_seconds >= 0.0
-    return CommandResult(completed.returncode, duration_seconds, completed.stdout, completed.stderr)
+    stderr += f"\ncommand timed out after {timeout_seconds} seconds"
+    return CommandResult(124, duration_seconds, stdout, stderr)
+
+
+def run_capture_reap(process: subprocess.Popen[str]) -> None:
+    try:
+        process.communicate(timeout=PROGRESS_INTERVAL_SECONDS)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()
+
+
+def format_duration(duration_seconds: float) -> str:
+    assert duration_seconds >= 0.0
+    seconds = int(duration_seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {seconds:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m"
 
 
 def run_logged(
@@ -115,26 +170,20 @@ def run_logged(
     log_path: Path,
     *,
     timeout_seconds: int,
+    progress_label: str | None = None,
     cwd: Path = REPOSITORY_ROOT,
     environment: dict[str, str] | None = None,
 ) -> CommandResult:
     result = run_capture(
         arguments,
         timeout_seconds=timeout_seconds,
+        progress_label=progress_label,
         cwd=cwd,
         environment=environment,
     )
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(result.stdout + result.stderr, encoding="utf-8")
     return result
-
-
-def timeout_output(value: str | bytes | None) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return value
 
 
 def require_success(result: CommandResult, description: str) -> None:
@@ -508,6 +557,7 @@ def question_commands(
     data_dir: Path,
     composition: Path,
     log_dir: Path,
+    progress_prefix: str,
 ) -> dict[str, Any]:
     question_id = str(question["question_id"])
     question_text = str(question["question"])
@@ -516,6 +566,7 @@ def question_commands(
         [*base, "query", question_text, "--limit", str(options.query_limit), "--json"],
         log_dir / f"{question_id}-query.log",
         timeout_seconds=QUERY_TIMEOUT_SECONDS,
+        progress_label=f"{progress_prefix} retrieval",
     )
     require_success(query, f"querying {question_id}")
     query_results = parse_query_results(query.stdout)
@@ -523,6 +574,7 @@ def question_commands(
         [*base, "agent", question_text, "--model", MODEL, "--turns", str(options.turns)],
         log_dir / f"{question_id}-agent.log",
         timeout_seconds=AGENT_TIMEOUT_SECONDS,
+        progress_label=f"{progress_prefix} answer",
     )
     require_success(agent, f"answering {question_id}")
     addresses = [str(result["address"]) for result in query_results]
@@ -603,6 +655,7 @@ def create_run(options: RunOptions) -> tuple[Path, Path, dict[str, Any]]:
         "schema_version": 1,
         "run_id": run_id,
         "status": "running",
+        "phase": "starting",
         "started_at": started_at,
         "finished_at": None,
         "duration_seconds": None,
@@ -627,6 +680,7 @@ def create_run(options: RunOptions) -> tuple[Path, Path, dict[str, Any]]:
             "indexing": INDEX_TIMEOUT_SECONDS,
             "evaluation": EVALUATION_TIMEOUT_SECONDS,
         },
+        "progress_interval_seconds": PROGRESS_INTERVAL_SECONDS,
         "options": vars(options),
         "system": system_specs(),
         "inseam": inseam_identity(),
@@ -641,6 +695,10 @@ def create_run(options: RunOptions) -> tuple[Path, Path, dict[str, Any]]:
 
 
 def index_documents(run_dir: Path, data_dir: Path, composition: Path) -> dict[str, Any]:
+    document_count = fixture_document_count()
+    progress_label = "Indexing benchmark documents"
+    if document_count is not None:
+        progress_label = f"Indexing {document_count:,} benchmark documents"
     started_at = utc_now()
     result = run_logged(
         [
@@ -654,6 +712,7 @@ def index_documents(run_dir: Path, data_dir: Path, composition: Path) -> dict[st
         ],
         run_dir / "logs" / "index.log",
         timeout_seconds=INDEX_TIMEOUT_SECONDS,
+        progress_label=progress_label,
     )
     finished_at = utc_now()
     require_success(result, "indexing EnterpriseRAG-Bench")
@@ -664,6 +723,24 @@ def index_documents(run_dir: Path, data_dir: Path, composition: Path) -> dict[st
         "returncode": result.returncode,
         "log": "logs/index.log",
     }
+
+
+def fixture_document_count() -> int | None:
+    marker = FIXTURE_ROOT / "documents.json"
+    if not marker.exists():
+        return None
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise BenchmarkError(f"could not read fixture metadata at {marker}: {error}") from error
+    document_count = payload.get("text_file_count")
+    if type(document_count) is not int:
+        raise BenchmarkError(f"fixture metadata at {marker} has no integer text_file_count")
+    if document_count < 1:
+        raise BenchmarkError(f"fixture metadata at {marker} has an invalid text_file_count")
+    if document_count > 600_000:
+        raise BenchmarkError(f"fixture metadata at {marker} exceeds the document safety limit")
+    return document_count
 
 
 def run_queries(
@@ -679,9 +756,16 @@ def run_queries(
     answers_path = run_dir / "answers.jsonl"
     for index, question in enumerate(questions):
         question_id = str(question["question_id"])
-        print(f"[{index + 1}/{len(questions)}] {question_id}", flush=True)
+        progress_prefix = f"[{index + 1}/{len(questions)}] {question_id}"
         started_at = utc_now()
-        record = question_commands(question, options, data_dir, composition, run_dir / "logs")
+        record = question_commands(
+            question,
+            options,
+            data_dir,
+            composition,
+            run_dir / "logs",
+            progress_prefix,
+        )
         record["started_at"] = started_at
         record["finished_at"] = utc_now()
         append_json_line(query_path, record)
@@ -717,7 +801,7 @@ def evaluator_environment() -> dict[str, str]:
     return environment
 
 
-def evaluate(run_dir: Path, parallelism: int) -> dict[str, Any]:
+def evaluate(run_dir: Path, parallelism: int, question_count: int) -> dict[str, Any]:
     evaluator = FIXTURE_ROOT / "evaluator"
     evaluator_python = evaluator / ".venv" / "bin" / "python"
     if not evaluator_python.exists():
@@ -740,6 +824,7 @@ def evaluate(run_dir: Path, parallelism: int) -> dict[str, Any]:
         ],
         run_dir / "logs" / "evaluation.log",
         timeout_seconds=EVALUATION_TIMEOUT_SECONDS,
+        progress_label=f"Evaluating {question_count} answers with {parallelism} workers",
         cwd=evaluator,
         environment=evaluator_environment(),
     )
@@ -771,26 +856,49 @@ def run_benchmark(options: RunOptions) -> None:
     run_dir, data_dir, manifest = create_run(options)
     composition = run_dir / "composition.toml"
     composition.write_text(composition_text(options), encoding="utf-8")
+    print(f"Starting EnterpriseRAG-Bench run {manifest['run_id']}", flush=True)
+    print(f"  artifacts: {run_dir}", flush=True)
+    print(f"  index data: {data_dir}", flush=True)
+    print(f"  questions: {len(questions)}", flush=True)
     started = time.monotonic()
     try:
+        update_run_phase(run_dir, manifest, "indexing")
         manifest["indexing"] = index_documents(run_dir, data_dir, composition)
-        write_json(run_dir / "manifest.json", manifest)
+        update_run_phase(run_dir, manifest, "querying")
         queries = run_queries(run_dir, data_dir, composition, manifest, questions, options)
         scores = {"retrieval": retrieval_scores(queries, questions)}
         if not options.skip_evaluation:
-            scores["enterprise_rag_bench"] = evaluate(run_dir, options.evaluation_parallelism)
+            update_run_phase(run_dir, manifest, "evaluating")
+            scores["enterprise_rag_bench"] = evaluate(
+                run_dir,
+                options.evaluation_parallelism,
+                len(questions),
+            )
             pip_freeze(run_dir)
         manifest["scores"] = scores
         manifest["status"] = "completed"
-    except BaseException as error:
+        manifest["phase"] = "completed"
+    except KeyboardInterrupt:
+        manifest["status"] = "interrupted"
+        manifest["phase"] = "interrupted"
+        manifest["error"] = "interrupted by user"
+        raise
+    except Exception as error:
         manifest["status"] = "failed"
-        manifest["error"] = str(error)
+        manifest["phase"] = "failed"
+        manifest["error"] = str(error) or error.__class__.__name__
         raise
     finally:
         manifest["finished_at"] = utc_now()
         manifest["duration_seconds"] = round(time.monotonic() - started, 6)
         write_json(run_dir / "manifest.json", manifest)
     print(f"Benchmark run recorded in {run_dir}")
+
+
+def update_run_phase(run_dir: Path, manifest: dict[str, Any], phase: str) -> None:
+    assert phase in {"indexing", "querying", "evaluating"}
+    manifest["phase"] = phase
+    write_json(run_dir / "manifest.json", manifest)
 
 
 def positive_bounded(value: int, name: str, maximum: int) -> int:
@@ -869,6 +977,9 @@ def main() -> int:
     except BenchmarkError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        print("\ninterrupted; partial run artifacts were preserved", file=sys.stderr)
+        return 130
     return 0
 
 

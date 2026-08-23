@@ -1,9 +1,11 @@
 """Tests for the EnterpriseRAG-Bench harness boundary parsers and scores."""
 
+import io
 import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -83,6 +85,18 @@ class EnterpriseRagBenchTests(unittest.TestCase):
         self.assertIn('agent_model = "stealth/ox-alpha"', composition)
         self.assertEqual(composition.count("llm_call_budget = 500"), 2)
 
+    def test_formats_progress_durations_for_scanning(self) -> None:
+        cases = [
+            (0.9, "0s"),
+            (59.9, "59s"),
+            (61.0, "1m 01s"),
+            (3_660.0, "1h 01m"),
+        ]
+
+        for duration_seconds, expected in cases:
+            with self.subTest(duration_seconds=duration_seconds):
+                self.assertEqual(benchmark.format_duration(duration_seconds), expected)
+
     def test_run_records_manifest_timings_results_and_scores(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_text:
             temporary = Path(temporary_text)
@@ -90,6 +104,9 @@ class EnterpriseRagBenchTests(unittest.TestCase):
             runs = temporary / "runs"
             fake_bin = temporary / "bin"
             fixture.joinpath("documents").mkdir(parents=True)
+            fixture.joinpath("documents.json").write_text(
+                json.dumps({"text_file_count": 1}) + "\n"
+            )
             fixture.joinpath("setup.json").write_text("{}\n")
             fixture.joinpath("questions.jsonl").write_text(
                 json.dumps(
@@ -112,10 +129,12 @@ class EnterpriseRagBenchTests(unittest.TestCase):
             }
             options = benchmark.RunOptions(1, 8, 12, 8, 500, 4, True)
 
-            with mock.patch.object(benchmark, "FIXTURE_ROOT", fixture):
-                with mock.patch.object(benchmark, "RUNS_ROOT", runs):
-                    with mock.patch.dict(os.environ, environment):
-                        benchmark.run_benchmark(options)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                with mock.patch.object(benchmark, "FIXTURE_ROOT", fixture):
+                    with mock.patch.object(benchmark, "RUNS_ROOT", runs):
+                        with mock.patch.dict(os.environ, environment):
+                            benchmark.run_benchmark(options)
 
             run_directories = list(runs.iterdir())
             self.assertEqual(len(run_directories), 1)
@@ -123,12 +142,55 @@ class EnterpriseRagBenchTests(unittest.TestCase):
                 run_directories[0].joinpath("manifest.json").read_text()
             )
             self.assertEqual(manifest["status"], "completed")
+            self.assertEqual(manifest["phase"], "completed")
             self.assertEqual(manifest["queries_completed"], 1)
             self.assertEqual(manifest["inseam"]["cli_version"], "inseam 9.9.9")
             self.assertEqual(
                 manifest["scores"]["retrieval"]["average_document_recall_pct"],
                 100.0,
             )
+            progress = output.getvalue()
+            self.assertIn("Indexing 1 benchmark documents...", progress)
+            self.assertIn("[1/1] qst_0001 retrieval...", progress)
+            self.assertIn("[1/1] qst_0001 answer...", progress)
+            self.assertIn("Benchmark run recorded", progress)
+
+    def test_interruption_records_the_terminal_phase(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_text:
+            temporary = Path(temporary_text)
+            fixture = temporary / "fixture"
+            run_dir = temporary / "run"
+            data_dir = temporary / "data"
+            fixture.mkdir()
+            run_dir.mkdir()
+            data_dir.mkdir()
+            fixture.joinpath("setup.json").write_text("{}\n")
+            manifest = {"run_id": "test-run", "status": "running", "phase": "starting"}
+            options = benchmark.RunOptions(1, 8, 12, 8, 500, 4, True)
+
+            with redirect_stdout(io.StringIO()):
+                with mock.patch.object(benchmark, "FIXTURE_ROOT", fixture):
+                    with mock.patch.object(benchmark, "evaluator_environment"):
+                        with mock.patch.object(
+                            benchmark, "load_questions", return_value=[{}]
+                        ):
+                            with mock.patch.object(
+                                benchmark,
+                                "create_run",
+                                return_value=(run_dir, data_dir, manifest),
+                            ):
+                                with mock.patch.object(
+                                    benchmark,
+                                    "index_documents",
+                                    side_effect=KeyboardInterrupt,
+                                ):
+                                    with self.assertRaises(KeyboardInterrupt):
+                                        benchmark.run_benchmark(options)
+
+            recorded = json.loads(run_dir.joinpath("manifest.json").read_text())
+            self.assertEqual(recorded["status"], "interrupted")
+            self.assertEqual(recorded["phase"], "interrupted")
+            self.assertEqual(recorded["error"], "interrupted by user")
 
 
 def fake_inseam_source() -> str:
