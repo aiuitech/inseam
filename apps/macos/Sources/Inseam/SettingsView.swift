@@ -14,6 +14,7 @@ private let compositionTemplate = """
 
 enum SettingsTab: Hashable {
     case configuration
+    case plugins
     case secrets
     case advanced
 }
@@ -26,6 +27,9 @@ struct SettingsView: View {
             ConfigurationSettingsTab()
                 .tabItem { Label("Configuration", systemImage: "slider.horizontal.3") }
                 .tag(SettingsTab.configuration)
+            PluginsSettingsTab()
+                .tabItem { Label("Plugins", systemImage: "shippingbox") }
+                .tag(SettingsTab.plugins)
             SecretsSettingsTab()
                 .tabItem { Label("Secrets", systemImage: "key") }
                 .tag(SettingsTab.secrets)

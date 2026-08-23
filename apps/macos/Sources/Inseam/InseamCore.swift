@@ -122,6 +122,38 @@ final class CoreNode {
         }
     }
 
+    /// Every composition entry as the running kernel sees it.
+    func plugins() throws -> [PluginView] {
+        guard let handle else { throw CoreError(message: "node is closed") }
+        return try decode([PluginView].self) { error in
+            inseam_node_plugins(handle, &error)
+        }
+    }
+
+    /// Read and mount one plugin directory into this open node. Directory
+    /// parsing and JSON encoding are bounded but blocking, so call off the
+    /// main thread along with the FFI call.
+    func installPlugin(id: String, directory: URL) throws -> PluginView {
+        guard let handle else { throw CoreError(message: "node is closed") }
+        let request = try PluginUpload.request(id: id, directory: directory)
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        encoder.outputFormatting = [.sortedKeys]
+        let json = try String(decoding: encoder.encode(request), as: UTF8.self)
+        return try decode(PluginView.self) { error in
+            inseam_node_install_plugin(handle, json, &error)
+        }
+    }
+
+    /// Inspect a chosen directory before presenting the install sheet.
+    static func inspectPluginDirectory(_ directory: URL) throws -> PluginDirectoryInspection {
+        try PluginUpload.inspect(directory: directory)
+    }
+
+    static func pluginIdProblem(_ id: String) -> String? {
+        PluginUpload.pluginIdProblem(id)
+    }
+
     /// Start authorizing a grant over the loopback redirect; the caller
     /// opens `url` in the browser, then blocks on `authorizeAwait`.
     func authorizeBegin(grant: String) throws -> AuthorizationStarted {
@@ -196,7 +228,7 @@ struct FiberHealth: Decodable, Identifiable {
 
 /// A secret a parked entry declared: the environment variable to set and
 /// the owner-facing reason to set it — prose the UI shows verbatim.
-struct SecretNeed: Decodable, Identifiable, Equatable {
+struct SecretNeed: Codable, Identifiable, Equatable {
     let env: String
     let purpose: String
 

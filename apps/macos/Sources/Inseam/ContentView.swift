@@ -32,6 +32,14 @@ final class AppModel: ObservableObject {
     @Published private(set) var authorizingGrant: String?
     /// The last outcome of a connect/disconnect, for the Settings page.
     @Published var connectionMessage = ""
+    /// Every composition entry as the kernel runs it. The Plugins tab splits
+    /// loaded artifacts from linked entries for display.
+    @Published private(set) var pluginEntries: [PluginView] = []
+    /// Plugin reads and installs block in the FFI and share this guard so the
+    /// Settings tab cannot submit overlapping work.
+    @Published private(set) var pluginBusy = false
+    /// The last plugin list or install outcome shown in Settings.
+    @Published private(set) var pluginMessage = ""
 
     let coreVersion = CoreNode.coreVersion()
     let dataDir: URL
@@ -59,6 +67,7 @@ final class AppModel: ObservableObject {
         parkedWarnings = []
         neededSecrets = []
         parkedEntries = []
+        pluginEntries = []
         results = []
         status = "opening node…"
         let dataDir = dataDir
@@ -72,6 +81,7 @@ final class AppModel: ObservableObject {
             let warnings = Self.parkedWarnings(in: health)
             let grants = (try? node.grants()) ?? []
             let hosts = (try? node.hosts()) ?? []
+            let plugins = (try? node.plugins()) ?? []
             return {
                 self?.node = node
                 self?.nodeOpen = true
@@ -80,6 +90,7 @@ final class AppModel: ObservableObject {
                 self?.parkedWarnings = warnings
                 self?.grants = grants
                 self?.hosts = hosts
+                self?.pluginEntries = plugins
                 if !needs.isEmpty {
                     self?.status = "node open — an API key is needed"
                 } else if !warnings.isEmpty {
@@ -101,6 +112,81 @@ final class AppModel: ObservableObject {
             return {
                 self?.grants = grants
                 self?.hosts = hosts
+            }
+        }
+    }
+
+    /// Re-read the running composition for the Plugins tab.
+    func refreshPlugins() {
+        guard !pluginBusy else { return }
+        guard let node else {
+            pluginEntries = []
+            pluginMessage = "The node is not open."
+            return
+        }
+        pluginMessage = "Loading plugins…"
+        runPlugin { [weak self] in
+            let entries = try node.plugins()
+            return {
+                self?.pluginEntries = entries
+                self?.pluginMessage = "\(entries.count) entries loaded."
+            }
+        }
+    }
+
+    /// Install and reconcile a plugin without reopening the node. Completion
+    /// receives the core's verbatim error, or nil after the refreshed list is
+    /// visible.
+    func installPlugin(
+        id: String,
+        directory: URL,
+        completion: @escaping @MainActor (String?) -> Void
+    ) {
+        guard !pluginBusy else {
+            completion("another plugin operation is already running")
+            return
+        }
+        guard let node else {
+            completion("node is not open")
+            return
+        }
+        pluginMessage = "Installing \(id)…"
+        runPlugin(
+            { [weak self] in
+                let installed = try node.installPlugin(id: id, directory: directory)
+                let entries = try node.plugins()
+                return {
+                    self?.pluginEntries = entries
+                    self?.pluginMessage = "\(installed.id): \(installed.stateLabel)"
+                    completion(nil)
+                }
+            },
+            onError: { [weak self] message in
+                self?.pluginMessage = message
+                completion(message)
+            }
+        )
+    }
+
+    private func runPlugin(
+        _ work: @escaping () throws -> @MainActor () -> Void,
+        onError: @escaping @MainActor (String) -> Void = { _ in }
+    ) {
+        pluginBusy = true
+        Task.detached(priority: .userInitiated) {
+            do {
+                let apply = try work()
+                await MainActor.run {
+                    apply()
+                    self.pluginBusy = false
+                }
+            } catch {
+                let message = error.localizedDescription
+                await MainActor.run {
+                    self.pluginMessage = message
+                    self.pluginBusy = false
+                    onError(message)
+                }
             }
         }
     }

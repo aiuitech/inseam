@@ -33,14 +33,16 @@ A SwiftPM package, no Xcode project:
 
 - `Sources/CInseamFFI/module.modulemap` — system-library target exposing the FFI header and linking `inseam_ffi`.
 - `Sources/Inseam/InseamCore.swift` — `CoreNode`: RAII wrapper over the handle (with explicit `close()` so Settings can reopen), JSON decoding into Swift structs (snake_case converted).
-- `Sources/Inseam/ContentView.swift` — the UI: open node on launch (data dir `~/Library/Application Support/inseam`, shared with the CLI), Index Folder… button, query field, results list.
-- `Sources/Inseam/Configuration.swift` — Codable mirrors of the first-party plugin config types used by the settings bridge.
-- `Sources/Inseam/SettingsView.swift` — the Settings scene (⌘,): visual Configuration, Secrets, and Advanced tabs.
+- `Sources/Inseam/ContentView.swift` — the UI and `AppModel`: open node on launch (data dir `~/Library/Application Support/inseam`, shared with the CLI), run blocking node calls in detached tasks, and publish their results to the windows.
+- `Sources/Inseam/Configuration.swift` — Codable mirrors of the first-party config types and the plugin install/list messages.
+- `Sources/Inseam/PluginUpload.swift` — parse one chosen directory into a bounded `InstallPluginRequest`: regular non-hidden files, relative paths, base64 bytes, one `.wasm` artifact, and the same id/file/byte limits as Rust.
+- `Sources/Inseam/PluginsView.swift` — the Plugins Settings tab: loaded and linked entry states, directory picker, id confirmation sheet, progress, and core errors shown verbatim.
+- `Sources/Inseam/SettingsView.swift` — the Settings scene (⌘,): visual Configuration, Plugins, Secrets, and Advanced tabs.
 - `Sources/Inseam/Secrets.swift` — `SecretStore`, the Keychain wrapper behind the Secrets tab.
 
 ## Plugins
 
-A loaded plugin is installed from the app the way the web console does it: choose the plugin's directory (`<name>.wasm`, its manifest and checks, any fixtures), confirm the entry id, and the node mounts it in place through `inseam_node_install_plugin`; `inseam_node_plugins` lists what runs. Unmounting is editing `composition.toml` (the Advanced tab); upgrading is remove-then-install.
+A loaded plugin is installed from the app the way the web console does it: choose the plugin's directory (`<name>.wasm`, its manifest and checks, any fixtures), confirm the entry id, and the node mounts it in place through `inseam_node_install_plugin`; `inseam_node_plugins` lists what runs. The picker refuses zero or multiple `.wasm` artifacts. Before crossing the FFI, Swift skips hidden and non-regular files, limits traversal to 4,096 entries, limits the request to 64 files and 32 MiB decoded, and checks the id against `[a-z0-9][a-z0-9_-]*` with a 64-character ceiling. Directory reads, base64 encoding, the FFI call, and the list refresh all run off the main actor. Unmounting is editing `composition.toml` (the Advanced tab); upgrading is remove-then-install.
 
 ## Configuration and secrets
 

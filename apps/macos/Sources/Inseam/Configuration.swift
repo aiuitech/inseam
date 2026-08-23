@@ -191,3 +191,75 @@ struct IgnoreRule: Codable, Identifiable {
         case address, host, locator, sourceType, contentType, hint, property
     }
 }
+
+// Codable mirrors of the plugin owner operations. JSON uses snake_case at
+// the FFI boundary through CoreNode's encoder and decoder.
+
+struct InstallPluginRequest: Encodable {
+    let id: String
+    let files: [PluginFile]
+}
+
+struct PluginFile: Encodable {
+    let path: String
+    let bytes: String
+}
+
+enum PluginState: Codable, Equatable {
+    case active
+    case pending
+    case failed(reason: String)
+
+    private enum CodingKeys: String, CodingKey {
+        case state
+        case reason
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let state = try container.decode(String.self, forKey: .state)
+        switch state {
+        case "active": self = .active
+        case "pending": self = .pending
+        case "failed":
+            self = .failed(reason: try container.decode(String.self, forKey: .reason))
+        default:
+            throw DecodingError.dataCorruptedError(
+                forKey: .state,
+                in: container,
+                debugDescription: "unknown plugin state `\(state)`"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .active:
+            try container.encode("active", forKey: .state)
+        case .pending:
+            try container.encode("pending", forKey: .state)
+        case .failed(let reason):
+            try container.encode("failed", forKey: .state)
+            try container.encode(reason, forKey: .reason)
+        }
+    }
+}
+
+struct PluginView: Codable, Identifiable, Equatable {
+    let id: String
+    let plugin: String
+    let state: PluginState
+    let effects: [String]
+    let missing: [String]
+    let missingSecrets: [SecretNeed]
+
+    var stateLabel: String {
+        switch state {
+        case .active: "active"
+        case .pending:
+            missing.isEmpty ? "pending" : "waiting for \(missing.joined(separator: ", "))"
+        case .failed(let reason): "failed: \(reason)"
+        }
+    }
+}
