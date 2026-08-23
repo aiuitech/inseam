@@ -14,14 +14,17 @@ Three refusals define the product against the landscape:
 
 - **No content silo.** Sync-everything search products copy content into storage you must trust and fund. inseam replicates addresses + envelopes only ([addressing](addressing.md)).
 - **Discovery, not just access.** Per-service integrations answer questions one service at a time; inseam's value is the cross-source [index](discovery.md) that ranks an email against a file against a call.
-- **No privileged vendor position.** The hosted offering is an ordinary [node](nodes-and-hosts.md). Anything that only works on the hosted node is a design error.
+- **No privileged vendor position.** The hosted offering is an ordinary [node](nodes-and-hosts.md). Any *platform capability* that only works on the hosted node is a design error — a seam, a kernel affordance, or a plugin power reserved to inseam's own code. Inseam-authored plugins that are not published are not that; they run on the same contract everyone else targets ([hosted-service](hosted-service.md)).
 
 ## Commercialization: the hosted node
 
-Open-source core; revenue from hosting well-provisioned cloud nodes — a strong, always-on index for a user's network. The sale is index quality and uptime. This only stays honest under two architectural invariants:
+Open-source core; revenue from hosting well-provisioned cloud nodes — a strong, always-on index for a user's network. The sale is index quality, reserved plugins, and uptime, on a flat rate with an index-volume allowance and no free tier ([hosted-service](hosted-service.md) has the shape). This only stays honest under three architectural invariants:
 
-- The hosted node runs the same open-source software with no private capabilities.
+- The hosted node runs the open-source kernel and seams, unmodified. What it adds is composition and plugins, never platform.
+- Private plugins are implementations, not privileges: the same conformance harness, the same published contract, no capability a community plugin cannot reach.
 - The per-node [composition](composition.md) asymmetry is the product: weak devices borrow quality from the paid node, so the upgrade is felt on every device without any device being locked in.
+
+The phrasing that matters for surfaces: the hosted node has no special *powers*, and it does have plugins we wrote and did not publish. Both halves get said. Claiming it runs nothing but published code would be false ([PRODUCT.md](../PRODUCT.md) Principle 1).
 
 ## Community plugins are the connector strategy
 
@@ -39,4 +42,9 @@ The long tail of integrations will not be built in-house. The plan: a plugin sur
 ## Paths not taken
 
 - **Consumer-first packaging.** Rejected for now: the app's bar (a flawless Gmail connector on day one) is higher than the developer surface's, and the developer wedge funds the connectors the app needs.
-- **Proprietary connectors as the moat.** Rejected: contradicts the community strategy and puts the company on the connector treadmill the plugin system exists to escape.
+- **Proprietary connectors as the *whole* moat.** Still rejected in its original form — a company whose integrations are all private is back on the connector treadmill the plugin system exists to escape, and has nothing to offer the community authors it depends on. Superseded in part; see below.
+- **Private seams or a private kernel fork.** Rejected: this is the actual privileged-vendor failure. A reserved plugin competes on its implementation; a reserved seam makes every community plugin second-class and quietly ends the ecosystem.
+
+## Settled since
+
+- **Reserved plugins are a moat; reserved platform is not.** The original rejection of proprietary connectors was one decision doing two jobs, and only one of them survives. Keeping the *contract* open is what the community strategy needs — authors target a published seam, agents generate against it, plugins circulate. Keeping every *implementation* open was never load-bearing for that, and it left the hosted node selling operations alone, which is thin and copyable. So: inseam publishes plugins openly and also authors plugins it reserves for the hosted distribution, through the custom-distribution path the linked tier already defines ([plugins](plugins.md)) — no new mechanism, and the conformance harness applies unchanged. The treadmill worry is answered by the split rather than by abstinence: the long tail stays community-written because the contract is public, while the depth inseam builds itself is what a hosted plan buys. The cost is accepted and stated plainly — the hosted binary is not the published binary, "open core" is the accurate word, and surfaces say so ([hosted-service](hosted-service.md)).

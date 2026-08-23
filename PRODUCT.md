@@ -24,7 +24,7 @@ inseam indexes data where it sits (a laptop's filesystem, a Gmail account, a ser
 - **Content never moves.** Only addresses and envelopes (small metadata records) replicate. Sync-everything competitors copy content into another silo you must trust and pay for; inseam cannot, by architecture.
 - **Plugins all the way down.** The kernel is tiny — it runs plugins and owns the store. Every capability is a plugin on a typed service seam composed by `composition.toml`. Sandboxed WASM plugins are safe by construction (attenuated capabilities, fuel limits, conformance harness, release cooldown), so the connector long tail is written by the community and by users' own agents — "all your context" is not capped by a vendor's connector roadmap. The agent using inseam is the agent extending inseam.
 - **Cross-source discovery, not per-service access.** One index that ranks an email against a file against a call transcript; the ladder returns progressively closer views instead of twenty chunks up front.
-- **Yours, not hosted.** Open source core; every node is the user's. The commercial offering is a hosted cloud node with zero special powers — it sells index quality and uptime, not lock-in.
+- **Yours, not hosted.** Open core; every node is the user's. The commercial offering is a hosted cloud node with no special *powers* — same kernel, same seams, nothing a self-hosted node cannot reach — selling index quality, uptime, and inseam-authored plugins we don't publish. Say both halves: no privileged platform, and yes, reserved plugins. Never imply the hosted node runs only published code.
 
 ## Operating Context
 
@@ -36,7 +36,7 @@ inseam indexes data where it sits (a laptop's filesystem, a Gmail account, a ser
 ## Capabilities and Constraints
 
 - **Real today:** kernel, both plugin tiers (compiled-in and sandboxed WASM), filesystem connection, transforms, embeddings, Finder, sweep, node API, the discovery ladder, CLI, plugin authoring + conformance harness, registry model with hash-verified installs.
-- **Designed, not built:** multi-node sync; the external boundary (verified-property exposure, e.g. proving `email:user@example.com` to discover/fetch exactly the sources carrying that property — no user database anywhere).
+- **Designed, not built:** multi-node sync; the external boundary (verified-property exposure, e.g. proving `email:user@example.com` to discover/fetch exactly the sources carrying that property — no user database anywhere); the hosted service (`design/hosted-service.md`) — one VM per tenant, a control plane that cannot read the nodes, metered by index volume.
 - **Status is early and must be described as early.** Surfaces must not claim sync or the boundary as shipped.
 - Terminology is fixed: source, host, node, envelope, seam, composition, the ladder (`query`/`expand`/`scan`/`fetch`), loaded vs compiled plugin tiers. Use it; don't invent parallel vocabulary.
 - Stack (existing): Rust workspace for the product; Astro 7 + Cloudflare Workers (wrangler) for www.inseam.io; docs site at `apps/docs.inseam.io`; native macOS app at `apps/macos`.

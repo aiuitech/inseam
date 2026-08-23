@@ -4,4 +4,4 @@ This directory is the architectural design docs for inseam. Design docs are the 
 
 One file per concept.
 
-Current concepts include [benchmarking](benchmarking.md), which defines how external corpora, fresh indexes, model assignments, and recorded runs produce comparable results.
+Current concepts include [benchmarking](benchmarking.md), which defines how external corpora, fresh indexes, model assignments, and recorded runs produce comparable results, and [hosted-service](hosted-service.md), which defines how the commercial offering provisions, isolates, updates, and meters tenant nodes without gaining any power over them.
