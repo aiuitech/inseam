@@ -18,14 +18,15 @@ The node's data directory lives on an attached block volume, never on the server
 
 | Operation | Mechanism |
 | --- | --- |
-| update | rebuild the server from the new image, reattach the volume |
+| release | the node swaps its own binary from the signed manifest ([releases](releases.md)); the server is untouched |
+| rebuild | recreate the server from the base image, reattach the volume — for OS base changes and repair, never for releases |
 | suspend | detach the volume, delete the server |
 | archive | snapshot the volume, delete the volume |
 | resize | change the server type, reattach |
 | restore | create a server from the image, attach the volume |
-| patch the OS | does not exist — servers are rebuilt from a fresh image, never edited |
+| patch the OS | does not exist — servers are rebuilt from a fresh base image, never edited |
 
-Nothing is configured in place, so nothing drifts, and there is no configuration-management layer to own. A node that misbehaves is deleted and recreated against the same volume. The cost model follows the same split: a *powered-off* server still bills (its resources stay reserved), so suspension means deleting the server and keeping the volume, and archival means keeping only a snapshot.
+Nothing is configured in place, so nothing drifts, and there is no configuration-management layer to own. The base image contains no `inseam` binary: first boot fetches the version the release manifest names for the node's cohort, so a freshly rebuilt server converges to the same version a long-lived one updated itself to, through one mechanism. A node that misbehaves is deleted and recreated against the same volume. The cost model follows the same split: a *powered-off* server still bills (its resources stay reserved), so suspension means deleting the server and keeping the volume, and archival means keeping only a snapshot.
 
 Hetzner Cloud is the first provider — its API covers server, volume, image, and firewall lifecycle, and its per-node cost leaves the margin a flat rate needs. Nothing above is Hetzner-specific; the provider is one adapter in the control plane.
 
@@ -37,7 +38,9 @@ Concretely: no standing key into a tenant machine; the volume is encrypted with 
 
 ## Updates are pulled, not pushed
 
-Push-based rollout requires exactly the standing credential the invariant above forbids, so releases go the other way. Inseam publishes a **signed release manifest** naming a version per cohort. Each node polls it, verifies the signature, rebuilds itself inside its maintenance window, and reports its running version to a status endpoint. Staged rollout is the control plane moving tenants between cohorts; rollback is republishing the previous version.
+Push-based rollout requires exactly the standing credential the invariant above forbids, so releases go the other way. Inseam publishes a **signed release manifest** at the hosted origin naming a version per cohort ([releases](releases.md)). A supervisor timer on each node runs `inseam self update` inside the tenant's maintenance window: it verifies the signature, swaps the binary, and restarts. The node reports its running version to the control plane's status endpoint, and the **response carries the node's cohort** — the one piece of release state the control plane owns. Staged rollout is the control plane moving tenants between cohorts; rollback is promoting the previous version again. The control plane can choose *which signed version* a node runs and nothing else, which is precisely its legitimate power.
+
+Two things are deliberately separate here. A **release** is a binary swap the node performs on itself; a **rebuild** is the control plane recreating the server from the base image against the same volume, reserved for base-image changes and repair. Only the first happens on inseam's release cadence, and the server is never touched for it. A node cannot rebuild itself — a Hetzner token is project-scoped, and a tenant machine holding one could delete every other tenant's server — so the split is forced by the credential model, not chosen for tidiness.
 
 This costs a delay between publish and convergence and gains three things: the invariant holds, there is no orchestrator, and the mechanism does not care whether there are ten nodes or ten thousand. It is the same shape the loaded tier's release cooldown already takes — the node decides when code activates, using a clock it owns.
 
@@ -56,6 +59,8 @@ One rule keeps this from rotting the plugin story:
 > The moat is *which plugins exist*, never *what the platform lets a plugin do*.
 
 Private implementations, public seams. There is no seam, capability, or kernel affordance available to an inseam-authored plugin and not to a community one; a private plugin passes the same conformance harness as any other; and anyone can write a competing plugin against the same published contract and get identical behavior from the same node. The design error [positioning](positioning.md) names is a *privileged seam*, not a proprietary implementation — a distinction worth stating precisely, because the first would make every community plugin a second-class citizen and the second does not.
+
+The hosted distribution is its own repository — the private linked plugins and a three-line binary pinning `inseam-cli` by tag — built by the public release pipeline's reusable build job and promoted to cohorts by an operator who holds the signing key off the build machine ([releases](releases.md)). Updating the core and updating a private plugin are the same motion: tag, build, promote.
 
 Which tier a private plugin uses is decided by the existing rule, not by commercial preference: **linked** where the boundary cost bites (the indexing hot path, embedders, finder internals), **loaded** everywhere else. Preferring loaded matters more than it looks — a loaded private plugin is an artifact delivered through an entitled channel, so one binary runs everywhere and entitlement stays a licensing fact rather than a code fork. Linked private plugins mean the hosted binary genuinely differs from the open-source one, which is honest open core but must be *said* rather than implied away, and which forecloses ever selling a plugin pack to a self-hosted node.
 
@@ -77,6 +82,8 @@ Volumes grow but do not shrink, so a customer who deletes half their catalog can
 - **Scale-to-zero / suspend-on-idle (Fly Machines and similar).** The product *is* the always-on backbone through which roster and catalog updates converge ([network](network.md)); a node that sleeps is not one. It would also have put the fleet's reachability on a platform whose UDP path is its weakest, and node↔node transport is QUIC ([connections](connections.md)).
 - **A free tier.** Rejected: the open-source core is the free tier, and a permanently-provisioned machine per free user has no cost floor. This is what makes always-on virtual machines affordable at all.
 - **Push-based updates.** Requires a standing credential into every tenant machine, contradicting the control-plane invariant above.
+- **Nodes rebuilding their own servers.** Would require each tenant machine to hold a project-scoped provider token, which is a credential over every other tenant. Nodes swap binaries; the control plane rebuilds servers.
+- **A Cloudflare-proxied tenant hostname.** Proxying `<tenant>.inseam.io` would terminate the tenant's TLS on infrastructure the operator controls, which is the invariant violated by another name, and would not carry node↔node QUIC. Tenant records are DNS-only and the node holds its own certificate.
 - **A private fork of the kernel or private seams.** Rejected as the actual design error [positioning](positioning.md) warns about; the custom-distribution path gets the same commercial result without it.
 
 ## Open questions
