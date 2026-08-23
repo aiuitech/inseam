@@ -79,6 +79,23 @@ char *inseam_node_revoke_grant(const InseamNode *node,
                                const char *grant,
                                char **error_out);
 
+/* Every composition entry as the kernel runs it: a JSON array of PluginView
+ * ({id, plugin, state: {state: "active"|"pending"|"failed", reason?},
+ * effects, missing, missing_secrets}) — the `plugins` owner operation. */
+char *inseam_node_plugins(const InseamNode *node, char **error_out);
+
+/* Install a loaded plugin into the open node, no reopen. request_json is an
+ * InstallPluginRequest: {id, files: [{path, bytes}], config?} — the plugin
+ * directory's files, paths relative to it, bytes in standard base64 (at most
+ * 64 files, 32 MiB total). Files land under <data_dir>/plugins/<id>/, the
+ * entry is appended to the node's composition, the kernel reconciles in
+ * place. Returns the new entry's PluginView JSON; an entry that fails to
+ * activate is rolled back and the failure is the error. Blocks for the
+ * mount (admission runs on first sighting) — call off the main thread. */
+char *inseam_node_install_plugin(const InseamNode *node,
+                                 const char *request_json,
+                                 char **error_out);
+
 /* Per-entry health as a JSON array of {id, plugin, state, error, missing}.
  * state is "active" | "pending" | "failed"; error is set only for failed
  * entries and missing only for pending ones. */

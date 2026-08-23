@@ -19,9 +19,13 @@ A C ABI static library (`libinseam_ffi.a`) with a hand-maintained header at `cra
 | `inseam_node_grants` | The OAuth grants the node holds → `GrantView[]` JSON |
 | `inseam_node_authorize_begin` / `inseam_node_authorize_await` | Start a loopback authorization (returns the provider URL the app opens) and block until the browser comes back |
 | `inseam_node_revoke_grant` | Forget a grant's tokens |
+| `inseam_node_plugins` | Every composition entry as the kernel runs it → `PluginView[]` JSON (the `plugins` owner operation) |
+| `inseam_node_install_plugin` | Mount a loaded plugin into the open node from an `InstallPluginRequest` JSON (`{id, files: [{path, bytes(base64)}], config?}`) → the new entry's `PluginView` JSON. Files land under `<data-dir>/plugins/<id>/`, the entry is appended to `composition.toml`, the kernel reconciles in place — no reopen; a failed mount is rolled back and named |
 | `inseam_node_free` / `inseam_string_free` | Release handles/strings the library allocated |
 
 Conventions: calls that can fail take `char **error_out` (null return + owned message on failure); every returned string is freed with `inseam_string_free`. The handle owns a booted kernel and its tokio runtime, so calls block — app shells run them off the main thread. Responses are the same serde types `ops` serializes everywhere else.
+
+The handle is a distribution like the CLI: it boots the WASM plugin host, so `wasm:` entries in `composition.toml` mount, and it is what applies composition edits ([../../design/composition.md](../../design/composition.md)) — `inseam_node_install_plugin` runs the operation on the runtime and services the `composition` edit channel until it returns, the same loop `inseam serve` runs beside its transport. Overlapping calls on one handle serialize on the kernel rather than racing.
 
 ## The Swift side (`apps/macos`)
 
@@ -33,6 +37,10 @@ A SwiftPM package, no Xcode project:
 - `Sources/Inseam/Configuration.swift` — Codable mirrors of the first-party plugin config types used by the settings bridge.
 - `Sources/Inseam/SettingsView.swift` — the Settings scene (⌘,): visual Configuration, Secrets, and Advanced tabs.
 - `Sources/Inseam/Secrets.swift` — `SecretStore`, the Keychain wrapper behind the Secrets tab.
+
+## Plugins
+
+A loaded plugin is installed from the app the way the web console does it: choose the plugin's directory (`<name>.wasm`, its manifest and checks, any fixtures), confirm the entry id, and the node mounts it in place through `inseam_node_install_plugin`; `inseam_node_plugins` lists what runs. Unmounting is editing `composition.toml` (the Advanced tab); upgrading is remove-then-install.
 
 ## Configuration and secrets
 

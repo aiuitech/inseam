@@ -10,6 +10,7 @@ crate-type = ["staticlib", "lib"]
 inseam-kernel.workspace = true
 inseam-seams.workspace = true
 inseam-plugins.workspace = true
+inseam-wasm-host.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true
@@ -17,4 +18,5 @@ tokio.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
+base64.workspace = true
 tempfile.workspace = true

@@ -1438,9 +1438,11 @@ dependencies = [
 name = "inseam-ffi"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "inseam-kernel",
  "inseam-plugins",
  "inseam-seams",
+ "inseam-wasm-host",
  "serde",
  "serde_json",
  "tempfile",
