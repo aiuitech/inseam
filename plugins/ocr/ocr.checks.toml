@@ -17,6 +17,22 @@ fragment_contains = "GARAGE SALE"
 relation = "transcribes"
 mimetype = "text/plain"
 
+# A linked image: the same transcript for an image that is a fragment of
+# some document rather than a source of its own — the bytes arrive through
+# `source-bytes` either way.
+[[check]]
+name = "transcribes a linked image reached as a non-root fragment"
+mimetype = "image/jpeg"
+is_root = false
+bytes_file = "fixtures/pixel.png"
+llm_returns = "OPEN HOUSE SUNDAY 2PM"
+
+[check.expect]
+min_fragments = 1
+fragment_contains = "OPEN HOUSE"
+relation = "transcribes"
+mimetype = "text/plain"
+
 # The degrade path: when the LLM refuses (offline node, spent budget), OCR
 # must emit nothing — never an error, never a placeholder fragment that
 # would pollute the search index.

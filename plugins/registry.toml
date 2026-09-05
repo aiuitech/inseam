@@ -13,7 +13,7 @@
 
 [[plugin]]
 name = "ocr"
-version = "0.1.0"
-description = "Transcribe text in images through the granted vision LLM"
+version = "0.2.0"
+description = "Transcribe text in images, root or linked, through the granted vision LLM"
 artifact = "ocr/ocr.wasm"
-sha256 = "cf009072570a78b7c6130726a1487e4aca4b376bc7b22121b803d72db9f77ba3"
+sha256 = "56e6c78e7c593631b64cb59c11d1348ebfca7b0a34ee20d735faf905d44fc886"

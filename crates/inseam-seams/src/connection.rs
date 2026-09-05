@@ -207,6 +207,18 @@ pub trait Connection: Send + Sync {
 
     /// Raw bytes of a source, for byte-wanting transforms and binary fetches.
     async fn read_bytes(&self, address: &Address) -> Result<Vec<u8>, SeamError>;
+
+    /// The envelope of one address without enumerating anything — how a
+    /// fetch-only host answers "what is this?" (a web resource's content
+    /// type and size from its headers) so a transform can type a reference
+    /// before anyone reads the bytes. Hosts that only learn envelopes by
+    /// enumeration leave the default, which says so.
+    async fn describe(&self, address: &Address) -> Result<Envelope, SeamError> {
+        Err(SeamError::Unavailable(format!(
+            "host `{}` describes sources only by enumeration",
+            address.host
+        )))
+    }
 }
 
 /// One registered connection: the host it stewards, what the edge supports,
@@ -237,14 +249,20 @@ pub trait Connections: Send + Sync {
     }
 }
 
-/// Pick the connection a scope names when the caller did not: the only one
-/// mounted, or an error listing the choices. Explicit is the rule the
-/// moment a node stewards two hosts.
+/// Pick the connection a scope names when the caller did not: the only
+/// sweepable one mounted, or an error listing the choices. Explicit is the
+/// rule the moment a node stewards two enumerable hosts; a fetch-only host
+/// (the public web) can never be a sweep's scope, so it is never a
+/// candidate and never makes a lone filesystem ambiguous.
 pub fn resolve_default(registry: &dyn Connections) -> Result<Arc<Registration>, SeamError> {
-    let mut hosts = registry.snapshot();
+    let mut hosts: Vec<Arc<Registration>> = registry
+        .snapshot()
+        .into_iter()
+        .filter(|r| r.capabilities.enumerates)
+        .collect();
     match hosts.len() {
         0 => Err(SeamError::Unavailable(
-            "no connection is mounted; this node stewards no host".to_string(),
+            "no connection that can be swept is mounted; this node enumerates no host".to_string(),
         )),
         1 => Ok(hosts.remove(0)),
         _ => Err(SeamError::AmbiguousHost(

@@ -1,8 +1,8 @@
 name = "ocr"
-version = "0.1.0"
+version = "0.2.0"
 seam = "transform"
 claims = ["image/png", "image/jpeg", "image/webp"]
-roots_only = true
+roots_only = false
 kind = "enrichment"
 
 [capabilities]

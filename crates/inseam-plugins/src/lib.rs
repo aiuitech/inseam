@@ -13,6 +13,7 @@
 
 pub mod connection_fs;
 pub mod connection_google;
+pub mod connection_web;
 pub mod connections;
 pub mod embedder;
 pub mod finder;
@@ -22,6 +23,7 @@ pub mod operations;
 pub mod sweep;
 pub mod transform_chunker;
 pub mod transform_entities;
+pub mod transform_links;
 pub mod transform_markdown;
 pub mod transform_summarizer;
 pub mod transforms;
@@ -37,6 +39,7 @@ pub fn factories() -> Vec<Arc<dyn PluginFactory>> {
         Arc::new(connections::ConnectionsRegistryFactory),
         Arc::new(connection_fs::FsConnectionFactory),
         Arc::new(connection_google::GoogleConnectionFactory),
+        Arc::new(connection_web::WebConnectionFactory),
         Arc::new(oauth::OAuthFactory),
         Arc::new(llm_endpoint::LlmEndpointFactory),
         Arc::new(embedder::EmbedderFactory),
@@ -45,6 +48,7 @@ pub fn factories() -> Vec<Arc<dyn PluginFactory>> {
         Arc::new(transform_chunker::ChunkerFactory),
         Arc::new(transform_summarizer::SummarizerFactory),
         Arc::new(transform_entities::EntityExtractorFactory),
+        Arc::new(transform_links::LinksFactory),
         Arc::new(finder::FinderFactory),
         Arc::new(sweep::SweepFactory),
         Arc::new(operations::OperationsFactory),

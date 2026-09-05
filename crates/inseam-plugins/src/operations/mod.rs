@@ -169,12 +169,22 @@ impl OperationsService {
     /// The host an index request means: the one it names, else the only
     /// one mounted.
     fn host_for_index(&self, request: &IndexRequest) -> Result<Arc<ConnectionRegistration>, SeamError> {
-        match &request.host {
+        let steward = match &request.host {
             Some(host) => self
                 .connections
                 .resolve(host)
-                .ok_or_else(|| SeamError::UnknownHost(host.clone())),
-            None => resolve_default(self.connections.as_ref()),
+                .ok_or_else(|| SeamError::UnknownHost(host.clone()))?,
+            None => resolve_default(self.connections.as_ref())?,
+        };
+        // A fetch-only host has nothing to enumerate: naming it as a scope
+        // is a mistake to say out loud, not an empty sweep.
+        if steward.capabilities.enumerates {
+            Ok(steward)
+        } else {
+            Err(SeamError::Refused(format!(
+                "host `{}` serves fetches only and cannot be swept",
+                steward.host.id
+            )))
         }
     }
 

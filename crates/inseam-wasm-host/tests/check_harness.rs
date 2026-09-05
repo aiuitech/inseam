@@ -48,8 +48,9 @@ async fn ocr_passes_the_full_harness_including_its_golden_checks() {
         .iter()
         .filter(|i| i.phase == Phase::Golden)
         .collect();
-    // The coverage gate, then both of the plugin's own checks.
-    assert_eq!(golden.len(), 3, "coverage gate + both golden checks ran: {}", report.render());
+    // The coverage gate, then the plugin's three own checks: a root image,
+    // a linked (non-root) image, and the starved path.
+    assert_eq!(golden.len(), 4, "coverage gate + three golden checks ran: {}", report.render());
     assert!(report.render().contains("PASS"));
 }
 

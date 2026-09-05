@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use inseam_kernel::address::{Address, Locator};
 use inseam_kernel::substrate::{Composition, Kernel, PluginFactory};
-use inseam_seams::connection::CONNECTIONS;
+use inseam_seams::connection::{HostKind, CONNECTIONS};
 use inseam_seams::operations::{Operations, QueryRequest, OPERATIONS};
 
 pub const OFFLINE_BASE: &str = r#"
@@ -85,7 +85,8 @@ pub fn address_of(kernel: &Kernel, path: &Path) -> Address {
         .service(&CONNECTIONS)
         .expect("connections bound")
         .snapshot()
-        .pop()
+        .into_iter()
+        .find(|r| r.host.kind == HostKind::filesystem())
         .expect("the filesystem connection registered")
         .host
         .id

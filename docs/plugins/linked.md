@@ -9,6 +9,7 @@ Every plugin is the same five declarations — name, config, inject, provide, ap
 | `connections` | `connections` | — | the registry connection plugins sign up with ([indexing/connections.md](../indexing/connections.md)) |
 | `connection-fs` | — | connections | the local filesystem host ([indexing/filesystem-host.md](../indexing/filesystem-host.md)) |
 | `connection-google` | — | connections, oauth | one Google account as a host per service (Gmail, Drive, Calendar, Contacts, Tasks); registers its own grant and follows it ([indexing/google-workspace.md](../indexing/google-workspace.md)) |
+| `connection-web` | — | connections | the public web as a fetch-only host behind an allow list and a public-address guard; not in the base composition ([indexing/web-host.md](../indexing/web-host.md)) |
 | `oauth` | `oauth` | — | the node's OAuth grants — configured here or registered by connections: authorize from any client, store, refresh; host connections consume them by id ([oauth.md](oauth.md)) |
 | `llm-endpoint` | `llm` | — | OpenAI-compatible client; declares `transform_model`/`agent_model` as facts. Fails loudly (and alone) when its key env var is unset, and declares that need via `Plugin::secrets()` so status surfaces can say why the key matters |
 | `embedder` | `embedder` | store, llm? | endpoint / hashed / none; declares the embedding identity to the store, which opens the search surface under it |
@@ -17,6 +18,7 @@ Every plugin is the same five declarations — name, config, inject, provide, ap
 | `transform-chunker` | — | transforms | fallback chunking for text with no structure |
 | `transform-summarizer` | — | transforms | the mandatory summary (LLM → extractive → envelope) |
 | `transform-entities` | — | transforms | LLM entity extraction |
+| `transform-links` | — | transforms, connections | the link follower: links to images become typed fragments referencing their web address; not in the base composition ([indexing/transforms.md](../indexing/transforms.md)) |
 | `finder` | `finder` | store, embedder | the ranking algorithm ([finder/algorithm.md](../finder/algorithm.md)) |
 | `sweep` | `sweep` | store, connections, transforms, embedder, llm? | the reconciling sweep ([indexing/maintenance.md](../indexing/maintenance.md)) |
 | `operations` | `operations` | store, connections, finder, sweep, oauth? | the transport-neutral node API, grant operations included ([finder/operations.md](../finder/operations.md)) |

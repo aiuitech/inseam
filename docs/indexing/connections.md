@@ -16,8 +16,8 @@ register_as_effect(cx, Registration {
 ```
 
 - **Host description** — the stable host id addresses carry, the kind (the locator-schema family, also the domain separator in id derivation), and a display name. This is the roster's host record, held locally.
-- **Capabilities** — what the edge supports, stated in full: whether it can *enumerate* (a fetch-only edge is never swept), whether it offers a *change feed*, whether it is *writable*. These are the facts consumers branch on.
-- **The connection** — `enumerate(root)` lists the sources under a connection-interpreted scope (a directory, a label); `locator_prefix(root)` says which locators that scope covers so vanished sources can be reconciled (`Some("")` means the whole host — what a flat id space answers for its everything-scope; `None` skips reconciliation rather than guessing); `read_text` / `read_lines` / `read_bytes` serve content.
+- **Capabilities** — what the edge supports, stated in full: whether it can *enumerate* (a fetch-only edge is never swept — the [web host](web-host.md) is one), whether it offers a *change feed*, whether it is *writable*. These are the facts consumers branch on.
+- **The connection** — `enumerate(root)` lists the sources under a connection-interpreted scope (a directory, a label); `locator_prefix(root)` says which locators that scope covers so vanished sources can be reconciled (`Some("")` means the whole host — what a flat id space answers for its everything-scope; `None` skips reconciliation rather than guessing); `read_text` / `read_lines` / `read_bytes` serve content; `describe(address)` answers one address's envelope without enumerating (a web resource's headers), which fetch-only hosts implement and the rest leave to the default.
 
 Registration is an effect: unmounting the plugin unregisters the host, and nothing downstream has to be told. One node holds **one connection per host** — a second entry registering a host already stewarded fails that entry alone, naming both.
 
@@ -26,7 +26,7 @@ Registration is an effect: unmounting the plugin unregisters the host, and nothi
 Consumers never bind a connection; they inject `connections` and resolve by host:
 
 - the **sweep** resolves the host a `SweepRequest` names at the start of every run, so mounting a mailbox never restarts the sweep;
-- **operations** resolve `scan`/`fetch` by the host in the address, and `index` by the host the request names — or the only host mounted. With two or more hosts, a scope must name one: `inseam index --host <id> <root>`, or an address, `inseam index inseam://<host>/<root>`. `inseam hosts` lists what is mounted.
+- **operations** resolve `scan`/`fetch`/`fetch_bytes` by the host in the address, and `index` by the host the request names — or the only *enumerable* host mounted. With two or more enumerable hosts, a scope must name one: `inseam index --host <id> <root>`, or an address, `inseam index inseam://<host>/<root>`; a fetch-only host is never a candidate and is refused by name if named. `inseam hosts` lists what is mounted.
 
 ## Writing one
 

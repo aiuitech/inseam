@@ -1,7 +1,9 @@
-//! OCR enrichment plugin: transcribes visible text from images encountered
-//! at source roots via one metered vision call, emitting a single
-//! `text/plain;via=ocr` fragment that `transcribes` the image. Degrades to
-//! empty output whenever a capability is withheld or the image has no text.
+//! OCR enrichment plugin: transcribes visible text from images — image
+//! sources at the root, and images a document links to (fragments carrying
+//! a content reference, whose bytes the host hands over the same way) —
+//! via one metered vision call, emitting a single `text/plain;via=ocr`
+//! fragment that `transcribes` the image. Degrades to empty output whenever
+//! a capability is withheld or the image has no text.
 
 wit_bindgen::generate!({
     path: "../../crates/inseam-wasm-host/wit",
@@ -28,7 +30,7 @@ impl Guest for Plugin {
                 "image/jpeg".into(),
                 "image/webp".into(),
             ],
-            roots_only: true,
+            roots_only: false,
         }
     }
 

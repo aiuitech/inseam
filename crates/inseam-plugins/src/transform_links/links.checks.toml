@@ -1,0 +1,41 @@
+# Golden checks for the `links` linked transform (docs/plugins/validation.md),
+# run by the conformance suite through the transforms seam. The conformance
+# kernel mounts no web host, so these checks pin the offline path: a link is
+# typed by its URL's extension and referenced without any network. Probing
+# through a mounted web host is proven by the integration test
+# (tests/web_host.rs).
+
+# The claim: a link to an image becomes an `image/*` fragment that
+# references the image's web address, related `resolves-to`.
+[[check]]
+name = "types a linked image by its extension and references it"
+mimetype = "text/uri-list"
+is_root = false
+text = "https://example.com/flyers/garage-sale.png"
+
+[check.expect]
+min_fragments = 1
+max_fragments = 1
+relation = "resolves-to"
+mimetype = "image/png"
+
+# Links to content outside the follow list produce nothing: the graph keeps
+# the `text/uri-list` fragment itself, and that is all it says about a page.
+[[check]]
+name = "ignores links to content it does not follow"
+mimetype = "text/uri-list"
+text = "https://example.com/renovation-guide.html"
+
+[check.expect]
+min_fragments = 0
+max_fragments = 0
+
+# The degrade path: no text, no link, nothing emitted.
+[[check]]
+name = "emits nothing when the text is withheld"
+mimetype = "text/uri-list"
+is_root = false
+
+[check.expect]
+min_fragments = 0
+max_fragments = 0

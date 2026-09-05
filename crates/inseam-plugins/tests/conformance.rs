@@ -17,9 +17,10 @@ use inseam_seams::transforms::TRANSFORMS;
 /// that is the enrollment gate, not an oversight.
 fn conformance_config(name: &str) -> toml::Table {
     let raw = match name {
-        "connections" | "connection-fs" | "connection-google" | "oauth" | "llm-endpoint"
-        | "transforms" | "transform-markdown" | "transform-chunker" | "transform-summarizer"
-        | "transform-entities" | "finder" | "sweep" | "operations" => "",
+        "connections" | "connection-fs" | "connection-google" | "connection-web" | "oauth"
+        | "llm-endpoint" | "transforms" | "transform-markdown" | "transform-chunker"
+        | "transform-summarizer" | "transform-entities" | "transform-links" | "finder" | "sweep"
+        | "operations" => "",
         "embedder" => "provider = \"hashed\"\nmodel = \"hashed\"\ndimensions = 8",
         other => panic!(
             "linked plugin `{other}` is not enrolled in the conformance suite; add a minimal \
@@ -40,6 +41,7 @@ fn golden_checks_for(name: &str) -> Option<PathBuf> {
         "chunker" => "transform_chunker/chunker.checks.toml",
         "summarizer" => "transform_summarizer/summarizer.checks.toml",
         "entity-extractor" => "transform_entities/entity-extractor.checks.toml",
+        "links" => "transform_links/links.checks.toml",
         _ => return None,
     };
     Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join(file))
@@ -57,16 +59,16 @@ async fn linked_transforms_claim_deterministically_and_survive_hostile_inputs() 
         data.path(),
         // The offline base omits the entity extractor only because it is
         // useless without an LLM; conformance still covers it.
-        "[[entry]]\nid = \"entities\"\nplugin = \"transform-entities\"\n",
+        "[[entry]]\nid = \"entities\"\nplugin = \"transform-entities\"\n\n[[entry]]\nid = \"links\"\nplugin = \"transform-links\"\n",
     )
     .await;
     let registrations = kernel.service(&TRANSFORMS).expect("transforms bound").snapshot();
     assert!(
-        registrations.len() >= 4,
-        "markdown, chunker, summarizer, entities all registered: {}",
+        registrations.len() >= 5,
+        "markdown, chunker, summarizer, entities, links all registered: {}",
         registrations.len()
     );
-    inseam_conformance::batter_transforms(&kernel, &[]).await;
+    inseam_conformance::batter_transforms(&kernel, &["text/uri-list"]).await;
 }
 
 #[tokio::test]
@@ -74,7 +76,7 @@ async fn linked_transforms_pass_their_own_golden_checks() {
     let data = tempfile::tempdir().expect("tempdir");
     let kernel = common::boot(
         data.path(),
-        "[[entry]]\nid = \"entities\"\nplugin = \"transform-entities\"\n",
+        "[[entry]]\nid = \"entities\"\nplugin = \"transform-entities\"\n\n[[entry]]\nid = \"links\"\nplugin = \"transform-links\"\n",
     )
     .await;
     inseam_conformance::golden_transforms(&kernel, &golden_checks_for).await;
