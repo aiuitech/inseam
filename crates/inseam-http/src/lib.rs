@@ -305,12 +305,13 @@ async fn security_headers(
 ) -> axum::response::Response {
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
-    headers.insert(
-        axum::http::HeaderName::from_static("content-security-policy"),
-        axum::http::HeaderValue::from_static(
+    // A route that set its own policy (`raw`'s sandbox) keeps it; every
+    // other response gets the console's.
+    headers
+        .entry(axum::http::HeaderName::from_static("content-security-policy"))
+        .or_insert(axum::http::HeaderValue::from_static(
             "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self'; form-action 'self'",
-        ),
-    );
+        ));
     headers.insert(
         axum::http::header::REFERRER_POLICY,
         axum::http::HeaderValue::from_static("no-referrer"),
@@ -500,32 +501,51 @@ async fn fetch_bytes(
     Ok(Json(state.operations.fetch_bytes(request).await?))
 }
 
+/// Content types a browser may render inline from the owner origin: raster
+/// images, which carry no script. Everything else is a download — an
+/// indexed HTML or SVG file rendered inline would run on the owner origin
+/// with the session cookie, and the index holds whatever the hosts do.
+const INLINE_CONTENT_TYPES: &[&str] = &["image/png", "image/jpeg", "image/gif", "image/webp"];
+
 /// The one route that answers with a body that is not JSON: the bytes of a
 /// source or referenced fragment under their own content type, so an
 /// `<img>` in the console or any HTTP client reads an indexed image as a
-/// plain URL. `fetch_bytes` unwrapped, nothing more — the operation decides
-/// what may be served and how much.
+/// plain URL. `fetch_bytes` unwrapped — the operation decides what may be
+/// served and how much; the route decides only how a browser may treat it:
+/// every response is CSP-sandboxed (no script, opaque origin), and only
+/// [`INLINE_CONTENT_TYPES`] are `inline`, the rest `attachment`.
 async fn raw(
     State(state): State<AppState>,
     Query(request): Query<FetchBytesRequest>,
 ) -> Result<Response, ApiError> {
     let response = state.operations.fetch_bytes(request).await?;
-    // A mimetype is validated as `type/subtype;k=v` at the store boundary,
-    // so this fallback covers only a parameter value with header-hostile
-    // bytes; the body is served either way.
-    let content_type = axum::http::HeaderValue::from_str(&response.content_type)
+    Ok((raw_headers(&response.content_type), response.bytes.0).into_response())
+}
+
+fn raw_headers(content_type: &str) -> [(axum::http::HeaderName, axum::http::HeaderValue); 3] {
+    // Mimetypes are lowercase `type/subtype;k=v` from the store boundary;
+    // the essence is what the allow list names.
+    let essence = content_type.split(';').next().unwrap_or("").trim();
+    let disposition = if INLINE_CONTENT_TYPES.contains(&essence) {
+        "inline"
+    } else {
+        "attachment"
+    };
+    // The fallback covers only a parameter value with header-hostile bytes;
+    // the body is served either way, as a download.
+    let content_type = axum::http::HeaderValue::from_str(content_type)
         .unwrap_or_else(|_| axum::http::HeaderValue::from_static("application/octet-stream"));
-    Ok((
-        [
-            (axum::http::header::CONTENT_TYPE, content_type),
-            (
-                axum::http::header::CONTENT_DISPOSITION,
-                axum::http::HeaderValue::from_static("inline"),
-            ),
-        ],
-        response.bytes.0,
-    )
-        .into_response())
+    [
+        (axum::http::header::CONTENT_TYPE, content_type),
+        (
+            axum::http::header::CONTENT_DISPOSITION,
+            axum::http::HeaderValue::from_static(disposition),
+        ),
+        (
+            axum::http::HeaderName::from_static("content-security-policy"),
+            axum::http::HeaderValue::from_static("sandbox"),
+        ),
+    ]
 }
 
 async fn index(
@@ -644,13 +664,15 @@ mod tests {
             &self,
             request: FetchBytesRequest,
         ) -> Result<FetchBytesResponse, SeamError> {
-            if request.address.locator.as_str() != "tmp/logo.png" {
-                return Err(SeamError::UnknownSource(request.address));
-            }
+            let (content_type, bytes) = match request.address.locator.as_str() {
+                "tmp/logo.png" => ("image/png", PNG_BYTES.to_vec()),
+                "tmp/diagram.svg" => ("image/svg+xml", b"<svg onload=\"alert(1)\"/>".to_vec()),
+                _ => return Err(SeamError::UnknownSource(request.address)),
+            };
             Ok(FetchBytesResponse {
                 address: request.address,
-                content_type: "image/png".to_string(),
-                bytes: inseam_seams::operations::FileBytes(PNG_BYTES.to_vec()),
+                content_type: content_type.to_string(),
+                bytes: inseam_seams::operations::FileBytes(bytes),
             })
         }
 
@@ -821,8 +843,22 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[CONTENT_TYPE], "image/png");
         assert_eq!(response.headers()[axum::http::header::CONTENT_DISPOSITION], "inline");
+        assert_eq!(response.headers()["content-security-policy"], "sandbox");
+        assert_eq!(response.headers()[axum::http::header::X_CONTENT_TYPE_OPTIONS], "nosniff");
         let bytes = to_bytes(response.into_body(), 4096).await.expect("body");
         assert_eq!(bytes.as_ref(), PNG_BYTES);
+
+        // Anything that can carry script is a sandboxed download, never
+        // rendered on the owner origin.
+        let request = Request::get("/api/v1/owner/raw?address=inseam%3A%2F%2Ffs-test%2Ftmp%2Fdiagram.svg")
+            .header(COOKIE, &cookie)
+            .body(Body::empty())
+            .expect("valid request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[CONTENT_TYPE], "image/svg+xml");
+        assert_eq!(response.headers()[axum::http::header::CONTENT_DISPOSITION], "attachment");
+        assert_eq!(response.headers()["content-security-policy"], "sandbox");
 
         // The JSON form of the same operation carries the bytes as base64.
         let request = Request::post("/api/v1/owner/fetch_bytes")

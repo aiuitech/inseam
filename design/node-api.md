@@ -77,7 +77,11 @@ So the example flow: my external service calls `query("some topic", properties: 
   operation unwrapped to a body under its own `Content-Type` — the adapter
   adds a header, never a policy: what may be served, and how much, is
   decided in the operation, so the console's `<img>` and a `curl` see the
-  same answer as the CLI's `fetch --output`. *Rejected:* a text-only fetch
+  same answer as the CLI's `fetch --output`. The one thing the route does
+  own is the browser's treatment of the body: the index holds whatever the
+  hosts hold, so a raw response is CSP-sandboxed, and only raster images
+  render inline — anything that can carry script is a download.
+  *Rejected:* a text-only fetch
   that base64-encodes binaries into `text` (a lie about the content type
   every client would have to detect), and a raw route with its own path
   resolution (a second door with its own rules).

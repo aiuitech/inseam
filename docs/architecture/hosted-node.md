@@ -35,12 +35,17 @@ client. `GET /owner/grants` and `POST /owner/grants/revoke` complete the set
 
 `GET /api/v1/owner/raw?address=<address>` is the one route whose answer is
 not JSON: the `fetch_bytes` operation unwrapped to a body under its own
-`Content-Type` (`Content-Disposition: inline`), so the console's `<img>` or
-any HTTP client with the owner cookie reads an indexed image as a plain
-URL. `POST /api/v1/owner/fetch_bytes` is the same operation in JSON, bytes
-as base64. What may be served and how much is the operation's decision
-([../finder/operations.md](../finder/operations.md)); the route adds only
-the header.
+`Content-Type`, so the console's `<img>` or any HTTP client with the owner
+cookie reads an indexed image as a plain URL. `POST /api/v1/owner/fetch_bytes`
+is the same operation in JSON, bytes as base64. What may be served and how
+much is the operation's decision ([../finder/operations.md](../finder/operations.md));
+the route decides only how a browser may treat the body. The index holds
+whatever the hosts do — an HTML page, an SVG with a script — and rendering
+that on the owner origin would run it with the session cookie, so every
+`raw` response carries `Content-Security-Policy: sandbox` and `nosniff`,
+and only raster images (`image/png`, `image/jpeg`, `image/gif`,
+`image/webp`) are `Content-Disposition: inline`; everything else is an
+`attachment`.
 
 Requests are limited to 64 KiB, 64 concurrent calls, and 60 seconds — except
 the one route that carries files, `POST /api/v1/owner/plugins/install`, which
