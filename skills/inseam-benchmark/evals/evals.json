@@ -18,6 +18,12 @@
       "prompt": "Compare our two latest EnterpriseRAG-Bench runs and tell me whether retrieval improved.",
       "expected_output": "Checks comparability pins, options, dirty state, hardware, and question counts before comparing retrieval and upstream scores, index time, and per-query timings.",
       "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Measure whether my Finder change helped retrieval without spending hours on EnterpriseRAG-Bench.",
+      "expected_output": "Sets up and runs the BEIR NFCorpus harness (benchmarks/beir.py), reports nDCG@10 and recall from the completed manifest, and compares against the previous BEIR run only when pins, options, and vector scope match.",
+      "files": []
     }
   ]
 }

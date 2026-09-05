@@ -1,6 +1,11 @@
 # Benchmarks
 
-The first benchmark is [EnterpriseRAG-Bench](https://github.com/onyx-dot-app/EnterpriseRAG-Bench): 500 questions over slightly more than 500,000 synthetic enterprise documents. The harness pins dataset release `v1.0.0`, verifies the published checksums, and runs the installed `inseam` CLI as an external process. This measures the same binary a user runs.
+Two benchmarks run the installed `inseam` CLI as an external process, so every result measures the same binary a user runs:
+
+- [EnterpriseRAG-Bench](#enterpriserag-bench): 500 questions over slightly more than 500,000 synthetic enterprise documents, answered by the agent and judged by an LLM. Hours and dollars per run.
+- [BEIR NFCorpus](#beir-nfcorpus): the smallest dataset in the BEIR retrieval suite, 3,633 biomedical abstracts and 323 queries with graded relevance judgments, scored with the standard nDCG family. Minutes and cents per run.
+
+Both runners share `harness.py`: bounded external commands with heartbeats, verified downloads, run identity and machine specifications, the `inseam index` and `inseam repair` steps, and the attempt ledger that makes a crashed or interrupted run resumable. Each runner owns its dataset pins, composition, query loop, and scoring.
 
 ## Requirements
 
@@ -8,13 +13,94 @@ The first benchmark is [EnterpriseRAG-Bench](https://github.com/onyx-dot-app/Ent
 - `git`, `curl`, and `unzip` on `PATH`
 - the `inseam` CLI on `PATH`
 - `OPENROUTER_API_KEY`
-- enough local disk for the 1.26 GB download, its extracted files, and a fresh Inseam index. Reserve at least 20 GB before a full run.
 
-The harness uses `google/gemini-2.5-flash-lite` through OpenRouter's batch lane for summaries and `stealth/ox-alpha` for answers, citation cleanup, correctness scoring, and fact scoring. Summary calls request low reasoning effort and exclude the reasoning trace from the response. Entity extraction, markdown splitting, and chunking are disabled. `openai/text-embedding-3-small` embeds one 200-character summary per source at 384 dimensions; source text still enters full-text search.
+Both runners use `google/gemini-2.5-flash-lite` through OpenRouter's batch lane for summaries, with low reasoning effort and the reasoning trace excluded, and `openai/text-embedding-3-small` at 384 dimensions for embeddings. Entity extraction, markdown splitting, and chunking are disabled. The default run limits summaries to 500 LLM calls; Inseam uses its deterministic fallback after the summarizer spends that budget. Raise `--llm-call-budget` only after estimating the cost and runtime. Summaries ride the batch lane (`summarizer.llm_lane = "batch"`): the sweep parks up to 4,096 planners on their summary calls and OpenRouter's Batch API takes them as one job of up to 10,000 requests. Embeddings use base64 responses and pack up to 128 inputs per request, with four batches in flight.
 
-The default run limits summaries to 500 LLM calls. Inseam uses its deterministic fallback after the summarizer spends that budget. Raise `--llm-call-budget` only after estimating the cost and runtime. Summaries ride the batch lane (`summarizer.llm_lane = "batch"`): the sweep parks up to 4,096 planners on their summary calls and OpenRouter's Batch API takes them as one job of up to 10,000 requests, so the whole summary budget is a handful of jobs. Embeddings use base64 responses and pack up to 128 inputs per request, with four batches in flight. The lean source-plus-summary shape fills an embedding request from 256 search rows.
+Every `run` invocation creates a new ignored index under the fixture's `nodes/` directory. This prevents a warm index from being reported as a fresh indexing result. Failed and interrupted runs remain on disk with their partial logs and a non-completed manifest.
 
-## Set up the fixture
+## Tests
+
+The harness is tested without network or the real binary:
+
+```sh
+cd benchmarks && python3 -m unittest test_harness test_enterprise_rag_bench test_beir
+```
+
+## BEIR NFCorpus
+
+BEIR (Benchmarking IR) datasets share one shape: a corpus, a set of queries, and graded relevance judgments (qrels). NFCorpus is the smallest corpus in the suite and the one to reach for when a full EnterpriseRAG-Bench run is too expensive: a 2.4 MB download, 3,633 documents, 323 test queries, 12,334 judgments graded 1 or 2. The harness pins the archive BEIR's own loader downloads by SHA-256 and by row counts.
+
+### Set up the fixture
+
+```sh
+python3 benchmarks/beir.py setup
+```
+
+Setup downloads and verifies `nfcorpus.zip`, extracts it, writes each corpus row as `benchmark/fixtures/beir-nfcorpus/documents/<document-id>.txt` with the title on the first line, keeps only the test split's judged queries in `queries.jsonl`, copies the test qrels, and records the pins in `setup.json`. The file name is the BEIR document ID, which is how a Finder result address maps back to a judgment. Setup is idempotent and needs no API key. Git ignores the fixture directory.
+
+### Run
+
+```sh
+export OPENROUTER_API_KEY=...
+python3 benchmarks/beir.py run
+```
+
+A run indexes the corpus, runs `inseam repair`, sends every test query through `inseam query --json` one at a time, and scores the rankings. There is no agent step and no LLM judge: BEIR is a retrieval benchmark, and its score is deterministic given the ranking.
+
+Bounded controls:
+
+```sh
+python3 benchmarks/beir.py run \
+  --limit 323 \
+  --query-limit 10 \
+  --index-concurrency 8 \
+  --llm-call-budget 500
+```
+
+`--limit` is how many test queries to run, in BEIR's order; indexing always covers the whole corpus. `--query-limit` is the number of Finder results per query and also the deepest metric cutoff. `inseam query` clamps its limit to 50, so the harness refuses a larger value instead of scoring a truncated ranking. The default of 10 reports nDCG@10, BEIR's headline number.
+
+Unlike the EnterpriseRAG-Bench composition, the BEIR composition embeds every fragment (`vectors = "all"`) rather than only the 200-character summary. The corpus is 5.8 MB of text, so embedding each abstract whole costs cents and measures the product's default search surface. Summaries and full text still enter full-text search.
+
+### Scores
+
+The harness computes trec_eval's `ndcg_cut`, `map_cut`, `recall`, and `P` at cutoffs 1, 3, 5, and 10 (plus `--query-limit` when it is larger), averaged over the queries that ran, and rounds to five decimals the way BEIR reports them. Gains are the raw grades with a log2(rank + 1) discount; recall and average precision divide by every judged relevant document, not only the ones inside the cutoff; a grade above zero counts as relevant. The implementation was checked against `pytrec_eval` on real NFCorpus rankings and agrees to floating-point precision.
+
+Each run also writes `run.trec`, the ranking in TREC run format, so anyone can rescore it independently:
+
+```sh
+trec_eval -m ndcg_cut.10 -m recall.10 benchmark/fixtures/beir-nfcorpus/qrels.tsv benchmarks/runs/beir-nfcorpus/<run-id>/run.trec
+```
+
+For a smoke check after setup:
+
+```sh
+python3 benchmarks/beir.py run --limit 1
+```
+
+### Resume a run
+
+```sh
+python3 benchmarks/beir.py resume <run-id>
+```
+
+Resume works exactly as it does for EnterpriseRAG-Bench below: same run directory, same options, verified pins and composition, completed index required, continue from the durable query checkpoint, and a new attempt record.
+
+### Recorded artifacts
+
+A run lives under `benchmarks/runs/beir-nfcorpus/<UTC timestamp>-<inseam commit>/`:
+
+- `manifest.json`: status, phase, attempt history, machine specifications, Inseam identity, dataset pins, model assignments including the vector scope, options, index duration and completion counts, and `scores.beir`.
+- `composition.toml`: the exact composition used.
+- `queries.jsonl`: per-query timing, the raw Finder results, and the ranked document IDs.
+- `query-scores.jsonl`: every metric for every query, for diagnosing which queries moved between runs.
+- `run.trec`: the ranking in TREC run format.
+- `logs/`: the index log plus attempt-specific query and repair output.
+
+## EnterpriseRAG-Bench
+
+[EnterpriseRAG-Bench](https://github.com/onyx-dot-app/EnterpriseRAG-Bench) is 500 questions over slightly more than 500,000 synthetic enterprise documents. The harness pins dataset release `v1.0.0`, verifies the published checksums, and checks out the evaluator at a pinned revision. Beyond the shared model policy, it uses `stealth/ox-alpha` for answers, citation cleanup, correctness scoring, and fact scoring. Its composition embeds one 200-character summary per source (`vectors = "summaries"`); source text still enters full-text search. Reserve at least 20 GB of local disk before a full run: the 1.26 GB download, its extracted files, and a fresh index.
+
+### Set up the fixture
 
 Run this once from the repository root:
 
@@ -26,7 +112,7 @@ Setup downloads and verifies `all_documents.zip` and `questions.jsonl`, extracts
 
 The download resumes if interrupted. Setup refuses a checksum mismatch and refuses to overwrite local changes in the ignored evaluator checkout.
 
-## Run
+### Run
 
 ```sh
 export OPENROUTER_API_KEY=...
@@ -57,9 +143,7 @@ python3 benchmarks/enterprise_rag_bench.py run \
   --evaluation-parallelism 4
 ```
 
-Every `run` invocation creates a new ignored index under `benchmark/fixtures/enterprise-rag-bench/nodes/`. This prevents a warm index from being reported as a fresh indexing result. Failed and interrupted runs remain on disk with their partial logs and a non-completed manifest.
-
-## Resume a run
+### Resume a run
 
 If indexing completed but a later query, answer, or evaluation failed, resume the same run:
 
@@ -67,13 +151,13 @@ If indexing completed but a later query, answer, or evaluation failed, resume th
 python3 benchmarks/enterprise_rag_bench.py resume <run-id>
 ```
 
-Use the directory name under `benchmarks/runs/` as `<run-id>`. Resume loads the original options and composition, verifies the dataset and model pins, checks that the index command completed successfully, and reuses that run's ignored data directory. It refuses a missing or incomplete index. It starts with the first question that has no durable record, or goes directly to evaluation when every question is complete.
+Use the directory name under `benchmarks/runs/enterprise-rag-bench/` as `<run-id>`. Resume loads the original options and composition, verifies the dataset and model pins, checks that the index command completed successfully, and reuses that run's ignored data directory. It refuses a missing or incomplete index. It starts with the first question that has no durable record, or goes directly to evaluation when every question is complete.
 
 Each invocation is recorded in `manifest.json` under `attempts`, including its start and finish time, duration, Inseam binary identity, search-index preparation timing and log, starting and ending question counts, status, error, and log directory. The top-level duration is the sum of attempt durations. The index record keeps its original duration and structured completion counts for sources, fragments, relations, transforms, embeddings, and spend.
 
-## Recorded runs
+### Recorded artifacts
 
-Commit completed runs under `benchmarks/runs/<UTC timestamp>-<inseam commit>/`. Each run contains:
+A run lives under `benchmarks/runs/enterprise-rag-bench/<UTC timestamp>-<inseam commit>/`:
 
 - `manifest.json`: start and finish time, attempt history, total active duration, current phase, OS, CPU, RAM, disk, Inseam CLI version, binary hash, source revision and dirty state, dataset pins, model names, command timeouts, options, index duration and completion counts, score summaries, and completion status.
 - `composition.toml`: the exact Inseam composition used.
@@ -84,3 +168,7 @@ Commit completed runs under `benchmarks/runs/<UTC timestamp>-<inseam commit>/`. 
 - `logs/`: the one-time index log plus attempt-specific query, agent, and evaluator output.
 
 The manifest's `scores.retrieval` block is computed from the initial ranked Finder results without an LLM. `scores.enterprise_rag_bench` evaluates the combined initial and agent-cited document set and records the upstream correctness, completeness, document recall, and invalid-extra-document aggregates. The raw result file remains authoritative.
+
+## Recorded runs
+
+Commit completed runs under `benchmarks/runs/<benchmark>/<UTC timestamp>-<inseam commit>/`. Only a manifest whose `status` is `completed` should enter comparisons. Compare runs only when dataset pins, model assignments, question or query count, and relevant options match, and call out dirty source trees and hardware differences instead of hiding them.

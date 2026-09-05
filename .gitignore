@@ -7,3 +7,4 @@ plugins/*/target
 .claude
 /benchmark/fixtures/*
 !/benchmark/fixtures/.gitkeep
+__pycache__/

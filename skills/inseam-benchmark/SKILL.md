@@ -1,23 +1,36 @@
 ---
 name: inseam-benchmark
-description: Set up, run, rerun, diagnose, and record Inseam retrieval benchmarks. Use this skill whenever a user mentions benchmarking Inseam, EnterpriseRAG-Bench, benchmark fixtures, retrieval scores, indexing performance, or comparing benchmark runs.
+description: Set up, run, rerun, diagnose, and record Inseam retrieval benchmarks. Use this skill whenever a user mentions benchmarking Inseam, EnterpriseRAG-Bench, BEIR, NFCorpus, nDCG, benchmark fixtures, retrieval scores, indexing performance, or comparing benchmark runs.
 ---
 
 # Run an Inseam benchmark
 
 Use the repository harness instead of assembling commands by hand. It pins the dataset and evaluator, verifies downloads, creates a fresh index, assigns every LLM role to the required model, and writes the evidence needed to compare runs.
 
+Two benchmarks exist. Pick by what the user needs to measure:
+
+- `benchmarks/beir.py` runs BEIR NFCorpus: retrieval only, 3,633 documents, 323 queries, scored with nDCG@10 and friends. Minutes and cents. Default for "did this retrieval change help".
+- `benchmarks/enterprise_rag_bench.py` runs EnterpriseRAG-Bench: half a million documents, agent answers, and an LLM judge. Hours and dollars. Use when the user names it or needs answer quality measured.
+
 ## Before running
 
 1. Read `docs/benchmarking.md` and `benchmarks/README.md` from the repository root.
 2. Run `git status --short`. Preserve unrelated changes.
 3. Run `inseam --version`. If source changed since the installed binary was built, run `cargo install --path crates/inseam-cli` before benchmarking.
-4. Confirm `OPENROUTER_API_KEY` is present without printing its value.
-5. Check free local disk. A full EnterpriseRAG-Bench run should start with at least 20 GB free.
+4. Confirm `OPENROUTER_API_KEY` is present without printing its value. Setup needs no key; every run does.
+5. Check free local disk. A full EnterpriseRAG-Bench run should start with at least 20 GB free. BEIR NFCorpus needs well under 1 GB.
 
 ## Set up the pinned fixture
 
-Run:
+For BEIR NFCorpus:
+
+```sh
+python3 benchmarks/beir.py setup
+```
+
+It must finish with `benchmark/fixtures/beir-nfcorpus/setup.json` present. Setup writes one text file per corpus document, keeps only the judged test queries, and copies the test qrels.
+
+For EnterpriseRAG-Bench:
 
 ```sh
 python3 benchmarks/enterprise_rag_bench.py setup
@@ -29,53 +42,69 @@ If setup reports a checksum mismatch, report the named file and expected checksu
 
 ## Run
 
-For the full benchmark:
+BEIR NFCorpus, every test query:
+
+```sh
+python3 benchmarks/beir.py run
+```
+
+A one-query harness check that still indexes the whole corpus:
+
+```sh
+python3 benchmarks/beir.py run --limit 1
+```
+
+`--query-limit` (default 10) is both the Finder result count and the deepest metric cutoff; the harness refuses values above 50 because `inseam query` clamps there.
+
+EnterpriseRAG-Bench, full:
 
 ```sh
 python3 benchmarks/enterprise_rag_bench.py run
 ```
 
-For a harness check that still builds a valid full-corpus index but answers one question:
+A harness check that still builds a valid full-corpus index but answers one question:
 
 ```sh
 python3 benchmarks/enterprise_rag_bench.py run --limit 1 --skip-evaluation
 ```
 
-Keep the defaults for a comparable rerun unless the user names a different experiment. Never silently reuse an index. Each invocation creates a fresh ignored node data directory and a new versioned run directory.
+Keep the defaults for a comparable rerun unless the user names a different experiment. Never silently reuse an index. Each invocation creates a fresh ignored node data directory and a new versioned run directory under `benchmarks/runs/<benchmark>/`.
 
-The runner announces indexing, search-index preparation, each question's retrieval and answer, and evaluation. Search-index preparation runs `inseam repair` before questions so a legacy node's one-time compact-vector conversion and DiskANN build is visible, timed, logged, and resumable; it reuses resident vectors and does not rerun source indexing or embeddings. Long external commands emit an elapsed-time heartbeat every five seconds. While heartbeats continue, do not diagnose a quiet upstream command as hung. For a live or interrupted run, inspect the newest `manifest.json`: `phase` identifies the active phase, `attempts[-1].search_index_preparation` records the optimization when complete, and `queries_completed` shows durable progress. An intentional interruption records `status: interrupted` and preserves the partial run; do not commit it as a result.
+The runner announces indexing, search-index preparation, each query's retrieval (and, for EnterpriseRAG-Bench, its answer), and evaluation. Search-index preparation runs `inseam repair` before questions so a legacy node's one-time compact-vector conversion and DiskANN build is visible, timed, logged, and resumable; it reuses resident vectors and does not rerun source indexing or embeddings. Long external commands emit an elapsed-time heartbeat every five seconds. While heartbeats continue, do not diagnose a quiet upstream command as hung. For a live or interrupted run, inspect the newest `manifest.json`: `phase` identifies the active phase, `attempts[-1].search_index_preparation` records the optimization when complete, and `queries_completed` shows durable progress. An intentional interruption records `status: interrupted` and preserves the partial run; do not commit it as a result.
 
 If a run has `status: failed` or `status: interrupted` and `indexing.returncode: 0`, resume it instead of starting another index:
 
 ```sh
+python3 benchmarks/beir.py resume <run-id>
 python3 benchmarks/enterprise_rag_bench.py resume <run-id>
 ```
 
 Resume must target the same run. Do not copy its index into a new run or change its original options. The command verifies the stored pins and composition, restores the durable query checkpoint, and records a new attempt with separate timings, Inseam identity, errors, and logs. If the index completion record is absent, report that the run cannot skip indexing.
 
-The model assignment is an invariant:
+The model assignment is an invariant shared by both benchmarks:
 
 - `google/gemini-2.5-flash-lite` for summaries on OpenRouter's batch lane (`summarizer.llm_lane = "batch"`), with low reasoning effort and its reasoning trace excluded.
 - Entity extraction disabled.
-- `stealth/ox-alpha` for agent answers and EnterpriseRAG-Bench evaluation.
-- `openai/text-embedding-3-small` for embeddings.
+- `openai/text-embedding-3-small` at 384 dimensions for embeddings. EnterpriseRAG-Bench embeds summaries only (`vectors = "summaries"`); BEIR embeds every fragment (`vectors = "all"`), recorded as `models.embedding_vectors`.
+- EnterpriseRAG-Bench only: `stealth/ox-alpha` for agent answers and evaluation.
 
 The default `--llm-call-budget 500` applies to summaries. State the cost implication before raising it. A value of 500,000 can cause one transform call per source during indexing.
 
 ## Verify the run
 
-Open the new `benchmarks/runs/<run-id>/manifest.json` and check:
+Open the new `benchmarks/runs/<benchmark>/<run-id>/manifest.json` and check:
 
 1. `status` is `completed`.
-2. `queries_completed` matches the requested question count.
+2. `queries_completed` matches the requested question or query count.
 3. `indexing.duration_seconds` is present and positive.
 4. The final attempt has `search_index_preparation.duration_seconds` and its log.
 5. System specifications and the Inseam CLI version, binary hash, repository revision, and dirty state are present.
-6. Every model entry matches the assignments above, including disabled entity extraction.
-7. `scores.retrieval` is present. Unless `--skip-evaluation` was requested, `scores.enterprise_rag_bench` and `enterprise-rag-bench-results.json` are also present.
-8. `queries.jsonl` has one row per question with retrieval, answer, and total durations plus raw Finder scores.
+6. Every model entry matches the assignments above, including disabled entity extraction and the vector scope.
+7. For BEIR: `scores.beir` has `ndcg@10`, `recall@10`, `map@10`, and `precision@10`, and `run.trec` plus `query-scores.jsonl` sit beside the manifest.
+8. For EnterpriseRAG-Bench: `scores.retrieval` is present. Unless `--skip-evaluation` was requested, `scores.enterprise_rag_bench` and `enterprise-rag-bench-results.json` are also present.
+9. `queries.jsonl` has one row per question or query with durations and raw Finder scores.
 
-Treat the upstream raw results file as authoritative. Compare runs only when dataset pins, evaluator revision, model assignments, question count, and relevant options match. Call out dirty source trees and hardware differences instead of hiding them.
+Treat the upstream raw results file (EnterpriseRAG-Bench) or `run.trec` (BEIR) as authoritative. Compare runs only when dataset pins, evaluator revision, model assignments, vector scope, question count, and relevant options match. Never compare a BEIR score with an EnterpriseRAG-Bench score. Call out dirty source trees and hardware differences instead of hiding them.
 
 ## Finish
 

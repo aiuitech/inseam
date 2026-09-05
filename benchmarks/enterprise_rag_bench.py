@@ -4,83 +4,90 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
-import platform
 import re
 import shutil
-import subprocess
 import sys
-import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+
+from harness import (
+    EMBEDDING_DIMENSIONS,
+    EMBEDDING_MODEL,
+    FIXTURES_ROOT,
+    INDEX_PROGRESS_INTERVAL_SECONDS,
+    INDEX_TIMEOUT_SECONDS,
+    MAX_INDEX_CONCURRENCY,
+    MAX_LLM_CALL_BUDGET,
+    METADATA_TIMEOUT_SECONDS,
+    OPENROUTER_BASE_URL,
+    PROGRESS_INTERVAL_SECONDS,
+    RUNS_ROOT as ALL_RUNS_ROOT,
+    SUMMARIZATION_LANE,
+    SUMMARIZATION_MODEL,
+    BenchmarkError,
+    CommandResult,
+    begin_attempt,
+    bounded_argument,
+    complete_run,
+    download_verified,
+    fixture_document_count,
+    inseam_arguments,
+    inseam_identity,
+    load_index_completion,
+    manifest_option_integer,
+    manifest_options_object,
+    new_run_id,
+    parse_query_results,
+    prepare_search_index,
+    print_reused_index,
+    query_arguments,
+    read_json_lines,
+    read_json_object,
+    record_run_outcome,
+    require_api_key,
+    require_program,
+    require_success,
+    run_capture,
+    run_logged,
+    run_main,
+    system_specs,
+    update_run_phase,
+    utc_now,
+    validate_index_data_path,
+    validate_resumable_status,
+    validate_run_id,
+    write_json,
+    write_json_lines,
+)
+import harness
 
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-FIXTURE_ROOT = REPOSITORY_ROOT / "benchmark" / "fixtures" / "enterprise-rag-bench"
-RUNS_ROOT = REPOSITORY_ROOT / "benchmarks" / "runs"
+FIXTURE_ROOT = FIXTURES_ROOT / "enterprise-rag-bench"
+RUNS_ROOT = ALL_RUNS_ROOT / "enterprise-rag-bench"
 RELEASE = "v1.0.0"
 UPSTREAM_REVISION = "d36685e273713975ee20299bbf1ab64165575b3c"
 UPSTREAM_URL = "https://github.com/onyx-dot-app/EnterpriseRAG-Bench.git"
 RELEASE_URL = f"https://github.com/onyx-dot-app/EnterpriseRAG-Bench/releases/download/{RELEASE}"
 ARCHIVE_SHA256 = "9d1174928696ad08bc15f3f104739519de633c1605a4ec2034e0e3c0087bc5cd"
 QUESTIONS_SHA256 = "f9524b9157cd43aae36b99333a124738804306ea6d07f332d49faa6d3d147905"
-SUMMARIZATION_MODEL = "google/gemini-2.5-flash-lite"
-# Summaries ride the llm endpoint's batch lane: the sweep parks every
-# planner on its summary call and one OpenRouter batch job carries them.
-SUMMARIZATION_LANE = "batch"
 ANSWER_MODEL = "stealth/ox-alpha"
 EVALUATION_MODEL = "stealth/ox-alpha"
-EMBEDDING_MODEL = "openai/text-embedding-3-small"
-EMBEDDING_DIMENSIONS = 384
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 MAX_QUESTIONS = 1_000
 MAX_TURNS = 64
 MAX_QUERY_RESULTS = 25
-MAX_INDEX_CONCURRENCY = 128
-MAX_LLM_CALL_BUDGET = 1_000_000
-MAX_RUN_ATTEMPTS = 100
-HASH_BLOCK_BYTES = 8 * 1024 * 1024
-METADATA_TIMEOUT_SECONDS = 30
+# The release holds slightly more than 500,000 documents; anything past this
+# bound means the archive is not the pinned one.
+DOCUMENTS_MIN = 500_000
+DOCUMENTS_MAX = 600_000
+SOURCES_MAX = DOCUMENTS_MAX + 1
 SETUP_TIMEOUT_SECONDS = 7_200
 QUERY_TIMEOUT_SECONDS = 600
 AGENT_TIMEOUT_SECONDS = 1_800
-INDEX_TIMEOUT_SECONDS = 259_200
 EVALUATION_TIMEOUT_SECONDS = 604_800
-PROGRESS_INTERVAL_SECONDS = 5
-INDEX_PROGRESS_INTERVAL_SECONDS = 30
 DOCUMENT_ID_PATTERN = re.compile(r"dsid_[0-9a-f]{32}")
-RUN_ID_PATTERN = re.compile(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}")
-STATUS_SOURCE_PATTERN = re.compile(
-    r"^sources\s+(\d+) \((\d+) indexed\)$", re.MULTILINE
-)
-STATUS_SEARCH_ROWS_PATTERN = re.compile(r"^search rows\s+(\d+)$", re.MULTILINE)
-INDEX_SOURCE_PATTERN = re.compile(
-    r"(\d+) sources seen: (\d+) indexed, (\d+) unchanged, (\d+) catalog-only, "
-    r"(\d+) past cutoff, (\d+) ignored"
-)
-INDEX_FRAGMENT_PATTERN = re.compile(
-    r"(\d+) fragments, (\d+) relations, (\d+) keyed fragments anchored"
-)
-INDEX_SUMMARY_PATTERN = re.compile(
-    r"summaries: (\d+) llm, (\d+) extractive, (\d+) envelope .*? "
-    r"(\d+) embedded .*? \$([0-9]+(?:\.[0-9]+)?) spent"
-)
-
-
-class BenchmarkError(RuntimeError):
-    """An operating error that should stop the benchmark cleanly."""
-
-
-@dataclass(frozen=True)
-class CommandResult:
-    returncode: int
-    duration_seconds: float
-    stdout: str
-    stderr: str
 
 
 @dataclass(frozen=True)
@@ -92,242 +99,6 @@ class RunOptions:
     llm_call_budget: int
     evaluation_parallelism: int
     skip_evaluation: bool
-
-
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
-
-def require_program(name: str) -> str:
-    path = shutil.which(name)
-    if path is None:
-        raise BenchmarkError(f"required program `{name}` is not on PATH")
-    return path
-
-
-def run_capture(
-    arguments: list[str],
-    *,
-    timeout_seconds: int,
-    progress_label: str | None = None,
-    progress_probe: Callable[[float], str] | None = None,
-    progress_interval_seconds: int = PROGRESS_INTERVAL_SECONDS,
-    cwd: Path = REPOSITORY_ROOT,
-    environment: dict[str, str] | None = None,
-) -> CommandResult:
-    assert arguments
-    assert timeout_seconds > 0
-    assert progress_interval_seconds > 0
-    started = time.monotonic()
-    if progress_label is not None:
-        print(f"{progress_label}...", flush=True)
-    process = subprocess.Popen(
-        arguments,
-        cwd=cwd,
-        env=environment,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    try:
-        result = run_capture_wait(
-            process,
-            started,
-            timeout_seconds,
-            progress_label,
-            progress_probe,
-            progress_interval_seconds,
-        )
-    except KeyboardInterrupt:
-        process.terminate()
-        run_capture_reap(process)
-        raise
-    if progress_label is not None:
-        outcome = "done" if result.returncode == 0 else "failed"
-        duration = format_duration(result.duration_seconds)
-        print(f"{progress_label}: {outcome} in {duration}", flush=True)
-    return result
-
-
-def run_capture_wait(
-    process: subprocess.Popen[str],
-    started: float,
-    timeout_seconds: int,
-    progress_label: str | None,
-    progress_probe: Callable[[float], str] | None,
-    progress_interval_seconds: int,
-) -> CommandResult:
-    heartbeat_count = (
-        timeout_seconds + progress_interval_seconds - 1
-    ) // progress_interval_seconds
-    assert heartbeat_count > 0
-    for _heartbeat_index in range(heartbeat_count):
-        elapsed_seconds = time.monotonic() - started
-        remaining_seconds = timeout_seconds - elapsed_seconds
-        wait_seconds = min(progress_interval_seconds, max(0.001, remaining_seconds))
-        try:
-            stdout, stderr = process.communicate(timeout=wait_seconds)
-        except subprocess.TimeoutExpired:
-            if progress_label is not None:
-                elapsed_seconds = time.monotonic() - started
-                detail = (
-                    progress_probe(elapsed_seconds)
-                    if progress_probe is not None
-                    else f"{format_duration(elapsed_seconds)} elapsed"
-                )
-                print(f"{progress_label}: {detail}", flush=True)
-        else:
-            duration_seconds = time.monotonic() - started
-            assert duration_seconds >= 0.0
-            assert process.returncode is not None
-            return CommandResult(process.returncode, duration_seconds, stdout, stderr)
-    process.kill()
-    stdout, stderr = process.communicate()
-    duration_seconds = time.monotonic() - started
-    assert duration_seconds >= 0.0
-    stderr += f"\ncommand timed out after {timeout_seconds} seconds"
-    return CommandResult(124, duration_seconds, stdout, stderr)
-
-
-def run_capture_reap(process: subprocess.Popen[str]) -> None:
-    try:
-        process.communicate(timeout=PROGRESS_INTERVAL_SECONDS)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.communicate()
-
-
-def format_duration(duration_seconds: float) -> str:
-    assert duration_seconds >= 0.0
-    seconds = int(duration_seconds)
-    if seconds < 60:
-        return f"{seconds}s"
-    minutes, seconds = divmod(seconds, 60)
-    if minutes < 60:
-        return f"{minutes}m {seconds:02d}s"
-    hours, minutes = divmod(minutes, 60)
-    return f"{hours}h {minutes:02d}m"
-
-
-def format_index_progress(
-    status_output: str, document_count: int, elapsed_seconds: float
-) -> str:
-    assert document_count > 0
-    sources = STATUS_SOURCE_PATTERN.search(status_output)
-    search_rows = STATUS_SEARCH_ROWS_PATTERN.search(status_output)
-    if sources is None or search_rows is None:
-        raise BenchmarkError("`inseam status` output has no indexing counts")
-    cataloged = int(sources.group(1))
-    indexed = int(sources.group(2))
-    if indexed > cataloged or cataloged > document_count:
-        raise BenchmarkError("`inseam status` returned impossible indexing counts")
-    return (
-        f"{format_duration(elapsed_seconds)} elapsed · "
-        f"{indexed:,} / {document_count:,} indexed · "
-        f"{cataloged:,} cataloged · {int(search_rows.group(1)):,} search rows"
-    )
-
-
-def read_index_progress(
-    data_dir: Path,
-    composition: Path,
-    document_count: int,
-    elapsed_seconds: float,
-) -> str:
-    result = run_capture(
-        [
-            "inseam",
-            "--data-dir",
-            str(data_dir),
-            "--composition",
-            str(composition),
-            "status",
-        ],
-        timeout_seconds=METADATA_TIMEOUT_SECONDS,
-    )
-    if result.returncode != 0:
-        return f"{format_duration(elapsed_seconds)} elapsed · status unavailable"
-    try:
-        return format_index_progress(result.stdout, document_count, elapsed_seconds)
-    except BenchmarkError:
-        return f"{format_duration(elapsed_seconds)} elapsed · status unavailable"
-
-
-def run_logged(
-    arguments: list[str],
-    log_path: Path,
-    *,
-    timeout_seconds: int,
-    progress_label: str | None = None,
-    progress_probe: Callable[[float], str] | None = None,
-    progress_interval_seconds: int = PROGRESS_INTERVAL_SECONDS,
-    cwd: Path = REPOSITORY_ROOT,
-    environment: dict[str, str] | None = None,
-) -> CommandResult:
-    result = run_capture(
-        arguments,
-        timeout_seconds=timeout_seconds,
-        progress_label=progress_label,
-        progress_probe=progress_probe,
-        progress_interval_seconds=progress_interval_seconds,
-        cwd=cwd,
-        environment=environment,
-    )
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(result.stdout + result.stderr, encoding="utf-8")
-    return result
-
-
-def require_success(result: CommandResult, description: str) -> None:
-    if result.returncode == 0:
-        return
-    detail = result.stderr.strip() or result.stdout.strip() or "no output"
-    raise BenchmarkError(f"{description} failed with exit code {result.returncode}: {detail}")
-
-
-def sha256_file(path: Path) -> str:
-    size_bytes = path.stat().st_size
-    block_count = (size_bytes + HASH_BLOCK_BYTES - 1) // HASH_BLOCK_BYTES
-    assert block_count >= 0
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for _block_index in range(block_count):
-            block = handle.read(HASH_BLOCK_BYTES)
-            assert block
-            digest.update(block)
-        assert handle.read(1) == b""
-    return digest.hexdigest()
-
-
-def download_verified(name: str, expected_sha256: str) -> Path:
-    curl = require_program("curl")
-    destination = FIXTURE_ROOT / "downloads" / name
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if not destination.exists() or sha256_file(destination) != expected_sha256:
-        result = run_capture(
-            [
-                curl,
-                "--fail",
-                "--location",
-                "--show-error",
-                "--continue-at",
-                "-",
-                "--retry",
-                "3",
-                "--output",
-                str(destination),
-                f"{RELEASE_URL}/{name}",
-            ],
-            timeout_seconds=SETUP_TIMEOUT_SECONDS,
-        )
-        require_success(result, f"downloading {name}")
-    actual_sha256 = sha256_file(destination)
-    if actual_sha256 != expected_sha256:
-        raise BenchmarkError(
-            f"{destination} has SHA-256 {actual_sha256}; expected {expected_sha256}. "
-            "Remove that file and rerun setup."
-        )
-    return destination
 
 
 def extract_documents(archive: Path) -> None:
@@ -345,14 +116,14 @@ def extract_documents(archive: Path) -> None:
     text_file_count = 0
     for path in documents.rglob("*.txt"):
         text_file_count += 1
-        if text_file_count > 600_000:
+        if text_file_count > DOCUMENTS_MAX:
             raise BenchmarkError(
-                "archive contains more than the 600000-document safety limit"
+                f"archive contains more than the {DOCUMENTS_MAX}-document safety limit"
             )
         assert path.is_file()
-    if text_file_count < 500_000:
+    if text_file_count < DOCUMENTS_MIN:
         raise BenchmarkError(
-            f"extracted only {text_file_count} text documents; expected at least 500000"
+            f"extracted only {text_file_count} text documents; expected at least {DOCUMENTS_MIN}"
         )
     write_json(
         marker,
@@ -454,8 +225,13 @@ def setup_evaluator_environment(evaluator: Path) -> None:
 
 def setup() -> None:
     FIXTURE_ROOT.mkdir(parents=True, exist_ok=True)
-    archive = download_verified("all_documents.zip", ARCHIVE_SHA256)
-    questions = download_verified("questions.jsonl", QUESTIONS_SHA256)
+    downloads = FIXTURE_ROOT / "downloads"
+    archive = download_verified(
+        f"{RELEASE_URL}/all_documents.zip", downloads / "all_documents.zip", ARCHIVE_SHA256
+    )
+    questions = download_verified(
+        f"{RELEASE_URL}/questions.jsonl", downloads / "questions.jsonl", QUESTIONS_SHA256
+    )
     shutil.copyfile(questions, FIXTURE_ROOT / "questions.jsonl")
     extract_documents(archive)
     evaluator = checkout_evaluator()
@@ -472,77 +248,6 @@ def setup() -> None:
         },
     )
     print(f"EnterpriseRAG-Bench is ready at {FIXTURE_ROOT}")
-
-
-def read_memory_bytes() -> int | None:
-    system = platform.system()
-    if system == "Darwin":
-        result = run_capture(
-            ["sysctl", "-n", "hw.memsize"],
-            timeout_seconds=METADATA_TIMEOUT_SECONDS,
-        )
-        return int(result.stdout.strip()) if result.returncode == 0 else None
-    if system == "Linux":
-        meminfo = Path("/proc/meminfo")
-        if not meminfo.exists():
-            return None
-        match = re.search(r"^MemTotal:\s+(\d+)\s+kB$", meminfo.read_text(), re.MULTILINE)
-        return int(match.group(1)) * 1024 if match else None
-    return None
-
-
-def read_cpu_model() -> str:
-    if platform.system() == "Darwin":
-        result = run_capture(
-            ["sysctl", "-n", "machdep.cpu.brand_string"],
-            timeout_seconds=METADATA_TIMEOUT_SECONDS,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    return platform.processor() or "unknown"
-
-
-def system_specs() -> dict[str, Any]:
-    disk = shutil.disk_usage(FIXTURE_ROOT)
-    return {
-        "os": platform.system(),
-        "os_release": platform.release(),
-        "os_version": platform.version(),
-        "architecture": platform.machine(),
-        "cpu_model": read_cpu_model(),
-        "logical_cpu_count": os.cpu_count(),
-        "memory_bytes": read_memory_bytes(),
-        "disk_total_bytes": disk.total,
-        "disk_free_bytes_at_start": disk.free,
-        "hostname": platform.node(),
-        "python_version": platform.python_version(),
-    }
-
-
-def git_value(arguments: list[str]) -> str | None:
-    result = run_capture(
-        ["git", *arguments], timeout_seconds=METADATA_TIMEOUT_SECONDS
-    )
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip()
-
-
-def inseam_identity() -> dict[str, Any]:
-    binary_text = require_program("inseam")
-    binary = Path(binary_text).resolve()
-    version = run_capture(
-        [str(binary), "--version"], timeout_seconds=METADATA_TIMEOUT_SECONDS
-    )
-    require_success(version, "reading the inseam version")
-    dirty = git_value(["status", "--porcelain"])
-    return {
-        "cli_version": version.stdout.strip(),
-        "binary_path": str(binary),
-        "binary_sha256": sha256_file(binary),
-        "repository_revision": git_value(["rev-parse", "HEAD"]),
-        "repository_dirty": bool(dirty),
-    }
 
 
 def composition_text(options: RunOptions) -> str:
@@ -615,18 +320,6 @@ def load_questions(limit: int) -> list[dict[str, Any]]:
     return selected
 
 
-def parse_query_results(stdout: str) -> list[dict[str, Any]]:
-    payload = json.loads(stdout)
-    results = payload.get("results")
-    if not isinstance(results, list):
-        raise BenchmarkError("`inseam query --json` did not return a results array")
-    if len(results) > MAX_QUERY_RESULTS:
-        raise BenchmarkError(
-            f"inseam returned {len(results)} results; hard limit is {MAX_QUERY_RESULTS}"
-        )
-    return results
-
-
 def extract_document_ids(values: list[str]) -> list[str]:
     found: set[str] = set()
     ordered: list[str] = []
@@ -669,18 +362,17 @@ def question_commands(
 ) -> dict[str, Any]:
     question_id = str(question["question_id"])
     question_text = str(question["question"])
-    base = ["inseam", "--data-dir", str(data_dir), "--composition", str(composition)]
     query = run_logged(
-        [*base, "query", question_text, "--limit", str(options.query_limit), "--json"],
+        query_arguments(data_dir, composition, question_text, options.query_limit),
         log_dir / f"{question_id}-query.log",
         timeout_seconds=QUERY_TIMEOUT_SECONDS,
         progress_label=f"{progress_prefix} retrieval",
     )
     require_success(query, f"querying {question_id}")
-    query_results = parse_query_results(query.stdout)
+    query_results = parse_query_results(query.stdout, MAX_QUERY_RESULTS)
     agent = run_logged(
         [
-            *base,
+            *inseam_arguments(data_dir, composition),
             "agent",
             question_text,
             "--model",
@@ -747,61 +439,8 @@ def retrieval_scores(
     }
 
 
-def write_json(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(temporary, path)
-
-
-def read_json_object(path: Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise BenchmarkError(f"could not read JSON at {path}: {error}") from error
-    if type(value) is not dict:
-        raise BenchmarkError(f"expected a JSON object at {path}")
-    return value
-
-
-def read_json_lines(path: Path, count_max: int) -> list[dict[str, Any]]:
-    assert count_max > 0
-    if not path.exists():
-        return []
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as error:
-        raise BenchmarkError(f"could not read JSON lines at {path}: {error}") from error
-    records: list[dict[str, Any]] = []
-    source_lines = text.splitlines()
-    for line_number, line in enumerate(source_lines, start=1):
-        if len(records) >= count_max:
-            raise BenchmarkError(f"{path} exceeds the {count_max}-record safety limit")
-        try:
-            value = json.loads(line)
-        except json.JSONDecodeError as error:
-            if line_number == len(source_lines):
-                if not text.endswith("\n"):
-                    break
-            message = f"invalid JSON on line {line_number} of {path}: {error}"
-            raise BenchmarkError(message) from error
-        if type(value) is not dict:
-            raise BenchmarkError(f"expected an object on line {line_number} of {path}")
-        records.append(value)
-    return records
-
-
-def write_json_lines(path: Path, values: list[dict[str, Any]]) -> None:
-    assert len(values) <= MAX_QUESTIONS
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp")
-    lines = (json.dumps(value, sort_keys=True) for value in values)
-    temporary.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
-    os.replace(temporary, path)
-
-
 def write_run_checkpoint(run_dir: Path, queries: list[dict[str, Any]]) -> None:
-    write_json_lines(run_dir / "queries.jsonl", queries)
+    write_json_lines(run_dir / "queries.jsonl", queries, MAX_QUESTIONS)
     answers = [
         {
             "question_id": query["question_id"],
@@ -811,13 +450,12 @@ def write_run_checkpoint(run_dir: Path, queries: list[dict[str, Any]]) -> None:
         for query in queries
     ]
     assert len(answers) == len(queries)
-    write_json_lines(run_dir / "answers.jsonl", answers)
+    write_json_lines(run_dir / "answers.jsonl", answers, MAX_QUESTIONS)
 
 
 def create_run(options: RunOptions) -> tuple[Path, Path, dict[str, Any]]:
     started_at = utc_now()
-    revision = git_value(["rev-parse", "--short=12", "HEAD"]) or "unknown"
-    run_id = f"{started_at[:19].replace('-', '').replace(':', '')}Z-{revision}"
+    run_id = new_run_id(started_at)
     run_dir = RUNS_ROOT / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
     data_dir = FIXTURE_ROOT / "nodes" / run_id
@@ -830,22 +468,8 @@ def create_run(options: RunOptions) -> tuple[Path, Path, dict[str, Any]]:
         "started_at": started_at,
         "finished_at": None,
         "duration_seconds": None,
-        "benchmark": {
-            "name": "EnterpriseRAG-Bench",
-            "release": RELEASE,
-            "upstream_revision": UPSTREAM_REVISION,
-            "archive_sha256": ARCHIVE_SHA256,
-            "questions_sha256": QUESTIONS_SHA256,
-        },
-        "models": {
-            "summarization": SUMMARIZATION_MODEL,
-            "summarization_lane": SUMMARIZATION_LANE,
-            "entity_extraction": "disabled",
-            "answer_generation": ANSWER_MODEL,
-            "answer_evaluation": EVALUATION_MODEL,
-            "embeddings": EMBEDDING_MODEL,
-            "embedding_dimensions": EMBEDDING_DIMENSIONS,
-        },
+        "benchmark": benchmark_pins(),
+        "models": model_assignments(),
         "timeouts_seconds": {
             "setup_command": SETUP_TIMEOUT_SECONDS,
             "finder_query": QUERY_TIMEOUT_SECONDS,
@@ -856,7 +480,7 @@ def create_run(options: RunOptions) -> tuple[Path, Path, dict[str, Any]]:
         "progress_interval_seconds": PROGRESS_INTERVAL_SECONDS,
         "index_progress_interval_seconds": INDEX_PROGRESS_INTERVAL_SECONDS,
         "options": vars(options),
-        "system": system_specs(),
+        "system": system_specs(FIXTURE_ROOT),
         "inseam": inseam_identity(),
         "fixture_path": str(FIXTURE_ROOT),
         "index_data_path": str(data_dir),
@@ -869,128 +493,38 @@ def create_run(options: RunOptions) -> tuple[Path, Path, dict[str, Any]]:
     return run_dir, data_dir, manifest
 
 
+def benchmark_pins() -> dict[str, str]:
+    return {
+        "name": "EnterpriseRAG-Bench",
+        "release": RELEASE,
+        "upstream_revision": UPSTREAM_REVISION,
+        "archive_sha256": ARCHIVE_SHA256,
+        "questions_sha256": QUESTIONS_SHA256,
+    }
+
+
+def model_assignments() -> dict[str, str | int]:
+    return {
+        "summarization": SUMMARIZATION_MODEL,
+        "summarization_lane": SUMMARIZATION_LANE,
+        "entity_extraction": "disabled",
+        "answer_generation": ANSWER_MODEL,
+        "answer_evaluation": EVALUATION_MODEL,
+        "embeddings": EMBEDDING_MODEL,
+        "embedding_dimensions": EMBEDDING_DIMENSIONS,
+    }
+
+
 def index_documents(run_dir: Path, data_dir: Path, composition: Path) -> dict[str, Any]:
-    document_count = fixture_document_count()
-    progress_label = "Indexing benchmark documents"
-    progress_probe: Callable[[float], str] | None = None
-    if document_count is not None:
-        progress_label = f"Indexing {document_count:,} benchmark documents"
-        progress_probe = lambda elapsed_seconds: read_index_progress(
-            data_dir, composition, document_count, elapsed_seconds
-        )
-    started_at = utc_now()
-    result = run_logged(
-        [
-            "inseam",
-            "--data-dir",
-            str(data_dir),
-            "--composition",
-            str(composition),
-            "index",
-            str(FIXTURE_ROOT / "documents"),
-        ],
-        run_dir / "logs" / "index.log",
-        timeout_seconds=INDEX_TIMEOUT_SECONDS,
-        progress_label=progress_label,
-        progress_probe=progress_probe,
-        progress_interval_seconds=INDEX_PROGRESS_INTERVAL_SECONDS,
+    return harness.index_documents(
+        run_dir,
+        data_dir,
+        composition,
+        FIXTURE_ROOT / "documents",
+        fixture_document_count(FIXTURE_ROOT, DOCUMENTS_MAX),
+        SOURCES_MAX,
+        "EnterpriseRAG-Bench",
     )
-    finished_at = utc_now()
-    require_success(result, "indexing EnterpriseRAG-Bench")
-    return {
-        "started_at": started_at,
-        "finished_at": finished_at,
-        "duration_seconds": round(result.duration_seconds, 6),
-        "returncode": result.returncode,
-        "log": "logs/index.log",
-        "summary": capture_index_summary(result.stdout),
-    }
-
-
-def prepare_search_index(
-    data_dir: Path, composition: Path, log_dir: Path
-) -> dict[str, Any]:
-    started_at = utc_now()
-    result = run_logged(
-        [
-            "inseam",
-            "--data-dir",
-            str(data_dir),
-            "--composition",
-            str(composition),
-            "repair",
-        ],
-        log_dir / "search-index.log",
-        timeout_seconds=INDEX_TIMEOUT_SECONDS,
-        progress_label="Preparing libSQL vector search index",
-    )
-    require_success(result, "repairing the vector search index")
-    return {
-        "started_at": started_at,
-        "finished_at": utc_now(),
-        "duration_seconds": round(result.duration_seconds, 6),
-        "returncode": result.returncode,
-        "log": str((log_dir / "search-index.log").relative_to(log_dir.parents[1])),
-    }
-
-
-def capture_index_summary(output: str) -> dict[str, Any]:
-    try:
-        return parse_index_summary(output)
-    except BenchmarkError as error:
-        return {"parse_error": str(error)}
-
-
-def parse_index_summary(output: str) -> dict[str, int | float]:
-    sources = INDEX_SOURCE_PATTERN.search(output)
-    fragments = INDEX_FRAGMENT_PATTERN.search(output)
-    summaries = INDEX_SUMMARY_PATTERN.search(output)
-    if sources is None:
-        raise BenchmarkError("index output has no source completion summary")
-    if fragments is None:
-        raise BenchmarkError("index output has no fragment completion summary")
-    if summaries is None:
-        raise BenchmarkError("index output has no transform completion summary")
-    values = [int(value) for value in (*sources.groups(), *fragments.groups())]
-    transform_values = [int(value) for value in summaries.groups()[:4]]
-    if values[0] < 1:
-        raise BenchmarkError("index completion summary reports no sources")
-    if values[0] > 600_001:
-        raise BenchmarkError("index completion summary exceeds the source safety limit")
-    return {
-        "sources_seen": values[0],
-        "sources_indexed": values[1],
-        "sources_unchanged": values[2],
-        "sources_catalog_only": values[3],
-        "sources_past_cutoff": values[4],
-        "sources_ignored": values[5],
-        "fragments": values[6],
-        "relations": values[7],
-        "keyed_fragments": values[8],
-        "summaries_llm": transform_values[0],
-        "summaries_extractive": transform_values[1],
-        "summaries_envelope": transform_values[2],
-        "embeddings": transform_values[3],
-        "cost_usd": float(summaries.group(5)),
-    }
-
-
-def fixture_document_count() -> int | None:
-    marker = FIXTURE_ROOT / "documents.json"
-    if not marker.exists():
-        return None
-    try:
-        payload = json.loads(marker.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise BenchmarkError(f"could not read fixture metadata at {marker}: {error}") from error
-    document_count = payload.get("text_file_count")
-    if type(document_count) is not int:
-        raise BenchmarkError(f"fixture metadata at {marker} has no integer text_file_count")
-    if document_count < 1:
-        raise BenchmarkError(f"fixture metadata at {marker} has an invalid text_file_count")
-    if document_count > 600_000:
-        raise BenchmarkError(f"fixture metadata at {marker} exceeds the document safety limit")
-    return document_count
 
 
 def run_queries(
@@ -1034,14 +568,12 @@ def run_queries(
 
 
 def evaluator_environment() -> dict[str, str]:
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        raise BenchmarkError("OPENROUTER_API_KEY must be set")
+    require_api_key()
     environment = os.environ.copy()
     environment.update(
         {
             "LLM_PROVIDER": "openai",
-            "LLM_API_KEY": api_key,
+            "LLM_API_KEY": os.environ["OPENROUTER_API_KEY"],
             "LLM_MODEL_NAME": EVALUATION_MODEL,
             "CHEAP_LLM_MODEL_NAME": EVALUATION_MODEL,
             "OPENAI_BASE_URL": OPENROUTER_BASE_URL,
@@ -1160,6 +692,7 @@ def execute_benchmark(
     initial_phase = "indexing" if index_required else "querying"
     started, log_dir = begin_attempt(run_dir, manifest, initial_phase, identity)
     print_run_start(run_dir, data_dir, manifest, questions, queries, index_required)
+    error: BaseException | None = None
     try:
         if index_required:
             manifest["indexing"] = index_documents(run_dir, data_dir, composition)
@@ -1188,81 +721,13 @@ def execute_benchmark(
                 run_dir, log_dir, options.evaluation_parallelism, len(questions)
             )
             pip_freeze(run_dir)
-        manifest["scores"] = scores
-        manifest["status"] = "completed"
-        manifest["phase"] = "completed"
-    except KeyboardInterrupt:
-        set_run_error(manifest, "interrupted", "interrupted by user")
-        raise
-    except Exception as error:
-        set_run_error(manifest, "failed", str(error) or error.__class__.__name__)
+        complete_run(manifest, scores)
+    except BaseException as caught:
+        error = caught
         raise
     finally:
-        finish_attempt(run_dir, manifest, started)
+        record_run_outcome(run_dir, manifest, started, error)
     print(f"Benchmark run recorded in {run_dir}")
-
-
-def begin_attempt(
-    run_dir: Path,
-    manifest: dict[str, Any],
-    phase: str,
-    identity: dict[str, Any],
-) -> tuple[float, Path]:
-    attempts = manifest["attempts"]
-    assert type(attempts) is list
-    if len(attempts) >= MAX_RUN_ATTEMPTS:
-        raise BenchmarkError(f"run exceeds the {MAX_RUN_ATTEMPTS}-attempt safety limit")
-    attempt_number = len(attempts) + 1
-    log_relative = f"logs/attempt-{attempt_number:03d}"
-    attempts.append(
-        {
-            "attempt_number": attempt_number,
-            "resumed": attempt_number > 1,
-            "started_at": utc_now(),
-            "finished_at": None,
-            "duration_seconds": None,
-            "starting_phase": phase,
-            "starting_queries_completed": manifest["queries_completed"],
-            "ending_queries_completed": None,
-            "status": "running",
-            "error": None,
-            "inseam": identity,
-            "log_directory": log_relative,
-            "search_index_preparation": None,
-        }
-    )
-    manifest["status"] = "running"
-    manifest["phase"] = phase
-    manifest["finished_at"] = None
-    manifest.pop("error", None)
-    write_json(run_dir / "manifest.json", manifest)
-    return time.monotonic(), run_dir / log_relative
-
-
-def finish_attempt(run_dir: Path, manifest: dict[str, Any], started: float) -> None:
-    duration_seconds = round(time.monotonic() - started, 6)
-    assert duration_seconds >= 0.0
-    attempt = manifest["attempts"][-1]
-    attempt["finished_at"] = utc_now()
-    attempt["duration_seconds"] = duration_seconds
-    attempt["ending_queries_completed"] = manifest["queries_completed"]
-    attempt["status"] = manifest["status"]
-    attempt["ending_phase"] = manifest["phase"]
-    attempt["error"] = manifest.get("error")
-    durations = [value["duration_seconds"] for value in manifest["attempts"]]
-    assert all(type(value) in {int, float} for value in durations)
-    manifest["duration_seconds"] = round(sum(durations), 6)
-    manifest["finished_at"] = attempt["finished_at"]
-    manifest["resume_count"] = len(manifest["attempts"]) - 1
-    write_json(run_dir / "manifest.json", manifest)
-
-
-def set_run_error(manifest: dict[str, Any], status: str, error: str) -> None:
-    assert status in {"failed", "interrupted"}
-    assert error
-    manifest["status"] = status
-    manifest["phase"] = status
-    manifest["error"] = error
 
 
 def print_run_start(
@@ -1282,22 +747,6 @@ def print_run_start(
     print(f"  questions: {len(queries)}/{len(questions)} completed", flush=True)
 
 
-def print_reused_index(manifest: dict[str, Any]) -> None:
-    indexing = manifest["indexing"]
-    summary = indexing["summary"]
-    duration = format_duration(float(indexing["duration_seconds"]))
-    sources = summary.get("sources_seen")
-    fragments = summary.get("fragments")
-    if type(sources) is int:
-        if type(fragments) is int:
-            message = f"{sources:,} sources, {fragments:,} fragments, "
-        else:
-            message = f"{sources:,} sources, "
-    else:
-        message = "completion recorded, "
-    print(f"Reusing completed index: {message}original indexing time {duration}", flush=True)
-
-
 def load_resumable_run(
     run_id: str,
 ) -> tuple[
@@ -1309,8 +758,7 @@ def load_resumable_run(
     RunOptions,
     list[dict[str, Any]],
 ]:
-    if RUN_ID_PATTERN.fullmatch(run_id) is None:
-        raise BenchmarkError(f"invalid benchmark run ID `{run_id}`")
+    validate_run_id(run_id)
     run_dir = RUNS_ROOT / run_id
     manifest_path = run_dir / "manifest.json"
     if not manifest_path.is_file():
@@ -1318,15 +766,15 @@ def load_resumable_run(
     manifest = read_json_object(manifest_path)
     migrate_manifest(manifest)
     validate_resumable_manifest(run_id, manifest)
-    options = options_from_manifest(manifest.get("options"))
+    options = options_from_manifest(manifest)
     questions = load_questions(options.question_limit)
     composition = run_dir / "composition.toml"
     if not composition.is_file():
         raise BenchmarkError(f"run `{run_id}` has no composition.toml")
     if composition.read_text(encoding="utf-8") != composition_text(options):
         raise BenchmarkError(f"run `{run_id}` composition does not match its options")
-    data_dir = validate_index_data_path(run_id, manifest)
-    load_index_completion(run_dir, manifest)
+    data_dir = validate_index_data_path(run_id, manifest, FIXTURE_ROOT)
+    load_index_completion(run_dir, manifest, SOURCES_MAX)
     queries = load_completed_queries(run_dir, manifest, questions)
     return run_dir, data_dir, manifest, composition, questions, options, queries
 
@@ -1369,41 +817,15 @@ def legacy_attempt(manifest: dict[str, Any], duration_seconds: float) -> dict[st
 
 
 def validate_resumable_manifest(run_id: str, manifest: dict[str, Any]) -> None:
-    if manifest.get("run_id") != run_id:
-        raise BenchmarkError(f"run directory and manifest ID differ for `{run_id}`")
-    status = manifest.get("status")
-    if status not in {"failed", "interrupted"}:
-        message = f"run `{run_id}` has status {status!r}; expected failed or interrupted"
-        raise BenchmarkError(message)
-    benchmark = manifest.get("benchmark")
-    expected_benchmark = {
-        "name": "EnterpriseRAG-Bench",
-        "release": RELEASE,
-        "upstream_revision": UPSTREAM_REVISION,
-        "archive_sha256": ARCHIVE_SHA256,
-        "questions_sha256": QUESTIONS_SHA256,
-    }
-    if benchmark != expected_benchmark:
+    validate_resumable_status(run_id, manifest)
+    if manifest.get("benchmark") != benchmark_pins():
         raise BenchmarkError(f"run `{run_id}` uses different benchmark inputs")
-    expected_models = {
-        "summarization": SUMMARIZATION_MODEL,
-        "summarization_lane": SUMMARIZATION_LANE,
-        "entity_extraction": "disabled",
-        "answer_generation": ANSWER_MODEL,
-        "answer_evaluation": EVALUATION_MODEL,
-        "embeddings": EMBEDDING_MODEL,
-        "embedding_dimensions": EMBEDDING_DIMENSIONS,
-    }
-    if manifest.get("models") != expected_models:
+    if manifest.get("models") != model_assignments():
         raise BenchmarkError(f"run `{run_id}` uses different models")
 
 
-def options_from_manifest(value: Any) -> RunOptions:
-    if type(value) is not dict:
-        raise BenchmarkError("run manifest has no options object")
-    expected = set(RunOptions.__annotations__)
-    if set(value) != expected:
-        raise BenchmarkError("run manifest options do not match this runner")
+def options_from_manifest(manifest: dict[str, Any]) -> RunOptions:
+    value = manifest_options_object(manifest, set(RunOptions.__annotations__))
     skip_evaluation = value["skip_evaluation"]
     if type(skip_evaluation) is not bool:
         raise BenchmarkError("run option skip_evaluation is not a boolean")
@@ -1422,48 +844,6 @@ def options_from_manifest(value: Any) -> RunOptions:
         ),
         skip_evaluation=skip_evaluation,
     )
-
-
-def manifest_option_integer(value: dict[str, Any], name: str, maximum: int) -> int:
-    option = value[name]
-    if type(option) is not int:
-        raise BenchmarkError(f"run option {name} is not an integer")
-    if option < 1:
-        raise BenchmarkError(f"run option {name} must be at least 1")
-    if option > maximum:
-        raise BenchmarkError(f"run option {name} exceeds the {maximum} safety limit")
-    return option
-
-
-def validate_index_data_path(run_id: str, manifest: dict[str, Any]) -> Path:
-    expected = FIXTURE_ROOT / "nodes" / run_id
-    recorded = manifest.get("index_data_path")
-    if type(recorded) is not str:
-        raise BenchmarkError(f"run `{run_id}` has no index data path")
-    if Path(recorded).resolve() != expected.resolve():
-        raise BenchmarkError(f"run `{run_id}` points at unexpected index data")
-    if not expected.is_dir():
-        raise BenchmarkError(f"run `{run_id}` index data is missing at {expected}")
-    return expected
-
-
-def load_index_completion(run_dir: Path, manifest: dict[str, Any]) -> None:
-    indexing = manifest.get("indexing")
-    if type(indexing) is not dict:
-        raise BenchmarkError(f"run `{manifest['run_id']}` has no completed index record")
-    if indexing.get("returncode") != 0:
-        raise BenchmarkError(f"run `{manifest['run_id']}` indexing did not complete")
-    duration = indexing.get("duration_seconds")
-    if type(duration) not in {int, float}:
-        raise BenchmarkError("completed index record has no duration")
-    if duration <= 0:
-        raise BenchmarkError("completed index record has a non-positive duration")
-    log_path = run_dir / "logs" / "index.log"
-    if not log_path.is_file():
-        raise BenchmarkError(f"completed index log is missing at {log_path}")
-    summary = indexing.get("summary")
-    if type(summary) is not dict:
-        indexing["summary"] = capture_index_summary(log_path.read_text(encoding="utf-8"))
 
 
 def load_completed_queries(
@@ -1493,59 +873,33 @@ def load_completed_queries(
     return queries
 
 
-def update_run_phase(run_dir: Path, manifest: dict[str, Any], phase: str) -> None:
-    assert phase in {"indexing", "querying", "evaluating"}
-    manifest["phase"] = phase
-    write_json(run_dir / "manifest.json", manifest)
-
-
-def positive_bounded(value: int, name: str, maximum: int) -> int:
-    if value < 1:
-        raise argparse.ArgumentTypeError(f"{name} must be at least 1")
-    if value > maximum:
-        raise argparse.ArgumentTypeError(f"{name} must be at most {maximum}")
-    return value
-
-
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("setup", help="download and verify the dataset and evaluator")
     run_parser = subparsers.add_parser("run", help="index, query, answer, and score a new run")
     run_parser.add_argument(
-        "--limit",
-        type=lambda value: positive_bounded(int(value), "limit", MAX_QUESTIONS),
-        default=500,
+        "--limit", type=bounded_argument("limit", MAX_QUESTIONS), default=500
     )
     run_parser.add_argument(
-        "--query-limit",
-        type=lambda value: positive_bounded(
-            int(value), "query-limit", MAX_QUERY_RESULTS
-        ),
-        default=8,
+        "--query-limit", type=bounded_argument("query-limit", MAX_QUERY_RESULTS), default=8
     )
     run_parser.add_argument(
-        "--turns",
-        type=lambda value: positive_bounded(int(value), "turns", MAX_TURNS),
-        default=12,
+        "--turns", type=bounded_argument("turns", MAX_TURNS), default=12
     )
     run_parser.add_argument(
         "--index-concurrency",
-        type=lambda value: positive_bounded(
-            int(value), "index-concurrency", MAX_INDEX_CONCURRENCY
-        ),
+        type=bounded_argument("index-concurrency", MAX_INDEX_CONCURRENCY),
         default=8,
     )
     run_parser.add_argument(
         "--llm-call-budget",
-        type=lambda value: positive_bounded(
-            int(value), "llm-call-budget", MAX_LLM_CALL_BUDGET
-        ),
+        type=bounded_argument("llm-call-budget", MAX_LLM_CALL_BUDGET),
         default=500,
     )
     run_parser.add_argument(
         "--evaluation-parallelism",
-        type=lambda value: positive_bounded(int(value), "evaluation-parallelism", 64),
+        type=bounded_argument("evaluation-parallelism", 64),
         default=4,
     )
     run_parser.add_argument(
@@ -1563,29 +917,20 @@ def parse_arguments() -> argparse.Namespace:
 
 def main() -> int:
     arguments = parse_arguments()
-    try:
-        if arguments.command == "setup":
-            setup()
-        elif arguments.command == "run":
-            options = RunOptions(
-                question_limit=arguments.limit,
-                query_limit=arguments.query_limit,
-                turns=arguments.turns,
-                index_concurrency=arguments.index_concurrency,
-                llm_call_budget=arguments.llm_call_budget,
-                evaluation_parallelism=arguments.evaluation_parallelism,
-                skip_evaluation=arguments.skip_evaluation,
-            )
-            run_benchmark(options)
-        else:
-            resume_benchmark(arguments.run_id)
-    except BenchmarkError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
-    except KeyboardInterrupt:
-        print("\ninterrupted; partial run artifacts were preserved", file=sys.stderr)
-        return 130
-    return 0
+    if arguments.command == "setup":
+        return run_main(setup)
+    if arguments.command == "run":
+        options = RunOptions(
+            question_limit=arguments.limit,
+            query_limit=arguments.query_limit,
+            turns=arguments.turns,
+            index_concurrency=arguments.index_concurrency,
+            llm_call_budget=arguments.llm_call_budget,
+            evaluation_parallelism=arguments.evaluation_parallelism,
+            skip_evaluation=arguments.skip_evaluation,
+        )
+        return run_main(lambda: run_benchmark(options))
+    return run_main(lambda: resume_benchmark(arguments.run_id))
 
 
 if __name__ == "__main__":
