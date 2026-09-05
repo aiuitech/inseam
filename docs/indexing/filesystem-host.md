@@ -25,3 +25,5 @@ Text sources the indexer actually reads get their envelope length upgraded from 
 ## Serving
 
 `fetch` returns the full text content; `scan` returns 1-based inclusive line ranges (the end is clamped; a start past the end of the file is an error); `fetch_bytes` returns any file's raw bytes with its content type — the rung for images and other binaries, which `fetch` refuses by name ([../finder/operations.md](../finder/operations.md)).
+
+Content reads run on the runtime's blocking pool and pass through a gate of 64 reads in flight per host, shared by every handle to it. The sweep can resume thousands of parked planners at once when a batch-lane job lands; without the gate each would open its file together and exhaust a default 256-descriptor macOS shell. Readers past the gate wait rather than fail.

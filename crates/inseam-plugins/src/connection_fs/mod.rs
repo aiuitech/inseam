@@ -10,6 +10,7 @@ use std::time::SystemTime;
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use ignore::WalkBuilder;
+use tokio::sync::Semaphore;
 
 use inseam_kernel::address::{Address, ContentLength, Envelope, HostId, Locator, Timestamp};
 use inseam_kernel::fragment::Mimetype;
@@ -174,6 +175,16 @@ impl WalkConfig {
     }
 }
 
+/// Content reads in flight at once, across every planner sharing this host.
+/// The sweep parks thousands of planners on batch-lane calls; when the job
+/// lands they all resume and read together, and every open file is a
+/// descriptor a default 256-descriptor macOS shell does not have. Sixty-four
+/// keeps the disk busy without touching the descriptor table, and readers
+/// past the gate wait rather than fail.
+const READS_IN_FLIGHT_MAX: usize = 64;
+const _: () = assert!(READS_IN_FLIGHT_MAX >= 1);
+const _: () = assert!(READS_IN_FLIGHT_MAX <= 256, "the gate must fit a default descriptor table");
+
 /// The connection to the machine's filesystem host. Locators are absolute
 /// paths with the leading `/` stripped, so any file the node can read is
 /// addressable and `inseam://<host>/<path>` round-trips.
@@ -181,11 +192,41 @@ impl WalkConfig {
 pub struct FsHost {
     id: HostId,
     walk: WalkConfig,
+    /// Shared by every clone of this host, so the bound is per node rather
+    /// than per handle.
+    reads: Arc<Semaphore>,
 }
 
 impl FsHost {
     pub fn new(id: HostId, walk: WalkConfig) -> Self {
-        Self { id, walk }
+        Self {
+            id,
+            walk,
+            reads: Arc::new(Semaphore::new(READS_IN_FLIGHT_MAX)),
+        }
+    }
+
+    /// Reads go through the runtime's blocking pool: many planners read at
+    /// once during a sweep, and a blocking read on a worker thread would
+    /// stall the others' transforms. The gate bounds how many are open at
+    /// once (`READS_IN_FLIGHT_MAX`).
+    async fn read_bytes_at(&self, path: &Path) -> Result<Vec<u8>, SeamError> {
+        // The semaphore is never closed, so acquisition only fails if the
+        // runtime is torn down under us; that is an operating error here.
+        let _permit = self
+            .reads
+            .acquire()
+            .await
+            .map_err(|e| SeamError::failed(format!("read {}: {e}", path.display())))?;
+        assert!(self.reads.available_permits() < READS_IN_FLIGHT_MAX);
+        tokio::fs::read(path)
+            .await
+            .map_err(|e| SeamError::failed(format!("read {}: {e}", path.display())))
+    }
+
+    async fn read_text_at(&self, path: &Path) -> Result<String, SeamError> {
+        let bytes = self.read_bytes_at(path).await?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
     /// The host id for this machine: `fs-<hostname>`, sanitized.
@@ -322,7 +363,7 @@ impl Connection for FsHost {
             .map_err(|e| SeamError::failed(format!("cannot enumerate {root}: {e}")))?;
         // The walk is synchronous disk work; it runs on the blocking pool so
         // it never stalls the runtime the sweep's pipeline lives on.
-        let host = FsHost::new(self.id.clone(), self.walk.clone());
+        let host = self.clone();
         tokio::task::spawn_blocking(move || host.walk_sources(&dir))
             .await
             .map_err(|e| SeamError::failed(format!("enumeration task failed: {e}")))?
@@ -335,7 +376,7 @@ impl Connection for FsHost {
 
     async fn read_text(&self, address: &Address) -> Result<String, SeamError> {
         let path = self.resolve(address)?;
-        read_text_at(&path).await
+        self.read_text_at(&path).await
     }
 
     async fn read_lines(
@@ -345,28 +386,14 @@ impl Connection for FsHost {
         end: u64,
     ) -> Result<String, SeamError> {
         let path = self.resolve(address)?;
-        let text = read_text_at(&path).await?;
+        let text = self.read_text_at(&path).await?;
         slice_lines(&text, start, end).map_err(SeamError::failed)
     }
 
     async fn read_bytes(&self, address: &Address) -> Result<Vec<u8>, SeamError> {
         let path = self.resolve(address)?;
-        read_bytes_at(&path).await
+        self.read_bytes_at(&path).await
     }
-}
-
-/// Reads go through the runtime's blocking pool: many planners read at once
-/// during a sweep, and a blocking read on a worker thread would stall the
-/// others' transforms.
-async fn read_bytes_at(path: &Path) -> Result<Vec<u8>, SeamError> {
-    tokio::fs::read(path)
-        .await
-        .map_err(|e| SeamError::failed(format!("read {}: {e}", path.display())))
-}
-
-async fn read_text_at(path: &Path) -> Result<String, SeamError> {
-    let bytes = read_bytes_at(path).await?;
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Extensions that mime_guess maps poorly or not at all but that are plainly
@@ -541,6 +568,37 @@ mod tests {
             names(&host_with(config), dir.path()).await,
             vec!["app/src/index.js", "notes/Archive/keep.md"]
         );
+    }
+
+    #[tokio::test]
+    async fn thousands_of_concurrent_reads_all_land() {
+        // The sweep resumes every parked planner at once when a batch job
+        // lands; the host must serve them without opening thousands of
+        // files together. Every clone shares the gate.
+        let dir = tempfile::tempdir().expect("tempdir");
+        for index in 0..64 {
+            write(dir.path(), &format!("doc-{index}.txt"), &format!("body {index}\n"));
+        }
+        let host = host();
+        let sources = host
+            .enumerate(dir.path().to_str().expect("utf8"))
+            .await
+            .expect("enumerate");
+        assert_eq!(sources.len(), 64);
+        let reads_total: usize = 2_048;
+        let mut tasks = Vec::with_capacity(reads_total);
+        for index in 0..reads_total {
+            let host = host.clone();
+            let address = sources[index % sources.len()].address.clone();
+            tasks.push(tokio::spawn(async move { host.read_bytes(&address).await }));
+        }
+        let mut landed: usize = 0;
+        for task in tasks {
+            let bytes = task.await.expect("task").expect("read");
+            assert!(bytes.starts_with(b"body "));
+            landed += 1;
+        }
+        assert_eq!(landed, reads_total);
     }
 
     #[tokio::test]
