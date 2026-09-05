@@ -12,8 +12,16 @@ pub enum SeamError {
     UnknownSource(Address),
     #[error("{0} is not indexed as text and has no text fragments to scan")]
     NothingToScan(Address),
-    #[error("{0} is binary ({1}); fetching binary content over the JSON surface is not supported yet")]
+    #[error("{0} is binary ({1}); fetch its bytes instead of its text")]
     BinaryFetch(Address, String),
+    /// A byte fetch was asked for content past the bound the operation
+    /// carries in one message.
+    #[error("{address} is {bytes} bytes; fetching bytes is bounded at {limit}")]
+    FetchTooLarge {
+        address: Address,
+        bytes: u64,
+        limit: u64,
+    },
     #[error("bad address: {0}")]
     Address(#[from] inseam_kernel::address::AddressError),
     /// No mounted connection stewards the named host.

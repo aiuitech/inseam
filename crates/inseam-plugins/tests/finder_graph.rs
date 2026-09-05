@@ -72,6 +72,7 @@ async fn seed_source(
                 mimetype: Mimetype::markdown(),
                 text: None,
                 extent: Some(Extent::lines(1, 10)),
+                content_address: None,
             },
         ).await
         .expect("root");
@@ -83,6 +84,7 @@ async fn seed_source(
                 mimetype: Mimetype::markdown(),
                 text: Some(body.to_string()),
                 extent: Some(Extent::lines(1, 10)),
+                content_address: None,
             },
         ).await
         .expect("section");
@@ -190,6 +192,7 @@ async fn relational_relevance_beats_flat_similarity() {
                 mimetype: Mimetype::parse("text/x-inseam-entity;kind=project").expect("valid"),
                 text: Some("Kitchen Reno".to_string()),
                 extent: None,
+                content_address: None,
             },
         ).await
         .expect("entity")

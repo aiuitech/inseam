@@ -67,6 +67,20 @@ So the example flow: my external service calls `query("some topic", properties: 
   `SameSite=Strict` cookie never rides a cross-site redirect, safe because the
   operation accepts nothing but the `state` it issued, and addressed by an
   explicit public URL (`--public-url`) rather than a trusted `Host` header.
+- **Bytes are a rung of the ladder, bounded per message.** `fetch_bytes`
+  returns a source's or a referenced fragment's raw bytes with their content
+  type, base64 in the JSON message like every file an operation carries,
+  bounded at 32 MiB; past that it refuses rather than streams, because an
+  operation message is one value and streaming is the adapters' open
+  question below. The text `fetch` refuses binaries by name. The HTTP
+  adapter's one non-JSON route, `GET /owner/raw?address=…`, is that
+  operation unwrapped to a body under its own `Content-Type` — the adapter
+  adds a header, never a policy: what may be served, and how much, is
+  decided in the operation, so the console's `<img>` and a `curl` see the
+  same answer as the CLI's `fetch --output`. *Rejected:* a text-only fetch
+  that base64-encodes binaries into `text` (a lie about the content type
+  every client would have to detect), and a raw route with its own path
+  resolution (a second door with its own rules).
 - **Plugins are owner operations too.** `plugins` (every entry as the
   kernel runs it) and `install_plugin` (a plugin directory's files, mounted
   into the running node) ride the seam, so the console, the CLI, and any

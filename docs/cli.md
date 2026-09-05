@@ -17,7 +17,8 @@ inseam revoke <grant>               # forget a grant's tokens; its hosts withdra
 inseam query "kitchen renovation"   # ranked results with summaries and hints; --json for raw output
 inseam expand <address>             # one source's fragments, relations, connected keyed fragments (entities)
 inseam scan <address> --start 120 --end 160   # read a line range of a source
-inseam fetch <address>              # the whole source
+inseam fetch <address>              # the whole source as text
+inseam fetch <address> --output f   # its raw bytes (an image, a PDF, a linked file) to a file; `-` is stdout
 inseam agent "when did I ...?"      # a live LLM using query/expand/scan/fetch as tools
 inseam models [--embeddings]        # the endpoint's model catalog, cheapest first; against ollama, installed models with widths
 inseam status                       # store stats, sizes, embedding identity (model, dims, vector scope), DiskANN readiness, pending re-embeds

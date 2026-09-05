@@ -678,6 +678,7 @@ fn sprout_forest(
                 mimetype,
                 text: f.text.clone(),
                 extent: None,
+                content_address: None,
             },
             relation,
         )));

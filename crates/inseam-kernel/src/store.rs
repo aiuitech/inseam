@@ -26,7 +26,7 @@ use crate::fragment::{
 };
 use crate::subtree::{PlanNode, SubtreePlan};
 
-const SCHEMA_VERSION: &str = "6";
+const SCHEMA_VERSION: &str = "7";
 /// Ids per `IN (...)` predicate: every id-list query and delete is issued in
 /// chunks of this many, so no caller can build unbounded SQL.
 const ID_LIST_CHUNK: usize = 400;
@@ -99,6 +99,9 @@ pub struct StoredFragment {
     pub mimetype: Mimetype,
     pub text: Option<String>,
     pub extent: Option<Extent>,
+    /// Where the fragment's bytes live when the index holds a reference
+    /// instead of text ([`NewFragment::content_address`]).
+    pub content_address: Option<Address>,
 }
 
 /// The index bookkeeping the sweep reads to decide dirtiness: content-change
@@ -962,6 +965,24 @@ impl IndexStore {
         row.map(|r| row_to_fragment(&r)).transpose()
     }
 
+    /// The lowest-id fragment whose content lives at `address` — how a
+    /// fetch learns the content type of referenced content that is not a
+    /// cataloged source of its own (an image a document links to).
+    pub async fn fragment_referencing(
+        &self,
+        address: &Address,
+    ) -> Result<Option<StoredFragment>, StoreError> {
+        let row = self
+            .first_row(
+                &format!(
+                    "SELECT {FRAGMENT_COLUMNS} FROM fragments WHERE content_address = ?1 ORDER BY id LIMIT 1"
+                ),
+                params![address.to_string()],
+            )
+            .await?;
+        row.map(|r| row_to_fragment(&r)).transpose()
+    }
+
     pub async fn fragments_of(&self, source: SourceId) -> Result<Vec<StoredFragment>, StoreError> {
         let mut rows = self
             .catalog
@@ -1663,9 +1684,11 @@ const CATALOG_SCHEMA_SQL: &str = "CREATE TABLE IF NOT EXISTS meta (
        text TEXT,
        extent_unit TEXT,
        extent_start INTEGER,
-       extent_end INTEGER
+       extent_end INTEGER,
+       content_address TEXT
      );
      CREATE INDEX IF NOT EXISTS fragments_by_source ON fragments(source);
+     CREATE INDEX IF NOT EXISTS fragments_by_content_address ON fragments(content_address);
      CREATE TABLE IF NOT EXISTS relations (
        from_fragment INTEGER NOT NULL REFERENCES fragments(id) ON DELETE CASCADE,
        kind TEXT NOT NULL,
@@ -2135,7 +2158,8 @@ fn row_to_source(r: &libsql::Row) -> Result<StoredSource, StoreError> {
     })
 }
 
-const FRAGMENT_COLUMNS: &str = "id, source, mimetype, text, extent_unit, extent_start, extent_end";
+const FRAGMENT_COLUMNS: &str =
+    "id, source, mimetype, text, extent_unit, extent_start, extent_end, content_address";
 
 fn row_to_fragment(r: &libsql::Row) -> Result<StoredFragment, StoreError> {
     let id: i64 = r.get(0)?;
@@ -2156,12 +2180,17 @@ fn row_to_fragment(r: &libsql::Row) -> Result<StoredFragment, StoreError> {
         }
         _ => None,
     };
+    let content_address = r
+        .get::<Option<String>>(7)?
+        .map(|a| a.parse::<Address>().map_err(|e| corrupt(id, e)))
+        .transpose()?;
     Ok(StoredFragment {
         id: FragmentId(id),
         source: r.get::<Option<i64>>(1)?.map(SourceId),
         mimetype: Mimetype::parse(&mimetype).map_err(|e| corrupt(id, e))?,
         text: r.get(3)?,
         extent,
+        content_address,
     })
 }
 
@@ -2181,8 +2210,8 @@ fn corrupt(id: i64, err: impl std::fmt::Display) -> StoreError {
 }
 
 const INSERT_FRAGMENT_SQL: &str =
-    "INSERT INTO fragments (source, mimetype, text, extent_unit, extent_start, extent_end)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6) RETURNING id";
+    "INSERT INTO fragments (source, mimetype, text, extent_unit, extent_start, extent_end, content_address)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) RETURNING id";
 
 /// Read the first column of an at-most-one-row result and run the statement
 /// to completion, so a surrounding transaction can commit afterwards.
@@ -2206,6 +2235,7 @@ fn fragment_params(source: Option<SourceId>, fragment: &NewFragment) -> impl lib
         unit,
         start,
         end,
+        fragment.content_address.as_ref().map(Address::to_string),
     ]
 }
 
@@ -2346,6 +2376,7 @@ mod tests {
                     mimetype: Mimetype::markdown(),
                     text: None,
                     extent: Some(Extent::lines(1, 10)),
+                    content_address: None,
                 },
             )
             .await
@@ -2358,6 +2389,7 @@ mod tests {
                     mimetype: Mimetype::markdown(),
                     text: Some("# Kitchen\nbudget notes".into()),
                     extent: Some(Extent::lines(1, 2)),
+                    content_address: None,
                 },
             )
             .await
@@ -2369,6 +2401,7 @@ mod tests {
                     mimetype: Mimetype::summary(),
                     text: Some("Notes about the kitchen budget.".into()),
                     extent: None,
+                    content_address: None,
                 },
             )
             .await
@@ -2388,6 +2421,9 @@ mod tests {
         assert_eq!(frags.len(), 3);
         assert_eq!(frags[1].text.as_deref(), Some("# Kitchen\nbudget notes"));
         assert_eq!(frags[1].extent, Some(Extent::lines(1, 2)));
+        // Pair assertion with the content-reference test: a text fragment
+        // stores no reference.
+        assert!(frags.iter().all(|f| f.content_address.is_none()));
 
         let rels = s.relations_touching(&[section]).await.expect("ok");
         assert_eq!(rels.len(), 1);
@@ -2397,6 +2433,37 @@ mod tests {
         s.delete_fragments_of(sid).await.expect("deletes");
         assert!(s.fragments_of(sid).await.expect("ok").is_empty());
         assert!(s.all_relations().await.expect("ok").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_content_reference_roundtrips_on_its_fragment() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        let a = addr("inseam://fs-test/tmp/note.md");
+        let sid = s
+            .upsert_source(&a, &envelope(1, 10), 10)
+            .await
+            .expect("upserts");
+        let image = addr("inseam://fs-test/tmp/diagram.png");
+        let id = s
+            .insert_fragment(
+                sid,
+                &NewFragment {
+                    mimetype: Mimetype::parse("image/png").expect("valid"),
+                    text: None,
+                    extent: None,
+                    content_address: Some(image.clone()),
+                },
+            )
+            .await
+            .expect("inserts");
+        let stored = s.fragment(id).await.expect("ok").expect("present");
+        assert_eq!(stored.content_address, Some(image.clone()));
+        assert_eq!(stored.text, None);
+        let referencing = s.fragment_referencing(&image).await.expect("ok").expect("present");
+        assert_eq!(referencing.id, id);
+        let other = addr("inseam://fs-test/tmp/other.png");
+        assert!(s.fragment_referencing(&other).await.expect("ok").is_none());
     }
 
     #[tokio::test]
@@ -2673,6 +2740,7 @@ mod tests {
                 mimetype: Mimetype::summary().with_param("via", "extractive"),
                 text: Some("summary".into()),
                 extent: None,
+                content_address: None,
             },
         });
         s.write_subtree(&plan).await.expect("lands");
@@ -2724,6 +2792,7 @@ mod tests {
             mimetype: Mimetype::text_plain(),
             text: Some(t.to_string()),
             extent: None,
+            content_address: None,
         };
         let a = s.insert_fragment(sid, &plain("a")).await.expect("inserts");
         let b = s.insert_fragment(sid, &plain("b")).await.expect("inserts");
@@ -2756,6 +2825,7 @@ mod tests {
             mimetype: Mimetype::text_plain(),
             text: Some("node".to_string()),
             extent: None,
+            content_address: None,
         };
         let mut ids = Vec::new();
         for _ in 0..6_u32 {
@@ -2812,6 +2882,7 @@ mod tests {
                     mimetype: Mimetype::markdown(),
                     text: Some("greg's note".into()),
                     extent: None,
+                    content_address: None,
                 },
             )
             .await
@@ -2823,6 +2894,7 @@ mod tests {
                     mimetype: Mimetype::parse("text/x-test-entity;kind=person").expect("valid"),
                     text: Some(name.into()),
                     extent: None,
+                    content_address: None,
                 },
             )
             .await
@@ -2884,6 +2956,7 @@ mod tests {
             mimetype: Mimetype::parse("text/x-test-entity;kind=person").expect("valid"),
             text: Some("Greg Hunt".into()),
             extent: None,
+            content_address: None,
         };
         let first = s.keyed_fragment(&key, &fragment).await.expect("creates");
         let KeyedFragment::Created(e) = first else {
@@ -2910,6 +2983,7 @@ mod tests {
                 mimetype: Mimetype::markdown(),
                 text: None,
                 extent: Some(Extent::lines(1, 3)),
+                content_address: None,
             },
             fragments: texts
                 .iter()
@@ -2926,6 +3000,7 @@ mod tests {
                         mimetype: Mimetype::text_plain(),
                         text: Some((*t).to_string()),
                         extent: None,
+                        content_address: None,
                     },
                 })
                 .collect(),
@@ -3005,6 +3080,7 @@ mod tests {
                 mimetype: Mimetype::parse("text/x-test-entity;kind=person").expect("valid"),
                 text: Some("Greg".into()),
                 extent: None,
+                content_address: None,
             },
             relation: RelationKind::new("mentions").expect("valid"),
             anchors: vec![PlanNode::Fragment(0)],

@@ -22,8 +22,10 @@ interface host {
     /// One metered vision call: OCR, captioning (requires `llm`).
     llm-describe-image: func(prompt: string, mimetype: string, image: list<u8>) -> result<string, string>;
 
-    /// The raw bytes of the claimed source (requires the `source-bytes`
-    /// capability; granted at the root only).
+    /// The raw bytes of the claimed fragment (requires the `source-bytes`
+    /// capability): the source's own bytes at the root, or the content a
+    /// non-root fragment references (an image a document links to) when
+    /// the plugin claims non-roots too.
     source-bytes: func() -> result<list<u8>, string>;
 }
 

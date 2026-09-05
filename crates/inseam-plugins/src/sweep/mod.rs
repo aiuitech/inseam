@@ -308,6 +308,7 @@ impl Sweep for SweepService {
         let planning = self.planning_concurrency(&grantor, &registrations, request.llm_lane);
         let planner = Arc::new(Planner {
             connection: Arc::clone(&steward.connection),
+            connections: Arc::clone(&self.connections),
             registrations,
             grantor: Arc::clone(&grantor),
             sweep_shape,

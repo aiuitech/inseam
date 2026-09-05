@@ -163,19 +163,20 @@ async fn the_incremental_discovery_ladder_works_offline() {
         .expect("fetches");
     assert!(fetched.text.contains("# Kitchen Renovation"));
 
-    // Binary sources refuse the JSON fetch surface for now.
+    // Binary sources have no text rung: the error names the bytes rung
+    // (`tests/fetch_bytes.rs` walks it).
     let png = response
         .results
         .iter()
         .map(|r| &r.address)
         .find(|a| a.to_string().ends_with("logo.png"));
     if let Some(png) = png {
-        assert!(ops
+        let refused = ops
             .fetch(FetchRequest {
-                address: png.clone()
+                address: png.clone(),
             })
-            .await
-            .is_err());
+            .await;
+        assert!(matches!(refused, Err(inseam_seams::SeamError::BinaryFetch(a, _)) if &a == png));
     }
 }
 

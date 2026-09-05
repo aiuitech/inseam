@@ -9,7 +9,10 @@ The boundary operations from [design/node-api.md](../../design/node-api.md), ser
 | 1 | `query { text, limit }` | cheapest | ranked addresses + envelopes, each with a score, summary, fragment hints (text preview + line extent), and any `replicas` — other addresses of the same content, collapsed by content digest |
 | 2 | `expand { address }` | index-only | the source's fragments (mimetype, extent, preview), its typed relations, and neighboring fragments beyond the source — keyed fragments such as entities and the sources they connect to |
 | 3 | `scan { address, start, end }` | reads a slice | lines `start..=end` (1-based, inclusive) through the fetch path; media sources redirect to their largest text descendant (`served_from_fragment` set) |
-| 4 | `fetch { address }` | full content | the whole source (text only, for now) |
+| 4 | `fetch { address }` | full content | the whole source as text |
+| 4 | `fetch_bytes { address }` | full content | the raw bytes with their content type — a source that is not text (an image, a PDF), or the target of a fragment's content reference (an image a document links to); bounded at 32 MiB per message, base64 in JSON |
+
+`fetch` on a binary source refuses with `BinaryFetch`, naming `fetch_bytes`. `fetch_bytes` serves only what the index has a record of: a cataloged source (its envelope gives the content type) or an address some fragment references (that fragment's mimetype does). Every fragment view in `expand` carries `content_address` when the fragment holds a reference instead of text ([../indexing/transforms.md](../indexing/transforms.md)).
 
 Errors are typed and written as sentences (`no source at …`, `scan start line 200 is beyond the 41-line source`) so both humans and models can correct themselves.
 

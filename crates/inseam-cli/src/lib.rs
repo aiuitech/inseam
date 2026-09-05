@@ -34,7 +34,8 @@ use inseam_seams::llm::{self, LlmLane, ModelInfo, LLM};
 use inseam_seams::oauth::{GrantId, GrantState, Redirect};
 use inseam_seams::operations::{
     AuthorizeGrantRequest, AwaitAuthorizationRequest, CatalogFilter, CatalogRequest,
-    CatalogResponse, ExpandRequest, FetchRequest, GrantView, IndexRequest, QueryRequest,
+    CatalogResponse, ExpandRequest, FetchBytesRequest, FetchRequest, GrantView, IndexRequest,
+    QueryRequest,
     Operations, QueryResponse, RepairOutcome, RepairReport, RepairRequest, RevokeGrantRequest,
     ScanRequest, OPERATIONS,
 };
@@ -303,8 +304,14 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Retrieve a source's full content.
-    Fetch { address: String },
+    /// Retrieve a source's full content: its text, or with `--output` its
+    /// bytes (an image, a PDF, a linked file) written to a file.
+    Fetch {
+        address: String,
+        /// Write the raw bytes here instead of printing text; `-` is stdout.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     /// Let a live LLM discover things through the operations seam
     /// (query/expand/scan/fetch as tools). Requires the endpoint API key.
     Agent {
@@ -757,14 +764,29 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 println!("{}", response.text);
             }
         }
-        Command::Fetch { address } => {
+        Command::Fetch { address, output } => {
             let ops = kernel.service(&OPERATIONS)?;
-            let response = ops
-                .fetch(FetchRequest {
-                    address: address.parse()?,
-                })
-                .await?;
-            println!("{}", response.text);
+            let address: Address = address.parse()?;
+            match output {
+                Some(path) => {
+                    let response = ops.fetch_bytes(FetchBytesRequest { address }).await?;
+                    write_fetched_bytes(&path, &response.bytes.0)?;
+                    eprintln!(
+                        "wrote {} bytes of {} to {}",
+                        response.bytes.0.len(),
+                        response.content_type,
+                        path.display()
+                    );
+                }
+                None => match ops.fetch(FetchRequest { address }).await {
+                    Ok(response) => println!("{}", response.text),
+                    Err(inseam_seams::SeamError::BinaryFetch(address, content_type)) => bail!(
+                        "{address} is {content_type}; save its bytes with \
+                         `inseam fetch {address} --output <file>`"
+                    ),
+                    Err(error) => return Err(error.into()),
+                },
+            }
         }
         Command::Agent {
             question,
@@ -1206,6 +1228,17 @@ fn print_results(response: &QueryResponse) {
     }
 }
 
+/// Write fetched bytes to `path`, or to stdout for `-`, so a binary fetch
+/// never lands in a terminal by accident.
+fn write_fetched_bytes(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    if path == Path::new("-") {
+        use std::io::Write as _;
+        std::io::stdout().write_all(bytes)?;
+        return Ok(());
+    }
+    std::fs::write(path, bytes).with_context(|| format!("writing {}", path.display()))
+}
+
 fn print_expansion(response: &inseam_seams::operations::ExpandResponse) {
     println!("{}", response.address);
     if let Some(summary) = &response.summary {
@@ -1219,7 +1252,12 @@ fn print_expansion(response: &inseam_seams::operations::ExpandResponse) {
             .map(|e| format!(" [{e}]"))
             .unwrap_or_default();
         let text = f.text.as_deref().unwrap_or("");
-        println!("  #{:<5} {}{extent}  {}", f.id, f.mimetype, text);
+        let reference = f
+            .content_address
+            .as_ref()
+            .map(|a| format!("  @ {a}"))
+            .unwrap_or_default();
+        println!("  #{:<5} {}{extent}  {}{reference}", f.id, f.mimetype, text);
     }
     if !response.relations.is_empty() {
         println!("\nrelations:");

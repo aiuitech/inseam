@@ -73,8 +73,11 @@ pub struct TransformCtx<'a> {
     pub is_root: bool,
     /// The fragment's text; `None` for content the node did not read.
     pub text: Option<&'a str>,
-    /// Raw source bytes; granted only to transforms that declare
-    /// [`Transform::wants_bytes`], and only at the root.
+    /// The claimed fragment's raw bytes: the source's at the root, the
+    /// referenced content's for a fragment carrying a
+    /// [`NewFragment::content_address`]. Granted only to transforms that
+    /// declare [`Transform::wants_bytes`]; `None` for a text fragment, an
+    /// unreadable reference, or content over the sweep's byte cap.
     pub bytes: Option<&'a [u8]>,
     /// Shared (`Arc`) so a sandbox bridge can move the grant into its
     /// instance state; the grant is still per-application and metered.
@@ -142,7 +145,8 @@ pub trait Transform: Send + Sync {
     /// entities) are derived understanding and must never be claimed.
     fn claims(&self, mimetype: &Mimetype, is_root: bool) -> bool;
 
-    /// Whether applications should receive the source's raw bytes.
+    /// Whether applications should receive the claimed fragment's raw
+    /// bytes ([`TransformCtx::bytes`]).
     fn wants_bytes(&self) -> bool {
         false
     }
@@ -337,6 +341,7 @@ mod tests {
                     mimetype: Mimetype::text_plain(),
                     text: Some("x".into()),
                     extent: None,
+                    content_address: None,
                 },
                 relation: RelationKind::contains(),
                 children,

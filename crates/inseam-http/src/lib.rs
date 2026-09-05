@@ -32,7 +32,8 @@ use inseam_kernel::address::HostId;
 use inseam_seams::oauth::{AuthorizationCallback, GrantId, Redirect};
 use inseam_seams::operations::{
     AuthorizeGrantRequest, CatalogRequest, CatalogResponse, ExpandRequest, ExpandResponse,
-    FetchRequest, FetchResponse, GrantView, HostView, IndexRequest, InstallPluginRequest,
+    FetchBytesRequest, FetchBytesResponse, FetchRequest, FetchResponse, GrantView, HostView,
+    IndexRequest, InstallPluginRequest,
     Operations, PluginView, QueryRequest, QueryResponse, RevokeGrantRequest, ScanRequest,
     ScanResponse, StatusReport,
 };
@@ -255,6 +256,8 @@ fn owner_router(state: &AppState) -> Router<AppState> {
         .route("/expand", post(expand))
         .route("/scan", post(scan))
         .route("/fetch", post(fetch))
+        .route("/fetch_bytes", post(fetch_bytes))
+        .route("/raw", get(raw))
         .route("/index", post(index))
         .route("/grants", get(grants))
         .route("/grants/authorize", post(authorize_grant))
@@ -490,6 +493,41 @@ async fn fetch(
     Ok(Json(state.operations.fetch(request).await?))
 }
 
+async fn fetch_bytes(
+    State(state): State<AppState>,
+    Json(request): Json<FetchBytesRequest>,
+) -> Result<Json<FetchBytesResponse>, ApiError> {
+    Ok(Json(state.operations.fetch_bytes(request).await?))
+}
+
+/// The one route that answers with a body that is not JSON: the bytes of a
+/// source or referenced fragment under their own content type, so an
+/// `<img>` in the console or any HTTP client reads an indexed image as a
+/// plain URL. `fetch_bytes` unwrapped, nothing more — the operation decides
+/// what may be served and how much.
+async fn raw(
+    State(state): State<AppState>,
+    Query(request): Query<FetchBytesRequest>,
+) -> Result<Response, ApiError> {
+    let response = state.operations.fetch_bytes(request).await?;
+    // A mimetype is validated as `type/subtype;k=v` at the store boundary,
+    // so this fallback covers only a parameter value with header-hostile
+    // bytes; the body is served either way.
+    let content_type = axum::http::HeaderValue::from_str(&response.content_type)
+        .unwrap_or_else(|_| axum::http::HeaderValue::from_static("application/octet-stream"));
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, content_type),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                axum::http::HeaderValue::from_static("inline"),
+            ),
+        ],
+        response.bytes.0,
+    )
+        .into_response())
+}
+
 async fn index(
     State(state): State<AppState>,
     Json(request): Json<HttpIndexRequest>,
@@ -559,6 +597,9 @@ mod tests {
     use super::*;
 
     const TOKEN: &str = "0123456789abcdef0123456789abcdef";
+    /// A PNG signature followed by padding: enough to be recognizably not
+    /// JSON on the wire.
+    const PNG_BYTES: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0];
 
     #[derive(Default)]
     struct StubOperations {
@@ -597,6 +638,20 @@ mod tests {
 
         async fn fetch(&self, _request: FetchRequest) -> Result<FetchResponse, SeamError> {
             Err(unused())
+        }
+
+        async fn fetch_bytes(
+            &self,
+            request: FetchBytesRequest,
+        ) -> Result<FetchBytesResponse, SeamError> {
+            if request.address.locator.as_str() != "tmp/logo.png" {
+                return Err(SeamError::UnknownSource(request.address));
+            }
+            Ok(FetchBytesResponse {
+                address: request.address,
+                content_type: "image/png".to_string(),
+                bytes: inseam_seams::operations::FileBytes(PNG_BYTES.to_vec()),
+            })
         }
 
         async fn index(&self, request: IndexRequest) -> Result<IndexReport, SeamError> {
@@ -748,6 +803,50 @@ mod tests {
     async fn owner_routes_reject_an_anonymous_request() {
         let app = test_router(Arc::new(StubOperations::default()), Vec::new());
         let request = Request::get("/api/v1/owner/status")
+            .body(Body::empty())
+            .expect("valid request");
+        let response = app.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn the_raw_route_serves_bytes_under_their_own_content_type() {
+        let app = test_router(Arc::new(StubOperations::default()), Vec::new());
+        let cookie = login_cookie(&app).await;
+        let request = Request::get("/api/v1/owner/raw?address=inseam%3A%2F%2Ffs-test%2Ftmp%2Flogo.png")
+            .header(COOKIE, &cookie)
+            .body(Body::empty())
+            .expect("valid request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[CONTENT_TYPE], "image/png");
+        assert_eq!(response.headers()[axum::http::header::CONTENT_DISPOSITION], "inline");
+        let bytes = to_bytes(response.into_body(), 4096).await.expect("body");
+        assert_eq!(bytes.as_ref(), PNG_BYTES);
+
+        // The JSON form of the same operation carries the bytes as base64.
+        let request = Request::post("/api/v1/owner/fetch_bytes")
+            .header(COOKIE, &cookie)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"address":"inseam://fs-test/tmp/logo.png"}"#))
+            .expect("valid request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), 4096).await.expect("body");
+        let body: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON");
+        assert_eq!(body["content_type"], "image/png");
+        assert_eq!(body["bytes"], "iVBORw0KGgoAAA==");
+
+        // An address the operation refuses is a JSON error, not a body.
+        let request = Request::get("/api/v1/owner/raw?address=inseam%3A%2F%2Ffs-test%2Ftmp%2Fnope.png")
+            .header(COOKIE, &cookie)
+            .body(Body::empty())
+            .expect("valid request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        // And no cookie, no bytes.
+        let request = Request::get("/api/v1/owner/raw?address=inseam%3A%2F%2Ffs-test%2Ftmp%2Flogo.png")
             .body(Body::empty())
             .expect("valid request");
         let response = app.oneshot(request).await.expect("response");

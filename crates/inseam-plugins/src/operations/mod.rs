@@ -15,7 +15,7 @@ mod install;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use inseam_kernel::address::{Address, HostId};
+use inseam_kernel::address::{Address, ContentLength, HostId};
 use inseam_kernel::store::{
     CatalogRow, CatalogSelection, IndexStore, SearchIndexRepair,
     SearchIndexRepairOutcome, StoredFragment, StoredSource, VectorScope,
@@ -35,7 +35,8 @@ use inseam_seams::oauth::{
 use inseam_seams::operations::{
     AuthorizeGrantRequest, AwaitAuthorizationRequest, CatalogFilter, CatalogRequest,
     CatalogResponse, CatalogSourceView, EnvelopeView, ExpandRequest,
-    ExpandResponse, FetchRequest, FetchResponse, FragmentHint, FragmentView, GrantView,
+    ExpandResponse, FetchBytesRequest, FetchBytesResponse, FetchRequest, FetchResponse,
+    FileBytes, FragmentHint, FragmentView, GrantView, FETCH_BYTES_MAX,
     HostView, IndexRequest, InstallPluginRequest, OperationRequest, Operations, PluginView,
     QueryRequest, QueryResponse, QueryResult, RelationView, RepairOutcome, RepairReport,
     RepairRequest, RevokeGrantRequest, ScanRequest, ScanResponse, StatusReport, OPERATIONS,
@@ -135,6 +136,25 @@ impl OperationsService {
         self.store
             .source_by_address(address).await?
             .ok_or_else(|| SeamError::UnknownSource(address.clone()))
+    }
+
+    /// What the catalog knows about the content at an address: a source's
+    /// content type and byte size when the address is cataloged, else the
+    /// mimetype of a fragment that references it (a linked image). Anything
+    /// else is unknown — a fetch never reaches for content the index has no
+    /// record of.
+    async fn content_at(&self, address: &Address) -> Result<(String, Option<u64>), SeamError> {
+        if let Some(source) = self.store.source_by_address(address).await? {
+            let known_bytes = match source.envelope.length {
+                ContentLength::Bytes(n) => Some(n),
+                ContentLength::Lines(_) => None,
+            };
+            return Ok((source.envelope.content_type.to_string(), known_bytes));
+        }
+        match self.store.fragment_referencing(address).await? {
+            Some(fragment) => Ok((fragment.mimetype.to_string(), None)),
+            None => Err(SeamError::UnknownSource(address.clone())),
+        }
     }
 
     /// The connection serving a host, for reads: a cataloged source whose
@@ -285,6 +305,31 @@ impl Operations for OperationsService {
             address: source.address,
             content_type: source.envelope.content_type.to_string(),
             text,
+        })
+    }
+
+    async fn fetch_bytes(&self, request: FetchBytesRequest) -> Result<FetchBytesResponse, SeamError> {
+        self.guard("fetch")?;
+        let (content_type, known_bytes) = self.content_at(&request.address).await?;
+        // Refuse before reading when the catalog already knows the size;
+        // otherwise the read itself is the check (pair assertion below).
+        if let Some(bytes) = known_bytes
+            && bytes > FETCH_BYTES_MAX
+        {
+            return Err(fetch_too_large(&request.address, bytes));
+        }
+        let bytes = self
+            .connection_to(&request.address.host)?
+            .read_bytes(&request.address)
+            .await?;
+        let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        if size > FETCH_BYTES_MAX {
+            return Err(fetch_too_large(&request.address, size));
+        }
+        Ok(FetchBytesResponse {
+            address: request.address,
+            content_type,
+            bytes: FileBytes(bytes),
         })
     }
 
@@ -537,7 +582,16 @@ fn fragment_view(f: &StoredFragment, source: Option<Address>) -> FragmentView {
         mimetype: f.mimetype.to_string(),
         extent: f.extent.map(|e| e.to_string()),
         text: f.text.as_deref().map(|t| preview(t, PREVIEW_CHARS)),
+        content_address: f.content_address.clone(),
         source,
+    }
+}
+
+fn fetch_too_large(address: &Address, bytes: u64) -> SeamError {
+    SeamError::FetchTooLarge {
+        address: address.clone(),
+        bytes,
+        limit: FETCH_BYTES_MAX,
     }
 }
 

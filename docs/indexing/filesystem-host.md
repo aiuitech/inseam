@@ -24,4 +24,4 @@ Text sources the indexer actually reads get their envelope length upgraded from 
 
 ## Serving
 
-`fetch` returns the full text content; `scan` returns 1-based inclusive line ranges (the end is clamped; a start past the end of the file is an error). Binary fetches over the JSON surface are refused for now.
+`fetch` returns the full text content; `scan` returns 1-based inclusive line ranges (the end is clamped; a start past the end of the file is an error); `fetch_bytes` returns any file's raw bytes with its content type — the rung for images and other binaries, which `fetch` refuses by name ([../finder/operations.md](../finder/operations.md)).

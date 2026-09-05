@@ -134,6 +134,7 @@ impl Transform for SummarizerTransform {
                 mimetype: Mimetype::summary().with_param("via", kind.as_str()),
                 text: Some(text),
                 extent: None,
+                content_address: None,
             },
             RelationKind::derives(),
         )])

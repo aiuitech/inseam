@@ -55,8 +55,10 @@ One metered vision call: OCR, captioning (requires `llm`).
 
 #### <a id="source_bytes"></a>`source-bytes: func`
 
-The raw bytes of the claimed source (requires the `source-bytes`
-capability; granted at the root only).
+The raw bytes of the claimed fragment (requires the `source-bytes`
+capability): the source's own bytes at the root, or the content a
+non-root fragment references (an image a document links to) when
+the plugin claims non-roots too.
 
 ##### Return values
 

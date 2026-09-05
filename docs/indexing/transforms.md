@@ -8,9 +8,18 @@ Linked (Rust) transforms and loaded (WASM) transforms register the same way: `cl
 
 The sweep applies transforms recursively: over the source root, then over every fragment they emit, until nothing claims the output. A transform claiming another's emitted mimetype (the loaded tier's usual shape — e.g. OCR emitting `text/plain` from images) chains in the same rebuild. Every claimant of one fragment is applied at the same time (they are independent of each other), and their outputs are taken in a fixed order — structural transforms before enrichment ones, then by entry id — so budgets and the resulting subtree are deterministic no matter what order plugins started in or which application finished first. Many sources are planned at once too ([maintenance.md](maintenance.md)).
 
-Capabilities are handed in, never grabbed: the context carries the text, optionally the raw bytes (only for transforms that declare `wants_bytes`, and only at the root), and optionally a **granted LLM** (`GrantedLlm`) — metered against the transform's per-run budget and checked against the `LlmCall` guard on every call. Budget spent, or guard says no → the LLM handle refuses, and the transform falls back gracefully.
+Capabilities are handed in, never grabbed: the context carries the text, optionally the raw bytes (only for transforms that declare `wants_bytes`: the source's at the root, the referenced content's for a fragment with a content reference — below), and optionally a **granted LLM** (`GrantedLlm`) — metered against the transform's per-run budget and checked against the `LlmCall` guard on every call. Budget spent, or guard says no → the LLM handle refuses, and the transform falls back gracefully.
 
 Output is uniform: `sprouts` (child fragments, each with the relation kind from the input to it — a summary is a sprout related `derives`) plus `keyed` sprouts: fragments shared index-wide under a plugin-namespaced key, with an **anchor** rule (the input fragment, or every source-content fragment whose text contains a needle) the sweep resolves, since a transform can't know fragment ids. Relation kinds are an open vocabulary: the kernel defines `contains` and `derives`; a plugin names any other kind it needs (kebab-case) and the finder weights it by name.
+
+## Content references
+
+A fragment normally carries text. A fragment whose content is bytes somewhere else — an image a document links to, a file a message attaches — carries a **content reference** instead: `content_address`, the address of the bytes. The index stores the reference, never the bytes (source data never moves; [design/addressing.md](../../design/addressing.md)), and reads them through the connection stewarding that address's host exactly when they are needed:
+
+- **during planning**, when a byte-wanting transform claims the referenced fragment as a non-root — an OCR transform claiming `image/png` non-roots gets the linked image's bytes just as it gets a root image's. One read per fragment, shared by every claimant of it, bounded by the sweep's `max_content_bytes`; a host that is not mounted, a failed read, or an oversized target withholds the bytes (logged), and the fragment stays a bare reference;
+- **on fetch**, when a client asks `fetch_bytes` for the referenced address — the referencing fragment's mimetype is the content type ([../finder/operations.md](../finder/operations.md)).
+
+The root never carries a reference: its content is the source itself. Linked transforms emit references today (`NewFragment::content_address`); the WIT projection does not carry the field yet, so loaded transforms emit text fragments only, but they *claim* referenced fragments like any other and receive their bytes through `source-bytes` — which is what lets the OCR plugin extend from image roots to linked images by claiming non-roots.
 
 ## The first-party transforms
 

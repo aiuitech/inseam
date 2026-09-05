@@ -127,6 +127,7 @@ impl Transform for EntityExtractorTransform {
                     mimetype: extract::entity_mimetype(entity.kind),
                     text: Some(entity.name.clone()),
                     extent: None,
+                    content_address: None,
                 },
                 relation: extract::mentions(),
                 anchor: Anchor::TextContaining(entity.name),

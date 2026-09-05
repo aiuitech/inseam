@@ -134,6 +134,7 @@ impl From<SeamError> for ApiError {
             SeamError::NothingToScan(_) | SeamError::BinaryFetch(_, _) => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "unsupported_source")
             }
+            SeamError::FetchTooLarge { .. } => (StatusCode::PAYLOAD_TOO_LARGE, "too_large"),
             SeamError::Store(_) | SeamError::Failed(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "operation_failed")
             }

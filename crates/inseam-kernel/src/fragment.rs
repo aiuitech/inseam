@@ -10,6 +10,8 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::address::Address;
+
 /// Longest relation kind name accepted; far above any sensible vocabulary,
 /// present so the store's `kind` column has a known bound.
 pub const RELATION_KIND_LEN_MAX: u32 = 64;
@@ -321,6 +323,14 @@ pub struct NewFragment {
     pub mimetype: Mimetype,
     pub text: Option<String>,
     pub extent: Option<Extent>,
+    /// Where this fragment's bytes live, when its content is not text the
+    /// index holds: the address of an image a document links to, say. The
+    /// index stores the reference, never the bytes — source data never
+    /// moves (`design/addressing.md`) — and reads them through the host's
+    /// connection when a byte-wanting transform claims the fragment or a
+    /// client fetches it. `None` for text fragments and for the root, whose
+    /// content is the source itself.
+    pub content_address: Option<Address>,
 }
 
 /// A new fragment plus how it hangs off its parent and its own descendants.
@@ -406,6 +416,7 @@ mod tests {
                     mimetype: Mimetype::text_plain(),
                     text: Some(t.to_string()),
                     extent: None,
+                    content_address: None,
                 },
                 RelationKind::contains(),
             )

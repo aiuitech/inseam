@@ -127,6 +127,7 @@ mod tests {
                 mimetype: Mimetype::markdown(),
                 text: None,
                 extent: None,
+                content_address: None,
             },
             fragments,
             keyed,
@@ -145,6 +146,7 @@ mod tests {
                 mimetype: Mimetype::text_plain(),
                 text: Some("x".into()),
                 extent: None,
+                content_address: None,
             },
         }
     }
@@ -170,6 +172,7 @@ mod tests {
                 mimetype: Mimetype::text_plain(),
                 text: None,
                 extent: None,
+                content_address: None,
             },
             relation: RelationKind::new("mentions").expect("valid"),
             anchors,

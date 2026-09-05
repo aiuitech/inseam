@@ -40,6 +40,10 @@ pub trait Operations: Send + Sync {
     async fn expand(&self, request: ExpandRequest) -> Result<ExpandResponse, SeamError>;
     async fn scan(&self, request: ScanRequest) -> Result<ScanResponse, SeamError>;
     async fn fetch(&self, request: FetchRequest) -> Result<FetchResponse, SeamError>;
+    /// The bytes of a source or of a referenced fragment, with their
+    /// content type — the rung for content that is not text: an image, a
+    /// PDF, a linked file. Bounded at [`FETCH_BYTES_MAX`] per message.
+    async fn fetch_bytes(&self, request: FetchBytesRequest) -> Result<FetchBytesResponse, SeamError>;
     /// Owner operation: reconcile the index over a scope of one host.
     async fn index(&self, request: IndexRequest) -> Result<IndexReport, SeamError>;
     /// Owner operation: the hosts this node stewards, with what each
@@ -165,6 +169,10 @@ pub struct FragmentView {
     pub extent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// Where the fragment's bytes live when it holds a reference instead of
+    /// text (an image a document links to); `fetch_bytes` serves it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_address: Option<Address>,
     /// Address of the fragment's own source, present on neighbors so a
     /// client can hop to them.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -219,6 +227,24 @@ pub struct FetchResponse {
     pub address: Address,
     pub content_type: String,
     pub text: String,
+}
+
+/// Most bytes one `fetch_bytes` response carries: content past this is
+/// refused with [`SeamError::FetchTooLarge`] rather than streamed, since
+/// operation messages are single JSON values (`design/node-api.md`).
+pub const FETCH_BYTES_MAX: u64 = 32 * 1024 * 1024;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FetchBytesRequest {
+    pub address: Address,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FetchBytesResponse {
+    pub address: Address,
+    pub content_type: String,
+    /// Standard base64 on the wire, like every file an operation carries.
+    pub bytes: FileBytes,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

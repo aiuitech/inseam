@@ -65,6 +65,7 @@ fn push_chunk(
             mimetype: mimetype.clone(),
             text: Some(body),
             extent: Some(Extent::lines(start as u64 + 1, end as u64 + 1)),
+            content_address: None,
         },
         RelationKind::contains(),
     ));

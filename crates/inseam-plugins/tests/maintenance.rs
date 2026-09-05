@@ -75,6 +75,7 @@ async fn vanished_sources_are_removed_and_their_entities_collected() {
                 mimetype: Mimetype::parse("text/x-inseam-entity;kind=instrument").expect("valid"),
                 text: Some("Xylophone".into()),
                 extent: None,
+                content_address: None,
             },
         ).await
         .expect("creates")

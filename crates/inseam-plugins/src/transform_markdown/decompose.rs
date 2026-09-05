@@ -55,6 +55,7 @@ pub fn decompose(text: &str) -> Vec<Sprout> {
                 mimetype: Mimetype::uri_list(),
                 text: Some(url.clone()),
                 extent: Some(Extent::lines(line, line)),
+                content_address: None,
             },
             links_to(),
         );
@@ -150,6 +151,7 @@ impl Section {
                 mimetype: Mimetype::markdown(),
                 text: Some(body.to_string()),
                 extent: Some(Extent::lines(start_line, end_line)),
+                content_address: None,
             },
             relation: RelationKind::contains(),
             children: self
@@ -204,6 +206,7 @@ fn attach_links(sprouts: &mut [Sprout], links: &[(usize, String)], lines: &LineI
                     mimetype: Mimetype::uri_list(),
                     text: Some(url.clone()),
                     extent: Some(Extent::lines(line, line)),
+                    content_address: None,
                 },
                 links_to(),
             ));

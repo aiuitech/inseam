@@ -5,11 +5,11 @@ One libSQL database (`catalog.sqlite3`) under the node's data dir, owned entirel
 ## Catalog tables: source of truth
 
 - `sources` — the catalog: address (host + locator), envelope columns (including the optional content `digest`), `raw_bytes` for change detection, `root_fragment`, an `indexed` flag, and the two shape records ([maintenance.md](maintenance.md)): `shape_stamp` (fingerprint of the transforms that built it) and `mimetypes` (the subtree's mimetype inventory). Both NULL for catalog-only rows.
-- `fragments` — the graph's vertices: mimetype, text, extent. `source` is NULL only for keyed fragments, which are shared across the whole index.
+- `fragments` — the graph's vertices: mimetype, text, extent, and an optional `content_address` — where the fragment's bytes live when the index holds a reference instead of text (an image a document links to; [transforms.md](transforms.md#content-references)). `source` is NULL only for keyed fragments, which are shared across the whole index.
 - `relations` — typed edges, stored input → output; the kind is an open name (`contains`, `derives`, `links-to`, `mentions`, `transcribes`, …), deleted along with their fragments.
 - `keyed_fragments` — the dedup registry for index-wide fragments: plugin-namespaced key (`entity:person:greg`) → fragment id.
 - `plugin_state` / `plugin_state_meta` — the kernel's `state` service: per-plugin namespaced key-value, declared with a version; a version mismatch discards the namespace (the wasm host keeps its release-cooldown first-seen clocks here).
-- `meta` — schema version (5) plus the embedding identity the index was built with (model, dimensions, and which fragments carry vectors; [embeddings.md](embeddings.md)).
+- `meta` — schema version (7) plus the embedding identity the index was built with (model, dimensions, and which fragments carry vectors; [embeddings.md](embeddings.md)).
 
 ## Search tables: derived search surface
 

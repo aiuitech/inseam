@@ -12,11 +12,11 @@ use std::sync::Arc;
 
 use futures_util::future::join_all;
 
-use inseam_kernel::address::{ContentDigest, ContentLength, Envelope};
+use inseam_kernel::address::{Address, ContentDigest, ContentLength, Envelope};
 use inseam_kernel::fragment::{Extent, Mimetype, NewFragment, Sprout};
 use inseam_kernel::store::InventoryEntry;
 use inseam_kernel::subtree::{PlanNode, PlannedFragment, PlannedKeyed, Shape, SubtreePlan};
-use inseam_seams::connection::{Connection, EnumeratedSource};
+use inseam_seams::connection::{Connection, Connections, EnumeratedSource};
 use inseam_seams::text::{count_lines, is_indexable_text};
 use inseam_seams::transforms::{
     participating, prune, shape_stamp, Anchor, DecomposeBudget, KeyedSprout, Registration,
@@ -51,7 +51,12 @@ pub(super) struct Planned {
 
 /// Everything a planner needs, shared across the run's concurrent planners.
 pub(super) struct Planner {
+    /// The connection of the host under sweep: where every root's content
+    /// is read from.
     pub(super) connection: Arc<dyn Connection>,
+    /// The registry, for fragments whose content lives at an address of its
+    /// own (`NewFragment::content_address`) — possibly on another host.
+    pub(super) connections: Arc<dyn Connections>,
     pub(super) registrations: Vec<Arc<Registration>>,
     pub(super) grantor: Arc<Grantor>,
     pub(super) sweep_shape: String,
@@ -141,14 +146,28 @@ impl Planner {
             .iter()
             .filter(|r| r.transform.claims(&item.mimetype, item.is_root))
             .collect();
+        let wants_bytes = claimants.iter().any(|r| r.transform.wants_bytes());
+        let referenced: Option<Vec<u8>> = if wants_bytes && !item.is_root {
+            self.read_referenced_bytes(item).await
+        } else {
+            None
+        };
+        // The root's bytes come from the source read; a referenced
+        // fragment's from its own address. Either way only byte-wanting
+        // claimants see them.
+        let item_bytes: Option<&[u8]> = if item.is_root {
+            read.bytes.as_deref()
+        } else {
+            referenced.as_deref()
+        };
         let applications = claimants.iter().map(|registration| {
             let ctx = TransformCtx {
                 envelope: &read.envelope,
                 mimetype: &item.mimetype,
                 is_root: item.is_root,
                 text: item.text.as_deref(),
-                bytes: if item.is_root && registration.transform.wants_bytes() {
-                    read.bytes.as_deref()
+                bytes: if registration.transform.wants_bytes() {
+                    item_bytes
                 } else {
                     None
                 },
@@ -159,6 +178,39 @@ impl Planner {
         let outputs = join_all(applications).await;
         assert_eq!(outputs.len(), claimants.len());
         claimants.into_iter().zip(outputs).collect()
+    }
+
+    /// The bytes a referenced fragment names, read once per work item
+    /// through the connection stewarding the address's host and bounded by
+    /// the content cap. Reads are best-effort like everything in planning:
+    /// an unmounted host, a failed read, or an oversized target leaves the
+    /// claimants without bytes and the fragment stays a bare reference
+    /// (still fetchable by a client later), logged rather than fatal.
+    async fn read_referenced_bytes(&self, item: &WorkItem) -> Option<Vec<u8>> {
+        assert!(!item.is_root, "the root's bytes come from the source read");
+        let address = item.content_address.as_ref()?;
+        let Some(steward) = self.connections.resolve(&address.host) else {
+            tracing::warn!(%address, "referenced content: no connection stewards its host");
+            return None;
+        };
+        let bytes = match steward.connection.read_bytes(address).await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::warn!(%address, %error, "referenced content: read failed");
+                return None;
+            }
+        };
+        let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        if size > self.limits.max_content_bytes {
+            tracing::warn!(
+                %address,
+                bytes = size,
+                cap = self.limits.max_content_bytes,
+                "referenced content: over the content cap, bytes withheld"
+            );
+            return None;
+        }
+        Some(bytes)
     }
 }
 
@@ -178,6 +230,9 @@ struct WorkItem {
     mimetype: Mimetype,
     is_root: bool,
     text: Option<String>,
+    /// Where the fragment's bytes live, for byte-wanting claimants of a
+    /// non-root; always `None` at the root.
+    content_address: Option<Address>,
     depth: usize,
 }
 
@@ -220,6 +275,7 @@ impl SubtreeBuild {
                 mimetype: root_mimetype,
                 is_root: true,
                 text: read.content.clone(),
+                content_address: None,
                 depth: 0,
             }]),
             fragment_budget: limits.max_fragments_per_source,
@@ -310,6 +366,7 @@ impl SubtreeBuild {
                 mimetype: fragment.mimetype.clone(),
                 is_root: false,
                 text: fragment.text.clone(),
+                content_address: fragment.content_address.clone(),
                 depth,
             });
         }
@@ -352,6 +409,7 @@ impl SubtreeBuild {
                     mimetype: self.root_mimetype,
                     text: None,
                     extent: Some(root_extent),
+                    content_address: None,
                 },
                 fragments: self.fragments,
                 keyed,

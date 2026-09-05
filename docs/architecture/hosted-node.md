@@ -33,6 +33,15 @@ reports the resulting callback URL, which must be registered on the OAuth
 client. `GET /owner/grants` and `POST /owner/grants/revoke` complete the set
 ([../plugins/oauth.md](../plugins/oauth.md)).
 
+`GET /api/v1/owner/raw?address=<address>` is the one route whose answer is
+not JSON: the `fetch_bytes` operation unwrapped to a body under its own
+`Content-Type` (`Content-Disposition: inline`), so the console's `<img>` or
+any HTTP client with the owner cookie reads an indexed image as a plain
+URL. `POST /api/v1/owner/fetch_bytes` is the same operation in JSON, bytes
+as base64. What may be served and how much is the operation's decision
+([../finder/operations.md](../finder/operations.md)); the route adds only
+the header.
+
 Requests are limited to 64 KiB, 64 concurrent calls, and 60 seconds — except
 the one route that carries files, `POST /api/v1/owner/plugins/install`, which
 takes up to 44 MiB (a 32 MiB plugin directory, base64 in JSON). The server

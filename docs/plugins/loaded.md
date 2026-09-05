@@ -26,7 +26,7 @@ Three ways the entry gets there: by hand, as above; `inseam plugin mount` / `plu
 
 - `log` — into the node's tracing output
 - `llm-complete`, `llm-describe-image` — the same metered, guarded LLM handle linked transforms get; if the manifest didn't request it, every call errors
-- `source-bytes` — the claimed source's raw bytes, root-only
+- `source-bytes` — the claimed fragment's raw bytes: the source's at the root, or the content a non-root fragment references (an image a document links to) when the plugin claims non-roots ([../indexing/transforms.md](../indexing/transforms.md#content-references))
 
 ## What the bridge enforces
 
