@@ -1,10 +1,6 @@
-- indexing should be incremental so we don't have to generate everything for experiments that turn off entity fragments for example
-- explore "dependency graphs" for discovery. We implicitly form dependency graphs in our mind before approaching how to solve a subject. That might be useful. 
-
 ## WIP
 
 ## Todos
-- implement the range reader / scanner (AsyncHttpRangeReader?)
 - need folder as a source fragment
   - summarizer should be recursive. so at the folder level it's one summary of all its child files that each have their own summary. 
 
@@ -20,3 +16,7 @@
     - save these pairings as the answer key for best retrieval
     - grade on score proximity to ideal set from the LLM extracted queries
 - goal: hook up an agent with inseam to allow it to visit files, get related content and merge/organize
+
+## Maybe Later
+
+- explore "dependency graphs" for discovery. We implicitly form dependency graphs in our mind before approaching how to solve a subject. That might be useful.
