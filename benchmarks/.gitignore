@@ -1,1 +1,5 @@
 __pycache__
+# A run directory versions only its result: manifest, composition, scores, and ranking.
+# Logs and the raw per-query dumps stay local because they are large and reproducible.
+runs/**/logs/
+runs/**/queries.jsonl

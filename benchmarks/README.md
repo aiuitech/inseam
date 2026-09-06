@@ -40,7 +40,7 @@ BEIR (Benchmarking IR) datasets share one shape: a corpus, a set of queries, and
 python3 benchmarks/beir.py setup
 ```
 
-Setup downloads and verifies `nfcorpus.zip`, extracts it, writes each corpus row as `benchmark/fixtures/beir-nfcorpus/documents/<document-id>.txt` with the title on the first line, keeps only the test split's judged queries in `queries.jsonl`, copies the test qrels, and records the pins in `setup.json`. The file name is the BEIR document ID, which is how a Finder result address maps back to a judgment. Setup is idempotent and needs no API key. Git ignores the fixture directory.
+Setup downloads and verifies `nfcorpus.zip`, extracts it, writes each corpus row as `benchmarks/fixtures/beir-nfcorpus/documents/<document-id>.txt` with the title on the first line, keeps only the test split's judged queries in `queries.jsonl`, copies the test qrels, and records the pins in `setup.json`. The file name is the BEIR document ID, which is how a Finder result address maps back to a judgment. Setup is idempotent and needs no API key. Git ignores the fixture directory.
 
 ### Run
 
@@ -72,7 +72,7 @@ The harness computes trec_eval's `ndcg_cut`, `map_cut`, `recall`, and `P` at cut
 Each run also writes `run.trec`, the ranking in TREC run format, so anyone can rescore it independently:
 
 ```sh
-trec_eval -m ndcg_cut.10 -m recall.10 benchmark/fixtures/beir-nfcorpus/qrels.tsv benchmarks/runs/beir-nfcorpus/<run-id>/run.trec
+trec_eval -m ndcg_cut.10 -m recall.10 benchmarks/fixtures/beir-nfcorpus/qrels.tsv benchmarks/runs/beir-nfcorpus/<run-id>/run.trec
 ```
 
 For a smoke check after setup:
@@ -95,10 +95,10 @@ A run lives under `benchmarks/runs/beir-nfcorpus/<UTC timestamp>-<inseam commit>
 
 - `manifest.json`: status, phase, attempt history, machine specifications, Inseam identity, dataset pins, model assignments including the vector scope, options, index duration and completion counts, and `scores.beir`.
 - `composition.toml`: the exact composition used.
-- `queries.jsonl`: per-query timing, the raw Finder results, and the ranked document IDs.
 - `query-scores.jsonl`: every metric for every query, for diagnosing which queries moved between runs.
 - `run.trec`: the ranking in TREC run format.
-- `logs/`: the index log plus attempt-specific query and repair output.
+- `queries.jsonl` (local only): per-query timing, the raw Finder results, and the ranked document IDs.
+- `logs/` (local only): the index log plus attempt-specific query and repair output.
 
 ## EnterpriseRAG-Bench
 
@@ -112,7 +112,7 @@ Run this once from the repository root:
 python3 benchmarks/enterprise_rag_bench.py setup
 ```
 
-Setup downloads and verifies `all_documents.zip` and `questions.jsonl`, extracts the documents, checks out only the evaluator code at the pinned upstream revision, and creates its Python virtual environment. Everything lands under `benchmark/fixtures/enterprise-rag-bench/`. Git ignores that directory's contents because the fixture is large and upstream asks that the dataset not enter training corpora.
+Setup downloads and verifies `all_documents.zip` and `questions.jsonl`, extracts the documents, checks out only the evaluator code at the pinned upstream revision, and creates its Python virtual environment. Everything lands under `benchmarks/fixtures/enterprise-rag-bench/`. Git ignores that directory's contents because the fixture is large and upstream asks that the dataset not enter training corpora.
 
 The download resumes if interrupted. Setup refuses a checksum mismatch and refuses to overwrite local changes in the ignored evaluator checkout.
 
@@ -175,14 +175,14 @@ A run lives under `benchmarks/runs/enterprise-rag-bench/<UTC timestamp>-<inseam 
 
 - `manifest.json`: start and finish time, attempt history, total active duration, current phase, OS, CPU, RAM, disk, Inseam CLI version, binary hash, source revision and dirty state, dataset pins, model names, command timeouts, options, index duration and completion counts, score summaries, and completion status.
 - `composition.toml`: the exact Inseam composition used.
-- `queries.jsonl`: per-question start and finish time, retrieval time, answer time, total time, answer, initial Finder document IDs, agent-cited document IDs, the combined evaluator document set, and every raw Finder result with its address and score.
+- `queries.jsonl` (local only): per-question start and finish time, retrieval time, answer time, total time, answer, initial Finder document IDs, agent-cited document IDs, the combined evaluator document set, and every raw Finder result with its address and score.
 - `answers.jsonl`: the candidate file sent to EnterpriseRAG-Bench.
 - `enterprise-rag-bench-results.json`: the evaluator's per-question results and aggregate scores.
 - `evaluator-dependencies.txt`: installed evaluator package versions.
-- `logs/`: the one-time index log plus attempt-specific query, agent, and evaluator output.
+- `logs/` (local only): the one-time index log plus attempt-specific query, agent, and evaluator output.
 
 The manifest's `scores.retrieval` block is computed from the initial ranked Finder results without an LLM. `scores.enterprise_rag_bench` evaluates the combined initial and agent-cited document set and records the upstream correctness, completeness, document recall, and invalid-extra-document aggregates. The raw result file remains authoritative.
 
 ## Recorded runs
 
-Commit completed runs under `benchmarks/runs/<benchmark>/<UTC timestamp>-<inseam commit>/`. Only a manifest whose `status` is `completed` should enter comparisons. Compare runs only when dataset pins, model assignments, question or query count, and relevant options match, and call out dirty source trees and hardware differences instead of hiding them.
+Commit completed runs under `benchmarks/runs/<benchmark>/<UTC timestamp>-<inseam commit>/`. Git versions only the result of a run: the manifest, the composition, the scores, and the ranking or answers the scores were computed from. The `logs/` directory and `queries.jsonl` stay local because they are large, reproducible from the pins, and never needed to compare two runs; `benchmarks/.gitignore` enforces this. Runs whose status is `interrupted`, `failed`, or `running` are not results and must not be committed. Only a manifest whose `status` is `completed` should enter comparisons. Compare runs only when dataset pins, model assignments, question or query count, and relevant options match, and call out dirty source trees and hardware differences instead of hiding them.

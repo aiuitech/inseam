@@ -29,7 +29,7 @@ For BEIR NFCorpus:
 python3 benchmarks/beir.py setup
 ```
 
-It must finish with `benchmark/fixtures/beir-nfcorpus/setup.json` present. Setup writes one text file per corpus document, keeps only the judged test queries, and copies the test qrels.
+It must finish with `benchmarks/fixtures/beir-nfcorpus/setup.json` present. Setup writes one text file per corpus document, keeps only the judged test queries, and copies the test qrels.
 
 For EnterpriseRAG-Bench:
 
@@ -37,7 +37,7 @@ For EnterpriseRAG-Bench:
 python3 benchmarks/enterprise_rag_bench.py setup
 ```
 
-The command is idempotent and resumes the large download. It must finish with `benchmark/fixtures/enterprise-rag-bench/setup.json` present. Do not copy, commit, summarize, or inspect corpus contents. Do not edit the pinned questions or evaluator. Git intentionally ignores every fixture file except `benchmark/fixtures/.gitkeep`.
+The command is idempotent and resumes the large download. It must finish with `benchmarks/fixtures/enterprise-rag-bench/setup.json` present. Do not copy, commit, summarize, or inspect corpus contents. Do not edit the pinned questions or evaluator. Git intentionally ignores every fixture file except `benchmarks/fixtures/.gitkeep`.
 
 If setup reports a checksum mismatch, report the named file and expected checksum. Do not bypass verification. If it reports local evaluator changes, preserve or remove those changes only with the user's direction.
 
@@ -89,7 +89,9 @@ The model assignment is an invariant shared by both benchmarks:
 - `openai/text-embedding-3-small` at 384 dimensions for embeddings. EnterpriseRAG-Bench embeds summaries only (`vectors = "summaries"`); BEIR embeds every fragment (`vectors = "all"`), recorded as `models.embedding_vectors`.
 - EnterpriseRAG-Bench only: `stealth/ox-alpha` for agent answers and evaluation.
 
-The default `--llm-call-budget 500` applies to summaries. State the cost implication before raising it. A value of 500,000 can cause one transform call per source during indexing.
+The default `--llm-call-budget 500` applies to summaries. State the cost implication before raising it. A value of 500,000 can cause one transform call per source during indexing. For BEIR, `--llm-call-budget 3633` (the corpus size) asks the model for every summary and is the run that measures the full indexing process; it costs well under a dollar on the batch lane.
+
+`indexing.summary.embeddings_reused` and `transforms_reused` count what the node answered from its digest-keyed caches. A fresh run reports zero for both; a resumed attempt reports how much of the interrupted work was kept.
 
 ### Verify the run
 
@@ -97,7 +99,7 @@ Open the new `benchmarks/runs/<benchmark>/<run-id>/manifest.json` and check:
 
 1. `status` is `completed`.
 2. `queries_completed` matches the requested question or query count.
-3. `indexing.duration_seconds` is present and positive.
+3. `indexing.duration_seconds` is present and positive, and `indexing.footprint` records the index bytes, source bytes, and their ratio; the final attempt's `search_index_preparation.index_bytes` is the index size after the DiskANN build.
 4. The final attempt has `search_index_preparation.duration_seconds` and its log.
 5. System specifications and the Inseam CLI version, binary hash, repository revision, and dirty state are present.
 6. Every model entry matches the assignments above, including disabled entity extraction and the vector scope.
@@ -109,4 +111,4 @@ Treat the upstream raw results file (EnterpriseRAG-Bench) or `run.trec` (BEIR) a
 
 ### Finish
 
-Commit the completed run directory and any intentional harness or documentation changes. Never commit `benchmark/fixtures/` contents or the ignored Inseam data directory. Mention the run directory, aggregate scores, index duration, total duration, Inseam version, source revision, machine summary, and commit hash in the handoff.
+Commit the completed run directory and any intentional harness or documentation changes. Git ignores the run's `logs/` and `queries.jsonl` on purpose; do not force-add them. Never commit an interrupted, failed, or running run, `benchmarks/fixtures/` contents, or the ignored Inseam data directory. Mention the run directory, aggregate scores, index duration, total duration, Inseam version, source revision, machine summary, and commit hash in the handoff.

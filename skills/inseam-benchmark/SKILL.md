@@ -28,7 +28,7 @@ For BEIR NFCorpus:
 python3 benchmarks/beir.py setup
 ```
 
-It must finish with `benchmark/fixtures/beir-nfcorpus/setup.json` present. Setup writes one text file per corpus document, keeps only the judged test queries, and copies the test qrels.
+It must finish with `benchmarks/fixtures/beir-nfcorpus/setup.json` present. Setup writes one text file per corpus document, keeps only the judged test queries, and copies the test qrels.
 
 For EnterpriseRAG-Bench:
 
@@ -36,7 +36,7 @@ For EnterpriseRAG-Bench:
 python3 benchmarks/enterprise_rag_bench.py setup
 ```
 
-The command is idempotent and resumes the large download. It must finish with `benchmark/fixtures/enterprise-rag-bench/setup.json` present. Do not copy, commit, summarize, or inspect corpus contents. Do not edit the pinned questions or evaluator. Git intentionally ignores every fixture file except `benchmark/fixtures/.gitkeep`.
+The command is idempotent and resumes the large download. It must finish with `benchmarks/fixtures/enterprise-rag-bench/setup.json` present. Do not copy, commit, summarize, or inspect corpus contents. Do not edit the pinned questions or evaluator. Git intentionally ignores every fixture file except `benchmarks/fixtures/.gitkeep`.
 
 If setup reports a checksum mismatch, report the named file and expected checksum. Do not bypass verification. If it reports local evaluator changes, preserve or remove those changes only with the user's direction.
 
@@ -110,4 +110,4 @@ Treat the upstream raw results file (EnterpriseRAG-Bench) or `run.trec` (BEIR) a
 
 ## Finish
 
-Commit the completed run directory and any intentional harness or documentation changes. Never commit `benchmark/fixtures/` contents or the ignored Inseam data directory. Mention the run directory, aggregate scores, index duration, total duration, Inseam version, source revision, machine summary, and commit hash in the handoff.
+Commit the completed run directory and any intentional harness or documentation changes. Git ignores the run's `logs/` and `queries.jsonl` on purpose; do not force-add them. Never commit an interrupted, failed, or running run, `benchmarks/fixtures/` contents, or the ignored Inseam data directory. Mention the run directory, aggregate scores, index duration, total duration, Inseam version, source revision, machine summary, and commit hash in the handoff.

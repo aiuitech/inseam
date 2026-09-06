@@ -28,7 +28,7 @@ from typing import Any, Callable
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-FIXTURES_ROOT = REPOSITORY_ROOT / "benchmark" / "fixtures"
+FIXTURES_ROOT = REPOSITORY_ROOT / "benchmarks" / "fixtures"
 RUNS_ROOT = REPOSITORY_ROOT / "benchmarks" / "runs"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 # The model policy is one policy for every benchmark (design/benchmarking.md):

@@ -5,6 +5,6 @@ plugins/*/target
 .DS_Store
 .impeccable
 .claude
-/benchmark/fixtures/*
-!/benchmark/fixtures/.gitkeep
+/benchmarks/fixtures/*
+!/benchmarks/fixtures/.gitkeep
 __pycache__/
