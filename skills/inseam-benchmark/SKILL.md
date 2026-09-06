@@ -56,6 +56,14 @@ python3 benchmarks/beir.py run --limit 1
 
 `--query-limit` (default 10) is both the Finder result count and the deepest metric cutoff; the harness refuses values above 50 because `inseam query` clamps there.
 
+BEIR's summarizer target is a run option. Text within `--summary-target-chars` is its own summary and costs no model call, so a target past the longest abstract (10,092 characters) makes the run model-free — every abstract embedded and searched whole, with its own extractive keywords — and `--summarization-lane interactive` keeps the run's one remaining call (the corpus folder's summary) off a one-request batch job that can sit in OpenRouter's queue:
+
+```sh
+python3 benchmarks/beir.py run --summary-target-chars 12000 --llm-call-budget 1 --summarization-lane interactive
+```
+
+The model-summary shape — one query-shaped summary and the model's keywords per abstract — is `--summary-target-chars 400 --llm-call-budget 3633` on the default batch lane. Both are recorded in the manifest's `options` and `models.summarization_lane`, so runs of different shapes are never compared as one.
+
 EnterpriseRAG-Bench, full:
 
 ```sh

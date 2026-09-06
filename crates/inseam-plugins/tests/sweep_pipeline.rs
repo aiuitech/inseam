@@ -114,7 +114,10 @@ async fn index_with(
         .expect("sweeps");
     // 39 files, three subfolders, and the root: folders land after files.
     assert_eq!(report.indexed, 43, "{report}");
-    assert_eq!(report.extractive_summaries, 43, "{report}");
+    // The short docs are their own summaries; the long notes and the
+    // folder listings get extractive ones. No LLM is mounted.
+    assert_eq!(report.verbatim_summaries, 36, "{report}");
+    assert_eq!(report.extractive_summaries, 7, "{report}");
     assert!(
         report.embedded > 43,
         "every text fragment embedded: {report}"

@@ -25,7 +25,7 @@ How merging works: when your entry matches a base entry's id, your `config` **re
 | `markdown` | `transform-markdown` | — |
 | `directory` | `transform-directory` | — |
 | `chunker` | `transform-chunker` | `target_chars` (1600) |
-| `summarizer` | `transform-summarizer` | `target_chars` (400), `llm_call_budget` (500), `llm_lane` (`interactive`; `batch` parks summaries into batch-API jobs — `inseam index --batch` does it per run) |
+| `summarizer` | `transform-summarizer` | `target_chars` (400; text within it is its own summary, no call made), `llm_input_chars` (8000; a longer text is reduced to its telling sentences before the call), `keywords_max` (12; keywords planted beside the summary for full-text search), `llm_call_budget` (500), `llm_lane` (`interactive`; `batch` parks summaries into batch-API jobs — `inseam index --batch` does it per run) |
 | `entities` | `transform-entities` | `max_per_source` (12), `llm_call_budget` (500), `llm_lane` (`interactive`) |
 | — | `transform-links` | `follow` (`["image/*"]`), `probe` (true) — links become typed content references; not in the base composition ([indexing/transforms.md](indexing/transforms.md)) |
 | `finder` | `finder` | `seed_k`, `rrf_k`, `damping`, `iterations`, `epsilon`, `max_hints`, `max_vector_distance`, `graph_hops` (default 2, max 4), `graph_relation_limit` (default 20000, max 100000), `[weights]` (`default` + `by_kind` by relation kind name) |

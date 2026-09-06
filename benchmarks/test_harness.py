@@ -68,6 +68,25 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(summary["relations"], 1_868_268)
         self.assertEqual(summary["embeddings"], 1_864_381)
         self.assertEqual(summary["cost_usd"], 13.0042)
+        self.assertEqual(summary["summaries_verbatim"], 0)
+        self.assertEqual(summary["summaries_llm"], 492)
+
+    def test_parses_the_verbatim_summary_count_when_printed(self) -> None:
+        output = (
+            "3634 sources seen: 3634 indexed, 0 unchanged, 0 catalog-only, "
+            "0 past cutoff, 0 ignored\n"
+            "10902 fragments, 7268 relations, 0 keyed fragments anchored\n"
+            "summaries: 3633 verbatim, 1 llm, 0 extractive, 0 envelope · "
+            "3634 embedded · $0.0003 spent\n"
+        )
+
+        summary = harness.parse_index_summary(output, 4_000)
+
+        self.assertEqual(summary["summaries_verbatim"], 3_633)
+        self.assertEqual(summary["summaries_llm"], 1)
+        self.assertEqual(summary["summaries_extractive"], 0)
+        self.assertEqual(summary["embeddings"], 3_634)
+        self.assertEqual(summary["cost_usd"], 0.0003)
 
     def test_parses_index_reuse_counts_and_defaults_them_to_zero(self) -> None:
         output = (

@@ -1,21 +1,28 @@
 //! The summarizer: the one mandatory transform. The Finder serves summaries
 //! in every response so an AI client can decide whether to keep digging, so
 //! every indexed source must have one (`design/indexing.md`). Profiles
-//! configure the length, not the existence: LLM when available and budgeted,
-//! extractive for text otherwise, envelope-derived for everything else.
+//! configure the length, not the existence, and the ladder runs: verbatim
+//! when the text already fits the length (no call to make), LLM when
+//! available and budgeted, extractive for text otherwise, envelope-derived
+//! for everything else.
+//!
+//! The summary is written to be found: it answers what someone would be
+//! looking for when this source is the right one, in a searcher's words.
+//! Beside it ride the keywords — the terms that name the source — for the
+//! full-text side of the index; the same LLM call produces both.
 
 use inseam_kernel::address::Envelope;
 use inseam_seams::dates::ymd;
+use inseam_seams::extract;
 use inseam_seams::text::{collapse_ws, truncate_chars};
 use inseam_seams::transforms::GrantedLlm;
-
-/// Characters of source text an LLM summary call sees.
-const LLM_INPUT_CHARS: usize = 8_000;
 
 /// How a summary came to be. Recorded on the summary fragment's mimetype as
 /// the `via` parameter, so provenance travels with the fragment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SummaryKind {
+    /// The text fit the target length, so it is its own summary.
+    Verbatim,
     Llm,
     Extractive,
     Envelope,
@@ -24,6 +31,7 @@ pub enum SummaryKind {
 impl SummaryKind {
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::Verbatim => "verbatim",
             Self::Llm => "llm",
             Self::Extractive => "extractive",
             Self::Envelope => "envelope",
@@ -31,66 +39,133 @@ impl SummaryKind {
     }
 }
 
-/// Summarize source text: LLM if the capability was granted, extractive
-/// fallback on any failure. Never errors — the mandatory-summary invariant
-/// wins.
+/// The dials a summary is made to.
+#[derive(Debug, Clone, Copy)]
+pub struct SummaryShape {
+    /// Target summary length in characters.
+    pub target_chars: usize,
+    /// Characters of source text an LLM call sees; a longer text is
+    /// reduced to its telling sentences first ([`extract::select`]).
+    pub llm_input_chars: usize,
+    /// Keywords kept beside the summary.
+    pub keywords_max: usize,
+}
+
+/// A summary with the keywords made beside it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Summary {
+    pub text: String,
+    pub kind: SummaryKind,
+    /// The terms that name the source, best first; empty for a verbatim
+    /// summary, which is the whole text, and for an envelope summary, which
+    /// saw no text.
+    pub keywords: Vec<String>,
+}
+
+/// Summarize source text. Never errors — the mandatory-summary invariant
+/// wins: verbatim when the text fits, the LLM when the capability was
+/// granted, extractive on any failure.
 pub async fn summarize_text(
     llm: Option<&dyn GrantedLlm>,
     hint: Option<&str>,
     text: &str,
-    target_chars: usize,
-) -> (String, SummaryKind) {
+    shape: SummaryShape,
+) -> Summary {
+    assert!(!text.trim().is_empty(), "text summaries need text");
+    // Keywords carry the terms a summary left out; a verbatim summary left
+    // nothing out, and a keyword row beside the whole text only hands
+    // full-text search a second, noisier copy of the same terms.
+    if text.chars().count() <= shape.target_chars {
+        return Summary {
+            text: collapse_ws(text),
+            kind: SummaryKind::Verbatim,
+            keywords: Vec::new(),
+        };
+    }
     if let Some(llm) = llm {
-        match llm_summary(llm, hint, text, target_chars).await {
-            Ok(summary) if !summary.is_empty() => return (summary, SummaryKind::Llm),
+        match llm_summary(llm, hint, text, shape).await {
+            Ok(summary) if !summary.text.is_empty() => return summary,
             Ok(_) => tracing::debug!("llm returned an empty summary; falling back"),
             Err(e) => tracing::warn!("llm summary failed, falling back to extractive: {e}"),
         }
     }
-    (extractive(text, target_chars), SummaryKind::Extractive)
+    extractive(text, shape)
 }
 
 async fn llm_summary(
     llm: &dyn GrantedLlm,
     hint: Option<&str>,
     text: &str,
-    target_chars: usize,
-) -> Result<String, inseam_seams::SeamError> {
-    let bounded: String = text.chars().take(LLM_INPUT_CHARS).collect();
+    shape: SummaryShape,
+) -> Result<Summary, inseam_seams::SeamError> {
+    let input = extract::select(text, shape.llm_input_chars);
     let name = hint.unwrap_or("(unnamed source)");
     let system = format!(
-        "You summarize personal files for a search index. Reply with only the \
-         summary text: at most {target_chars} characters, one paragraph, no preamble, \
-         no markdown. Capture what the document is, the key people, projects, places, \
-         dates and topics in it."
+        "You write the entry a search index keeps for a file, so that someone looking for \
+         it finds it. Reply with JSON only, no prose and no markdown, shaped \
+         {{\"summary\": string, \"keywords\": [string]}}. The summary is one paragraph of at \
+         most {} characters that answers: what would someone be looking for when this file \
+         is the right one? Say what the file is and what it is about, name the people, \
+         projects, places, and dates it concerns, and use the words a searcher would use, \
+         including likely synonyms. The keywords are at most {} terms or short phrases: the \
+         most distinctive words in the file that someone might search for, names and \
+         technical terms included, generic words excluded.",
+        shape.target_chars, shape.keywords_max
     );
     let reply = llm
-        .complete(&system, &format!("File: {name}\n\n{bounded}"))
+        .complete(&system, &format!("File: {name}\n\n{input}"))
         .await?;
-    Ok(truncate_chars(&collapse_ws(&reply), target_chars))
+    let (summary, keywords) = parse_reply(&reply);
+    let keywords = if keywords.is_empty() {
+        extract::keywords(text, shape.keywords_max)
+    } else {
+        keywords
+    };
+    Ok(Summary {
+        text: truncate_chars(&collapse_ws(&summary), shape.target_chars),
+        kind: SummaryKind::Llm,
+        keywords: keywords.into_iter().take(shape.keywords_max).collect(),
+    })
 }
 
-/// First words of the content with markdown furniture stripped — the offline
-/// summary a small device's profile would produce.
-pub fn extractive(text: &str, target_chars: usize) -> String {
-    let mut cleaned = String::with_capacity(text.len().min(target_chars * 4));
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty()
-            || line.chars().all(|c| matches!(c, '-' | '=' | '#' | '*' | '`' | '~'))
-        {
-            continue;
+#[derive(serde::Deserialize)]
+struct Reply {
+    #[serde(default)]
+    summary: String,
+    #[serde(default)]
+    keywords: Vec<String>,
+}
+
+/// Read the model's JSON, tolerating fences and prose around it. A reply
+/// that is not JSON is taken whole as the summary, with no keywords.
+pub fn parse_reply(raw: &str) -> (String, Vec<String>) {
+    let object = match (raw.find('{'), raw.rfind('}')) {
+        (Some(open), Some(close)) if open < close => &raw[open..=close],
+        _ => return (raw.trim().to_string(), Vec::new()),
+    };
+    match serde_json::from_str::<Reply>(object) {
+        Ok(reply) => {
+            let keywords = reply
+                .keywords
+                .into_iter()
+                .map(|k| collapse_ws(&k))
+                .filter(|k| !k.is_empty())
+                .collect();
+            (reply.summary, keywords)
         }
-        let line = line
-            .trim_start_matches(['#', '>', '*', '-', ' '])
-            .trim_end_matches(['#', ' ']);
-        cleaned.push_str(&strip_links(line));
-        cleaned.push(' ');
-        if cleaned.chars().count() > target_chars * 2 {
-            break;
-        }
+        Err(_) => (raw.trim().to_string(), Vec::new()),
     }
-    truncate_chars(&collapse_ws(&cleaned), target_chars)
+}
+
+/// The offline summary a small device's profile would produce: the text's
+/// telling sentences, one per section first, within the target.
+pub fn extractive(text: &str, shape: SummaryShape) -> Summary {
+    let selected = extract::select(text, shape.target_chars);
+    Summary {
+        text: truncate_chars(&collapse_ws(&selected), shape.target_chars),
+        kind: SummaryKind::Extractive,
+        keywords: extract::keywords(text, shape.keywords_max),
+    }
 }
 
 /// Summary for sources whose content the index never read: derived from the
@@ -103,31 +178,8 @@ pub fn envelope_summary(envelope: &Envelope) -> String {
         .unwrap_or_default();
     format!(
         "{name} — {} {} of {}{modified}. Content not indexed on this node; fetch to inspect.",
-        envelope.length,
-        envelope.source_type,
-        envelope.content_type
+        envelope.length, envelope.source_type, envelope.content_type
     )
-}
-
-/// Replace `[text](url)` with `text`. Hand-rolled to keep regex out of core.
-fn strip_links(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let mut rest = line;
-    while let Some(open) = rest.find('[') {
-        let Some(close_rel) = rest[open..].find(']') else { break };
-        let close = open + close_rel;
-        let after = &rest[close + 1..];
-        if let Some(paren_end) = after.strip_prefix('(').and_then(|a| a.find(')')) {
-            out.push_str(&rest[..open]);
-            out.push_str(&rest[open + 1..close]);
-            rest = &after[paren_end + 2..];
-        } else {
-            out.push_str(&rest[..close + 1]);
-            rest = after;
-        }
-    }
-    out.push_str(rest);
-    out
 }
 
 #[cfg(test)]
@@ -136,28 +188,58 @@ mod tests {
     use inseam_kernel::address::{ContentLength, Timestamp};
     use inseam_kernel::fragment::Mimetype;
 
-    #[test]
-    fn extractive_strips_markdown_and_caps_length() {
-        let text = "# Kitchen Reno\n\n---\n\nBudget lives in [the sheet](https://x.com/s). \
-                    Demo starts in June.\n";
-        let s = extractive(text, 60);
-        assert!(s.starts_with("Kitchen Reno"));
-        assert!(s.contains("the sheet"));
-        assert!(!s.contains("https://"));
-        assert!(s.chars().count() <= 60);
-    }
+    const SHAPE: SummaryShape = SummaryShape {
+        target_chars: 60,
+        llm_input_chars: 8_000,
+        keywords_max: 5,
+    };
+
+    const LONG: &str = "# Kitchen Reno\n\n---\n\nBudget lives in [the sheet](https://x.com/s). \
+        Demo starts in June. The kitchen reno needs a permit. The kitchen reno permit is filed \
+        with the city. Counters arrive after the cabinets.\n";
 
     #[test]
-    fn extractive_of_empty_text_is_empty() {
-        assert_eq!(extractive("", 100), "");
-        assert_eq!(extractive("---\n\n===\n", 100), "");
+    fn extractive_strips_markdown_and_caps_length() {
+        let s = extractive(LONG, SHAPE);
+        assert_eq!(s.kind, SummaryKind::Extractive);
+        assert!(!s.text.contains("https://"), "{}", s.text);
+        assert!(!s.text.contains('#'), "{}", s.text);
+        assert!(s.text.chars().count() <= 60);
+        assert!(
+            s.keywords.iter().any(|k| k == "kitchen reno"),
+            "{:?}",
+            s.keywords
+        );
+    }
+
+    #[tokio::test]
+    async fn text_within_the_target_is_its_own_summary() {
+        let s = summarize_text(None, Some("a.md"), "Plain words here.", SHAPE).await;
+        assert_eq!(s.kind, SummaryKind::Verbatim);
+        assert_eq!(s.text, "Plain words here.");
+        assert!(s.keywords.is_empty(), "a verbatim summary left nothing out");
     }
 
     #[tokio::test]
     async fn summarize_without_llm_is_extractive() {
-        let (s, kind) = summarize_text(None, Some("a.md"), "Plain words here.", 100).await;
-        assert_eq!(kind, SummaryKind::Extractive);
-        assert_eq!(s, "Plain words here.");
+        let s = summarize_text(None, Some("a.md"), LONG, SHAPE).await;
+        assert_eq!(s.kind, SummaryKind::Extractive);
+    }
+
+    #[test]
+    fn parse_reply_reads_fenced_json() {
+        let (summary, keywords) = parse_reply(
+            "```json\n{\"summary\": \"A note.\", \"keywords\": [\"reno\", \" permit \"]}\n```",
+        );
+        assert_eq!(summary, "A note.");
+        assert_eq!(keywords, vec!["reno", "permit"]);
+    }
+
+    #[test]
+    fn parse_reply_takes_prose_whole() {
+        let (summary, keywords) = parse_reply("  Just a sentence. ");
+        assert_eq!(summary, "Just a sentence.");
+        assert!(keywords.is_empty());
     }
 
     #[test]
@@ -177,11 +259,5 @@ mod tests {
         assert!(s.contains("IMG_2019.jpeg"));
         assert!(s.contains("52000 bytes"));
         assert!(s.contains("2015-01-01"));
-    }
-
-    #[test]
-    fn strip_links_leaves_plain_brackets_alone() {
-        assert_eq!(strip_links("a [note] here"), "a [note] here");
-        assert_eq!(strip_links("[x](https://y) and [z](https://w)"), "x and z");
     }
 }

@@ -1,38 +1,106 @@
 # Golden checks for the `summarizer` linked transform (docs/plugins/validation.md):
-# the mandatory summary, with a three-rung ladder — LLM, extractive, envelope —
-# recorded in the summary mimetype's `via` parameter.
+# the mandatory summary, with a four-rung ladder — verbatim, LLM, extractive,
+# envelope — recorded in the summary mimetype's `via` parameter, and the
+# keywords planted beside it for the full-text index.
 
-# The claim: with a granted LLM, the summary is the model's reply, marked
-# `via=llm` and `derives` its source.
+# The top rung: text that already fits the summary length is its own
+# summary, and no model is asked. It left nothing out, so no keywords.
 [[check]]
-name = "summarizes through the granted llm"
+name = "keeps text within the target verbatim"
 mimetype = "text/plain"
 text = "Meeting notes: the kitchen renovation budget is approved; demolition starts in March."
-llm_returns = "Kitchen renovation budget approved; demolition in March."
+llm_returns = "unused: the text fits"
 
 [check.expect]
 min_fragments = 1
 max_fragments = 1
 relation = "derives"
+mimetype = "text/x-inseam-summary;via=verbatim"
+fragment_contains = "demolition starts in March"
+
+# The claim: with a granted LLM, the summary is the model's reply, marked
+# `via=llm`, and the keywords are the model's too.
+[[check]]
+name = "summarizes through the granted llm"
+mimetype = "text/plain"
+text = """
+Meeting notes from the kitchen renovation planning session. The kitchen renovation
+budget is approved at forty thousand. Demolition starts in March once the permit is
+filed with the city. Cabinets come from the supplier in Reno and arrive in April.
+Counters are the largest line item after the cabinets. The kitchen renovation ends
+in May, and the contractor wants the appliance list before demolition. Greg owns the
+budget sheet; Dana owns the timeline. Next session is the second week of February.
+"""
+llm_returns = '{"summary": "Kitchen renovation planning: budget approved; demolition in March.", "keywords": ["kitchen renovation", "demolition"]}'
+
+[check.expect]
+min_fragments = 2
+max_fragments = 2
+relation = "derives"
 mimetype = "text/x-inseam-summary;via=llm"
 fragment_contains = "demolition in March"
 
+[[check]]
+name = "plants the model's keywords beside the summary"
+mimetype = "text/plain"
+text = """
+Meeting notes from the kitchen renovation planning session. The kitchen renovation
+budget is approved at forty thousand. Demolition starts in March once the permit is
+filed with the city. Cabinets come from the supplier in Reno and arrive in April.
+Counters are the largest line item after the cabinets. The kitchen renovation ends
+in May, and the contractor wants the appliance list before demolition. Greg owns the
+budget sheet; Dana owns the timeline. Next session is the second week of February.
+"""
+llm_returns = '{"summary": "Kitchen renovation planning: budget approved; demolition in March.", "keywords": ["kitchen renovation", "demolition"]}'
+
+[check.expect]
+min_fragments = 2
+max_fragments = 2
+mimetype = "text/x-inseam-keywords;via=llm"
+fragment_contains = "kitchen renovation, demolition"
+
 # One rung down: when the LLM refuses (offline node, spent budget) the
-# summary is extractive — the content's own first words.
+# summary is extractive — the text's telling sentences — and the keywords
+# are its weightiest terms.
 [[check]]
 name = "falls back to an extractive summary when the llm refuses"
 mimetype = "text/plain"
-text = "Meeting notes: the kitchen renovation budget is approved; demolition starts in March."
+text = """
+Meeting notes from the kitchen renovation planning session. The kitchen renovation
+budget is approved at forty thousand. Demolition starts in March once the permit is
+filed with the city. Cabinets come from the supplier in Reno and arrive in April.
+Counters are the largest line item after the cabinets. The kitchen renovation ends
+in May, and the contractor wants the appliance list before demolition. Greg owns the
+budget sheet; Dana owns the timeline. Next session is the second week of February.
+"""
 
 [check.expect]
-min_fragments = 1
-max_fragments = 1
+min_fragments = 2
+max_fragments = 2
 mimetype = "text/x-inseam-summary;via=extractive"
+fragment_contains = "kitchen renovation"
+
+[[check]]
+name = "names the text's own keywords when the llm refuses"
+mimetype = "text/plain"
+text = """
+Meeting notes from the kitchen renovation planning session. The kitchen renovation
+budget is approved at forty thousand. Demolition starts in March once the permit is
+filed with the city. Cabinets come from the supplier in Reno and arrive in April.
+Counters are the largest line item after the cabinets. The kitchen renovation ends
+in May, and the contractor wants the appliance list before demolition. Greg owns the
+budget sheet; Dana owns the timeline. Next session is the second week of February.
+"""
+
+[check.expect]
+min_fragments = 2
+max_fragments = 2
+mimetype = "text/x-inseam-keywords;via=extractive"
 fragment_contains = "kitchen renovation"
 
 # The bottom rung, the degrade path: with no content and no LLM there is
 # still exactly one summary, built from the envelope alone — every source
-# gets a summary, which is what makes it mandatory.
+# gets a summary, which is what makes it mandatory. No text, no keywords.
 [[check]]
 name = "summarizes from the envelope alone when starved"
 mimetype = "text/plain"

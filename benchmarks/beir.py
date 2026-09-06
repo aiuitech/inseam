@@ -18,7 +18,7 @@ import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from harness import (
     EMBEDDING_DIMENSIONS,
@@ -108,6 +108,23 @@ MAX_QREL_ROWS = 100_000
 # `inseam query` clamps its result limit to 50, so a larger cutoff would
 # silently score a truncated ranking.
 MAX_QUERY_RESULTS = 50
+# The summarizer target a run may ask for; past the longest NFCorpus
+# abstract by a wide margin, so any real corpus can be embedded whole.
+MAX_SUMMARY_TARGET_CHARS = 100_000
+SUMMARIZATION_LANES = frozenset({"batch", "interactive"})
+MAX_KEYWORDS = 100
+
+
+def count_argument(name: str, maximum: int) -> Callable[[str], int]:
+    def parse(raw: str) -> int:
+        value = int(raw)
+        if value < 0:
+            raise argparse.ArgumentTypeError(f"{name} must be at least 0")
+        if value > maximum:
+            raise argparse.ArgumentTypeError(f"{name} must be at most {maximum}")
+        return value
+
+    return parse
 METRIC_CUTOFFS = (1, 3, 5, 10)
 SETUP_TIMEOUT_SECONDS = 1_800
 QUERY_TIMEOUT_SECONDS = 600
@@ -122,6 +139,17 @@ class RunOptions:
     results_per_query: int
     index_concurrency: int
     llm_call_budget: int
+    # The summarizer's target length. Text within it is its own summary
+    # and costs no model call, so a target past the corpus's longest
+    # document embeds every abstract whole and makes the run model-free.
+    summary_target_chars: int = 200
+    # The lane summary calls ride. Batch is the right trade for thousands of
+    # calls; a run that makes a handful (a model-free run summarizes only the
+    # corpus folder) would wait on a one-request batch job for nothing.
+    summarization_lane: str = SUMMARIZATION_LANE
+    # Keywords planted beside each summary for full-text search; 0 plants
+    # none, the control for whether the row earns its place.
+    keywords_max: int = 12
 
 
 def validate_document_id(document_id: str) -> str:
@@ -316,9 +344,10 @@ disabled = true
 [[entry]]
 id = "summarizer"
 [entry.config]
-target_chars = 200
+target_chars = {options.summary_target_chars}
+keywords_max = {options.keywords_max}
 llm_call_budget = {options.llm_call_budget}
-llm_lane = "{SUMMARIZATION_LANE}"
+llm_lane = "{options.summarization_lane}"
 
 [[entry]]
 id = "entities"
@@ -513,10 +542,10 @@ def benchmark_pins() -> dict[str, Any]:
     return pins
 
 
-def model_assignments() -> dict[str, str | int]:
+def model_assignments(options: RunOptions) -> dict[str, str | int]:
     return {
         "summarization": SUMMARIZATION_MODEL,
-        "summarization_lane": SUMMARIZATION_LANE,
+        "summarization_lane": options.summarization_lane,
         "entity_extraction": "disabled",
         "embeddings": EMBEDDING_MODEL,
         "embedding_dimensions": EMBEDDING_DIMENSIONS,
@@ -540,7 +569,7 @@ def create_run(options: RunOptions) -> tuple[Path, Path, dict[str, Any]]:
         "finished_at": None,
         "duration_seconds": None,
         "benchmark": benchmark_pins(),
-        "models": model_assignments(),
+        "models": model_assignments(options),
         "timeouts_seconds": {
             "setup_command": SETUP_TIMEOUT_SECONDS,
             "finder_query": QUERY_TIMEOUT_SECONDS,
@@ -756,9 +785,9 @@ def load_resumable_run(
     validate_resumable_status(run_id, manifest)
     if manifest.get("benchmark") != benchmark_pins():
         raise BenchmarkError(f"run `{run_id}` uses different benchmark inputs")
-    if manifest.get("models") != model_assignments():
-        raise BenchmarkError(f"run `{run_id}` uses different models")
     options = options_from_manifest(manifest)
+    if manifest.get("models") != model_assignments(options):
+        raise BenchmarkError(f"run `{run_id}` uses different models")
     queries_to_run = load_queries(options.query_count)
     composition = run_dir / "composition.toml"
     if not composition.is_file():
@@ -789,7 +818,30 @@ def options_from_manifest(manifest: dict[str, Any]) -> RunOptions:
         llm_call_budget=manifest_option_integer(
             value, "llm_call_budget", MAX_LLM_CALL_BUDGET
         ),
+        summary_target_chars=manifest_option_integer(
+            value, "summary_target_chars", MAX_SUMMARY_TARGET_CHARS
+        ),
+        summarization_lane=manifest_option_lane(value, "summarization_lane"),
+        keywords_max=manifest_option_count(value, "keywords_max", MAX_KEYWORDS),
     )
+
+
+def manifest_option_count(value: dict[str, Any], name: str, maximum: int) -> int:
+    option = value[name]
+    if type(option) is not int:
+        raise BenchmarkError(f"run option {name} is not an integer")
+    if option < 0:
+        raise BenchmarkError(f"run option {name} must be at least 0")
+    if option > maximum:
+        raise BenchmarkError(f"run option {name} exceeds the {maximum} safety limit")
+    return option
+
+
+def manifest_option_lane(value: dict[str, Any], name: str) -> str:
+    option = value[name]
+    if option not in SUMMARIZATION_LANES:
+        raise BenchmarkError(f"run option {name} is not one of {sorted(SUMMARIZATION_LANES)}")
+    return option
 
 
 def load_completed_queries(
@@ -844,6 +896,24 @@ def parse_arguments() -> argparse.Namespace:
         type=bounded_argument("llm-call-budget", MAX_LLM_CALL_BUDGET),
         default=500,
     )
+    run_parser.add_argument(
+        "--summarization-lane",
+        choices=sorted(SUMMARIZATION_LANES),
+        default=SUMMARIZATION_LANE,
+        help="the lane summary calls ride; interactive suits a run that makes few calls",
+    )
+    run_parser.add_argument(
+        "--keywords-max",
+        type=count_argument("keywords-max", MAX_KEYWORDS),
+        default=12,
+        help="keywords planted beside each summary for full-text search; 0 plants none",
+    )
+    run_parser.add_argument(
+        "--summary-target-chars",
+        type=bounded_argument("summary-target-chars", MAX_SUMMARY_TARGET_CHARS),
+        default=200,
+        help="summarizer target length; text within it is its own summary, no model call",
+    )
     resume_parser = subparsers.add_parser(
         "resume",
         help="reuse a completed index and continue a failed or interrupted run",
@@ -862,6 +932,9 @@ def main() -> int:
             results_per_query=arguments.query_limit,
             index_concurrency=arguments.index_concurrency,
             llm_call_budget=arguments.llm_call_budget,
+            summary_target_chars=arguments.summary_target_chars,
+            summarization_lane=arguments.summarization_lane,
+            keywords_max=arguments.keywords_max,
         )
         return run_main(lambda: run_benchmark(options))
     return run_main(lambda: resume_benchmark(arguments.run_id))

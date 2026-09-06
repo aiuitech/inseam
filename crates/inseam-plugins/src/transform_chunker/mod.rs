@@ -1,8 +1,8 @@
 //! The `transform-chunker` plugin: the structural fallback for text with no
 //! semantic structure — paragraph-boundary chunks merged toward a target
-//! size ([`chunk`]). It claims every indexable-text root that is not
-//! markdown, so a source the structural transforms don't understand still
-//! gets a subtree. Its golden checks live beside it in `chunker.checks.toml`.
+//! size ([`chunk`]). It claims every indexable-text root the markdown
+//! transform does not (that one takes markdown and plain text), so a
+//! source the structural transforms don't understand still gets a subtree. Its golden checks live beside it in `chunker.checks.toml`.
 
 pub(crate) mod chunk;
 
@@ -90,7 +90,7 @@ impl Transform for ChunkerTransform {
     fn claims(&self, mimetype: &Mimetype, is_root: bool) -> bool {
         is_root
             && !mimetype.is_inseam_defined()
-            && mimetype.essence() != "text/markdown"
+            && !crate::transform_markdown::decompose::claims_essence(mimetype.essence())
             && is_indexable_text(mimetype)
     }
 

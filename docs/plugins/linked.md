@@ -17,7 +17,7 @@ Every plugin is the same five declarations — name, config, inject, provide, ap
 | `transform-markdown` | — | transforms | splits markdown by its heading structure |
 | `transform-directory` | — | transforms | folder sources: the composed listing becomes one entry fragment per child, referencing the child ([indexing/transforms.md](../indexing/transforms.md#folders)) |
 | `transform-chunker` | — | transforms | fallback chunking for text with no structure |
-| `transform-summarizer` | — | transforms | the mandatory summary (LLM → extractive → envelope) |
+| `transform-summarizer` | — | transforms | the mandatory summary (verbatim → LLM → extractive → envelope) and the keywords beside it |
 | `transform-entities` | — | transforms | LLM entity extraction |
 | `transform-links` | — | transforms, connections | the link follower: links to images become typed fragments referencing their web address; not in the base composition ([indexing/transforms.md](../indexing/transforms.md)) |
 | `finder` | `finder` | store, embedder | the ranking algorithm ([finder/algorithm.md](../finder/algorithm.md)) |

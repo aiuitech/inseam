@@ -138,6 +138,17 @@ impl Mimetype {
         self.essence == "text/x-inseam-summary"
     }
 
+    /// The kernel-defined type for the summarizer's keywords fragment: the
+    /// terms that name a source, kept for the full-text side of the index
+    /// beside the summary's prose (`design/indexing.md`).
+    pub fn keywords() -> Self {
+        Self::parse("text/x-inseam-keywords").expect("literal mimetype is valid")
+    }
+
+    pub fn is_keywords(&self) -> bool {
+        self.essence == "text/x-inseam-keywords"
+    }
+
     /// `text/x-inseam-*` types are derived understanding, not source
     /// content: the sweep never re-decomposes them and loaded transforms may
     /// not emit them. Plugins mint their own under the prefix (the entity

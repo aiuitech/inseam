@@ -17,15 +17,23 @@ pub fn links_to() -> RelationKind {
 // the two structural transforms agree on what a structureless text becomes.
 use crate::transform_chunker::chunk;
 
-/// Decompose markdown into its heading outline. Documents without headings
-/// fall back to paragraph chunking. Links (http/https) become `uri-list`
-/// child sprouts of the section containing them.
-pub fn decompose(text: &str) -> Vec<Sprout> {
+/// The root essences this transform decomposes: markdown, and plain text,
+/// whose `#` headings are the same outline and whose lack of them is the
+/// same chunking.
+pub fn claims_essence(essence: &str) -> bool {
+    matches!(essence, "text/markdown" | "text/plain")
+}
+
+/// Decompose a document into its heading outline; sections keep the
+/// parent's `mimetype`. Documents without headings fall back to paragraph
+/// chunking. Links (http/https) become `uri-list` child sprouts of the
+/// section containing them.
+pub fn decompose(mimetype: &Mimetype, text: &str) -> Vec<Sprout> {
     let outline = scan(text);
     let lines = LineIndex::new(text);
 
     if outline.headings.is_empty() {
-        let mut sprouts = chunk::chunk(&Mimetype::markdown(), text);
+        let mut sprouts = chunk::chunk(mimetype, text);
         attach_links(&mut sprouts, &outline.links, &lines);
         return sprouts;
     }
@@ -45,7 +53,7 @@ pub fn decompose(text: &str) -> Vec<Sprout> {
     }
     let mut sprouts: Vec<Sprout> = sections
         .iter()
-        .map(|s| s.to_sprout(text, &lines))
+        .map(|s| s.to_sprout(mimetype, text, &lines))
         .collect();
 
     for (byte, url) in &outline.links {
@@ -142,13 +150,13 @@ fn build_sections(headings: &[Heading], end_limit: usize) -> Vec<Section> {
 }
 
 impl Section {
-    fn to_sprout(&self, text: &str, lines: &LineIndex) -> Sprout {
+    fn to_sprout(&self, mimetype: &Mimetype, text: &str, lines: &LineIndex) -> Sprout {
         let body = text[self.start..self.own_end].trim_end();
         let start_line = lines.line_of(self.start);
         let end_line = lines.line_of(self.end.saturating_sub(1)).max(start_line);
         Sprout {
             fragment: NewFragment {
-                mimetype: Mimetype::markdown(),
+                mimetype: mimetype.clone(),
                 text: Some(body.to_string()),
                 extent: Some(Extent::lines(start_line, end_line)),
                 content_address: None,
@@ -157,7 +165,7 @@ impl Section {
             children: self
                 .children
                 .iter()
-                .map(|c| c.to_sprout(text, lines))
+                .map(|c| c.to_sprout(mimetype, text, lines))
                 .collect(),
         }
     }
@@ -262,7 +270,7 @@ Fence and beds.
 
     #[test]
     fn builds_the_heading_outline() {
-        let sprouts = decompose(DOC);
+        let sprouts = decompose(&Mimetype::markdown(), DOC);
         // preamble + two H1s
         assert_eq!(sprouts.len(), 3);
         let kitchen = &sprouts[1];
@@ -287,7 +295,7 @@ Fence and beds.
 
     #[test]
     fn extents_cover_full_sections_in_lines() {
-        let sprouts = decompose(DOC);
+        let sprouts = decompose(&Mimetype::markdown(), DOC);
         let kitchen = &sprouts[1];
         let Some(Extent::Lines { start, end }) = kitchen.fragment.extent else {
             panic!("kitchen section has a line extent");
@@ -304,7 +312,7 @@ Fence and beds.
 
     #[test]
     fn links_become_uri_list_children_of_their_section() {
-        let sprouts = decompose(DOC);
+        let sprouts = decompose(&Mimetype::markdown(), DOC);
         let kitchen = &sprouts[1];
         let links: Vec<_> = kitchen
             .children
@@ -323,7 +331,7 @@ Fence and beds.
     #[test]
     fn headingless_documents_fall_back_to_chunks() {
         let doc = "just a paragraph\n\nand [a link](https://example.com/x) in another\n";
-        let sprouts = decompose(doc);
+        let sprouts = decompose(&Mimetype::markdown(), doc);
         assert!(!sprouts.is_empty());
         assert!(sprouts
             .iter()
@@ -335,13 +343,13 @@ Fence and beds.
     #[test]
     fn ignores_anchor_and_relative_links() {
         let doc = "# A\n\nsee [there](#below) and [file](./local.md)\n";
-        let sprouts = decompose(doc);
+        let sprouts = decompose(&Mimetype::markdown(), doc);
         assert!(sprouts[0].children.is_empty());
     }
 
     #[test]
     fn empty_document_yields_nothing() {
-        assert!(decompose("").is_empty());
-        assert!(decompose("   \n\n  ").is_empty());
+        assert!(decompose(&Mimetype::markdown(), "").is_empty());
+        assert!(decompose(&Mimetype::markdown(), "   \n\n  ").is_empty());
     }
 }

@@ -1,6 +1,8 @@
 //! The `transform-markdown` plugin: the structural transform for
-//! `text/markdown` roots. It decomposes a document by its own heading
-//! structure ([`decompose`]) and registers that into the `transforms` seam
+//! `text/markdown` and `text/plain` roots. It decomposes a document by its
+//! own heading structure ([`decompose`]) — plain text with `#` headings
+//! is an outline too, and one without any falls back to paragraph chunks
+//! either way — and registers that into the `transforms` seam
 //! exactly the way a loaded transform does — the dog-food that proves the
 //! contract (`design/plugins.md`). Its golden checks live beside it in
 //! `markdown.checks.toml`.
@@ -61,7 +63,7 @@ impl Plugin for MarkdownPlugin {
                 transform: Arc::new(MarkdownTransform),
                 llm_call_budget: 0,
                 llm_lane: LlmLane::Interactive,
-                shape_fingerprint: "markdown-v1".to_string(),
+                shape_fingerprint: "markdown-v2".to_string(),
             },
         )
     }
@@ -76,10 +78,14 @@ impl Transform for MarkdownTransform {
     }
 
     fn claims(&self, mimetype: &Mimetype, is_root: bool) -> bool {
-        is_root && !mimetype.is_inseam_defined() && mimetype.essence() == "text/markdown"
+        is_root && !mimetype.is_inseam_defined() && decompose::claims_essence(mimetype.essence())
     }
 
     async fn apply(&self, ctx: TransformCtx<'_>) -> TransformOutput {
-        TransformOutput::sprouts(ctx.text.map(decompose::decompose).unwrap_or_default())
+        TransformOutput::sprouts(
+            ctx.text
+                .map(|text| decompose::decompose(ctx.mimetype, text))
+                .unwrap_or_default(),
+        )
     }
 }

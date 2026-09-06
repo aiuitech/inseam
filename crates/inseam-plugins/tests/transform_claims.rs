@@ -1,7 +1,8 @@
 //! The first-party transforms, seen together through the seam: which of
 //! them claim which root mimetypes. Each plugin's own tests cover its apply;
 //! this is the cross-plugin routing fact the sweep relies on — that a
-//! markdown root goes to the markdown transform and not the chunker, that
+//! markdown or plain-text root goes to the markdown transform and not the
+//! chunker, that
 //! every root gets the mandatory summarizer, and that nothing claims
 //! inseam-defined types or non-roots.
 
@@ -24,7 +25,7 @@ async fn claims_route_each_root_mimetype_to_the_right_transforms() {
     // enrichment, each by entry id — the order the sweep applies them in.
     let cases: &[(&str, &[&str])] = &[
         ("text/markdown", &["markdown", "entity-extractor", "summarizer"]),
-        ("text/plain", &["chunker", "entity-extractor", "summarizer"]),
+        ("text/plain", &["markdown", "entity-extractor", "summarizer"]),
         ("application/json", &["chunker", "entity-extractor", "summarizer"]),
         ("image/jpeg", &["entity-extractor", "summarizer"]),
     ];

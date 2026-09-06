@@ -14,7 +14,7 @@ Both runners share `harness.py`: bounded external commands with heartbeats, veri
 - the `inseam` CLI on `PATH`
 - `OPENROUTER_API_KEY`
 
-Both runners use `google/gemini-2.5-flash-lite` through OpenRouter's batch lane for summaries, with reasoning disabled and the reasoning trace excluded from the response, and `openai/text-embedding-3-small` at 384 dimensions for embeddings. Entity extraction, markdown splitting, and chunking are disabled. EnterpriseRAG-Bench additionally uses `stealth/ox-alpha` for answers, citation cleanup, correctness scoring, and fact scoring, and embeds one 200-character summary per source; BEIR embeds every fragment. Source text always enters full-text search.
+Both runners use `google/gemini-2.5-flash-lite` through OpenRouter's batch lane for summaries, with reasoning disabled and the reasoning trace excluded from the response, and `openai/text-embedding-3-small` at 384 dimensions for embeddings. Entity extraction, markdown splitting, and chunking are disabled, so each source's subtree is its summary and its keywords and nothing else: the summary is the one vector, and summary plus keywords are what full-text search sees. EnterpriseRAG-Bench additionally uses `stealth/ox-alpha` for answers, citation cleanup, correctness scoring, and fact scoring, and summarizes to 200 characters; BEIR's summary target is a run option (`--summary-target-chars`), because a target past the longest abstract makes every abstract its own summary — the whole text embedded and searchable, no model call — which is the right shape for a corpus of short text files.
 
 Every `run` invocation creates a new ignored index under the fixture's `nodes/` directory. This prevents a warm index from being reported as a fresh indexing result. Failed and interrupted runs remain on disk with their partial logs and a non-completed manifest.
 
@@ -58,12 +58,19 @@ python3 benchmarks/beir.py run \
   --limit 323 \
   --query-limit 10 \
   --index-concurrency 8 \
-  --llm-call-budget 500
+  --llm-call-budget 500 \
+  --summary-target-chars 200 \
+  --summarization-lane batch
 ```
 
 `--limit` is how many test queries to run, in BEIR's order; indexing always covers the whole corpus. `--query-limit` is the number of Finder results per query and also the deepest metric cutoff. `inseam query` clamps its limit to 50, so the harness refuses a larger value instead of scoring a truncated ranking. The default of 10 reports nDCG@10, BEIR's headline number.
 
-Unlike the EnterpriseRAG-Bench composition, the BEIR composition embeds every fragment (`vectors = "all"`) rather than only the 200-character summary. The corpus is 5.8 MB of text, so embedding each abstract whole costs cents and measures the product's default search surface. Summaries and full text still enter full-text search.
+`--summary-target-chars` is the summarizer's target length. Text within it is its own summary (`via=verbatim`) and costs no model call, so the two shapes worth comparing are:
+
+- **model-free**: `--summary-target-chars 12000 --llm-call-budget 1 --summarization-lane interactive` — every abstract (the longest is 10,092 characters) is embedded whole and searchable whole, with its own extractive keywords beside it. The one budgeted call summarizes the corpus folder; it rides the interactive lane because a one-request batch job can sit in OpenRouter's queue for longer than the rest of the run.
+- **model summaries**: `--summary-target-chars 400 --llm-call-budget 3633` — one query-shaped summary and the model's keywords per abstract, on the batch lane; the vector is over the summary, and full-text search sees the summary and the keywords, never the abstract.
+
+Unlike the EnterpriseRAG-Bench composition, the BEIR composition sets `vectors = "all"`; with the structural transforms disabled that is still one vector per source, the summary's, and the difference between the shapes is what that summary is. The corpus is 5.8 MB of text, so embedding each abstract whole costs cents.
 
 ### Scores
 

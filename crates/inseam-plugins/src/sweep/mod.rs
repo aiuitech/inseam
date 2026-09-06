@@ -41,7 +41,8 @@ use tokio::sync::Semaphore;
 
 use inseam_kernel::address::Timestamp;
 use inseam_kernel::store::{
-    CatalogEntry, CatalogMark, IndexStore, KeyedFragment, SourceCompletion, SubtreeWritten,
+    CatalogEntry, CatalogMark, IndexStore, KeyedFragment, SearchRole, SourceCompletion,
+    SubtreeWritten,
 };
 use inseam_kernel::substrate::{
     ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError, STORE, parse_config,
@@ -1000,7 +1001,7 @@ impl SweepService {
                 fragment: target.fragment,
                 source: target.source,
                 text: target.text,
-                is_summary: target.is_summary,
+                role: target.role,
             }]);
             for batch in buffer.drain_ready() {
                 stage.submit(batch).await?;
@@ -1046,6 +1047,7 @@ fn tally(report: &mut IndexReport, planned: &Planned, written: &SubtreeWritten) 
     report.fragments += planned.plan.fragment_count() + created_keyed;
     report.relations += planned.plan.fragments.len() + anchors;
     report.keyed_anchored += planned.plan.keyed.len();
+    report.verbatim_summaries += planned.stats.verbatim_summaries;
     report.llm_summaries += planned.stats.llm_summaries;
     report.extractive_summaries += planned.stats.extractive_summaries;
     report.envelope_summaries += planned.stats.envelope_summaries;
@@ -1070,7 +1072,7 @@ fn search_rows_of(planned: &Planned, written: &SubtreeWritten) -> Vec<PendingRow
                     fragment: *id,
                     source: Some(written.source),
                     text: t.clone(),
-                    is_summary: p.fragment.mimetype.is_summary(),
+                    role: SearchRole::of(&p.fragment.mimetype, false),
                 })
         });
     let keyed = planned
@@ -1088,7 +1090,7 @@ fn search_rows_of(planned: &Planned, written: &SubtreeWritten) -> Vec<PendingRow
                     fragment: *id,
                     source: None,
                     text: t.clone(),
-                    is_summary: p.fragment.mimetype.is_summary(),
+                    role: SearchRole::of(&p.fragment.mimetype, true),
                 }),
             KeyedFragment::Existing(_) => None,
         });

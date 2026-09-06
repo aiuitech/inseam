@@ -59,10 +59,12 @@ async fn the_incremental_discovery_ladder_works_offline() {
     assert_eq!(report.sources_seen, 5);
     assert_eq!(report.indexed, 5);
     assert_eq!(report.llm_summaries, 0, "no llm mounted, no llm calls");
-    // Binary png gets an envelope summary; text and the folder's listing
-    // get extractive ones.
+    // Binary png gets an envelope summary; the short texts are their own
+    // summaries; the folder's listing, longer than the target, gets an
+    // extractive one.
     assert_eq!(report.envelope_summaries, 1);
-    assert_eq!(report.extractive_summaries, 4);
+    assert_eq!(report.verbatim_summaries, 3, "{report}");
+    assert_eq!(report.extractive_summaries, 1, "{report}");
     assert!(report.fragments > 8, "sections + summaries: {report}");
     assert!(report.spent == 0.0);
 

@@ -13,7 +13,7 @@ use tokio::task::JoinHandle;
 
 use inseam_kernel::address::ContentDigest;
 use inseam_kernel::fragment::FragmentId;
-use inseam_kernel::store::{IndexStore, SearchRow, SourceCompletion, SourceId};
+use inseam_kernel::store::{IndexStore, SearchRole, SearchRow, SourceCompletion, SourceId};
 use inseam_seams::embedder::Embedder;
 use inseam_seams::SeamError;
 
@@ -25,13 +25,13 @@ const EMBED_IN_FLIGHT: usize = 4;
 
 /// A text-bearing fragment bound for the search tables. Every row enters
 /// the full-text index; whether it also gets a vector is the embedder's
-/// vector scope's call, and `is_summary` is the one fact that call needs.
+/// vector scope's call, and the row's role is the one fact that call needs.
 #[derive(Debug, Clone)]
 pub(super) struct PendingRow {
     pub(super) fragment: FragmentId,
     pub(super) source: Option<SourceId>,
     pub(super) text: String,
-    pub(super) is_summary: bool,
+    pub(super) role: SearchRole,
 }
 
 /// One unit of stage work: rows to embed and land, and the sources whose
@@ -221,7 +221,7 @@ async fn embed_batch(embedder: &dyn Embedder, store: &IndexStore, batch: Batch) 
     let wanted: Vec<usize> = if embedder.dimensions().is_some() {
         rows.iter()
             .enumerate()
-            .filter(|(_, row)| scope.covers(row.is_summary))
+            .filter(|(_, row)| scope.covers(row.role))
             .map(|(position, _)| position)
             .collect()
     } else {
@@ -312,7 +312,11 @@ mod tests {
             fragment: FragmentId(n),
             source: Some(SourceId(1)),
             text: format!("row {n}"),
-            is_summary: n % 2 == 0,
+            role: if n % 2 == 0 {
+                SearchRole::Summary
+            } else {
+                SearchRole::Content
+            },
         }
     }
 

@@ -389,9 +389,12 @@ impl FinderService {
                 let Some(fragment) = self.store.fragment(*fid).await? else {
                     continue;
                 };
-                // Summaries ride along separately; text-less roots hint
-                // nothing.
-                if fragment.mimetype.is_summary() || fragment.text.is_none() {
+                // Summaries ride along separately, keywords have no place
+                // to scan to, and text-less roots hint nothing.
+                if fragment.mimetype.is_summary() || fragment.mimetype.is_keywords() {
+                    continue;
+                }
+                if fragment.text.is_none() {
                     continue;
                 }
                 hints.push(RankedFragment {

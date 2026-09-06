@@ -49,6 +49,7 @@ pub(super) struct PlanLimits {
 /// run report tallies.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(super) struct PlanStats {
+    pub(super) verbatim_summaries: usize,
     pub(super) llm_summaries: usize,
     pub(super) extractive_summaries: usize,
     pub(super) envelope_summaries: usize,
@@ -495,6 +496,7 @@ impl SubtreeBuild {
         for sprout in &output.sprouts {
             if sprout.fragment.mimetype.is_summary() {
                 match sprout.fragment.mimetype.param("via") {
+                    Some("verbatim") => self.stats.verbatim_summaries += 1,
                     Some("llm") => self.stats.llm_summaries += 1,
                     Some("envelope") => self.stats.envelope_summaries += 1,
                     _ => self.stats.extractive_summaries += 1,

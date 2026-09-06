@@ -307,14 +307,46 @@ impl KeyedFragment {
     }
 }
 
+/// What a search row is to the vector scope — the one fact the scope
+/// branches on. Vectors are for prose: source content and the summary
+/// derived from it. Names and terms — keywords, keyed fragments such as
+/// entities, a folder's entries — are what full-text search matches
+/// exactly, and a vector over a list of names buys nothing it does not
+/// already have (`design/indexing.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchRole {
+    /// Source prose: a section, a chunk, a transcript.
+    Content,
+    /// The mandatory summary (`text/x-inseam-summary`).
+    Summary,
+    /// Names and terms, matched by the full-text index alone: keywords,
+    /// keyed fragments, and every other derived type.
+    Lexical,
+}
+
+impl SearchRole {
+    /// The role of a fragment from its mimetype and whether it belongs to
+    /// a source at all (keyed fragments belong to none).
+    pub fn of(mimetype: &Mimetype, keyed: bool) -> Self {
+        if mimetype.is_summary() {
+            Self::Summary
+        } else if keyed || mimetype.is_inseam_defined() {
+            Self::Lexical
+        } else {
+            Self::Content
+        }
+    }
+}
+
 /// Which text-bearing fragments get vectors. Every text fragment enters the
 /// full-text index regardless; the scope decides which of them also pay for
 /// a vector — summaries alone make a lean index whose vector bulk is one
-/// bounded row per source (`design/indexing.md`).
+/// bounded row per source (`design/indexing.md`). Rows in the
+/// [`SearchRole::Lexical`] role never carry one under either scope.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum VectorScope {
-    /// Every text-bearing fragment gets a vector.
+    /// Every prose fragment — source content and summaries — gets a vector.
     #[default]
     All,
     /// Only summary fragments (`text/x-inseam-summary`) get vectors.
@@ -340,11 +372,14 @@ impl VectorScope {
         }
     }
 
-    /// Whether a fragment gets a vector under this scope.
-    pub fn covers(self, is_summary: bool) -> bool {
-        match self {
-            Self::All => true,
-            Self::Summaries => is_summary,
+    /// Whether a row in this role gets a vector under this scope.
+    pub fn covers(self, role: SearchRole) -> bool {
+        match (self, role) {
+            (_, SearchRole::Lexical) => false,
+            (Self::All, SearchRole::Content) => true,
+            (Self::All, SearchRole::Summary) => true,
+            (Self::Summaries, SearchRole::Summary) => true,
+            (Self::Summaries, SearchRole::Content) => false,
         }
     }
 }
@@ -378,7 +413,7 @@ pub struct ReembedTarget {
     pub fragment: FragmentId,
     pub source: Option<SourceId>,
     pub text: String,
-    pub is_summary: bool,
+    pub role: SearchRole,
 }
 
 /// What the store knows about its search surface, under one lock so the two
@@ -1747,11 +1782,15 @@ impl IndexStore {
         let mut out = Vec::new();
         while let Some(row) = rows.next().await? {
             let mimetype: String = row.get(3)?;
+            let source = row.get::<Option<i64>>(1)?.map(SourceId);
+            let role = Mimetype::parse(&mimetype)
+                .map(|m| SearchRole::of(&m, source.is_none()))
+                .unwrap_or(SearchRole::Content);
             out.push(ReembedTarget {
                 fragment: FragmentId(row.get(0)?),
-                source: row.get::<Option<i64>>(1)?.map(SourceId),
+                source,
                 text: row.get::<String>(2)?,
-                is_summary: Mimetype::parse(&mimetype).is_ok_and(|m| m.is_summary()),
+                role,
             });
         }
         Ok(out)
@@ -3219,11 +3258,14 @@ mod tests {
         s.write_subtree(&plan).await.expect("lands");
         let mut targets = s.reembed_targets().await.expect("lists");
         targets.sort_by(|a, b| a.text.cmp(&b.text));
-        let flags: Vec<(&str, bool)> = targets
+        let roles: Vec<(&str, SearchRole)> = targets
             .iter()
-            .map(|t| (t.text.as_str(), t.is_summary))
+            .map(|t| (t.text.as_str(), t.role))
             .collect();
-        assert_eq!(flags, vec![("body", false), ("summary", true)]);
+        assert_eq!(
+            roles,
+            vec![("body", SearchRole::Content), ("summary", SearchRole::Summary)]
+        );
     }
 
     #[tokio::test]

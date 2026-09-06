@@ -252,14 +252,15 @@ async fn plugin_churn_dirties_only_sources_the_plugins_claims_touch() {
     let corpus = tempfile::tempdir().expect("tempdir");
     let data = tempfile::tempdir().expect("tempdir");
     std::fs::write(corpus.path().join("note.md"), "# Note\n\nmarkdown words\n").expect("writes");
-    std::fs::write(corpus.path().join("plain.txt"), "plain words here\n").expect("writes");
+    std::fs::write(corpus.path().join("data.json"), "{\"words\": \"plain words here\"}\n")
+        .expect("writes");
 
     let mut kernel = common::boot(data.path(), "").await;
     index(common::ops(&kernel).as_ref(), corpus.path()).await;
 
-    // Unmount the chunker: it participated only in plain.txt's subtree
-    // (markdown is claimed by the markdown transform), so exactly one
-    // source re-indexes. This is the claims-aware stamp at work —
+    // Unmount the chunker: it participated only in data.json's subtree
+    // (markdown and plain text are claimed by the markdown transform), so
+    // exactly one source re-indexes. This is the claims-aware stamp at work —
     // dirtiness discovered by the sweep, never triggered by the lifecycle.
     common::reconcile(&mut kernel, "[[entry]]\nid = \"chunker\"\ndisabled = true").await;
     let report = index(common::ops(&kernel).as_ref(), corpus.path()).await;
@@ -267,7 +268,7 @@ async fn plugin_churn_dirties_only_sources_the_plugins_claims_touch() {
     assert_eq!(
         (report.indexed, report.unchanged),
         (1, 2),
-        "only the txt source re-indexes: {report}"
+        "only the json source re-indexes: {report}"
     );
 
     // Mount it back: again only the source whose inventory intersects the

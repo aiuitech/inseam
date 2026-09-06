@@ -2,26 +2,29 @@
 # the structural fallback for text with no structure of its own.
 
 # The claim: text splits into `contains`-related chunks that keep the
-# parent's mimetype, so a chunk of JSON is still JSON to the index.
+# parent's mimetype, so a chunk of JSON is still JSON to the index. (Plain
+# text and markdown go to the markdown transform, whose headingless
+# fallback is this same chunking.)
 [[check]]
-name = "chunks plain text under the parent mimetype"
-mimetype = "text/plain"
+name = "chunks structured text under the parent mimetype"
+mimetype = "text/csv"
 text = """
-First paragraph of a note about the garden.
+name,note
+rose,First row of a note about the garden.
 
-Second paragraph, about the shed.
+shed,Second row, about the shed.
 """
 
 [check.expect]
 min_fragments = 1
 relation = "contains"
-mimetype = "text/plain"
+mimetype = "text/csv"
 fragment_contains = "garden"
 
 # The degrade path: withheld text chunks into nothing.
 [[check]]
 name = "emits nothing when the text is withheld"
-mimetype = "text/plain"
+mimetype = "text/csv"
 
 [check.expect]
 min_fragments = 0

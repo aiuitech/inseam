@@ -139,6 +139,9 @@ pub struct IndexReport {
     pub keyed_removed: usize,
     /// Search rows re-embedded by a pending embedding migration.
     pub reembedded: usize,
+    /// Sources whose text fit the summary length and became their own
+    /// summary, with no call made.
+    pub verbatim_summaries: usize,
     pub llm_summaries: usize,
     pub extractive_summaries: usize,
     pub envelope_summaries: usize,
@@ -204,7 +207,8 @@ impl fmt::Display for IndexReport {
         )?;
         write!(
             f,
-            "summaries: {} llm, {} extractive, {} envelope · {} embedded · ${:.4} spent",
+            "summaries: {} verbatim, {} llm, {} extractive, {} envelope · {} embedded · ${:.4} spent",
+            self.verbatim_summaries,
             self.llm_summaries,
             self.extractive_summaries,
             self.envelope_summaries,

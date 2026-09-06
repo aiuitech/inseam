@@ -2,9 +2,11 @@
 //! finder serves summaries in every response so an AI client can decide
 //! whether to keep digging, so every indexed source must have one
 //! (`design/indexing.md`). Config sets the length, never the existence:
-//! LLM when the granted handle allows it, extractive for text otherwise,
-//! envelope-derived for everything else ([`summarize`]). Its golden checks
-//! live beside it in `summarizer.checks.toml`.
+//! verbatim when the text already fits it, LLM when the granted handle
+//! allows it, extractive for text otherwise, envelope-derived for
+//! everything else ([`summarize`]). Beside the summary it plants the
+//! source's keywords for the full-text index. Its golden checks live
+//! beside it in `summarizer.checks.toml`.
 
 mod summarize;
 
@@ -19,14 +21,24 @@ use inseam_seams::transforms::{
     register_as_effect, Registration, Transform, TransformCtx, TransformKind, TransformOutput,
 };
 
-use summarize::SummaryKind;
+use summarize::{SummaryKind, SummaryShape};
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SummarizerConfig {
     /// Target summary length in characters. Config sets the length, not the
-    /// existence: every indexed source gets a summary.
+    /// existence: every indexed source gets a summary. Text that already
+    /// fits is its own summary and costs no call.
     pub target_chars: usize,
+    /// Characters of source text one LLM summary call reads. A longer
+    /// source is first reduced, without a model, to the sentences that
+    /// best represent it across its sections, so the whole document —
+    /// not its head — is what the model summarizes (shape tier).
+    pub llm_input_chars: usize,
+    /// Keywords planted beside the summary for the full-text index, at
+    /// most (shape tier). The LLM names them in the same call as the
+    /// summary; without one they are the text's own weightiest terms.
+    pub keywords_max: usize,
     /// LLM summaries per index run (run-metering tier — not in the shape
     /// stamp); beyond it the summarizer falls back to extractive summaries
     /// so the mandatory-summary invariant still holds.
@@ -44,6 +56,8 @@ impl Default for SummarizerConfig {
     fn default() -> Self {
         Self {
             target_chars: 400,
+            llm_input_chars: 8_000,
+            keywords_max: 12,
             llm_call_budget: 500,
             llm_lane: LlmLane::Interactive,
         }
@@ -86,13 +100,17 @@ impl Plugin for SummarizerPlugin {
                 entry_id: cx.entry_id().to_string(),
                 name: "summarizer".to_string(),
                 transform: Arc::new(SummarizerTransform {
-                    target_chars: self.config.target_chars,
+                    shape: SummaryShape {
+                        target_chars: self.config.target_chars,
+                        llm_input_chars: self.config.llm_input_chars,
+                        keywords_max: self.config.keywords_max,
+                    },
                 }),
                 llm_call_budget: self.config.llm_call_budget,
                 llm_lane: self.config.llm_lane,
                 shape_fingerprint: format!(
-                    "summarizer-v1|target_chars={}",
-                    self.config.target_chars
+                    "summarizer-v2|target_chars={}|llm_input_chars={}|keywords_max={}",
+                    self.config.target_chars, self.config.llm_input_chars, self.config.keywords_max
                 ),
             },
         )
@@ -100,7 +118,7 @@ impl Plugin for SummarizerPlugin {
 }
 
 pub(crate) struct SummarizerTransform {
-    pub(crate) target_chars: usize,
+    pub(crate) shape: SummaryShape,
 }
 
 #[async_trait::async_trait]
@@ -115,29 +133,50 @@ impl Transform for SummarizerTransform {
 
     async fn apply(&self, ctx: TransformCtx<'_>) -> TransformOutput {
         let hint = ctx.envelope.hint.as_deref();
-        let (text, kind) = match ctx.text.filter(|t| !t.trim().is_empty()) {
+        let summary = match ctx.text.filter(|t| !t.trim().is_empty()) {
             Some(content) => {
-                summarize::summarize_text(ctx.llm.as_deref(), hint, content, self.target_chars).await
+                summarize::summarize_text(ctx.llm.as_deref(), hint, content, self.shape).await
             }
-            None => (
-                summarize::envelope_summary(ctx.envelope),
-                SummaryKind::Envelope,
-            ),
+            None => summarize::Summary {
+                text: summarize::envelope_summary(ctx.envelope),
+                kind: SummaryKind::Envelope,
+                keywords: Vec::new(),
+            },
         };
-        if text.is_empty() {
+        if summary.text.is_empty() {
             return TransformOutput::default();
         }
-        TransformOutput::sprouts(vec![Sprout::leaf(
+        let mut sprouts = vec![Sprout::leaf(
             NewFragment {
-                // The `via` param records provenance: llm, extractive, or
-                // envelope. The index report counts by it.
-                mimetype: Mimetype::summary().with_param("via", kind.as_str()),
-                text: Some(text),
+                // The `via` param records provenance: verbatim, llm,
+                // extractive, or envelope. The index report counts by it.
+                mimetype: Mimetype::summary().with_param("via", summary.kind.as_str()),
+                text: Some(summary.text),
                 extent: None,
                 content_address: None,
             },
             RelationKind::derives(),
-        )])
+        )];
+        if !summary.keywords.is_empty() {
+            // Keywords are the model's when the summary is; otherwise the
+            // text's own. They are full-text rows only, never vectors.
+            let via = match summary.kind {
+                SummaryKind::Llm => "llm",
+                SummaryKind::Verbatim | SummaryKind::Extractive | SummaryKind::Envelope => {
+                    "extractive"
+                }
+            };
+            sprouts.push(Sprout::leaf(
+                NewFragment {
+                    mimetype: Mimetype::keywords().with_param("via", via),
+                    text: Some(summary.keywords.join(", ")),
+                    extent: None,
+                    content_address: None,
+                },
+                RelationKind::derives(),
+            ));
+        }
+        TransformOutput::sprouts(sprouts)
     }
 }
 
@@ -148,7 +187,11 @@ mod tests {
 
     fn test_address() -> &'static Address {
         static ADDRESS: std::sync::OnceLock<Address> = std::sync::OnceLock::new();
-        ADDRESS.get_or_init(|| "inseam://fs-test/tmp/note.md".parse().expect("valid address"))
+        ADDRESS.get_or_init(|| {
+            "inseam://fs-test/tmp/note.md"
+                .parse()
+                .expect("valid address")
+        })
     }
 
     fn envelope(content_type: &str, hint: &str) -> Envelope {
@@ -186,10 +229,10 @@ mod tests {
     async fn without_content_derives_from_the_envelope() {
         let envelope = envelope("image/jpeg", "IMG_2019.jpeg");
         let m = envelope.content_type.clone();
-        let out = SummarizerTransform { target_chars: 200 }
+        let out = SummarizerTransform { shape: shape(200) }
             .apply(ctx(&envelope, &m, None))
             .await;
-        assert_eq!(out.sprouts.len(), 1);
+        assert_eq!(out.sprouts.len(), 1, "an envelope summary has no keywords");
         let sprout = &out.sprouts[0];
         assert_eq!(sprout.relation, RelationKind::derives());
         assert_eq!(sprout.fragment.mimetype.param("via"), Some("envelope"));
@@ -201,13 +244,55 @@ mod tests {
             .contains("IMG_2019.jpeg"));
     }
 
+    fn shape(target_chars: usize) -> SummaryShape {
+        SummaryShape {
+            target_chars,
+            llm_input_chars: 8_000,
+            keywords_max: 12,
+        }
+    }
+
     #[tokio::test]
-    async fn without_llm_capability_is_extractive() {
+    async fn without_llm_capability_is_extractive_with_the_texts_own_keywords() {
         let envelope = envelope("text/markdown", "note.md");
         let m = envelope.content_type.clone();
-        let out = SummarizerTransform { target_chars: 200 }
-            .apply(ctx(&envelope, &m, Some("# Reno\n\nBudget notes for the kitchen.")))
+        let out = SummarizerTransform { shape: shape(20) }
+            .apply(ctx(
+                &envelope,
+                &m,
+                Some("# Reno\n\nBudget notes for the kitchen. Kitchen demo in June."),
+            ))
             .await;
-        assert_eq!(out.sprouts[0].fragment.mimetype.param("via"), Some("extractive"));
+        assert_eq!(out.sprouts.len(), 2);
+        assert_eq!(
+            out.sprouts[0].fragment.mimetype.param("via"),
+            Some("extractive")
+        );
+        let keywords = &out.sprouts[1].fragment;
+        assert!(keywords.mimetype.is_keywords());
+        assert_eq!(keywords.mimetype.param("via"), Some("extractive"));
+        assert_eq!(out.sprouts[1].relation, RelationKind::derives());
+        assert!(keywords
+            .text
+            .as_deref()
+            .expect("has text")
+            .contains("kitchen"));
+    }
+
+    #[tokio::test]
+    async fn text_within_the_target_is_verbatim() {
+        let envelope = envelope("text/plain", "note.txt");
+        let m = envelope.content_type.clone();
+        let out = SummarizerTransform { shape: shape(200) }
+            .apply(ctx(&envelope, &m, Some("Budget notes for the kitchen.")))
+            .await;
+        assert_eq!(
+            out.sprouts[0].fragment.mimetype.param("via"),
+            Some("verbatim")
+        );
+        assert_eq!(
+            out.sprouts[0].fragment.text.as_deref(),
+            Some("Budget notes for the kitchen.")
+        );
     }
 }

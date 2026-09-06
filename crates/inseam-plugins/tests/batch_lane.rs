@@ -103,6 +103,9 @@ id = "summarizer"
 plugin = "transform-summarizer"
 [entry.config]
 llm_call_budget = 1000
+# The corpus notes are a line each; a target they exceed keeps every
+# summary a model call, which is what the lane tests count.
+target_chars = 20
 "#
     )
 }
@@ -236,11 +239,10 @@ async fn rebuilds_and_shape_changes_reuse_cached_summaries_and_vectors() {
     assert_eq!(reshaped.embedded, 0, "{reshaped}");
     assert_eq!(fake.chat_calls.load(Ordering::Relaxed), 7, "no new endpoint calls");
 
-    // A summarizer config change is a new identity: the model is asked again.
-    let resummarized_overlay = overlay(&base).replace(
-        "llm_call_budget = 1000\n",
-        "llm_call_budget = 1000\ntarget_chars = 120\n",
-    );
+    // A summarizer config change is a new identity: the model is asked
+    // again. The new target still sits under the notes' length, so every
+    // summary stays a model call.
+    let resummarized_overlay = overlay(&base).replace("target_chars = 20\n", "target_chars = 24\n");
     assert_ne!(resummarized_overlay, overlay(&base));
     common::reconcile(&mut kernel, &resummarized_overlay).await;
     let resummarized = common::ops(&kernel).index(request(false)).await.expect("sweeps");

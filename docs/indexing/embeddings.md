@@ -34,8 +34,10 @@ A `dimensions` smaller than the native width is accepted only for models trained
 
 Vectors are the storage bulk of an index — one `f32` per dimension per text fragment, against a few bytes per fragment for the graph. `vectors` chooses:
 
-- `all` (default) — every text-bearing fragment (sections, chunks, summaries, entities) gets a vector.
+- `all` (default) — every prose fragment gets a vector: source content (sections, chunks, transcripts) and summaries.
 - `summaries` — only summary fragments get vectors: one bounded row per source. Every fragment still enters the full-text index, so exact-term queries reach into sections and chunks; only vector seeding runs over summaries.
+
+Under either scope, rows that are names and terms rather than prose — keywords, entities and every other keyed fragment, a folder's entries — carry no vector. Full-text search matches those exactly, and a vector over a list of names buys nothing it does not already have; the store calls this the row's **search role** (content, summary, or lexical).
 
 For the leanest index, pair `vectors = "summaries"` with the structural transforms switched off ([transforms.md](transforms.md)): with `markdown` and `chunker` disabled the subtree is the source and its summary and nothing else, and the summarizer's `target_chars` bounds exactly how much text each source contributes. Three sources index to six fragments and three search rows.
 

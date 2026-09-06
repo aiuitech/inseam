@@ -65,8 +65,10 @@ INDEX_REUSE_PATTERN = re.compile(r"reused: (\d+) embeddings, (\d+) transform out
 INDEX_FRAGMENT_PATTERN = re.compile(
     r"(\d+) fragments, (\d+) relations, (\d+) keyed fragments anchored"
 )
+# The verbatim count is optional: binaries before the summarizer's verbatim
+# rung printed the line without it, and their runs still parse.
 INDEX_SUMMARY_PATTERN = re.compile(
-    r"summaries: (\d+) llm, (\d+) extractive, (\d+) envelope .*? "
+    r"summaries: (?:(\d+) verbatim, )?(\d+) llm, (\d+) extractive, (\d+) envelope .*? "
     r"(\d+) embedded .*? \$([0-9]+(?:\.[0-9]+)?) spent"
 )
 
@@ -602,7 +604,7 @@ def parse_index_summary(output: str, sources_max: int) -> dict[str, int | float]
     if summaries is None:
         raise BenchmarkError("index output has no transform completion summary")
     values = [int(value) for value in (*sources.groups(), *fragments.groups())]
-    transform_values = [int(value) for value in summaries.groups()[:4]]
+    transform_values = [int(value or 0) for value in summaries.groups()[:5]]
     # Binaries before the artifact caches print no reuse line: zero reuse.
     reuse = INDEX_REUSE_PATTERN.search(output)
     reuse_values = [0, 0] if reuse is None else [int(value) for value in reuse.groups()]
@@ -620,13 +622,14 @@ def parse_index_summary(output: str, sources_max: int) -> dict[str, int | float]
         "fragments": values[6],
         "relations": values[7],
         "keyed_fragments": values[8],
-        "summaries_llm": transform_values[0],
-        "summaries_extractive": transform_values[1],
-        "summaries_envelope": transform_values[2],
-        "embeddings": transform_values[3],
+        "summaries_verbatim": transform_values[0],
+        "summaries_llm": transform_values[1],
+        "summaries_extractive": transform_values[2],
+        "summaries_envelope": transform_values[3],
+        "embeddings": transform_values[4],
         "embeddings_reused": reuse_values[0],
         "transforms_reused": reuse_values[1],
-        "cost_usd": float(summaries.group(5)),
+        "cost_usd": float(summaries.group(6)),
     }
 
 
