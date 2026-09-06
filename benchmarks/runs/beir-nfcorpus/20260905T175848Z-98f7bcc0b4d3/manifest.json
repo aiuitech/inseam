@@ -1,0 +1,145 @@
+{
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "duration_seconds": 593.186234,
+      "ending_phase": "completed",
+      "ending_queries_completed": 323,
+      "error": null,
+      "finished_at": "2026-09-05T18:08:43.279Z",
+      "inseam": {
+        "binary_path": "/Users/greg/.cargo/bin/inseam",
+        "binary_sha256": "6d71c2361e62055d3a3efa72d9687055053817f9d872065510657e9ab6075b61",
+        "cli_version": "inseam 0.1.0",
+        "repository_dirty": true,
+        "repository_revision": "98f7bcc0b4d38ae87bfb8a3f1ac535ff9ed08eb9"
+      },
+      "log_directory": "logs/attempt-001",
+      "resumed": false,
+      "search_index_preparation": {
+        "duration_seconds": 0.010021,
+        "finished_at": "2026-09-05T18:06:04.276Z",
+        "log": "logs/attempt-001/search-index.log",
+        "returncode": 0,
+        "started_at": "2026-09-05T18:06:04.265Z"
+      },
+      "started_at": "2026-09-05T17:58:50.055Z",
+      "starting_phase": "indexing",
+      "starting_queries_completed": 0,
+      "status": "completed"
+    }
+  ],
+  "benchmark": {
+    "archive_sha256": "efe5be03f8c5b86a5870102d0599d227c8c6e2484328e68c6522560385671b0b",
+    "archive_url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/nfcorpus.zip",
+    "dataset": "nfcorpus",
+    "document_count": 3633,
+    "name": "BEIR",
+    "qrel_count": 12334,
+    "query_count": 323,
+    "split": "test"
+  },
+  "duration_seconds": 593.186234,
+  "finished_at": "2026-09-05T18:08:43.279Z",
+  "fixture_path": "/Users/greg/ws/inseam/benchmark/fixtures/beir-nfcorpus",
+  "index_data_path": "/Users/greg/ws/inseam/benchmark/fixtures/beir-nfcorpus/nodes/20260905T175848Z-98f7bcc0b4d3",
+  "index_progress_interval_seconds": 30,
+  "indexing": {
+    "duration_seconds": 434.197558,
+    "finished_at": "2026-09-05T18:06:04.262Z",
+    "log": "logs/index.log",
+    "returncode": 0,
+    "started_at": "2026-09-05T17:58:50.056Z",
+    "summary": {
+      "cost_usd": 0.0768,
+      "embeddings": 3633,
+      "fragments": 7266,
+      "keyed_fragments": 0,
+      "relations": 3633,
+      "sources_catalog_only": 0,
+      "sources_ignored": 0,
+      "sources_indexed": 3633,
+      "sources_past_cutoff": 0,
+      "sources_seen": 3633,
+      "sources_unchanged": 0,
+      "summaries_envelope": 0,
+      "summaries_extractive": 3133,
+      "summaries_llm": 500
+    }
+  },
+  "inseam": {
+    "binary_path": "/Users/greg/.cargo/bin/inseam",
+    "binary_sha256": "6d71c2361e62055d3a3efa72d9687055053817f9d872065510657e9ab6075b61",
+    "cli_version": "inseam 0.1.0",
+    "repository_dirty": true,
+    "repository_revision": "98f7bcc0b4d38ae87bfb8a3f1ac535ff9ed08eb9"
+  },
+  "models": {
+    "embedding_dimensions": 384,
+    "embedding_vectors": "all",
+    "embeddings": "openai/text-embedding-3-small",
+    "entity_extraction": "disabled",
+    "summarization": "google/gemini-2.5-flash-lite",
+    "summarization_lane": "batch"
+  },
+  "options": {
+    "index_concurrency": 8,
+    "llm_call_budget": 500,
+    "query_count": 323,
+    "results_per_query": 10
+  },
+  "phase": "completed",
+  "progress_interval_seconds": 5,
+  "queries_completed": 323,
+  "resume_count": 0,
+  "run_id": "20260905T175848Z-98f7bcc0b4d3",
+  "schema_version": 2,
+  "scores": {
+    "beir": {
+      "cutoffs": [
+        1,
+        3,
+        5,
+        10
+      ],
+      "map@1": 0.0457,
+      "map@10": 0.09376,
+      "map@3": 0.07015,
+      "map@5": 0.08088,
+      "ndcg@1": 0.36533,
+      "ndcg@10": 0.28448,
+      "ndcg@3": 0.33184,
+      "ndcg@5": 0.31001,
+      "precision@1": 0.3839,
+      "precision@10": 0.21579,
+      "precision@3": 0.31476,
+      "precision@5": 0.26935,
+      "queries_evaluated": 323,
+      "recall@1": 0.0457,
+      "recall@10": 0.12883,
+      "recall@3": 0.07985,
+      "recall@5": 0.09944,
+      "semantics": "trec_eval ndcg_cut, map_cut, recall, and P averaged over queries; linear gains; relevance grade > 0 counts as relevant"
+    }
+  },
+  "started_at": "2026-09-05T17:58:48.755Z",
+  "status": "completed",
+  "system": {
+    "architecture": "arm64",
+    "cpu_model": "Apple M2",
+    "disk_free_bytes_at_start": 21784682496,
+    "disk_total_bytes": 245107195904,
+    "hostname": "GregAir.local",
+    "logical_cpu_count": 8,
+    "memory_bytes": 8589934592,
+    "os": "Darwin",
+    "os_release": "25.6.0",
+    "os_version": "Darwin Kernel Version 25.6.0: Fri Jul 31 19:18:43 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T8112",
+    "python_version": "3.14.5"
+  },
+  "timeouts_seconds": {
+    "finder_query": 600,
+    "indexing": 259200,
+    "setup_command": 1800
+  }
+}

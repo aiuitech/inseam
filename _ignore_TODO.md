@@ -4,6 +4,7 @@
 ## WIP
 
 ## Todos
+- implement the range reader / scanner (AsyncHttpRangeReader?)
 - need folder as a source fragment
   - summarizer should be recursive. so at the folder level it's one summary of all its child files that each have their own summary. 
 - query results should have meta data for time, etc
