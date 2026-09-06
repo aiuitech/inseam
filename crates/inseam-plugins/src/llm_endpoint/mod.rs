@@ -74,6 +74,8 @@ const CHAT_BATCH_JOBS_IN_FLIGHT_MAX: usize = 8;
 const CHAT_BATCH_QUEUE_MAX: usize = 65_536;
 /// One job-creation upload's deadline: tens of megabytes on a slow uplink.
 const CHAT_BATCH_CREATE_TIMEOUT: Duration = Duration::from_secs(900);
+/// OpenRouter rejects a job containing more requests than this with 413.
+const OPENROUTER_BATCH_REQUESTS_MAX: u32 = 5_000;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -103,9 +105,8 @@ pub struct LlmEndpointConfig {
     /// `transform_batch_model` fact. Unset derives `<transform_model>:batch`,
     /// OpenRouter's batch variant of the same model.
     pub transform_batch_model: Option<String>,
-    /// Requests per batch-API job, the upper bound. The provider documents
-    /// no cap and stream-parses the upload; this bounds one job's upload
-    /// and its inline results.
+    /// Requests per batch-API job, the upper bound. OpenRouter accepts at
+    /// most 5,000; another compatible batch endpoint may set its own bound.
     pub batch_requests_max: NonZeroU32,
 }
 
@@ -119,7 +120,8 @@ impl Default for LlmEndpointConfig {
             agent_model: "openai/gpt-5-mini".to_string(),
             batches_url: None,
             transform_batch_model: None,
-            batch_requests_max: NonZeroU32::new(10_000).expect("10000 is non-zero"),
+            batch_requests_max: NonZeroU32::new(OPENROUTER_BATCH_REQUESTS_MAX)
+                .expect("5000 is non-zero"),
         }
     }
 }
@@ -158,6 +160,9 @@ impl LlmEndpointConfig {
     /// The batch lane's dials, when the endpoint has one.
     fn batching(&self) -> Option<ChatBatching> {
         let batches_url = self.batches_url()?;
+        if endpoint_host(&self.base_url) == "openrouter.ai" {
+            assert!(self.batch_requests_max.get() <= OPENROUTER_BATCH_REQUESTS_MAX);
+        }
         let requests_max = usize::try_from(self.batch_requests_max.get()).expect("u32 fits usize");
         Some(ChatBatching {
             batches_url,
@@ -183,10 +188,22 @@ pub struct LlmEndpoint {
 
 impl LlmEndpoint {
     pub fn from_config(config: &toml::Table) -> Result<Self, PluginError> {
-        Ok(Self {
-            config: parse_config(config)?,
-        })
+        let config: LlmEndpointConfig = parse_config(config)?;
+        validate_batch_requests(&config).map_err(PluginError)?;
+        Ok(Self { config })
     }
+}
+
+fn validate_batch_requests(config: &LlmEndpointConfig) -> Result<(), String> {
+    if endpoint_host(&config.base_url) != "openrouter.ai" {
+        return Ok(());
+    }
+    if config.batch_requests_max.get() <= OPENROUTER_BATCH_REQUESTS_MAX {
+        return Ok(());
+    }
+    Err(format!(
+        "llm.batch_requests_max must not exceed {OPENROUTER_BATCH_REQUESTS_MAX} for OpenRouter"
+    ))
 }
 
 pub struct LlmEndpointFactory;
@@ -798,6 +815,7 @@ mod tests {
     #[test]
     fn the_batch_lane_is_derived_for_openrouter_and_absent_elsewhere() {
         let openrouter = LlmEndpointConfig::default();
+        assert_eq!(openrouter.batch_requests_max.get(), 5_000);
         assert_eq!(
             openrouter.batches_url().as_deref(),
             Some("https://openrouter.ai/api/beta/batches")
@@ -821,6 +839,37 @@ mod tests {
         };
         assert_eq!(gateway.batches_url().as_deref(), Some("https://gateway.example/batches"));
         assert_eq!(gateway.transform_batch_model(), "google/gemini-2.5-flash-lite:batch");
+    }
+
+    #[test]
+    fn openrouter_rejects_batch_jobs_above_its_request_limit_at_boot() {
+        let mut config = toml::Table::new();
+        config.insert("batch_requests_max".into(), toml::Value::Integer(5_001));
+
+        let error = LlmEndpoint::from_config(&config).err().unwrap();
+
+        assert_eq!(
+            error.to_string(),
+            "llm.batch_requests_max must not exceed 5000 for OpenRouter"
+        );
+    }
+
+    #[test]
+    fn another_batch_endpoint_may_set_its_own_request_limit() {
+        let mut config = toml::Table::new();
+        config.insert(
+            "base_url".into(),
+            toml::Value::String("https://gateway.example/v1".into()),
+        );
+        config.insert(
+            "batches_url".into(),
+            toml::Value::String("https://gateway.example/batches".into()),
+        );
+        config.insert("batch_requests_max".into(), toml::Value::Integer(10_000));
+
+        let plugin = LlmEndpoint::from_config(&config).unwrap();
+
+        assert_eq!(plugin.config.batch_requests_max.get(), 10_000);
     }
 
     #[test]

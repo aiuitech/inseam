@@ -80,7 +80,7 @@ EVALUATION_MODEL = "stealth/ox-alpha"
 EMBEDDING_MODEL = "openai/text-embedding-3-small"
 EMBEDDING_DIMENSIONS = 384
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-SUMMARY_BATCH_REQUESTS_MAX = 10_000
+SUMMARY_BATCH_REQUESTS_MAX = 5_000
 SUMMARY_BATCH_CONCURRENCY = 65_536
 >>>>>>> f463417e (perf(benchmarks): fill concurrent summary batch jobs)
 MAX_QUESTIONS = 1_000

@@ -21,10 +21,14 @@ The harness uses `google/gemini-2.5-flash-lite` through OpenRouter's batch lane 
 >>>>>>> ba12a580 (fix(benchmarks): disable summary reasoning)
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 Every `run` invocation creates a new ignored index under the fixture's `nodes/` directory. This prevents a warm index from being reported as a fresh indexing result. Failed and interrupted runs remain on disk with their partial logs and a non-completed manifest.
 =======
 The default run limits summaries to 500 LLM calls. Inseam uses its deterministic fallback after the summarizer spends that budget. Raise `--llm-call-budget` only after estimating the cost and runtime. Summaries ride the batch lane (`summarizer.llm_lane = "batch"`). This pinned benchmark sets the endpoint's job cap to 10,000 requests and parks up to 65,536 source planners, the endpoint queue's hard bound, so several full OpenRouter Batch API jobs can run concurrently. The 64 MiB serialized-job limit may split large requests sooner. Embeddings use base64 responses and pack up to 128 inputs per request, with four batches in flight. The lean source-plus-summary shape fills an embedding request from 256 search rows.
 >>>>>>> f463417e (perf(benchmarks): fill concurrent summary batch jobs)
+=======
+The default run limits summaries to 500 LLM calls. Inseam uses its deterministic fallback after the summarizer spends that budget. Raise `--llm-call-budget` only after estimating the cost and runtime. Summaries ride the batch lane (`summarizer.llm_lane = "batch"`). This pinned benchmark sets OpenRouter's job cap to its 5,000-request limit and parks up to 65,536 source planners, so the endpoint can keep its eight job slots busy. The 64 MiB serialized-job limit may split large requests sooner. Embeddings use base64 responses and pack up to 128 inputs per request, with four batches in flight. The lean source-plus-summary shape fills an embedding request from 256 search rows.
+>>>>>>> 951f25d0 (fix(indexing): respect OpenRouter batch request limit)
 
 ## Tests
 

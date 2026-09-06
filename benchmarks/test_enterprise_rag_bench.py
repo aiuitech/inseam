@@ -73,7 +73,7 @@ class EnterpriseRagBenchTests(unittest.TestCase):
         self.assertIn('llm_lane = "batch"', composition)
         self.assertIn('transform_reasoning_effort = "none"', composition)
         self.assertIn('agent_model = "stealth/ox-alpha"', composition)
-        self.assertIn('batch_requests_max = 10000', composition)
+        self.assertIn('batch_requests_max = 5000', composition)
         self.assertIn('model = "openai/text-embedding-3-small"', composition)
         self.assertIn('dimensions = 384', composition)
         self.assertIn('vectors = "summaries"', composition)

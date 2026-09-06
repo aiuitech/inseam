@@ -87,7 +87,7 @@ What happens on the batch lane:
 
 - The endpoint plugin declares `transform_batch_model` — `<transform_model>:batch`, OpenRouter's batch variant of the same model (set `transform_batch_model` to name another). An endpoint without a batch API (ollama, vLLM) declares none, and a batch request is served interactively with a warning.
 - The sweep plans `batch_concurrency` sources at once (4,096 instead of `concurrency`'s 8). Each planner parks on its summary call, so the parked set is what one job gathers. The dial also bounds the parked sources' content held in memory.
-- The endpoint's batch lane submits a job when it is full (`batch_requests_max`, default 10,000, or 64 MiB of requests), when no call has arrived for two seconds, or when the oldest parked call has waited two minutes. Jobs run concurrently (eight at most) while later planners keep parking. Each job is polled every five seconds for its first minute, then every thirty.
+- The endpoint's batch lane submits a job when it is full (`batch_requests_max`, 5,000 by default and at most 5,000 on OpenRouter, or 64 MiB of requests), when no call has arrived for two seconds, or when the oldest parked call has waited two minutes. Jobs run concurrently (eight at most) while later planners keep parking. Each job is polled every five seconds for its first minute, then every thirty.
 - Results return to their callers by stable id. A failed item fails only its own call — that source's summary falls back to extractive — and a failed job fails every call in it the same way; the run continues.
 - The index report counts jobs: `llm batch lane: N jobs`.
 
