@@ -8,7 +8,7 @@ The boundary operations from [design/node-api.md](../../design/node-api.md), ser
 | --- | --- | --- | --- |
 | 1 | `query { text, limit }` | cheapest | ranked addresses + envelopes, each with a score, summary, fragment hints (text preview, score, and structured extent), and any `replicas` — other addresses of the same content, collapsed by content digest; plus a `meta` block describing the query itself (below) |
 | 2 | `expand { address }` | index-only | the source's fragments (mimetype, extent, preview), its typed relations, and neighboring fragments beyond the source — keyed fragments such as entities and the sources they connect to |
-| 3 | `scan { address, start, end }` | reads a slice | lines `start..=end` (1-based, inclusive) of a `text/*` source, read no further than line `end`; anything else is served from its largest `text/*` descendant (`served_from_fragment` set) — details below |
+| 3 | `scan { address, start, end }` | reads a slice | lines `start..=end` (1-based, inclusive) of a text source, read no further than line `end`; anything else is served from its largest text descendant (`served_from_fragment` set) — details below |
 | 4 | `fetch { address }` | full content | the whole source as text |
 | 4 | `fetch_bytes { address }` | full content | the raw bytes with their content type — a source that is not text (an image, a PDF), or the target of a fragment's content reference (an image a document links to); bounded at 32 MiB per message, base64 in JSON |
 
@@ -30,7 +30,7 @@ A query result is a decision point, so each one carries what the follow-up needs
 
 ## Scan
 
-`scan` reads lines of **`text/*` sources only** — the unit extents and scan share is the line, and lines are defined for text. Structured application types (`application/json`, YAML, XML) are indexed as text but not scannable: `fetch` serves them whole. A source that is not text (a video, a PDF) is scanned through its largest `text/*` fragment that is source content rather than derived understanding — a transcript, never a summary or an entity — and the response names it in `served_from_fragment`; a source with no such fragment refuses with `NothingToScan`.
+`scan` reads lines of **text sources only** — the unit extents and scan share is the line, and lines are defined for text. "Text" is the one list the index shares with `fetch` and the chunker (`inseam-seams::text::is_indexable_text`): all of `text/*` plus the structured application types — JSON, YAML, TOML, XML, JavaScript, shell, SQL, SVG. A source that is not text (a video, a PDF, an image) is scanned through its largest text fragment that is source content rather than derived understanding — a transcript, never a summary or an entity — and the response names it in `served_from_fragment`; a source with no such fragment refuses with `NothingToScan`.
 
 The range is checked before anything is read. A zero `start` or an `end` before it is `ScanRange`; a `start` past the last line is `ScanBeyondEnd`, naming the line count so the client can correct itself. Both map to HTTP 400. `end` is clamped twice: to the last line, and to at most 2000 lines after `start` (`SCAN_LINES_MAX`) — one scan is a window, `fetch` is the rung for the whole thing. The response reports the window actually served:
 
@@ -38,7 +38,7 @@ The range is checked before anything is read. A zero `start` or an `end` before 
 | --- | --- |
 | `start`, `end` | the lines served, after clamping |
 | `lines_total` | the scanned text's line count when the index knows it: a text source's recorded length, or the stand-in fragment's; absent for a text source the index never read as text |
-| `mimetype` | the `text/*` type of what was read |
+| `mimetype` | the text type of what was read |
 | `text` | the lines, joined by `\n` |
 
 Hosts read no further than line `end`: the filesystem host reads a buffered file line by line and stops, and the web host streams the response body and drops the connection once line `end` has arrived, so the head of a log the byte cap refuses to fetch whole is still one scan away ([../indexing/web-host.md](../indexing/web-host.md)). Lines are the same lines `fetch` would return: a range read this way equals the same range cut from the whole text.

@@ -241,7 +241,7 @@ pub struct ScanRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanResponse {
     pub address: Address,
-    /// The `text/*` type of what was read: the source's, or the stand-in
+    /// The text type of what was read: the source's, or the stand-in
     /// fragment's.
     pub mimetype: String,
     /// The lines actually served, 1-based inclusive: `end` is the request's

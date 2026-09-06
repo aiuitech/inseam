@@ -276,11 +276,11 @@ impl Operations for OperationsService {
         assert!(start >= 1);
         assert!(end >= start);
         assert!(end - start < SCAN_LINES_MAX);
-        // Scan reads `text/*` only: the line arithmetic extents and scan
-        // share is defined for text, and everything else — media, PDFs,
-        // structured application types — climbs to `fetch` or is served
-        // through a text descendant below.
-        if source.envelope.content_type.is_text() {
+        // Scan reads what the index reads as text — `text/*` and the
+        // structured application types — one list shared with `fetch` and
+        // the chunker, so the three never disagree. Everything else (media,
+        // PDFs) is served through a text descendant below.
+        if is_indexable_text(&source.envelope.content_type) {
             let text = self
                 .connection_to(&source.address.host)?
                 .read_lines(&source.address, start, end)
@@ -592,12 +592,12 @@ fn clamp_scan_end(start: u64, end: u64) -> u64 {
 }
 
 /// The fragment a scan of a non-text source reads instead: its largest
-/// `text/*` fragment that is source content rather than derived
-/// understanding (no summaries, no entities).
+/// text fragment that is source content rather than derived understanding
+/// (no summaries, no entities).
 fn scan_stand_in(fragments: &[StoredFragment]) -> Option<(&StoredFragment, &str)> {
     fragments
         .iter()
-        .filter(|f| f.mimetype.is_text())
+        .filter(|f| is_indexable_text(&f.mimetype))
         .filter(|f| !f.mimetype.is_inseam_defined())
         .filter_map(|f| f.text.as_deref().map(|t| (f, t)))
         .max_by_key(|(_, t)| t.len())
@@ -683,11 +683,12 @@ mod tests {
             fragment(1, "text/x-inseam-summary", "a very long summary of the video"),
             fragment(2, "text/plain", "short"),
             fragment(3, "text/plain", "the transcript, longest"),
-            fragment(4, "application/json", "{\"not\": \"text/*, however long it is\"}"),
+            fragment(4, "application/json", "{\"structured\": \"text counts too\"}"),
+            fragment(5, "image/png", "not text however long this reference text is"),
         ];
         let (chosen, text) = scan_stand_in(&fragments).expect("a stand-in");
-        assert_eq!(chosen.id, FragmentId(3));
-        assert_eq!(text, "the transcript, longest");
+        assert_eq!(chosen.id, FragmentId(4));
+        assert_eq!(text, "{\"structured\": \"text counts too\"}");
         assert!(scan_stand_in(&fragments[..1]).is_none(), "summaries never stand in");
     }
 }
