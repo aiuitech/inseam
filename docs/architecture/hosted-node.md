@@ -94,9 +94,10 @@ statistics and mounted hosts, searches the index, expands and fetches a
 source, connects and disconnects accounts (the Connections panel lists every
 grant and the hosts it stewards), installs a loaded plugin from a chosen
 plugin directory and lists what the node runs (the Plugins panel), and
-triggers a sweep over an approved root. Vite proxies `/api` to a
-local node during development. A production build can be served by the node
-from the same origin.
+triggers a sweep over an approved root. `pnpm serve` in `apps/web` starts a
+development node and Vite together with throwaway defaults; Vite proxies
+`/api` to the node ([apps/web/README.md](../../apps/web/README.md)). A
+production build can be served by the node from the same origin.
 
 ## Container package
 

@@ -6,7 +6,27 @@ stays in Rust.
 
 ## Develop
 
-Start an HTTP node on port 7337 with a local cookie, then run Vite:
+After a fresh clone, with `inseam` on PATH (`cargo install --path
+crates/inseam-cli` from the repo root):
+
+```sh
+cd apps/web
+pnpm install
+pnpm serve
+```
+
+`pnpm serve` starts a node on `127.0.0.1:7337` and Vite on
+`http://localhost:5173`, and prints the owner token to paste into the login
+screen. The defaults are made for a throwaway local setup: the hosted
+composition, the repo's own `docs/` as the index root (`docs`), a data dir at
+`apps/web/.inseam`, and a fixed development token. Each is an environment
+variable when you want something else:
+
+```sh
+INSEAM_INDEX_ROOTS=notes=/absolute/path INSEAM_OWNER_TOKEN=... pnpm serve
+```
+
+`pnpm dev` runs Vite alone against a node you started yourself:
 
 ```sh
 INSEAM_OWNER_TOKEN=0123456789abcdef0123456789abcdef \

@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Throwaway node data written by `pnpm serve`
+.inseam
