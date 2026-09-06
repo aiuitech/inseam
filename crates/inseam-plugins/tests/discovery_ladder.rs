@@ -7,6 +7,8 @@ mod common;
 
 use std::path::Path;
 
+use inseam_kernel::address::ContentLength;
+use inseam_kernel::fragment::Extent;
 use inseam_seams::operations::{
     ExpandRequest, FetchRequest, IndexRequest, QueryRequest, ScanRequest,
 };
@@ -95,8 +97,21 @@ async fn the_incremental_discovery_ladder_works_offline() {
     let summary = top.summary.as_deref().expect("mandatory summary");
     assert!(summary.contains("Kitchen"), "summary: {summary}");
     assert!(!top.hints.is_empty(), "hints accompany results");
-    let hint_extent = top.hints[0].extent.as_deref().expect("hints carry extents");
-    assert!(hint_extent.starts_with("lines "), "got {hint_extent}");
+    // What a follow-up scan needs rides on the result: the source's length
+    // in lines, and each hint's line extent and score.
+    let ContentLength::Lines(kitchen_lines) = top.envelope.length else {
+        panic!("a text source's length is recorded in lines");
+    };
+    assert!(kitchen_lines >= 10, "kitchen.md is {kitchen_lines} lines");
+    let hint = &top.hints[0];
+    let Some(Extent::Lines { start, end }) = hint.extent else {
+        panic!("hints carry line extents, got {:?}", hint.extent);
+    };
+    assert!(start >= 1);
+    assert!(end >= start);
+    assert!(end <= kitchen_lines, "hint extent lies within the source");
+    assert!(hint.score > 0.0);
+    assert!(hint.score <= 1.0);
     // The meta describes the query that produced these results: the served
     // limit, and counts that agree with the results.
     let meta = &response.meta;
@@ -151,8 +166,9 @@ async fn the_incremental_discovery_ladder_works_offline() {
         .iter()
         .find(|f| f.text.as_deref().is_some_and(|t| t.contains("Cabinets")))
         .expect("budget section fragment");
-    let extent = budget_fragment.extent.as_deref().expect("has extent");
-    let (start, end) = parse_lines_extent(extent);
+    let Some(Extent::Lines { start, end }) = budget_fragment.extent else {
+        panic!("budget section has a line extent");
+    };
     let scan = ops
         .scan(ScanRequest {
             address: top.address.clone(),
@@ -167,6 +183,53 @@ async fn the_incremental_discovery_ladder_works_offline() {
         scan.text
     );
     assert!(scan.served_from_fragment.is_none(), "text scans read the source");
+    assert_eq!(scan.start, start);
+    assert_eq!(scan.end, end);
+    assert_eq!(scan.lines_total, Some(kitchen_lines));
+    assert_eq!(scan.mimetype, "text/markdown");
+
+    // Widening past the end clamps, and the response says where it stopped.
+    let widened = ops
+        .scan(ScanRequest {
+            address: top.address.clone(),
+            start: 1,
+            end: 10_000,
+        })
+        .await
+        .expect("scans");
+    assert_eq!(widened.start, 1);
+    assert_eq!(widened.end, kitchen_lines);
+    assert!(widened.text.starts_with("# Kitchen Renovation"));
+    assert!(widened.text.contains("drywall in July."));
+
+    // Bad ranges are typed client errors, never a read.
+    let beyond = ops
+        .scan(ScanRequest {
+            address: top.address.clone(),
+            start: kitchen_lines + 5,
+            end: kitchen_lines + 9,
+        })
+        .await;
+    assert!(
+        matches!(beyond, Err(inseam_seams::SeamError::ScanBeyondEnd { lines_total, .. }) if lines_total == kitchen_lines),
+        "{beyond:?}"
+    );
+    let backwards = ops
+        .scan(ScanRequest {
+            address: top.address.clone(),
+            start: 3,
+            end: 2,
+        })
+        .await;
+    assert!(matches!(backwards, Err(inseam_seams::SeamError::ScanRange { start: 3, end: 2 })));
+    let zero = ops
+        .scan(ScanRequest {
+            address: top.address.clone(),
+            start: 0,
+            end: 2,
+        })
+        .await;
+    assert!(matches!(zero, Err(inseam_seams::SeamError::ScanRange { start: 0, end: 2 })));
 
     // --- rung 4: fetch ---
     let fetched = ops
@@ -191,6 +254,15 @@ async fn the_incremental_discovery_ladder_works_offline() {
             })
             .await;
         assert!(matches!(refused, Err(inseam_seams::SeamError::BinaryFetch(a, _)) if &a == png));
+        // Nor a scan rung: an image has no text descendants to stand in.
+        let unscannable = ops
+            .scan(ScanRequest {
+                address: png.clone(),
+                start: 1,
+                end: 5,
+            })
+            .await;
+        assert!(matches!(unscannable, Err(inseam_seams::SeamError::NothingToScan(a)) if &a == png));
     }
 }
 
@@ -266,11 +338,3 @@ async fn changed_sources_have_their_subtree_replaced() {
     assert_eq!(common::hits(ops.as_ref(), "orchids").await, 1);
 }
 
-fn parse_lines_extent(extent: &str) -> (u64, u64) {
-    let range = extent.strip_prefix("lines ").expect("lines extent");
-    let (start, end) = range.split_once('-').expect("start-end");
-    (
-        start.parse().expect("start parses"),
-        end.parse().expect("end parses"),
-    )
-}

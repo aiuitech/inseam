@@ -13,7 +13,9 @@ use inseam_kernel::address::Address;
 use inseam_seams::operations::{ExpandRequest, FetchBytesRequest, FragmentView, IndexRequest};
 use inseam_seams::SeamError;
 
-use inseam_plugins::connection_web::{web_address, web_host_id};
+use inseam_kernel::fragment::Extent;
+use inseam_plugins::connection_web::{web_address, web_host_id, WebConnectionConfig, WebHost};
+use inseam_seams::connection::Connection;
 
 const PNG: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
 /// The web connection's byte cap in the test composition; `/big.png`
@@ -49,8 +51,28 @@ async fn big() -> impl IntoResponse {
     ([(axum::http::header::CONTENT_TYPE, "image/png")], vec![0u8; CAP + 1])
 }
 
+/// A text resource past the cap, declared as such: unfetchable whole, yet
+/// its first lines are one scan away.
+async fn log() -> impl IntoResponse {
+    let mut body = String::new();
+    for line in 1..=LOG_LINES {
+        body.push_str(&format!("line {line}: something happened\n"));
+    }
+    assert!(body.len() > CAP);
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "text/plain".to_string()),
+            (axum::http::header::CONTENT_LENGTH, body.len().to_string()),
+        ],
+        body,
+    )
+}
+
+const LOG_LINES: u64 = 40;
+
 async fn serve_fake_web() -> String {
     let router = axum::Router::new()
+        .route("/log.txt", get(log))
         .route("/logo.png", get(png))
         .route("/guide.html", get(page))
         .route("/redirect", get(redirect))
@@ -154,7 +176,11 @@ async fn links_become_typed_references_fetchable_through_the_web_host() {
     let logo = reference(fragments, &format!("{base}/logo.png")).expect("logo referenced");
     assert_eq!(logo.mimetype, "image/png");
     assert_eq!(logo.text, None);
-    assert_eq!(logo.extent.as_deref(), Some("bytes 0-12"), "the probe learned the length");
+    assert_eq!(
+        logo.extent,
+        Some(Extent::Bytes { start: 0, end: 12 }),
+        "the probe learned the length"
+    );
     // A redirect and an extension-less URL are typed by the probe alone.
     assert_eq!(reference(fragments, &format!("{base}/redirect")).expect("followed").mimetype, "image/png");
     assert_eq!(reference(fragments, &format!("{base}/mystery")).expect("probed").mimetype, "image/png");
@@ -247,4 +273,30 @@ async fn without_the_web_host_links_are_typed_offline_and_not_fetchable() {
         matches!(unreachable, Err(SeamError::UnknownHost(ref h)) if *h == web_host_id()),
         "{unreachable:?}"
     );
+}
+
+#[tokio::test]
+async fn line_reads_stream_the_head_of_a_resource_the_cap_refuses_whole() {
+    let base = serve_fake_web().await;
+    let config = WebConnectionConfig {
+        allow_hosts: vec!["127.0.0.1".to_string()],
+        content_bytes_max: u64::try_from(CAP).expect("fits"),
+        ..WebConnectionConfig::default()
+    };
+    let host = WebHost::new(&config).expect("configures");
+    let log = address(&format!("{base}/log.txt"));
+
+    let whole = host.read_text(&log).await;
+    assert!(matches!(whole, Err(SeamError::Refused(_))), "{whole:?}");
+
+    let head = host.read_lines(&log, 1, 2).await.expect("reads the head");
+    assert_eq!(head, "line 1: something happened\nline 2: something happened");
+
+    // Lines past what the cap can hold are still refused: what is read
+    // counts, not what is declared.
+    let deep = host.read_lines(&log, LOG_LINES - 1, LOG_LINES).await;
+    assert!(matches!(deep, Err(SeamError::Refused(_))), "{deep:?}");
+
+    let beyond = host.read_lines(&log, 1, 0).await;
+    assert!(matches!(beyond, Err(SeamError::ScanRange { start: 1, end: 0 })));
 }

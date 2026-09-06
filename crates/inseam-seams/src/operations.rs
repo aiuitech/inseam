@@ -9,8 +9,8 @@
 //! monotonic — no listener can force-allow what another denied
 //! (`design/access-control.md`).
 
-use inseam_kernel::address::{Address, HostId};
-use inseam_kernel::fragment::{FragmentId, Relation};
+use inseam_kernel::address::{Address, ContentLength, HostId};
+use inseam_kernel::fragment::{Extent, FragmentId, Relation};
 use inseam_kernel::store::VectorScope;
 use inseam_kernel::substrate::{FiberState, FiberView, Guard, SecretNeed, ServiceKey};
 use serde::{Deserialize, Serialize};
@@ -138,13 +138,15 @@ pub struct QueryResult {
     pub replicas: Vec<Address>,
 }
 
-/// Envelope fields rendered for clients: dates as `YYYY-MM-DD`, length with
-/// its unit.
+/// Envelope fields rendered for clients: dates as `YYYY-MM-DD`, length as
+/// the structured unit and value a follow-up `scan` needs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvelopeView {
     pub source_type: String,
     pub content_type: String,
-    pub length: String,
+    /// `{"unit": "lines", "value": n}` for text the index has read — the
+    /// bound a `scan` range can reach — else `bytes`.
+    pub length: ContentLength,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -153,12 +155,19 @@ pub struct EnvelopeView {
     pub title: Option<String>,
 }
 
+/// One fragment that earned its source a place in the ranking: enough to
+/// choose it, and where it sits so a `scan` can widen around it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FragmentHint {
     pub fragment: FragmentId,
     pub mimetype: String,
+    /// This fragment's own score on the query's scale (1.0 is the top
+    /// result's source), so a client sees which hint made the hit.
+    pub score: f64,
+    /// Where the fragment sits in its source: `{"unit": "lines", "start",
+    /// "end"}` for text, which `scan` accepts verbatim.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub extent: Option<String>,
+    pub extent: Option<Extent>,
     pub text: String,
 }
 
@@ -183,7 +192,7 @@ pub struct FragmentView {
     pub id: FragmentId,
     pub mimetype: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub extent: Option<String>,
+    pub extent: Option<Extent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     /// Where the fragment's bytes live when it holds a reference instead of
@@ -213,10 +222,18 @@ impl From<&Relation> for RelationView {
     }
 }
 
+/// Most lines one `scan` serves: a range past this is clamped to it, and
+/// the response's `end` says where it stopped. A client that wants more
+/// scans again from there or climbs to `fetch` — the rung for the whole
+/// thing (`design/finder.md`).
+pub const SCAN_LINES_MAX: u64 = 2000;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanRequest {
     pub address: Address,
-    /// 1-based inclusive line range.
+    /// 1-based inclusive line range. `end` is clamped to the last line and
+    /// to [`SCAN_LINES_MAX`] lines after `start`; a zero start, an end
+    /// before its start, or a start past the last line is refused.
     pub start: u64,
     pub end: u64,
 }
@@ -224,12 +241,22 @@ pub struct ScanRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanResponse {
     pub address: Address,
+    /// The `text/*` type of what was read: the source's, or the stand-in
+    /// fragment's.
     pub mimetype: String,
+    /// The lines actually served, 1-based inclusive: `end` is the request's
+    /// after clamping.
     pub start: u64,
     pub end: u64,
+    /// How many lines the scanned text has in all, when the index knows —
+    /// the recorded line count of a text source, or the stand-in
+    /// fragment's; absent for a text source the index never read as text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lines_total: Option<u64>,
     pub text: String,
-    /// Set when the source is media and the scan was served from a
-    /// descendant text fragment instead (`design/finder.md`).
+    /// Set when the source is not text and the scan was served from a
+    /// descendant text fragment instead — a transcript for a video
+    /// (`design/finder.md`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub served_from_fragment: Option<FragmentId>,
 }

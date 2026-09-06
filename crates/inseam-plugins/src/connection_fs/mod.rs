@@ -19,7 +19,7 @@ use inseam_seams::connection::{
     register_as_effect, Capabilities, Connection, EnumeratedSource, HostDescription, HostKind,
     Registration,
 };
-use inseam_seams::text::slice_lines;
+use inseam_seams::text::slice_lines_from_reader;
 use inseam_seams::SeamError;
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -229,6 +229,27 @@ impl FsHost {
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
+    /// Lines `start..=end` of a file, reading no further than line `end`:
+    /// a scan near the top of a large file costs what it reads, not the
+    /// file. The read holds a permit like every other, and runs on the
+    /// blocking pool because it is buffered synchronous disk work.
+    async fn read_lines_at(&self, path: &Path, start: u64, end: u64) -> Result<String, SeamError> {
+        let _permit = self
+            .reads
+            .acquire()
+            .await
+            .map_err(|e| SeamError::failed(format!("read {}: {e}", path.display())))?;
+        assert!(self.reads.available_permits() < READS_IN_FLIGHT_MAX);
+        let path = path.to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            let file = std::fs::File::open(&path)
+                .map_err(|e| SeamError::failed(format!("read {}: {e}", path.display())))?;
+            slice_lines_from_reader(std::io::BufReader::new(file), start, end)
+        })
+        .await
+        .map_err(|e| SeamError::failed(format!("line read task failed: {e}")))?
+    }
+
     /// The host id for this machine: `fs-<hostname>`, sanitized.
     pub fn local_id() -> HostId {
         let raw = gethostname::gethostname().to_string_lossy().to_lowercase();
@@ -386,8 +407,7 @@ impl Connection for FsHost {
         end: u64,
     ) -> Result<String, SeamError> {
         let path = self.resolve(address)?;
-        let text = self.read_text_at(&path).await?;
-        slice_lines(&text, start, end).map_err(SeamError::failed)
+        self.read_lines_at(&path, start, end).await
     }
 
     async fn read_bytes(&self, address: &Address) -> Result<Vec<u8>, SeamError> {

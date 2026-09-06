@@ -125,9 +125,10 @@ impl From<SeamError> for ApiError {
             SeamError::UnknownSource(_) | SeamError::UnknownHost(_) => {
                 (StatusCode::NOT_FOUND, "not_found")
             }
-            SeamError::Address(_) | SeamError::AmbiguousHost(_) => {
-                (StatusCode::BAD_REQUEST, "invalid_request")
-            }
+            SeamError::Address(_)
+            | SeamError::AmbiguousHost(_)
+            | SeamError::ScanRange { .. }
+            | SeamError::ScanBeyondEnd { .. } => (StatusCode::BAD_REQUEST, "invalid_request"),
             SeamError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "unauthorized"),
             SeamError::Refused(_) => (StatusCode::FORBIDDEN, "refused"),
             SeamError::Unavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),

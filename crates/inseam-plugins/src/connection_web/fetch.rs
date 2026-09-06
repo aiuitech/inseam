@@ -158,20 +158,28 @@ impl Fetcher {
     /// The headers of a resource without its body: `HEAD`, falling back to
     /// a `GET` whose body is dropped unread when the server refuses `HEAD`.
     pub(crate) async fn head(&self, url: &Url) -> Result<Fetched, SeamError> {
-        match self.request(url, Method::HEAD, false).await {
+        match self.request(url, Method::HEAD, BodyWant::None).await {
             Ok(fetched) => Ok(fetched),
-            Err(_) => self.request(url, Method::GET, false).await,
+            Err(_) => self.request(url, Method::GET, BodyWant::None).await,
         }
     }
 
     /// The resource, body included, under the byte cap.
     pub(crate) async fn get(&self, url: &Url) -> Result<Fetched, SeamError> {
-        self.request(url, Method::GET, true).await
+        self.request(url, Method::GET, BodyWant::Whole).await
+    }
+
+    /// The resource's body through its first `lines` lines, under the byte
+    /// cap; the connection is dropped once they are in hand. The body ends
+    /// mid-line when it is cut, so callers slice by line, never by byte.
+    pub(crate) async fn get_lines(&self, url: &Url, lines: u64) -> Result<Fetched, SeamError> {
+        assert!(lines >= 1);
+        self.request(url, Method::GET, BodyWant::Lines(lines)).await
     }
 
     /// Follow at most `redirects_max` hops, guarding every one, and read
     /// the final answer.
-    async fn request(&self, url: &Url, method: Method, want_body: bool) -> Result<Fetched, SeamError> {
+    async fn request(&self, url: &Url, method: Method, want: BodyWant) -> Result<Fetched, SeamError> {
         let hops_max = self.redirects_max + 1;
         let mut current = url.clone();
         for hop in 0..hops_max {
@@ -187,7 +195,7 @@ impl Fetcher {
                     response.status()
                 )));
             }
-            return self.finish(current, response, want_body).await;
+            return self.finish(current, response, want).await;
         }
         Err(SeamError::failed(format!(
             "{method} {url}: more than {} redirects",
@@ -238,23 +246,33 @@ impl Fetcher {
     }
 
     /// Read the headers, and the body under the cap when asked.
-    async fn finish(&self, url: Url, response: reqwest::Response, want_body: bool) -> Result<Fetched, SeamError> {
+    async fn finish(&self, url: Url, response: reqwest::Response, want: BodyWant) -> Result<Fetched, SeamError> {
         let content_type = content_type_of(&response);
         // The declared header, not reqwest's body size hint: a `HEAD`
         // answer has no body, and its hint says zero.
         let content_length = declared_length_of(&response);
+        // A line-bounded read stops early, so only what it actually reads
+        // counts against the cap: the head of a huge log is scannable even
+        // though the whole log is not fetchable.
+        let refuse_by_declared_length = match want {
+            BodyWant::None | BodyWant::Whole => true,
+            BodyWant::Lines(_) => false,
+        };
         if let Some(length) = content_length
             && length > self.content_bytes_max
+            && refuse_by_declared_length
         {
             return Err(SeamError::Refused(format!(
                 "{url} is {length} bytes; the web connection reads at most {}",
                 self.content_bytes_max
             )));
         }
-        let bytes = if want_body {
-            read_body(&url, response, self.content_bytes_max).await?
-        } else {
-            Vec::new()
+        let bytes = match want {
+            BodyWant::None => Vec::new(),
+            BodyWant::Whole => read_body(&url, response, self.content_bytes_max, None).await?,
+            BodyWant::Lines(lines) => {
+                read_body(&url, response, self.content_bytes_max, Some(lines)).await?
+            }
         };
         Ok(Fetched {
             content_type,
@@ -312,8 +330,26 @@ fn declared_length_of(response: &reqwest::Response) -> Option<u64> {
 
 /// Read a body chunk by chunk, refusing the moment it passes the cap, so
 /// an undeclared or lying length never fills memory.
-async fn read_body(url: &Url, mut response: reqwest::Response, cap: u64) -> Result<Vec<u8>, SeamError> {
+/// How much of a response body a request wants: none (a `HEAD`), all of
+/// it, or only through its first n lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BodyWant {
+    None,
+    Whole,
+    Lines(u64),
+}
+
+/// The body under the cap. With `lines_wanted`, reading stops at the chunk
+/// that completes that many lines — the count of `\n` seen — and the rest
+/// of the body never arrives.
+async fn read_body(
+    url: &Url,
+    mut response: reqwest::Response,
+    cap: u64,
+    lines_wanted: Option<u64>,
+) -> Result<Vec<u8>, SeamError> {
     let mut bytes: Vec<u8> = Vec::new();
+    let mut newlines: u64 = 0;
     // Every chunk carries at least one byte, so the loop is bounded by the
     // cap plus one refused chunk.
     let mut chunks: u64 = 0;
@@ -329,6 +365,10 @@ async fn read_body(url: &Url, mut response: reqwest::Response, cap: u64) -> Resu
             return Err(SeamError::Refused(format!(
                 "{url} exceeds the web connection's {cap} byte cap"
             )));
+        }
+        newlines += u64::try_from(chunk.iter().filter(|b| **b == b'\n').count()).unwrap_or(u64::MAX);
+        if lines_wanted.is_some_and(|wanted| newlines >= wanted) {
+            break;
         }
     }
     Ok(bytes)

@@ -155,7 +155,7 @@ impl Connection for TasksConnection {
 
     async fn read_lines(&self, address: &Address, start: u64, end: u64) -> Result<String, SeamError> {
         let text = self.read_text(address).await?;
-        slice_lines(&text, start, end).map_err(SeamError::failed)
+        slice_lines(&text, start, end)
     }
 
     async fn read_bytes(&self, address: &Address) -> Result<Vec<u8>, SeamError> {

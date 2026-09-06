@@ -761,6 +761,11 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 if let Some(fragment) = response.served_from_fragment {
                     eprintln!("(served from text fragment {fragment})");
                 }
+                let total = response
+                    .lines_total
+                    .map(|n| format!(" of {n}"))
+                    .unwrap_or_default();
+                eprintln!("(lines {}-{}{total})", response.start, response.end);
                 println!("{}", response.text);
             }
         }
@@ -1220,7 +1225,6 @@ fn print_results(response: &QueryResponse) {
         for hint in &r.hints {
             let extent = hint
                 .extent
-                .as_deref()
                 .map(|e| format!("[{e}] "))
                 .unwrap_or_default();
             println!("    ▸ {extent}{}", hint.text);
@@ -1269,7 +1273,6 @@ fn print_expansion(response: &inseam_seams::operations::ExpandResponse) {
     for f in &response.fragments {
         let extent = f
             .extent
-            .as_deref()
             .map(|e| format!(" [{e}]"))
             .unwrap_or_default();
         let text = f.text.as_deref().unwrap_or("");

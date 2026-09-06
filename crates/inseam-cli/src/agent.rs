@@ -143,11 +143,12 @@ fn system_prompt() -> String {
      the user's own files. Sources are named by addresses like \
      inseam://<host>/<path>.\n\
      Follow the incremental-discovery ladder, cheapest rung first:\n\
-     1. `query` — search; returns ranked addresses with summaries and matching-fragment \
-     hints (with line extents).\n\
+     1. `query` — search; returns ranked addresses with summaries, the source's length \
+     in lines, and matching-fragment hints with their scores and line extents.\n\
      2. `expand` — one result's fragment structure and related entities; use it to \
      navigate a promising source or hop to related ones.\n\
-     3. `scan` — read a specific line range (hints and expand give you the line numbers).\n\
+     3. `scan` — read a specific line range of a text source. Start from a hint's extent \
+     and widen around it for context; the response says how many lines the source has.\n\
      4. `fetch` — full content, only when a scan cannot answer.\n\
      Query again with different words if results look weak. Prefer scanning the exact \
      lines the hints point at over fetching. Answer as soon as the evidence answers the \
@@ -186,7 +187,9 @@ fn tool_definitions() -> Vec<Tool> {
         ),
         Tool::function(
             "scan",
-            "Read lines start..end (1-based, inclusive) of a source without fetching it all.",
+            "Read lines start..end (1-based, inclusive) of a text source without fetching it \
+             all. At most 2000 lines per call; the response's `end` and `lines_total` say \
+             where it stopped and how much there is.",
             json!({
                 "type": "object",
                 "properties": {

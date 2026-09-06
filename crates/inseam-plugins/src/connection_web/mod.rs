@@ -24,7 +24,7 @@ use inseam_seams::connection::{
     derive_host_id, register_as_effect, Capabilities, Connection, EnumeratedSource,
     HostDescription, HostKind, Registration,
 };
-use inseam_seams::text::slice_lines;
+use inseam_seams::text::{check_line_range, slice_lines};
 use inseam_seams::SeamError;
 
 use fetch::{Fetcher, HostPattern};
@@ -203,9 +203,16 @@ impl Connection for WebHost {
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
+    /// Lines of a web resource, streamed until line `end` is in hand and
+    /// then dropped mid-body: the bytes before a line are the only way to
+    /// find it, so a range request could not skip them, but nothing after
+    /// it need cross the wire.
     async fn read_lines(&self, address: &Address, start: u64, end: u64) -> Result<String, SeamError> {
-        let text = self.read_text(address).await?;
-        slice_lines(&text, start, end).map_err(SeamError::failed)
+        check_line_range(start, end)?;
+        let url = url_of(address)?;
+        let fetched = self.fetcher.get_lines(&url, end).await?;
+        let text = String::from_utf8_lossy(&fetched.bytes);
+        slice_lines(&text, start, end)
     }
 
     async fn read_bytes(&self, address: &Address) -> Result<Vec<u8>, SeamError> {

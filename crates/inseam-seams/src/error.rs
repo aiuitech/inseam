@@ -10,8 +10,15 @@ use thiserror::Error;
 pub enum SeamError {
     #[error("no source at {0} in this node's catalog")]
     UnknownSource(Address),
-    #[error("{0} is not indexed as text and has no text fragments to scan")]
+    #[error("{0} is not text and has no text fragments to scan; fetch it instead")]
     NothingToScan(Address),
+    /// A scan named a range that is not a 1-based inclusive line range:
+    /// a zero start, or an end before its start.
+    #[error("scan range {start}-{end} is not a 1-based inclusive line range")]
+    ScanRange { start: u64, end: u64 },
+    /// A scan started past the last line of what it scanned.
+    #[error("scan start line {start} is beyond the {lines_total}-line source")]
+    ScanBeyondEnd { start: u64, lines_total: u64 },
     #[error("{0} is binary ({1}); fetch its bytes instead of its text")]
     BinaryFetch(Address, String),
     /// A byte fetch was asked for content past the bound the operation

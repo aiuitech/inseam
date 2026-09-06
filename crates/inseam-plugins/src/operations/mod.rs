@@ -40,10 +40,11 @@ use inseam_seams::operations::{
     HostView, IndexRequest, InstallPluginRequest, OperationRequest, Operations, PluginView,
     QueryMeta, QueryRequest, QueryResponse, QueryResult, RelationView, RepairOutcome, RepairReport,
     RepairRequest, RevokeGrantRequest, ScanRequest, ScanResponse, StatusReport, OPERATIONS,
+    SCAN_LINES_MAX,
 };
 use inseam_seams::sweep::{IndexReport, Sweep, SweepRequest, SWEEP};
 use inseam_seams::dates::ymd;
-use inseam_seams::text::{is_indexable_text, preview, slice_lines};
+use inseam_seams::text::{check_line_range, count_lines, is_indexable_text, preview, slice_lines};
 use inseam_seams::SeamError;
 
 /// Characters of fragment text shown in hints and expand views.
@@ -269,39 +270,49 @@ impl Operations for OperationsService {
     async fn scan(&self, request: ScanRequest) -> Result<ScanResponse, SeamError> {
         self.guard("scan")?;
         let source = self.source_at(&request.address).await?;
-        let (start, end) = (request.start.max(1), request.end.max(request.start));
-        if is_indexable_text(&source.envelope.content_type) {
+        check_line_range(request.start, request.end)?;
+        let start = request.start;
+        let end = clamp_scan_end(start, request.end);
+        assert!(start >= 1);
+        assert!(end >= start);
+        assert!(end - start < SCAN_LINES_MAX);
+        // Scan reads `text/*` only: the line arithmetic extents and scan
+        // share is defined for text, and everything else — media, PDFs,
+        // structured application types — climbs to `fetch` or is served
+        // through a text descendant below.
+        if source.envelope.content_type.is_text() {
             let text = self
                 .connection_to(&source.address.host)?
                 .read_lines(&source.address, start, end)
                 .await?;
+            let lines_total = match source.envelope.length {
+                ContentLength::Lines(n) => Some(n),
+                ContentLength::Bytes(_) => None,
+            };
             return Ok(ScanResponse {
                 address: source.address,
                 mimetype: source.envelope.content_type.to_string(),
                 start,
-                end,
+                end: lines_total.map_or(end, |total| end.min(total)),
+                lines_total,
                 text,
                 served_from_fragment: None,
             });
         }
-        // Scanning media means reading lines of its text descendants — the
-        // transcript case. Pick the largest text fragment as the stand-in.
+        // Scanning anything that is not text means reading lines of its
+        // text descendants — the transcript case. The largest one stands in.
         let fragments = self.store.fragments_of(source.id).await?;
-        let best = fragments
-            .iter()
-            .filter(|f| !f.mimetype.is_summary())
-            .filter_map(|f| f.text.as_ref().map(|t| (f, t)))
-            .max_by_key(|(_, t)| t.len());
-        let Some((fragment, text)) = best else {
+        let Some((fragment, text)) = scan_stand_in(&fragments) else {
             return Err(SeamError::NothingToScan(source.address));
         };
-        let sliced =
-            slice_lines(text, start, end).map_err(SeamError::failed)?;
+        let sliced = slice_lines(text, start, end)?;
+        let lines_total = count_lines(text);
         Ok(ScanResponse {
             address: source.address,
             mimetype: fragment.mimetype.to_string(),
             start,
-            end,
+            end: end.min(lines_total),
+            lines_total: Some(lines_total),
             text: sliced,
             served_from_fragment: Some(fragment.id),
         })
@@ -569,12 +580,35 @@ fn catalog_source_view(row: &CatalogRow) -> CatalogSourceView {
     }
 }
 
+/// The end line a scan serves: the request's, held to [`SCAN_LINES_MAX`]
+/// lines from `start`. The caller has already checked the range.
+fn clamp_scan_end(start: u64, end: u64) -> u64 {
+    assert!(start >= 1);
+    assert!(end >= start);
+    let span_end = start.saturating_add(SCAN_LINES_MAX - 1);
+    let clamped = end.min(span_end);
+    assert!(clamped >= start);
+    clamped
+}
+
+/// The fragment a scan of a non-text source reads instead: its largest
+/// `text/*` fragment that is source content rather than derived
+/// understanding (no summaries, no entities).
+fn scan_stand_in(fragments: &[StoredFragment]) -> Option<(&StoredFragment, &str)> {
+    fragments
+        .iter()
+        .filter(|f| f.mimetype.is_text())
+        .filter(|f| !f.mimetype.is_inseam_defined())
+        .filter_map(|f| f.text.as_deref().map(|t| (f, t)))
+        .max_by_key(|(_, t)| t.len())
+}
+
 fn envelope_view(source: &StoredSource) -> EnvelopeView {
     let e = &source.envelope;
     EnvelopeView {
         source_type: e.source_type.clone(),
         content_type: e.content_type.to_string(),
-        length: e.length.to_string(),
+        length: e.length,
         created: e.created.map(ymd),
         modified: e.modified.map(ymd),
         title: e.hint.clone(),
@@ -586,7 +620,8 @@ fn hint_view(ranked: &RankedFragment) -> FragmentHint {
     FragmentHint {
         fragment: f.id,
         mimetype: f.mimetype.to_string(),
-        extent: f.extent.map(|e| e.to_string()),
+        score: round3(ranked.score),
+        extent: f.extent,
         text: f
             .text
             .as_deref()
@@ -599,7 +634,7 @@ fn fragment_view(f: &StoredFragment, source: Option<Address>) -> FragmentView {
     FragmentView {
         id: f.id,
         mimetype: f.mimetype.to_string(),
-        extent: f.extent.map(|e| e.to_string()),
+        extent: f.extent,
         text: f.text.as_deref().map(|t| preview(t, PREVIEW_CHARS)),
         content_address: f.content_address.clone(),
         source,
@@ -616,4 +651,43 @@ fn fetch_too_large(address: &Address, bytes: u64) -> SeamError {
 
 fn round3(x: f64) -> f64 {
     (x * 1000.0).round() / 1000.0
+}
+
+#[cfg(test)]
+mod tests {
+    use inseam_kernel::fragment::{FragmentId, Mimetype};
+
+    use super::*;
+
+    #[test]
+    fn scan_end_is_held_to_the_span_bound() {
+        assert_eq!(clamp_scan_end(1, 1), 1);
+        assert_eq!(clamp_scan_end(5, 9), 9);
+        assert_eq!(clamp_scan_end(1, SCAN_LINES_MAX), SCAN_LINES_MAX);
+        assert_eq!(clamp_scan_end(1, SCAN_LINES_MAX + 1), SCAN_LINES_MAX);
+        assert_eq!(clamp_scan_end(10, u64::MAX), 10 + SCAN_LINES_MAX - 1);
+        assert_eq!(clamp_scan_end(u64::MAX, u64::MAX), u64::MAX);
+    }
+
+    #[test]
+    fn a_scan_stand_in_is_the_largest_text_fragment_that_is_source_content() {
+        let fragment = |id: i64, mimetype: &str, text: &str| StoredFragment {
+            id: FragmentId(id),
+            source: None,
+            mimetype: Mimetype::parse(mimetype).expect("valid"),
+            text: Some(text.to_string()),
+            extent: None,
+            content_address: None,
+        };
+        let fragments = vec![
+            fragment(1, "text/x-inseam-summary", "a very long summary of the video"),
+            fragment(2, "text/plain", "short"),
+            fragment(3, "text/plain", "the transcript, longest"),
+            fragment(4, "application/json", "{\"not\": \"text/*, however long it is\"}"),
+        ];
+        let (chosen, text) = scan_stand_in(&fragments).expect("a stand-in");
+        assert_eq!(chosen.id, FragmentId(3));
+        assert_eq!(text, "the transcript, longest");
+        assert!(scan_stand_in(&fragments[..1]).is_none(), "summaries never stand in");
+    }
 }
