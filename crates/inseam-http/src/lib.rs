@@ -19,7 +19,7 @@ mod error;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
 use axum::extract::{DefaultBodyLimit, State};
@@ -35,7 +35,7 @@ use inseam_seams::operations::{
     FetchBytesRequest, FetchBytesResponse, FetchRequest, FetchResponse, GrantView, HostView,
     IndexRequest, InstallPluginRequest,
     Operations, PluginView, QueryRequest, QueryResponse, RevokeGrantRequest, ScanRequest,
-    ScanResponse, StatusReport,
+    ScanResponse, Settings, StatusReport,
 };
 use inseam_seams::llm::LlmLane;
 use inseam_seams::sweep::DeepBudget;
@@ -152,9 +152,36 @@ impl ServerConfig {
     }
 }
 
+/// The `operations` service as the transport reaches it. A composition
+/// edit that restarts a provider `operations` consumes restarts
+/// `operations` too, so the service the transport was handed at boot goes
+/// stale after the first settings write; the distribution that applies
+/// the edit puts the fresh binding here and every request takes the
+/// current one. One writer per edit, many readers per request: a lock
+/// held for the length of a pointer copy.
+pub struct OperationsSlot {
+    current: RwLock<Arc<dyn Operations>>,
+}
+
+impl OperationsSlot {
+    pub fn new(operations: Arc<dyn Operations>) -> Self {
+        Self {
+            current: RwLock::new(operations),
+        }
+    }
+
+    pub fn get(&self) -> Arc<dyn Operations> {
+        Arc::clone(&self.current.read().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    pub fn replace(&self, operations: Arc<dyn Operations>) {
+        *self.current.write().unwrap_or_else(PoisonError::into_inner) = operations;
+    }
+}
+
 #[derive(Clone)]
 struct AppState {
-    operations: Arc<dyn Operations>,
+    operations: Arc<OperationsSlot>,
     auth: Arc<Auth>,
     index_roots: Arc<[IndexRoot]>,
     /// Where providers redirect the owner's browser back.
@@ -199,7 +226,7 @@ struct HttpIndexRequest {
 
 pub async fn serve(
     config: ServerConfig,
-    operations: Arc<dyn Operations>,
+    operations: Arc<OperationsSlot>,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), ConfigError> {
     let config = config.validate()?;
@@ -215,7 +242,7 @@ pub async fn serve(
         .map_err(ConfigError::Serve)
 }
 
-fn router(config: ServerConfig, operations: Arc<dyn Operations>) -> Result<Router, ConfigError> {
+fn router(config: ServerConfig, operations: Arc<OperationsSlot>) -> Result<Router, ConfigError> {
     let oauth_callback_url = config.oauth_callback_url()?;
     let state = AppState {
         operations,
@@ -263,6 +290,7 @@ fn owner_router(state: &AppState) -> Router<AppState> {
         .route("/grants/authorize", post(authorize_grant))
         .route("/grants/revoke", post(revoke_grant))
         .route("/plugins", get(plugins))
+        .route("/settings", get(settings).put(configure))
         .route(
             "/plugins/install",
             post(install_plugin).layer(DefaultBodyLimit::max(PLUGIN_UPLOAD_BODY_BYTES_MAX)),
@@ -336,7 +364,7 @@ async fn info(State(state): State<AppState>) -> Json<OwnerInfo> {
 }
 
 async fn grants(State(state): State<AppState>) -> Result<Json<Vec<GrantView>>, ApiError> {
-    Ok(Json(state.operations.grants().await?))
+    Ok(Json(state.operations.get().grants().await?))
 }
 
 /// Start an authorization whose redirect this server serves: the console
@@ -348,6 +376,7 @@ async fn authorize_grant(
 ) -> Result<Json<inseam_seams::oauth::AuthorizationStarted>, ApiError> {
     let started = state
         .operations
+        .get()
         .authorize_grant(AuthorizeGrantRequest {
             grant: request.grant,
             redirect: Redirect::External {
@@ -365,6 +394,7 @@ async fn revoke_grant(
     Ok(Json(
         state
             .operations
+            .get()
             .revoke_grant(RevokeGrantRequest {
                 grant: request.grant,
             })
@@ -381,7 +411,7 @@ async fn oauth_callback(
     State(state): State<AppState>,
     Query(callback): Query<AuthorizationCallback>,
 ) -> Response {
-    let outcome = state.operations.complete_authorization(callback).await;
+    let outcome = state.operations.get().complete_authorization(callback).await;
     let (grant, message) = match &outcome {
         Ok(view) => (Some(view.id.to_string()), None),
         Err(error) => (None, Some(error.to_string())),
@@ -438,7 +468,7 @@ fn callback_page(title: &str, message: &str) -> String {
 }
 
 async fn plugins(State(state): State<AppState>) -> Result<Json<Vec<PluginView>>, ApiError> {
-    Ok(Json(state.operations.plugins().await?))
+    Ok(Json(state.operations.get().plugins().await?))
 }
 
 /// Install a loaded plugin into the running node. The request is the
@@ -448,57 +478,71 @@ async fn install_plugin(
     State(state): State<AppState>,
     Json(request): Json<InstallPluginRequest>,
 ) -> Result<Json<PluginView>, ApiError> {
-    Ok(Json(state.operations.install_plugin(request).await?))
+    Ok(Json(state.operations.get().install_plugin(request).await?))
+}
+
+/// The first-party settings document as the node runs it.
+async fn settings(State(state): State<AppState>) -> Result<Json<Settings>, ApiError> {
+    Ok(Json(state.operations.get().settings().await?))
+}
+
+/// Replace the first-party settings: the complete document, applied to the
+/// running node; the reply is the document afterwards.
+async fn configure(
+    State(state): State<AppState>,
+    Json(settings): Json<Settings>,
+) -> Result<Json<Settings>, ApiError> {
+    Ok(Json(state.operations.get().configure(settings).await?))
 }
 
 async fn status(State(state): State<AppState>) -> Result<Json<StatusReport>, ApiError> {
-    Ok(Json(state.operations.status().await?))
+    Ok(Json(state.operations.get().status().await?))
 }
 
 async fn catalog(
     State(state): State<AppState>,
     Json(request): Json<CatalogRequest>,
 ) -> Result<Json<CatalogResponse>, ApiError> {
-    Ok(Json(state.operations.catalog(request).await?))
+    Ok(Json(state.operations.get().catalog(request).await?))
 }
 
 async fn hosts(State(state): State<AppState>) -> Result<Json<Vec<HostView>>, ApiError> {
-    Ok(Json(state.operations.hosts().await?))
+    Ok(Json(state.operations.get().hosts().await?))
 }
 
 async fn query(
     State(state): State<AppState>,
     Json(request): Json<QueryRequest>,
 ) -> Result<Json<QueryResponse>, ApiError> {
-    Ok(Json(state.operations.query(request).await?))
+    Ok(Json(state.operations.get().query(request).await?))
 }
 
 async fn expand(
     State(state): State<AppState>,
     Json(request): Json<ExpandRequest>,
 ) -> Result<Json<ExpandResponse>, ApiError> {
-    Ok(Json(state.operations.expand(request).await?))
+    Ok(Json(state.operations.get().expand(request).await?))
 }
 
 async fn scan(
     State(state): State<AppState>,
     Json(request): Json<ScanRequest>,
 ) -> Result<Json<ScanResponse>, ApiError> {
-    Ok(Json(state.operations.scan(request).await?))
+    Ok(Json(state.operations.get().scan(request).await?))
 }
 
 async fn fetch(
     State(state): State<AppState>,
     Json(request): Json<FetchRequest>,
 ) -> Result<Json<FetchResponse>, ApiError> {
-    Ok(Json(state.operations.fetch(request).await?))
+    Ok(Json(state.operations.get().fetch(request).await?))
 }
 
 async fn fetch_bytes(
     State(state): State<AppState>,
     Json(request): Json<FetchBytesRequest>,
 ) -> Result<Json<FetchBytesResponse>, ApiError> {
-    Ok(Json(state.operations.fetch_bytes(request).await?))
+    Ok(Json(state.operations.get().fetch_bytes(request).await?))
 }
 
 /// Content types a browser may render inline from the owner origin: raster
@@ -518,7 +562,7 @@ async fn raw(
     State(state): State<AppState>,
     Query(request): Query<FetchBytesRequest>,
 ) -> Result<Response, ApiError> {
-    let response = state.operations.fetch_bytes(request).await?;
+    let response = state.operations.get().fetch_bytes(request).await?;
     Ok((raw_headers(&response.content_type), response.bytes.0).into_response())
 }
 
@@ -561,6 +605,7 @@ async fn index(
     };
     let response = state
         .operations
+        .get()
         .index(IndexRequest {
             host: request.host,
             root: root.path.to_string_lossy().into_owned(),
@@ -623,6 +668,7 @@ mod tests {
 
     #[derive(Default)]
     struct StubOperations {
+        configured: Mutex<Option<Settings>>,
         indexed: Mutex<Option<IndexRequest>>,
         authorized: Mutex<Option<AuthorizeGrantRequest>>,
         completed: Mutex<Option<AuthorizationCallback>>,
@@ -787,6 +833,18 @@ mod tests {
                 missing_secrets: Vec::new(),
             })
         }
+
+        async fn settings(&self) -> Result<Settings, SeamError> {
+            Ok(Settings(serde_json::json!({
+                "sweep": { "enabled": true, "config": { "max_depth": 6 } }
+            })))
+        }
+
+        async fn configure(&self, settings: Settings) -> Result<Settings, SeamError> {
+            *self.configured.lock().unwrap_or_else(|error| error.into_inner()) =
+                Some(settings.clone());
+            Ok(settings)
+        }
     }
 
     fn unused() -> SeamError {
@@ -805,7 +863,57 @@ mod tests {
     }
 
     fn test_router(operations: Arc<StubOperations>, index_roots: Vec<IndexRoot>) -> Router {
-        router(test_config(index_roots, None), operations).expect("valid router")
+        router(test_config(index_roots, None), slot(operations)).expect("valid router")
+    }
+
+    fn slot(operations: Arc<StubOperations>) -> Arc<OperationsSlot> {
+        Arc::new(OperationsSlot::new(operations))
+    }
+
+    #[tokio::test]
+    async fn settings_are_read_and_replaced_through_the_document_routes() {
+        let operations = Arc::new(StubOperations::default());
+        let app = test_router(Arc::clone(&operations), Vec::new());
+        let cookie = login_cookie(&app).await;
+        let request = Request::get("/api/v1/owner/settings")
+            .header(COOKIE, cookie.clone())
+            .body(Body::empty())
+            .expect("valid request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), 4096).await.expect("body");
+        let body: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON");
+        assert_eq!(body["sweep"]["config"]["max_depth"], 6);
+
+        let request = Request::put("/api/v1/owner/settings")
+            .header(CONTENT_TYPE, "application/json")
+            .header(COOKIE, cookie)
+            .body(Body::from(r#"{"sweep":{"enabled":false,"config":{"max_depth":2}}}"#))
+            .expect("valid request");
+        let response = app.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let configured = operations.configured.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let configured = configured.expect("the operation saw the document");
+        assert_eq!(configured.0["sweep"]["enabled"], false);
+    }
+
+    #[tokio::test]
+    async fn a_replaced_operations_service_answers_the_next_request() {
+        let first = Arc::new(StubOperations::default());
+        let slot = slot(Arc::clone(&first));
+        let app = router(test_config(Vec::new(), None), Arc::clone(&slot)).expect("valid router");
+        let cookie = login_cookie(&app).await;
+        let second = Arc::new(StubOperations::default());
+        slot.replace(Arc::clone(&second) as Arc<dyn Operations>);
+        let request = Request::put("/api/v1/owner/settings")
+            .header(CONTENT_TYPE, "application/json")
+            .header(COOKIE, cookie)
+            .body(Body::from(r#"{"sweep":{"enabled":true}}"#))
+            .expect("valid request");
+        let response = app.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(first.configured.lock().unwrap_or_else(|e| e.into_inner()).is_none());
+        assert!(second.configured.lock().unwrap_or_else(|e| e.into_inner()).is_some());
     }
 
     async fn login_cookie(app: &Router) -> String {
@@ -898,7 +1006,7 @@ mod tests {
         std::fs::write(web_dir.path().join("index.html"), "web client").expect("web index");
         let app = router(
             test_config(Vec::new(), Some(web_dir.path().to_path_buf())),
-            Arc::new(StubOperations::default()),
+            slot(Arc::new(StubOperations::default())),
         )
         .expect("valid router");
         let request = Request::get("/api/v1/not-a-route")
@@ -1018,7 +1126,7 @@ mod tests {
         let operations = Arc::new(StubOperations::default());
         let app = router(
             test_config(Vec::new(), Some(web_dir.path().to_path_buf())),
-            Arc::clone(&operations) as Arc<dyn Operations>,
+            slot(Arc::clone(&operations)),
         )
         .expect("valid router");
         let request = Request::get("/api/v1/oauth/callback?code=abc&state=st")

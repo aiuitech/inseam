@@ -97,7 +97,28 @@ pub trait Operations: Send + Sync {
     /// kernel reconciles; an entry that fails to activate (admission, a
     /// bad manifest) is rolled back and the failure is the error.
     async fn install_plugin(&self, request: InstallPluginRequest) -> Result<PluginView, SeamError>;
+    /// Owner operation: the first-party settings document — every
+    /// first-party entry's enable switch and complete config, defaults
+    /// applied — as the running node's composition projects it.
+    async fn settings(&self) -> Result<Settings, SeamError>;
+    /// Owner operation: replace the first-party settings with a complete
+    /// document and apply it to the running node now — the overlay is
+    /// rewritten, changed entries restart, and an entry that fails to come
+    /// back rolls the whole write back. The reply is the document as it
+    /// stands afterwards.
+    async fn configure(&self, settings: Settings) -> Result<Settings, SeamError>;
 }
+
+/// The first-party settings document on the wire. Its typed shape
+/// (`inseam_plugins::settings::SettingsDocument`) is built from the plugin
+/// config types, which live above this seam, so the seam carries it as
+/// the JSON both GUIs already speak and the provider parses it into the
+/// typed document at its boundary. `{ "<entry id>": { "enabled": bool,
+/// "config": { … } } }` for configured entries; `{ "enabled": bool }` for
+/// toggle-only ones.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Settings(pub serde_json::Value);
 
 // ---------------------------------------------------------------------------
 // Operation messages

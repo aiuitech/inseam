@@ -20,6 +20,7 @@ pub mod finder;
 pub mod llm_endpoint;
 pub mod oauth;
 pub mod operations;
+pub mod settings;
 pub mod sweep;
 pub mod transform_chunker;
 pub mod transform_directory;

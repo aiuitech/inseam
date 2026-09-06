@@ -12,6 +12,7 @@ import {
   type Plugin,
   type PluginFile,
   type QueryResult,
+  type Settings,
   type StatusReport,
 } from "@/api"
 import { ConnectionsPanel } from "@/components/connections-panel"
@@ -20,6 +21,7 @@ import { LoginScreen } from "@/components/login-screen"
 import { NodeSidebar } from "@/components/node-sidebar"
 import { PluginsPanel } from "@/components/plugins-panel"
 import { SearchWorkspace } from "@/components/search-workspace"
+import { SettingsPanel } from "@/components/settings-panel"
 
 type NodeSnapshot = {
   hosts: Host[]
@@ -27,6 +29,7 @@ type NodeSnapshot = {
   status: StatusReport
   grants: Grant[]
   plugins: Plugin[]
+  settings: Settings
 }
 
 type Notice = { kind: "ok" | "error"; text: string }
@@ -98,8 +101,11 @@ function OwnerConsole({ onExpired }: { onExpired: () => void }) {
   const [fetched, setFetched] = useState<FetchResponse | null>(null)
   const [report, setReport] = useState<IndexReport | null>(null)
   const [pending, setPending] = useState(true)
-  const [notice, setNotice] = useState<Notice | null>(() => takeCallbackNotice())
+  const [notice, setNotice] = useState<Notice | null>(() =>
+    takeCallbackNotice()
+  )
   const [pluginNotice, setPluginNotice] = useState<Notice | null>(null)
+  const [settingsNotice, setSettingsNotice] = useState<Notice | null>(null)
 
   const run = useCallback(
     async <T,>(operation: () => Promise<T>): Promise<T | null> => {
@@ -125,9 +131,10 @@ function OwnerConsole({ onExpired }: { onExpired: () => void }) {
       api.hosts(),
       api.grants(),
       api.plugins(),
+      api.settings(),
     ])
-      .then(([info, status, hosts, grants, plugins]) =>
-        setSnapshot({ info, status, hosts, grants, plugins })
+      .then(([info, status, hosts, grants, plugins, settings]) =>
+        setSnapshot({ info, status, hosts, grants, plugins, settings })
       )
       .catch((reason: unknown) => {
         if (reason instanceof ApiError && reason.status === 401) onExpired()
@@ -172,6 +179,33 @@ function OwnerConsole({ onExpired }: { onExpired: () => void }) {
               : `installed ${value.id} but it failed: ${value.state.state === "failed" ? value.state.reason : ""}`,
       })
       void refreshPlugins(snapshot)
+    })
+  }
+
+  /** A settings write can change anything the node runs — which entries
+   * are mounted, which hosts they steward, how the index is shaped — so
+   * everything but the search results is re-read. */
+  function configure(settings: Settings) {
+    if (!snapshot) return
+    setSettingsNotice(null)
+    void run(() => api.configure(settings)).then((applied) => {
+      if (!applied) return
+      setSettingsNotice({
+        kind: "ok",
+        text: "applied: the node runs this configuration now",
+      })
+      void Promise.all([api.status(), api.hosts(), api.grants(), api.plugins()])
+        .then(([status, hosts, grants, plugins]) =>
+          setSnapshot({
+            ...snapshot,
+            settings: applied,
+            status,
+            hosts,
+            grants,
+            plugins,
+          })
+        )
+        .catch((reason) => setError(errorMessage(reason)))
     })
   }
 
@@ -242,6 +276,12 @@ function OwnerConsole({ onExpired }: { onExpired: () => void }) {
               void refreshConnections(snapshot)
             })
           }
+        />
+        <SettingsPanel
+          settings={snapshot.settings}
+          pending={pending}
+          notice={settingsNotice}
+          onSave={configure}
         />
         <PluginsPanel
           plugins={snapshot.plugins}

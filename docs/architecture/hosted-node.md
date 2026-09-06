@@ -71,6 +71,37 @@ error. The same mount-time gates as any `wasm:` entry apply
 ([../plugins/loaded.md](../plugins/loaded.md)); `serve` is the transport
 that applies such edits, because it owns the running kernel.
 
+## Settings from the console
+
+`GET /api/v1/owner/settings` returns the first-party settings document —
+every first-party entry's enable switch and, for configured entries, its
+complete config with the node's defaults filled in — as the running node's
+composition projects it. `PUT /api/v1/owner/settings` takes the whole
+document back and applies it **without restarting the node**: the
+document is validated field by field the way each plugin validates its
+config at mount (a bad value is refused by name, `sweep.max_depth must be
+greater than zero`, before anything changes), the node's `composition.toml`
+is rewritten with every entry's config replaced wholesale (the layering
+rule; comments in the overlay are normalized away), the kernel reconciles,
+and only the entries whose config or toggle changed restart. If any
+configured entry fails to come back, or the composition refuses the
+result, file and tree go back to what they were and the failure is the
+error. The reply is the document as the node runs it afterwards.
+
+The document is the same JSON the macOS app's Configuration tab reads and
+writes through the FFI (`inseam_plugins::settings::SettingsDocument`), so
+both GUIs are one typed projection of the composition
+([../configuration.md](../configuration.md)). Two limits follow from
+where the write runs: the `operations` entry cannot be disabled this way
+(it is the service answering), and secrets are still environment
+variables the entries name — the console edits the names, never the
+values.
+
+A settings write may restart the `operations` provider itself (it
+consumes the finder, sweep, and connections it was configured against),
+so the transport holds it in a slot the distribution refreshes after each
+applied edit rather than a binding taken once at boot.
+
 ## Filesystem scopes
 
 The web API never accepts an arbitrary filesystem path. Each `--index-root`
@@ -92,7 +123,11 @@ run; `POST /api/v1/owner/catalog` lists the catalog (`host`, `filter` =
 `apps/web` is a React, TypeScript, Vite, and shadcn client. It shows node
 statistics and mounted hosts, searches the index, expands and fetches a
 source, connects and disconnects accounts (the Connections panel lists every
-grant and the hosts it stewards), installs a loaded plugin from a chosen
+grant and the hosts it stewards), edits the node's first-party configuration
+in place (the configuration panel: Connections, Models, Indexing, and
+Search groups with an enable switch per entry and a control per field;
+**apply** sends the whole document to the settings route above and
+**revert** discards the draft), installs a loaded plugin from a chosen
 plugin directory and lists what the node runs (the Plugins panel), and
 triggers a sweep over an approved root. `pnpm serve` in `apps/web` starts a
 development node and Vite together with throwaway defaults; Vite proxies

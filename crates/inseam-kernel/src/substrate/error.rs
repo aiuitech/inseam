@@ -63,6 +63,10 @@ pub enum SubstrateError {
     EntryExists(String),
     #[error("entry `{entry}` did not activate and was rolled back: {reason}")]
     MountFailed { entry: String, reason: String },
+    /// A settings write left some configured entry failed, or the
+    /// composition refused it; the overlay went back to its previous text.
+    #[error("configuring {entries} was rolled back: {reason}")]
+    ConfigureFailed { entries: String, reason: String },
     #[error("could not write composition overlay `{path}`: {source}")]
     OverlayIo { path: String, source: std::io::Error },
     #[error(

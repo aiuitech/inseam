@@ -604,7 +604,9 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 .iter()
                 .map(|value| parse_http_index_root(value))
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            let operations = kernel.service(&OPERATIONS)?;
+            let operations = Arc::new(inseam_http::OperationsSlot::new(
+                kernel.service(&OPERATIONS)?,
+            ));
             let edits = kernel
                 .take_composition_edits()
                 .expect("a freshly booted kernel hands out its edits once");
@@ -618,10 +620,18 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                     web_dir,
                     public_url,
                 },
-                operations,
+                Arc::clone(&operations),
                 shutdown_signal(),
             ));
-            serve_composition_edits(&mut kernel, &base, &overlay_path, edits, transport).await?;
+            serve_composition_edits(
+                &mut kernel,
+                &base,
+                &overlay_path,
+                edits,
+                &operations,
+                transport,
+            )
+            .await?;
         }
         Command::Index {
             root,
@@ -1145,15 +1155,18 @@ async fn shutdown_signal() {
 }
 
 /// Keep a running node editable: apply composition edits submitted through
-/// the `composition` service (an owner installing a plugin) until the
-/// transport finishes. The kernel stays here, on the node's own task, so a
-/// reconcile never runs concurrently with itself; each edit is applied
-/// whole, replied to, and the next one taken.
+/// the `composition` service (an owner installing a plugin, a settings
+/// write) until the transport finishes. The kernel stays here, on the
+/// node's own task, so a reconcile never runs concurrently with itself;
+/// each edit is applied whole, replied to, and the next one taken. An
+/// edit may have restarted the `operations` provider, so the transport's
+/// slot is refreshed after every one.
 async fn serve_composition_edits(
     kernel: &mut Kernel,
     base: &Composition,
     overlay_path: &Path,
     mut edits: CompositionEdits,
+    operations: &inseam_http::OperationsSlot,
     mut transport: tokio::task::JoinHandle<Result<(), inseam_http::ConfigError>>,
 ) -> anyhow::Result<()> {
     loop {
@@ -1175,6 +1188,13 @@ async fn serve_composition_edits(
                     .await;
                 if let Err(error) = &outcome {
                     tracing::warn!("composition edit not applied: {error}");
+                }
+                match kernel.service(&OPERATIONS) {
+                    Ok(current) => operations.replace(current),
+                    // The edit left `operations` waiting or failed: the
+                    // transport keeps the last service and its calls say
+                    // what is missing.
+                    Err(error) => tracing::warn!("operations not rebound after edit: {error}"),
                 }
                 pending.reply(outcome);
             }

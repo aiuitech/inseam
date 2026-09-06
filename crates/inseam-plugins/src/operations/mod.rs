@@ -39,9 +39,10 @@ use inseam_seams::operations::{
     FileBytes, FragmentHint, FragmentView, GrantView, FETCH_BYTES_MAX,
     HostView, IndexRequest, InstallPluginRequest, OperationRequest, Operations, PluginView,
     QueryMeta, QueryRequest, QueryResponse, QueryResult, RelationView, RepairOutcome, RepairReport,
-    RepairRequest, RevokeGrantRequest, ScanRequest, ScanResponse, StatusReport, OPERATIONS,
-    SCAN_LINES_MAX,
+    RepairRequest, RevokeGrantRequest, ScanRequest, ScanResponse, Settings, StatusReport,
+    OPERATIONS, SCAN_LINES_MAX,
 };
+use crate::settings::{SettingsDocument, WriteMode};
 use inseam_seams::sweep::{IndexMonitor, IndexReport, Sweep, SweepRequest, SWEEP};
 use inseam_seams::dates::ymd;
 use inseam_seams::text::{check_line_range, count_lines, is_indexable_text, preview, slice_lines};
@@ -463,12 +464,47 @@ impl Operations for OperationsService {
 
     async fn plugins(&self) -> Result<Vec<PluginView>, SeamError> {
         // Owner operation: not boundary-guarded (local transports only).
-        let fibers = self
+        let snapshot = self
             .composition
             .submit(CompositionEdit::Inspect)
             .await
             .map_err(edit_error)?;
-        Ok(fibers.into_iter().map(PluginView::from).collect())
+        Ok(snapshot.fibers.into_iter().map(PluginView::from).collect())
+    }
+
+    async fn settings(&self) -> Result<Settings, SeamError> {
+        // Owner operation: not boundary-guarded (local transports only).
+        let snapshot = self
+            .composition
+            .submit(CompositionEdit::Inspect)
+            .await
+            .map_err(edit_error)?;
+        settings_of(&snapshot.composition)
+    }
+
+    async fn configure(&self, settings: Settings) -> Result<Settings, SeamError> {
+        // Owner operation: not boundary-guarded (local transports only).
+        let document: SettingsDocument = serde_json::from_value(settings.0)
+            .map_err(|error| SeamError::Refused(format!("settings document: {error}")))?;
+        document
+            .validate()
+            .map_err(|error| SeamError::Refused(error.to_string()))?;
+        // This provider is the `operations` entry: disabling it would
+        // unload the very service answering, and every transport with it.
+        if !document.operations.enabled {
+            return Err(SeamError::Refused(
+                "the operations entry cannot be disabled from a running node".to_string(),
+            ));
+        }
+        let patches = document
+            .into_patches(WriteMode::All)
+            .map_err(|error| SeamError::Refused(error.to_string()))?;
+        let snapshot = self
+            .composition
+            .submit(CompositionEdit::Configure(patches))
+            .await
+            .map_err(edit_error)?;
+        settings_of(&snapshot.composition)
     }
 
     async fn install_plugin(&self, request: InstallPluginRequest) -> Result<PluginView, SeamError> {
@@ -497,7 +533,8 @@ impl Operations for OperationsService {
         })?;
         let entry = Entry::new(id.as_str(), &format!("wasm:{}", artifact.display())).with_config(config);
         match self.composition.submit(CompositionEdit::Mount(entry)).await {
-            Ok(fibers) => fibers
+            Ok(snapshot) => snapshot
+                .fibers
                 .into_iter()
                 .find(|fiber| fiber.id == id.as_str())
                 .map(PluginView::from)
@@ -575,11 +612,20 @@ fn serves_text(mimetype: &inseam_kernel::fragment::Mimetype) -> bool {
 
 /// refused or rolled back is a refusal the owner acts on; a runtime that
 /// does not apply edits is a missing capability; the rest failed.
+/// The layered composition the kernel reports, as the settings document.
+fn settings_of(composition: &inseam_kernel::substrate::Composition) -> Result<Settings, SeamError> {
+    let document = SettingsDocument::from_composition(composition)
+        .map_err(|error| SeamError::failed(error.to_string()))?;
+    let value = serde_json::to_value(document)
+        .map_err(|error| SeamError::failed(format!("settings document: {error}")))?;
+    Ok(Settings(value))
+}
+
 fn edit_error(error: SubstrateError) -> SeamError {
     match error {
-        SubstrateError::EntryExists(_) | SubstrateError::MountFailed { .. } => {
-            SeamError::Refused(error.to_string())
-        }
+        SubstrateError::EntryExists(_)
+        | SubstrateError::MountFailed { .. }
+        | SubstrateError::ConfigureFailed { .. } => SeamError::Refused(error.to_string()),
         SubstrateError::EditsUnserviced | SubstrateError::EditQueueFull => {
             SeamError::Unavailable(error.to_string())
         }
