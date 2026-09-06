@@ -592,29 +592,54 @@ fn raw_headers(content_type: &str) -> [(axum::http::HeaderName, axum::http::Head
     ]
 }
 
+/// Reconcile the index over one scope. `root` is an approved index root's
+/// id (`--index-root`), or a folder the owner configured on a host —
+/// matched verbatim against what the node reports for that host — so the
+/// route never accepts a path of its own.
 async fn index(
     State(state): State<AppState>,
     Json(request): Json<HttpIndexRequest>,
 ) -> Result<Json<inseam_seams::sweep::IndexReport>, ApiError> {
-    let Some(root) = state
+    let operations = state.operations.get();
+    let approved = state
         .index_roots
         .iter()
         .find(|root| root.id == request.root)
-    else {
-        return Err(ApiError::unknown_index_root(&request.root));
+        .map(|root| root.path.to_string_lossy().into_owned());
+    let root = match approved {
+        Some(path) => path,
+        None => configured_root(operations.as_ref(), request.host.as_ref(), &request.root).await?,
     };
-    let response = state
-        .operations
-        .get()
+    let response = operations
         .index(IndexRequest {
             host: request.host,
-            root: root.path.to_string_lossy().into_owned(),
+            root,
             rebuild: request.rebuild,
             deep_budget: request.deep_budget,
             llm_lane: request.llm_lane,
         })
         .await?;
     Ok(Json(response))
+}
+
+/// `root` exactly as some host reports it among its configured roots —
+/// the named host's when one is named, any host's otherwise.
+async fn configured_root(
+    operations: &dyn Operations,
+    host: Option<&HostId>,
+    root: &str,
+) -> Result<String, ApiError> {
+    let hosts = operations.hosts().await?;
+    let known = hosts
+        .iter()
+        .filter(|view| host.is_none_or(|named| *named == view.id))
+        .flat_map(|view| view.roots.iter())
+        .any(|configured| configured == root);
+    if known {
+        Ok(root.to_string())
+    } else {
+        Err(ApiError::unknown_index_root(root))
+    }
 }
 
 fn validate_root_id(id: &str) -> Result<(), ConfigError> {
@@ -640,6 +665,7 @@ fn validate_web_dir(web_dir: &Path) -> Result<(), ConfigError> {
     }
     Ok(())
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -732,7 +758,14 @@ mod tests {
         }
 
         async fn hosts(&self) -> Result<Vec<HostView>, SeamError> {
-            Ok(Vec::new())
+            Ok(vec![HostView {
+                id: HostId::new("fs-test").expect("valid"),
+                kind: inseam_seams::connection::HostKind::filesystem(),
+                display_name: "test".to_string(),
+                entry: "fs".to_string(),
+                capabilities: inseam_seams::connection::Capabilities::READ_ONLY,
+                roots: vec!["/srv/notes".to_string()],
+            }])
         }
 
         async fn catalog(&self, _request: CatalogRequest) -> Result<CatalogResponse, SeamError> {
@@ -1167,6 +1200,20 @@ mod tests {
             .await
             .expect("response")
             .status()
+    }
+
+    #[tokio::test]
+    async fn a_folder_configured_on_a_host_is_an_accepted_index_root() {
+        let operations = Arc::new(StubOperations::default());
+        let app = test_router(Arc::clone(&operations), Vec::new());
+        let cookie = login_cookie(&app).await;
+        assert_eq!(index_request(&app, &cookie, "/srv/notes").await, StatusCode::OK);
+        let indexed = operations.indexed.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        assert_eq!(indexed.expect("the operation ran").root, "/srv/notes");
+        // A path the node never reported is still refused: the route
+        // matches verbatim and invents nothing.
+        assert_eq!(index_request(&app, &cookie, "/srv").await, StatusCode::BAD_REQUEST);
+        assert_eq!(index_request(&app, &cookie, "/srv/notes/sub").await, StatusCode::BAD_REQUEST);
     }
 
     #[test]

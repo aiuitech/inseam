@@ -52,6 +52,8 @@ export type Host = {
   display_name: string
   entry: string
   capabilities: { enumerates: boolean; change_feed: boolean; writable: boolean }
+  /** Folders the owner configured on this host; each is an index root. */
+  roots: string[]
 }
 
 export type QueryResult = {

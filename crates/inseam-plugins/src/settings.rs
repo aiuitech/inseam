@@ -13,7 +13,7 @@ use inseam_kernel::substrate::{Composition, Entry, parse_config};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::connection_fs::{FsConnectionConfig, WalkConfig};
+use crate::connection_fs::{configured_roots, FsConnectionConfig, WalkConfig};
 use crate::connection_google::{GoogleConnection, GoogleConnectionConfig};
 use crate::embedder::{EmbedderConfig, Provider};
 use crate::finder::FinderConfig;
@@ -237,6 +237,7 @@ fn validate_source(config: &FsConnectionConfig) -> Result<(), SettingsError> {
         HostId::new(host_id).map_err(|error| format!("fs.host_id: {error}"))?;
     }
     WalkConfig::compile(config).map_err(|error| format!("fs.ignore: {error}"))?;
+    configured_roots(&config.roots).map_err(|error| format!("fs.roots: {error}"))?;
     Ok(())
 }
 
@@ -395,5 +396,9 @@ mod tests {
         let mut document = SettingsDocument::from_composition(&base()).unwrap();
         document.google.config.services.clear();
         assert!(document.validate().is_err());
+        let mut document = SettingsDocument::from_composition(&base()).unwrap();
+        document.fs.config.roots = vec!["notes".to_string()];
+        let error = document.validate().unwrap_err().to_string();
+        assert!(error.contains("fs.roots"), "{error}");
     }
 }

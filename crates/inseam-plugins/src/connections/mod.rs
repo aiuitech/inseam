@@ -157,6 +157,7 @@ mod tests {
                 display_name: host.to_string(),
             },
             capabilities: Capabilities::READ_ONLY,
+            roots: Vec::new(),
             connection: Arc::new(Stub),
         }
     }

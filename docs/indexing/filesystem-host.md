@@ -12,6 +12,12 @@ The host id is `fs-<hostname>` (sanitized; `host_id` in the entry config overrid
 
 Resolution refuses addresses for other hosts and any locator containing a parent-directory (`..`) component.
 
+## Configured folders
+
+The entry's `roots` lists the folders this host indexes, as absolute paths (at most 64, none twice, no `..`). Empty — the default — means the owner names a scope per run and any directory is one, which is what `inseam index <dir>` has always done. Once folders are configured, every scope on this host must lie inside one of them: a scope outside is refused by name, listing the configured folders, from the CLI as much as from a remote transport. A configured folder need not exist at boot (a volume mounted later is still the owner's configuration); it is checked when it is indexed.
+
+The connection reports its folders with its registration, so owner surfaces offer them as the roots to index: `inseam hosts` and the `hosts` operation carry them, the web console lists them in its index control, and the console's configuration panel (or the macOS app's Configuration tab) is where they are chosen ([../architecture/hosted-node.md](../architecture/hosted-node.md#filesystem-scopes)).
+
 ## Enumeration
 
 `inseam index <dir>` walks the directory **read-only** (a scope may also be given as a locator — `inseam index inseam://<host>/Users/greg/Notes` is the same scope as `/Users/greg/Notes`):

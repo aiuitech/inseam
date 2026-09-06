@@ -150,6 +150,7 @@ impl Plugin for WebConnection {
                     change_feed: false,
                     writable: false,
                 },
+                roots: Vec::new(),
                 connection: Arc::new(host),
             },
         )

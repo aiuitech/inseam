@@ -406,6 +406,10 @@ pub struct HostView {
     /// The composition entry whose connection stewards it.
     pub entry: String,
     pub capabilities: Capabilities,
+    /// The scopes configured for this host — an `index` request may name
+    /// one verbatim as its `root`.
+    #[serde(default)]
+    pub roots: Vec<String>,
 }
 
 /// One grant as owner surfaces show it: what it is for, where it stands,

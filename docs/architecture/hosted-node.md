@@ -104,8 +104,9 @@ applied edit rather than a binding taken once at boot.
 
 ## Filesystem scopes
 
-The web API never accepts an arbitrary filesystem path. Each `--index-root`
-or `INSEAM_INDEX_ROOTS` entry maps a short ID to one absolute directory:
+The web API never accepts an arbitrary filesystem path. An `index` request
+names one of two things. Each `--index-root` or `INSEAM_INDEX_ROOTS` entry
+maps a short ID to one absolute directory:
 
 ```sh
 inseam serve --index-root documents=/srv/inseam/hosts/documents
@@ -113,6 +114,14 @@ inseam serve --index-root documents=/srv/inseam/hosts/documents
 
 The client sends `documents`; the transport resolves the configured path
 before it calls `operations.index`. At most 64 unique root IDs may be active.
+Or the request names a folder the owner configured on a host — the `fs`
+entry's `roots`, chosen in the configuration panel — verbatim, with the
+host: the transport accepts it only if the `hosts` operation reports that
+exact string among that host's roots, so the route still invents no path.
+Anything else is `unknown_index_root`. A node with neither has nothing to
+index from the console until a folder is configured; a hosted node that
+wants the owner never to name paths at all leaves `roots` empty and sets
+`--index-root` ([../indexing/filesystem-host.md](../indexing/filesystem-host.md#configured-folders)).
 The same request may carry `deep_budget` (`"catalog_only"`, `{"sources": N}`,
 or `"unlimited"`) to override the composition's `sweep.max_sources` for that
 run; `POST /api/v1/owner/catalog` lists the catalog (`host`, `filter` =
@@ -129,7 +138,8 @@ Search groups with an enable switch per entry and a control per field;
 **apply** sends the whole document to the settings route above and
 **revert** discards the draft), installs a loaded plugin from a chosen
 plugin directory and lists what the node runs (the Plugins panel), and
-triggers a sweep over an approved root. `pnpm serve` in `apps/web` starts a
+triggers a sweep over an approved root or a configured folder (the index
+control lists both). `pnpm serve` in `apps/web` starts a
 development node and Vite together with throwaway defaults; Vite proxies
 `/api` to the node ([apps/web/README.md](../../apps/web/README.md)). A
 production build can be served by the node from the same origin.

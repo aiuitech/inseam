@@ -429,6 +429,7 @@ impl Operations for OperationsService {
                 display_name: r.host.display_name.clone(),
                 entry: r.entry_id.clone(),
                 capabilities: r.capabilities,
+                roots: r.roots.clone(),
             })
             .collect())
     }

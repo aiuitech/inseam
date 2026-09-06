@@ -228,6 +228,12 @@ pub struct Registration {
     pub entry_id: String,
     pub host: HostDescription,
     pub capabilities: Capabilities,
+    /// The scopes the owner configured this host to index — the folders
+    /// of a filesystem host — as the connection interprets them, so an
+    /// owner surface can offer them without naming a path itself. Empty
+    /// for a host with no configured scopes: everything it enumerates is
+    /// in play, and a scope is named per run.
+    pub roots: Vec<String>,
     pub connection: Arc<dyn Connection>,
 }
 

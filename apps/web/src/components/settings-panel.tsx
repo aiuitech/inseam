@@ -56,6 +56,12 @@ const GROUPS: Group[] = [
         title: "local filesystem",
         fields: [
           {
+            key: "roots",
+            label: "folders to index",
+            kind: "lines",
+            hint: "one absolute path per line; empty lets any folder be named per run, otherwise indexing is bounded to these",
+          },
+          {
             key: "host_id",
             label: "host id",
             kind: "text_or_null",

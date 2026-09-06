@@ -90,7 +90,7 @@ impl ApiError {
         Self::new(
             StatusCode::BAD_REQUEST,
             "unknown_index_root",
-            format!("no configured index root has id `{root}`"),
+            format!("`{root}` is neither an approved index root id nor a folder configured on a host"),
         )
     }
 

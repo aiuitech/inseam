@@ -12,6 +12,33 @@ type Props = {
   onIndex: (root: string, host?: string) => void
 }
 
+/** One thing the owner may index: a root the server approved at start
+ * (`--index-root id=/path`, sent by id) or a folder configured on a host
+ * (sent verbatim with its host). */
+type Scope = {
+  key: string
+  label: string
+  root: string
+  host?: string
+}
+
+function scopesOf(hosts: Host[], roots: IndexRoot[]): Scope[] {
+  const approved = roots.map((entry) => ({
+    key: `approved:${entry.id}`,
+    label: entry.id,
+    root: entry.id,
+  }))
+  const configured = hosts.flatMap((host) =>
+    host.roots.map((root) => ({
+      key: `host:${host.id}:${root}`,
+      label: hosts.length > 1 ? `${host.display_name} · ${root}` : root,
+      root,
+      host: host.id,
+    }))
+  )
+  return [...approved, ...configured]
+}
+
 export function IndexControl({
   hosts,
   roots,
@@ -19,12 +46,19 @@ export function IndexControl({
   report,
   onIndex,
 }: Props) {
-  const [root, setRoot] = useState(roots[0]?.id ?? "")
+  const scopes = scopesOf(hosts, roots)
+  const [key, setKey] = useState(scopes[0]?.key ?? "")
   const [host, setHost] = useState(hosts.length === 1 ? hosts[0].id : "")
+  const chosen = scopes.find((scope) => scope.key === key) ?? scopes[0]
+  // An approved root still needs a host once several are mounted; a
+  // configured folder already names its own.
+  const needsHost =
+    chosen !== undefined && chosen.host === undefined && hosts.length > 1
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (root) onIndex(root, host || undefined)
+    if (!chosen) return
+    onIndex(chosen.root, chosen.host ?? (host || undefined))
   }
 
   return (
@@ -33,22 +67,22 @@ export function IndexControl({
         <p className="eyebrow">maintenance / bounded roots</p>
         <h2>reconcile a host</h2>
       </div>
-      {roots.length > 0 ? (
+      {scopes.length > 0 ? (
         <form onSubmit={submit}>
           <label>
             root
             <select
-              value={root}
-              onChange={(event) => setRoot(event.target.value)}
+              value={chosen?.key ?? ""}
+              onChange={(event) => setKey(event.target.value)}
             >
-              {roots.map((entry) => (
-                <option value={entry.id} key={entry.id}>
-                  {entry.id}
+              {scopes.map((scope) => (
+                <option value={scope.key} key={scope.key}>
+                  {scope.label}
                 </option>
               ))}
             </select>
           </label>
-          {hosts.length > 1 ? (
+          {needsHost ? (
             <label>
               host
               <select
@@ -74,7 +108,8 @@ export function IndexControl({
         </form>
       ) : (
         <p className="index-empty">
-          Start the server with --index-root id=/path.
+          Add folders to index under configuration → connections → local
+          filesystem, or start the server with --index-root id=/path.
         </p>
       )}
       {report ? (
