@@ -83,7 +83,7 @@ Resume must target the same run. Do not copy its index into a new run or change 
 
 The model assignment is an invariant shared by both benchmarks:
 
-- `google/gemini-2.5-flash-lite` for summaries on OpenRouter's batch lane (`summarizer.llm_lane = "batch"`), with low reasoning effort and its reasoning trace excluded.
+- `google/gemini-2.5-flash-lite` for summaries on OpenRouter's batch lane (`summarizer.llm_lane = "batch"`), with reasoning disabled and its reasoning trace excluded.
 - Entity extraction disabled.
 - `openai/text-embedding-3-small` at 384 dimensions for embeddings. EnterpriseRAG-Bench embeds summaries only (`vectors = "summaries"`); BEIR embeds every fragment (`vectors = "all"`), recorded as `models.embedding_vectors`.
 - EnterpriseRAG-Bench only: `stealth/ox-alpha` for agent answers and evaluation.

@@ -71,7 +71,7 @@ class EnterpriseRagBenchTests(unittest.TestCase):
         self.assertIn('api_key_env = "OPENROUTER_API_KEY"', composition)
         self.assertIn('transform_model = "google/gemini-2.5-flash-lite"', composition)
         self.assertIn('llm_lane = "batch"', composition)
-        self.assertIn('transform_reasoning_effort = "low"', composition)
+        self.assertIn('transform_reasoning_effort = "none"', composition)
         self.assertIn('agent_model = "stealth/ox-alpha"', composition)
         self.assertIn('batch_requests_max = 10000', composition)
         self.assertIn('model = "openai/text-embedding-3-small"', composition)

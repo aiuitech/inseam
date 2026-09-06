@@ -14,7 +14,11 @@ Both runners share `harness.py`: bounded external commands with heartbeats, veri
 - the `inseam` CLI on `PATH`
 - `OPENROUTER_API_KEY`
 
+<<<<<<< HEAD
 Both runners use `google/gemini-2.5-flash-lite` through OpenRouter's batch lane for summaries, with low reasoning effort and the reasoning trace excluded, and `openai/text-embedding-3-small` at 384 dimensions for embeddings. Entity extraction, markdown splitting, and chunking are disabled. The default run limits summaries to 500 LLM calls; Inseam uses its deterministic fallback after the summarizer spends that budget. Raise `--llm-call-budget` only after estimating the cost and runtime. Summaries ride the batch lane (`summarizer.llm_lane = "batch"`): the sweep parks up to 4,096 planners on their summary calls and OpenRouter's Batch API takes them as one job of up to 10,000 requests. Embeddings use base64 responses and pack up to 128 inputs per request, with four batches in flight.
+=======
+The harness uses `google/gemini-2.5-flash-lite` through OpenRouter's batch lane for summaries and `stealth/ox-alpha` for answers, citation cleanup, correctness scoring, and fact scoring. Summary calls disable reasoning and exclude the reasoning trace from the response. Entity extraction, markdown splitting, and chunking are disabled. `openai/text-embedding-3-small` embeds one 200-character summary per source at 384 dimensions; source text still enters full-text search.
+>>>>>>> ba12a580 (fix(benchmarks): disable summary reasoning)
 
 <<<<<<< HEAD
 Every `run` invocation creates a new ignored index under the fixture's `nodes/` directory. This prevents a warm index from being reported as a fresh indexing result. Failed and interrupted runs remain on disk with their partial logs and a non-completed manifest.

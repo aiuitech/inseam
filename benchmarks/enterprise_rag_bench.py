@@ -273,7 +273,7 @@ id = "llm"
 base_url = "{OPENROUTER_BASE_URL}"
 api_key_env = "OPENROUTER_API_KEY"
 transform_model = "{SUMMARIZATION_MODEL}"
-transform_reasoning_effort = "low"
+transform_reasoning_effort = "none"
 agent_model = "{ANSWER_MODEL}"
 batch_requests_max = {SUMMARY_BATCH_REQUESTS_MAX}
 
