@@ -1,8 +1,6 @@
 ## WIP
 
 ## Todos
-- need folder as a source fragment
-  - summarizer should be recursive. so at the folder level it's one summary of all its child files that each have their own summary. 
 
 ### Web UI
 - ai skills for building inseam plugins, setting up nodes, and publishing to our plugin registry
