@@ -73,10 +73,12 @@ class EnterpriseRagBenchTests(unittest.TestCase):
         self.assertIn('llm_lane = "batch"', composition)
         self.assertIn('transform_reasoning_effort = "low"', composition)
         self.assertIn('agent_model = "stealth/ox-alpha"', composition)
+        self.assertIn('batch_requests_max = 10000', composition)
         self.assertIn('model = "openai/text-embedding-3-small"', composition)
         self.assertIn('dimensions = 384', composition)
         self.assertIn('vectors = "summaries"', composition)
         self.assertIn('target_chars = 200', composition)
+        self.assertIn('batch_concurrency = 65536', composition)
         self.assertEqual(composition.count("disabled = true"), 3)
         self.assertEqual(composition.count("llm_call_budget = 500"), 1)
 

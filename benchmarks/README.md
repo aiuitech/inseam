@@ -16,7 +16,11 @@ Both runners share `harness.py`: bounded external commands with heartbeats, veri
 
 Both runners use `google/gemini-2.5-flash-lite` through OpenRouter's batch lane for summaries, with low reasoning effort and the reasoning trace excluded, and `openai/text-embedding-3-small` at 384 dimensions for embeddings. Entity extraction, markdown splitting, and chunking are disabled. The default run limits summaries to 500 LLM calls; Inseam uses its deterministic fallback after the summarizer spends that budget. Raise `--llm-call-budget` only after estimating the cost and runtime. Summaries ride the batch lane (`summarizer.llm_lane = "batch"`): the sweep parks up to 4,096 planners on their summary calls and OpenRouter's Batch API takes them as one job of up to 10,000 requests. Embeddings use base64 responses and pack up to 128 inputs per request, with four batches in flight.
 
+<<<<<<< HEAD
 Every `run` invocation creates a new ignored index under the fixture's `nodes/` directory. This prevents a warm index from being reported as a fresh indexing result. Failed and interrupted runs remain on disk with their partial logs and a non-completed manifest.
+=======
+The default run limits summaries to 500 LLM calls. Inseam uses its deterministic fallback after the summarizer spends that budget. Raise `--llm-call-budget` only after estimating the cost and runtime. Summaries ride the batch lane (`summarizer.llm_lane = "batch"`). This pinned benchmark sets the endpoint's job cap to 10,000 requests and parks up to 65,536 source planners, the endpoint queue's hard bound, so several full OpenRouter Batch API jobs can run concurrently. The 64 MiB serialized-job limit may split large requests sooner. Embeddings use base64 responses and pack up to 128 inputs per request, with four batches in flight. The lean source-plus-summary shape fills an embedding request from 256 search rows.
+>>>>>>> f463417e (perf(benchmarks): fill concurrent summary batch jobs)
 
 ## Tests
 
@@ -120,6 +124,16 @@ python3 benchmarks/enterprise_rag_bench.py run
 ```
 
 A full run creates a fresh index and evaluates all 500 questions. It can take hours and makes many embedding and LLM requests. `--limit` limits questions and evaluator work, but indexing still covers the full corpus so retrieval scores remain meaningful.
+
+To summarize every source in the pinned 511,962-document fixture through the largest configured batch lane, opt into the full transform budget explicitly:
+
+```sh
+python3 benchmarks/enterprise_rag_bench.py run \
+  --llm-call-budget 511962 \
+  --index-concurrency 128
+```
+
+`--index-concurrency` remains the interactive-lane fallback. The summary batch lane uses its separately pinned `batch_concurrency = 65536`.
 
 The runner prints each active phase immediately. During indexing it polls `inseam status` every 30 seconds and prints elapsed time, fully indexed sources against the fixture total, cataloged sources, and search rows. A failed status probe reports `status unavailable` but does not fail the index. Other long commands retain their five-second elapsed-time heartbeat.
 

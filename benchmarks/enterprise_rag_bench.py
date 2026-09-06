@@ -75,6 +75,14 @@ ARCHIVE_SHA256 = "9d1174928696ad08bc15f3f104739519de633c1605a4ec2034e0e3c0087bc5
 QUESTIONS_SHA256 = "f9524b9157cd43aae36b99333a124738804306ea6d07f332d49faa6d3d147905"
 ANSWER_MODEL = "stealth/ox-alpha"
 EVALUATION_MODEL = "stealth/ox-alpha"
+<<<<<<< HEAD
+=======
+EMBEDDING_MODEL = "openai/text-embedding-3-small"
+EMBEDDING_DIMENSIONS = 384
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+SUMMARY_BATCH_REQUESTS_MAX = 10_000
+SUMMARY_BATCH_CONCURRENCY = 65_536
+>>>>>>> f463417e (perf(benchmarks): fill concurrent summary batch jobs)
 MAX_QUESTIONS = 1_000
 MAX_TURNS = 64
 MAX_QUERY_RESULTS = 25
@@ -267,6 +275,7 @@ api_key_env = "OPENROUTER_API_KEY"
 transform_model = "{SUMMARIZATION_MODEL}"
 transform_reasoning_effort = "low"
 agent_model = "{ANSWER_MODEL}"
+batch_requests_max = {SUMMARY_BATCH_REQUESTS_MAX}
 
 [[entry]]
 id = "embedder"
@@ -300,6 +309,7 @@ id = "sweep"
 [entry.config]
 max_sources = 0
 concurrency = {options.index_concurrency}
+batch_concurrency = {SUMMARY_BATCH_CONCURRENCY}
 max_fragments_per_source = 400
 max_depth = 6
 max_content_bytes = 2000000
