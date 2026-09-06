@@ -41,6 +41,10 @@ For the leanest index, pair `vectors = "summaries"` with the structural transfor
 
 Switching `vectors` is an identity change: the next index run re-embeds in place from stored text — no transforms re-run, no LLM spend, and in the `summaries` direction a fraction of the embedding calls.
 
+## Reuse across rebuilds
+
+Every vector the node lands is also filed in the catalog's `embedding_cache` under the BLAKE3 digest of the text it embeds, the model, and the width ([storage.md](storage.md)). Before the embedding stage calls the endpoint for a batch it looks the batch's texts up there and embeds only the misses. So a source rebuilt for any reason — a touched-but-unchanged file, an interrupted run, a shape change in some transform — re-embeds nothing whose text is unchanged, and switching `vectors` from `summaries` to `all` embeds only the rows that never had a vector. The report's `reused: N embeddings, …` line and `inseam status`'s `caches` line show it working. A model or width change is a different key: those vectors are computed fresh, and the old ones stay filed until `vacuum` in case the change is reverted.
+
 ## Local models with ollama
 
 Ollama speaks the OpenAI-compatible API on `http://localhost:11434/v1`, needs no key, and its native API (`/api/tags`, `/api/show`) tells inseam which installed models embed, which chat, and what width each embedder produces — `inseam models` and `inseam models --embeddings` use it.

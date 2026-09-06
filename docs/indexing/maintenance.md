@@ -22,6 +22,10 @@ Deep indexing is a pipeline ([design/indexing.md](../../design/indexing.md)):
 
 LLM budgets stay exact under concurrency: every application of a transform shares one per-run meter, and each call reserves against it atomically before it is made.
 
+## What a rebuild costs
+
+Rebuilding a source re-runs decomposition, which is cheap, and re-pays only the expensive artifacts whose inputs actually changed. Before the planner applies an LLM transform (the summarizer, the entity extractor) it asks the catalog's `transform_cache` for an output filed under the input's content digest and the transform's shape identity — entry, config fingerprint, model ([storage.md](storage.md)). A hit is used as-is and counted under `reused: … transform outputs` in the report; a cached LLM summary still counts as an LLM summary, and costs no budget. Only outputs the model produced are filed: an extractive fallback (budget spent, endpoint down) is never cached, so the next run with budget asks the model. Vectors are reused the same way ([embeddings.md](embeddings.md#reuse-across-rebuilds)). Together this is what makes `--rebuild`, an interrupted run's second attempt, and a shape change in one transform affordable: changing the summarizer's `target_chars` re-summarizes everything, but mounting the entity extractor re-summarizes nothing.
+
 ## Ingest first, index later: the deep budget
 
 How many sources one run deep-indexes is the run's **deep budget**. The composition's `sweep.max_sources` is the steady state (`0` = unlimited); `inseam index` overrides it for one run with `--catalog-only` (deep-index nothing) or `--max-sources N`. The override never outlives the run — the next unqualified run is back on the composition's dial.
@@ -45,7 +49,7 @@ Which entry changed decides how much re-work happens ([configuration.md](../conf
 
 - **Query-time** (`finder`, the llm entry's models) — never re-indexes.
 - **Run limits** (`sweep.max_sources` and the `--catalog-only` / `--max-sources` overrides, `sweep.concurrency`, per-transform `llm_call_budget`) — never re-indexes; they just bound or pace each run, so a big rebuild spreads across as many sweeps as the budgets allow.
-- **Shape** (transform configs, transform mounts/unmounts, the sweep's `max_depth`/`max_fragments_per_source`/`max_content_bytes`/`max_reference_hops`, the llm `transform_model` for transforms that use it) — stamps stop matching; affected sources re-index on their next sweep.
+- **Shape** (transform configs, transform mounts/unmounts, the sweep's `max_depth`/`max_fragments_per_source`/`max_content_bytes`/`max_reference_hops`, the llm `transform_model` for transforms that use it) — stamps stop matching; affected sources re-index on their next sweep, paying again only for the transforms whose own identity changed ([what a rebuild costs](#what-a-rebuild-costs)).
 - **Embedding** (the `embedder` entry: provider, model, dimensions, `vectors`) — only the in-place re-embed.
 
 ## Shrinking scope never deletes — ignoring does

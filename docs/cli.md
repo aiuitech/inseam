@@ -21,7 +21,7 @@ inseam fetch <address>              # the whole source as text
 inseam fetch <address> --output f   # its raw bytes (an image, a PDF, a linked file) to a file; `-` is stdout
 inseam agent "when did I ...?"      # a live LLM using query/expand/scan/fetch as tools
 inseam models [--embeddings]        # the endpoint's model catalog, cheapest first; against ollama, installed models with widths
-inseam status                       # store stats, sizes, embedding identity (model, dims, vector scope), DiskANN readiness, pending re-embeds
+inseam status                       # store stats, sizes, embedding identity (model, dims, vector scope), DiskANN readiness, pending re-embeds, cache sizes
 inseam repair                       # convert legacy vectors and build a missing DiskANN index
 inseam repair --rebuild             # reconstruct an existing DiskANN index
 inseam plugins                      # every running plugin, its state, and its live effects
