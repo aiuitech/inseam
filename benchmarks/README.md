@@ -167,13 +167,17 @@ python3 benchmarks/enterprise_rag_bench.py run \
 
 ### Resume a run
 
-If indexing completed but a later query, answer, or evaluation failed, resume the same run:
+Resume the same run after an indexing, query, answer, or evaluation failure:
 
 ```sh
 python3 benchmarks/enterprise_rag_bench.py resume <run-id>
 ```
 
+<<<<<<< HEAD
 Use the directory name under `benchmarks/runs/enterprise-rag-bench/` as `<run-id>`. Resume loads the original options and composition, verifies the dataset and model pins, checks that the index command completed successfully, and reuses that run's ignored data directory. It refuses a missing or incomplete index. It starts with the first question that has no durable record, or goes directly to evaluation when every question is complete.
+=======
+Use the directory name under `benchmarks/runs/` as `<run-id>`. Resume loads the original options and composition, verifies the dataset and model pins, and reuses that run's ignored data directory. If indexing did not finish, it runs the same reconciling sweep again in that node. Sources already marked indexed are unchanged and incur no transform or embedding work; sources that had not reached their indexed mark run again. If indexing finished, resume starts with the first question that has no durable record, or goes directly to evaluation when every question is complete. Each indexing attempt gets its own log.
+>>>>>>> 58598a7c (fix(indexing): resume interrupted batch sweeps)
 
 Each invocation is recorded in `manifest.json` under `attempts`, including its start and finish time, duration, Inseam binary identity, search-index preparation timing and log, starting and ending question counts, status, error, and log directory. The top-level duration is the sum of attempt durations. The index record keeps its original duration and structured completion counts for sources, fragments, relations, transforms, embeddings, and spend.
 

@@ -23,10 +23,11 @@ mod ollama;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use reqwest::header::HeaderMap;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -44,7 +45,9 @@ use inseam_seams::SeamError;
 use batch::{ChatBatcher, ChatBatching};
 use ollama::{EmbeddingModelVerdict, OllamaApi};
 
-const RETRIES: u32 = 3;
+const RETRIES: u32 = 8;
+const RETRY_DELAY_MAX: Duration = Duration::from_secs(300);
+const RETRY_RESET_MARGIN: Duration = Duration::from_secs(1);
 /// Inputs per embeddings request. The sweep may hand us more or fewer
 /// vector-covered rows; this is the endpoint-sized network batch.
 const EMBED_BATCH: usize = 128;
@@ -372,9 +375,11 @@ impl Transport {
         timeout: Duration,
     ) -> Result<T, SeamError> {
         let mut last_err = None;
+        let mut retry_delay = Duration::ZERO;
         for attempt in 0..RETRIES {
             if attempt > 0 {
-                tokio::time::sleep(Duration::from_secs(2u64.pow(attempt))).await;
+                tracing::warn!(attempt, retry_in_s = retry_delay.as_secs(), operation, "retrying llm request");
+                tokio::time::sleep(retry_delay).await;
             }
             let mut req = self
                 .http
@@ -392,6 +397,7 @@ impl Transport {
                 Ok(resp) => resp,
                 Err(e) => {
                     last_err = Some(SeamError::failed(format!("llm transport: {e}")));
+                    retry_delay = retry_backoff(attempt);
                     continue;
                 }
             };
@@ -402,6 +408,7 @@ impl Transport {
                     .await
                     .map_err(|e| SeamError::failed(format!("llm response: {e}")));
             }
+            let headers = resp.headers().clone();
             let body = resp.text().await.unwrap_or_default();
             let err = SeamError::failed(format!(
                 "llm endpoint returned {} for {operation}: {}",
@@ -413,9 +420,58 @@ impl Transport {
                 return Err(err);
             }
             last_err = Some(err);
+            retry_delay = response_retry_delay(&headers, &body, SystemTime::now(), attempt);
         }
         Err(last_err.unwrap_or_else(|| SeamError::failed("no attempts made")))
     }
+}
+
+fn response_retry_delay(
+    headers: &HeaderMap,
+    body: &str,
+    now: SystemTime,
+    attempt: u32,
+) -> Duration {
+    let mut delay = retry_backoff(attempt);
+    if let Some(seconds) = header_u64(headers, "retry-after") {
+        delay = delay.max(Duration::from_secs(seconds));
+    }
+    let reset = header_u64(headers, "x-ratelimit-reset").or_else(|| body_reset(body));
+    let until_reset = reset
+        .and_then(epoch_time)
+        .and_then(|epoch| epoch.duration_since(now).ok());
+    if let Some(until_reset) = until_reset {
+        delay = delay.max(until_reset.saturating_add(RETRY_RESET_MARGIN));
+    }
+    delay.min(RETRY_DELAY_MAX)
+}
+
+fn retry_backoff(attempt: u32) -> Duration {
+    Duration::from_secs(2u64.saturating_pow(attempt.saturating_add(1)))
+        .min(RETRY_DELAY_MAX)
+}
+
+fn header_u64(headers: &HeaderMap, name: &str) -> Option<u64> {
+    headers.get(name)?.to_str().ok()?.parse().ok()
+}
+
+fn body_reset(body: &str) -> Option<u64> {
+    let value: Value = serde_json::from_str(body).ok()?;
+    let reset = value.pointer("/error/metadata/headers/X-RateLimit-Reset")?;
+    match reset {
+        Value::String(text) => text.parse().ok(),
+        Value::Number(number) => number.as_u64(),
+        _ => None,
+    }
+}
+
+fn epoch_time(value: u64) -> Option<SystemTime> {
+    let milliseconds = if value >= 1_000_000_000_000 {
+        value
+    } else {
+        value.checked_mul(1_000)?
+    };
+    UNIX_EPOCH.checked_add(Duration::from_millis(milliseconds))
 }
 
 pub struct LlmClient {
@@ -786,6 +842,16 @@ mod tests {
     fn a_torn_base64_embedding_is_an_error() {
         let encoded = STANDARD.encode([0u8, 1, 2]);
         assert!(decode_f32_base64(&encoded).is_err());
+    }
+
+    #[test]
+    fn openrouter_rate_limit_reset_delays_retry_until_the_window_opens() {
+        let body = r#"{"error":{"metadata":{"headers":{"X-RateLimit-Reset":"1787520300000"}}}}"#;
+        let now = UNIX_EPOCH + Duration::from_secs(1_787_520_288);
+
+        let delay = response_retry_delay(&HeaderMap::new(), body, now, 0);
+
+        assert_eq!(delay, Duration::from_secs(13));
     }
 
     #[test]

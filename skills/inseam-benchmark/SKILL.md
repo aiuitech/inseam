@@ -72,14 +72,14 @@ Keep the defaults for a comparable rerun unless the user names a different exper
 
 The runner announces indexing, search-index preparation, each query's retrieval (and, for EnterpriseRAG-Bench, its answer), and evaluation. Search-index preparation runs `inseam repair` before questions so a legacy node's one-time compact-vector conversion and DiskANN build is visible, timed, logged, and resumable; it reuses resident vectors and does not rerun source indexing or embeddings. Long external commands emit an elapsed-time heartbeat every five seconds. While heartbeats continue, do not diagnose a quiet upstream command as hung. For a live or interrupted run, inspect the newest `manifest.json`: `phase` identifies the active phase, `attempts[-1].search_index_preparation` records the optimization when complete, and `queries_completed` shows durable progress. An intentional interruption records `status: interrupted` and preserves the partial run; do not commit it as a result.
 
-If a run has `status: failed` or `status: interrupted` and `indexing.returncode: 0`, resume it instead of starting another index:
+If a run has `status: failed` or `status: interrupted`, resume it instead of starting another run:
 
 ```sh
 python3 benchmarks/beir.py resume <run-id>
 python3 benchmarks/enterprise_rag_bench.py resume <run-id>
 ```
 
-Resume must target the same run. Do not copy its index into a new run or change its original options. The command verifies the stored pins and composition, restores the durable query checkpoint, and records a new attempt with separate timings, Inseam identity, errors, and logs. If the index completion record is absent, report that the run cannot skip indexing.
+Resume must target the same run. Do not copy its index into a new run or change its original options. The command verifies the stored pins and composition, restores the durable query checkpoint, and records a new attempt with separate timings, Inseam identity, errors, and logs. If the index completion record is absent, it reruns indexing in the same node. The reconciling sweep skips every source already marked indexed and repeats sources that had not reached that durable mark.
 
 The model assignment is an invariant shared by both benchmarks:
 

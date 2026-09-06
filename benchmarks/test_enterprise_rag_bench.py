@@ -198,6 +198,41 @@ class EnterpriseRagBenchTests(unittest.TestCase):
             self.assertEqual(resumed["indexing"]["summary"]["sources_seen"], 1)
             self.assertIn("Reusing completed index: 1 sources", output.getvalue())
 
+    def test_resume_continues_an_incomplete_index_in_the_same_node(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_text:
+            temporary = Path(temporary_text)
+            fixture, runs, environment = prepare_fake_fixture(temporary)
+            options = benchmark.RunOptions(1, 8, 12, 8, 500, 4, True)
+
+            with mock.patch.object(benchmark, "FIXTURE_ROOT", fixture):
+                with mock.patch.object(benchmark, "RUNS_ROOT", runs):
+                    with mock.patch.dict(os.environ, environment):
+                        run_dir, data_dir, manifest = benchmark.create_run(options)
+                        composition = run_dir / "composition.toml"
+                        composition.write_text(benchmark.composition_text(options))
+                        started, _log_dir = benchmark.begin_attempt(
+                            run_dir, manifest, "indexing", manifest["inseam"]
+                        )
+                        benchmark.set_run_error(manifest, "failed", "source read failed")
+                        benchmark.finish_attempt(run_dir, manifest, started)
+
+                        with redirect_stdout(io.StringIO()) as output:
+                            benchmark.resume_benchmark(manifest["run_id"])
+
+            resumed = json.loads(run_dir.joinpath("manifest.json").read_text())
+            self.assertEqual(resumed["status"], "completed")
+            self.assertEqual(resumed["index_data_path"], str(data_dir))
+            self.assertEqual(len(resumed["attempts"]), 2)
+            self.assertEqual(resumed["attempts"][1]["starting_phase"], "indexing")
+            self.assertEqual(
+                resumed["attempts"][1]["indexing_log"],
+                "logs/attempt-002/index.log",
+            )
+            self.assertEqual(
+                resumed["indexing"]["log"], "logs/attempt-002/index.log"
+            )
+            self.assertIn("Resuming EnterpriseRAG-Bench run", output.getvalue())
+
     def test_interruption_records_the_terminal_phase(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_text:
             temporary = Path(temporary_text)

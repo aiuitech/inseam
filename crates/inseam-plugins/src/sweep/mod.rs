@@ -33,6 +33,7 @@ use std::sync::Arc;
 
 use futures_util::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Semaphore;
 
 use inseam_kernel::address::Timestamp;
 use inseam_kernel::store::{
@@ -83,6 +84,10 @@ pub struct SweepConfig {
     /// the endpoint submits it; it also bounds the parked sources' content
     /// held in memory. Run-metering tier.
     pub batch_concurrency: NonZeroUsize,
+    /// Source content reads allowed at once. Batch planners park after the
+    /// read, so this bounds file descriptors without shrinking LLM jobs.
+    /// Run-metering tier.
+    pub source_reads_in_flight_max: NonZeroUsize,
     /// Fragment cap per source (shape tier).
     pub max_fragments_per_source: usize,
     /// Decomposition depth cap (shape tier).
@@ -113,6 +118,7 @@ impl Default for SweepConfig {
             max_sources: 0,
             concurrency: NonZeroUsize::new(8).expect("8 is non-zero"),
             batch_concurrency: NonZeroUsize::new(4_096).expect("4096 is non-zero"),
+            source_reads_in_flight_max: NonZeroUsize::new(128).expect("128 is non-zero"),
             max_fragments_per_source: 400,
             max_depth: 6,
             max_content_bytes: 2_000_000,
@@ -320,7 +326,13 @@ impl Sweep for SweepService {
         let planning = self.planning_concurrency(&grantor, &registrations, request.llm_lane);
         let planner = Arc::new(Planner {
             connection: Arc::clone(&steward.connection),
+<<<<<<< HEAD
             connections: Arc::clone(&self.connections),
+=======
+            source_read_permits: Arc::new(Semaphore::new(
+                self.config.source_reads_in_flight_max.get(),
+            )),
+>>>>>>> 58598a7c (fix(indexing): resume interrupted batch sweeps)
             registrations,
             grantor: Arc::clone(&grantor),
             sweep_shape,
@@ -736,7 +748,15 @@ impl<T> std::future::Future for Spawned<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{lane_independent_model, scope_covers};
+    use super::{lane_independent_model, scope_covers, SweepConfig};
+
+    #[test]
+    fn source_reads_have_a_separate_fixed_bound() {
+        let config = SweepConfig::default();
+
+        assert_eq!(config.source_reads_in_flight_max.get(), 128);
+        assert!(config.source_reads_in_flight_max < config.batch_concurrency);
+    }
 
     #[test]
     fn the_stamp_model_drops_the_batch_lane_suffix() {

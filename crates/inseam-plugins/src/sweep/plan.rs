@@ -11,6 +11,7 @@ use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 
 use futures_util::future::join_all;
+use tokio::sync::Semaphore;
 
 use inseam_kernel::address::{Address, ContentDigest, ContentLength, Envelope};
 use inseam_kernel::fragment::{Extent, Mimetype, NewFragment, Sprout};
@@ -57,9 +58,13 @@ pub(super) struct Planner {
     /// The connection of the host under sweep: where every root's content
     /// is read from.
     pub(super) connection: Arc<dyn Connection>,
+<<<<<<< HEAD
     /// The registry, for fragments whose content lives at an address of its
     /// own (`NewFragment::content_address`) — possibly on another host.
     pub(super) connections: Arc<dyn Connections>,
+=======
+    pub(super) source_read_permits: Arc<Semaphore>,
+>>>>>>> 58598a7c (fix(indexing): resume interrupted batch sweeps)
     pub(super) registrations: Vec<Arc<Registration>>,
     pub(super) grantor: Arc<Grantor>,
     pub(super) sweep_shape: String,
@@ -108,7 +113,7 @@ impl Planner {
             r.transform.wants_bytes() && r.transform.claims(&source.envelope.content_type, true)
         });
         let raw: Option<Vec<u8>> = if (is_texty || wants_bytes) && within_size {
-            Some(self.connection.read_bytes(&source.address).await?)
+            Some(self.read_source_bytes(&source.address).await?)
         } else {
             None
         };
@@ -132,6 +137,19 @@ impl Planner {
             content,
             bytes,
         })
+    }
+
+    async fn read_source_bytes(
+        &self,
+        address: &inseam_kernel::address::Address,
+    ) -> Result<Vec<u8>, SeamError> {
+        let permit = Arc::clone(&self.source_read_permits)
+            .acquire_owned()
+            .await
+            .map_err(|_| SeamError::failed("source read limiter closed"))?;
+        let result = self.connection.read_bytes(address).await;
+        drop(permit);
+        result
     }
 
     /// Apply every registration claiming `item` — concurrently, since

@@ -13,6 +13,8 @@ A source is **dirty** when any of these hold:
 3. **Shape-stale** — the source's recorded **shape stamp** doesn't match the current composition's shape tier (below). Catalog-only rows carry no stamp, so they automatically qualify for deep indexing whenever budget or cutoff later allows.
 4. **Vanished** — enumeration no longer sees it: the fragment subtree and catalog row are deleted. The index is derived and rebuildable, so there are no tombstones; a file that reappears is simply new.
 
+This indexed mark is the resume checkpoint. A repeated sweep skips every source whose mark and shape still match. Work that finished only in process memory before a crash must run again; work whose subtree, search rows, and mark reached storage does not.
+
 After the per-source work, the sweep garbage-collects **keyed fragments with no remaining relations** (entities, for instance — [indexing](indexing.md)) — the natural consequence of source deletions, rebuilds, and unmounting the plugin that emitted them, all converging without special cases.
 
 Dirtiness is discovered; nothing is triggered by the profile changing or a file being written. This is what makes maintenance idempotent, interrupt-safe, and meterable: the per-run budgets (`max_sources`, LLM call budgets) bound how much convergence any one sweep performs, and repeated sweeps finish the job.
