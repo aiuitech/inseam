@@ -4,7 +4,7 @@ Implements [design/finder.md](../../design/finder.md): start from hybrid search 
 
 ## 1. Seed: two searches, merged by rank
 
-The query runs against both search tables: full-text (BM25) and vector nearest-k by cosine distance — the latter after dropping hits beyond `max_vector_distance`, because nearest-k always returns *something*, however unrelated. The two best-first lists merge by **reciprocal rank fusion**:
+The query runs against both search tables: full-text (BM25) and vector nearest-k by cosine distance — the latter after dropping hits beyond `max_vector_distance`, because nearest-k always returns *something*, however unrelated. `seeds` can run one list alone (`full-text` or `vector`) to see which search the fusion is carrying, or because the node's embedder is not worth asking; it is query-time and never re-indexes. The two best-first lists merge by **reciprocal rank fusion**:
 
 ```
 seed(f) = Σ over lists  1 / (rrf_k + rank_f)

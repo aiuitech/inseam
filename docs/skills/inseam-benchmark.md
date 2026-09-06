@@ -63,7 +63,7 @@ BEIR's summarizer target is a run option. Text within `--summary-target-chars` i
 python3 benchmarks/beir.py run --summary-target-chars 12000 --llm-call-budget 1 --summarization-lane interactive
 ```
 
-The model-summary shape — one query-shaped summary and the model's keywords per abstract — is `--summary-target-chars 400 --llm-call-budget 3633` on the default batch lane. Both are recorded in the manifest's `options` and `models.summarization_lane`, so runs of different shapes are never compared as one.
+The model-summary shape — one query-shaped summary and the model's keywords per abstract — is `--summary-target-chars 400 --llm-call-budget 3633` on the default batch lane. `--embedding-dimensions`, `--finder-seeds` (`full-text` or `vector` alone, a diagnostic), `--corpus markdown` (the title as a `#` heading), and `--structural markdown` isolate where a score comes from. Every dial is recorded in the manifest's `options` and `models`, so runs of different shapes are never compared as one.
 
 EnterpriseRAG-Bench, full:
 

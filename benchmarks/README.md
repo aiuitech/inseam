@@ -72,6 +72,13 @@ python3 benchmarks/beir.py run \
 
 Unlike the EnterpriseRAG-Bench composition, the BEIR composition sets `vectors = "all"`; with the structural transforms disabled that is still one vector per source, the summary's, and the difference between the shapes is what that summary is. The corpus is 5.8 MB of text, so embedding each abstract whole costs cents.
 
+Four more dials isolate where a score comes from, each recorded in the manifest's `options` and `models`:
+
+- `--embedding-dimensions` (384): the embedder's width, up to the model's native 1536. The footprint line shows what a wider vector costs.
+- `--finder-seeds` (`both`): `full-text` or `vector` runs one seed list alone, which shows which search the fusion is carrying.
+- `--corpus` (`text`): `markdown` indexes the variant setup writes beside the text one, `documents-markdown/<id>.md`, the same row with the title as a `#` heading, so the markdown transform reads the document as an outline and the summarizer leads with the title.
+- `--structural` (`off`): `markdown` mounts the markdown structural transform, so each document also contributes its section as a content row beside its summary.
+
 ### Scores
 
 The harness computes trec_eval's `ndcg_cut`, `map_cut`, `recall`, and `P` at cutoffs 1, 3, 5, and 10 (plus `--query-limit` when it is larger), averaged over the queries that ran, and rounds to five decimals the way BEIR reports them. Gains are the raw grades with a log2(rank + 1) discount; recall and average precision divide by every judged relevant document, not only the ones inside the cutoff; a grade above zero counts as relevant. The implementation was checked against `pytrec_eval` on real NFCorpus rankings and agrees to floating-point precision.

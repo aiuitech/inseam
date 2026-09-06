@@ -33,6 +33,15 @@ const SCHEMA_VERSION: &str = "7";
 /// chunks of this many, so no caller can build unbounded SQL.
 const ID_LIST_CHUNK: usize = 400;
 const SEARCH_VECTOR_INDEX: &str = "search_rows_vector_idx";
+/// The DiskANN graph's shape: one-bit neighbor vectors, 32 neighbors per
+/// node, a 400-entry search list. Measured on BEIR NFCorpus at 384 dims
+/// (vector-only nDCG@10, exact cosine 0.368): 8 one-bit neighbors scored
+/// 0.299 at 1.2 KB per row; 32 with this search list 0.367 at 4.0 KB per
+/// row; 16 float8 neighbors 0.368 at 8 KB per row. The graph is where the
+/// recall lives, so this is the lean setting that still finds what exact
+/// search finds (`design/runtime.md`).
+const SEARCH_VECTOR_INDEX_PARAMETERS: &str =
+    "'metric=cosine', 'compress_neighbors=float1bit', 'max_neighbors=32', 'search_l=400'";
 const SEARCH_VECTOR_CANDIDATE_MULTIPLIER: usize = 4;
 #[cfg(not(test))]
 const SEARCH_VECTOR_MIGRATION_BATCH_ROWS: u64 = 4_096;
@@ -1540,7 +1549,11 @@ impl IndexStore {
             return Ok(Vec::new());
         }
         check_dimensions(surface.dimensions, vector)?;
-        if !search_vector_index_exists(&self.catalog).await? {
+        // A missing index is built here, and a stale one — built under an
+        // earlier definition — is rebuilt here, so the first query after
+        // either pays for the build and every later one finds what exact
+        // search would.
+        if !search_vector_index_current(&self.catalog).await? {
             self.repair_search_index(SearchIndexRepair::Ensure).await?;
         }
         if !search_vector_index_exists(&self.catalog).await? {
@@ -1615,12 +1628,15 @@ impl IndexStore {
         Ok(usize::try_from(count).expect("row counts are non-negative"))
     }
 
+    /// Whether the vector index exists under the current definition. An
+    /// index built under an earlier one reads as not ready: `inseam repair`
+    /// or the next vector search rebuilds it.
     pub async fn search_vector_index_ready(&self) -> Result<bool, StoreError> {
         let surface = self.surface()?;
         if surface.dimensions == 0 {
             return Ok(false);
         }
-        search_vector_index_exists(&self.catalog).await
+        search_vector_index_current(&self.catalog).await
     }
 
     // ------------------------------------------------------------------
@@ -2147,7 +2163,11 @@ async fn repair_search_vector_index(
         });
     }
     let existed = search_vector_index_exists(conn).await?;
-    if existed && repair == SearchIndexRepair::Ensure {
+    // An index built under an earlier definition is stale, not ready: it
+    // exists, but finds less than the current one would, so Ensure treats
+    // it as a rebuild rather than mounting it and underperforming forever.
+    let current = existed && search_vector_index_current(conn).await?;
+    if current && repair == SearchIndexRepair::Ensure {
         return Ok(SearchIndexRepairReport {
             search_rows,
             vectors_converted: 0,
@@ -2166,18 +2186,15 @@ async fn repair_search_vector_index(
             outcome: SearchIndexRepairOutcome::Empty,
         });
     }
+    // A rebuild drops and recreates rather than REINDEXing: REINDEX keeps
+    // the parameters the index was created with, and a rebuild is how a
+    // node adopts the current definition.
     if existed {
-        conn.execute("REINDEX search_rows_vector_idx", ()).await?;
-    } else {
-        conn.execute(
-            "CREATE INDEX search_rows_vector_idx
-             ON search_rows(libsql_vector_idx(
-               ann_vector, 'metric=cosine', 'compress_neighbors=float1bit', 'max_neighbors=8'
-             ))",
-            (),
-        )
-        .await?;
+        conn.execute(&format!("DROP INDEX IF EXISTS {SEARCH_VECTOR_INDEX}"), ())
+            .await?;
     }
+    conn.execute(&search_vector_index_definition(), ()).await?;
+    assert!(search_vector_index_current(conn).await?);
     tracing::info!(
         index = SEARCH_VECTOR_INDEX,
         elapsed_ms = started.elapsed().as_millis(),
@@ -2250,6 +2267,30 @@ async fn search_vector_index_exists(conn: &libsql::Connection) -> Result<bool, S
         )
         .await?;
     Ok(rows.next().await?.is_some())
+}
+
+/// The statement that builds the vector index under the current parameters.
+fn search_vector_index_definition() -> String {
+    format!(
+        "CREATE INDEX {SEARCH_VECTOR_INDEX} ON search_rows(libsql_vector_idx(ann_vector, {SEARCH_VECTOR_INDEX_PARAMETERS}))"
+    )
+}
+
+/// Whether the existing index was built under the current parameters. The
+/// catalog keeps the statement that created an index, so a definition
+/// change is visible without a version to bump.
+async fn search_vector_index_current(conn: &libsql::Connection) -> Result<bool, StoreError> {
+    let mut rows = conn
+        .query(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",
+            params![SEARCH_VECTOR_INDEX],
+        )
+        .await?;
+    let Some(row) = rows.next().await? else {
+        return Ok(false);
+    };
+    let sql: String = row.get(0)?;
+    Ok(sql.contains(SEARCH_VECTOR_INDEX_PARAMETERS))
 }
 
 async fn search_rows_count_in(conn: &libsql::Connection) -> Result<u64, StoreError> {
@@ -3095,6 +3136,47 @@ mod tests {
             .expect("rebuilds");
         assert_eq!(rebuilt.vectors_converted, 0);
         assert_eq!(rebuilt.outcome, SearchIndexRepairOutcome::Rebuilt);
+    }
+
+    /// The catalog keeps the statement that built the index, so an index
+    /// built under an earlier definition (the eight-neighbor one, say) is
+    /// visible as stale and rebuilt the first time a search asks for it,
+    /// rather than mounted and underperforming forever.
+    #[tokio::test]
+    async fn an_index_built_under_an_earlier_definition_is_rebuilt_on_first_search() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        let vector = vec![0.5; 8];
+        s.add_search_rows(&[SearchRow {
+            fragment: FragmentId(7),
+            source: None,
+            text: "row".into(),
+            vector: Some(vector.clone()),
+        }])
+        .await
+        .expect("lands");
+        // Rows land without an index (the sweep builds it at its end), so
+        // the earlier definition can be created directly.
+        s.catalog
+            .execute(
+                "CREATE INDEX search_rows_vector_idx ON search_rows(libsql_vector_idx(
+                   ann_vector, 'metric=cosine', 'compress_neighbors=float1bit', 'max_neighbors=8'
+                 ))",
+                (),
+            )
+            .await
+            .expect("builds the earlier definition");
+        assert!(search_vector_index_exists(&s.catalog).await.expect("reads"));
+        assert!(!s.search_vector_index_ready().await.expect("reads readiness"), "stale is not ready");
+
+        let hits = s.search_vector(&vector, 1).await.expect("searches");
+        assert_eq!(hits.first().map(|(id, _)| *id), Some(FragmentId(7)));
+        assert!(s.search_vector_index_ready().await.expect("reads readiness"));
+        let again = s
+            .repair_search_index(SearchIndexRepair::Ensure)
+            .await
+            .expect("ensures");
+        assert_eq!(again.outcome, SearchIndexRepairOutcome::AlreadyReady);
     }
 
     #[tokio::test]

@@ -115,6 +115,13 @@ SUMMARIZATION_LANES = frozenset({"batch", "interactive"})
 MAX_KEYWORDS = 100
 
 
+def distance_argument(raw: str) -> float:
+    value = float(raw)
+    if not 0.0 < value <= 2.0:
+        raise argparse.ArgumentTypeError("finder-max-vector-distance must be in (0, 2]")
+    return value
+
+
 def count_argument(name: str, maximum: int) -> Callable[[str], int]:
     def parse(raw: str) -> int:
         value = int(raw)
@@ -130,6 +137,16 @@ SETUP_TIMEOUT_SECONDS = 1_800
 QUERY_TIMEOUT_SECONDS = 600
 DOCUMENT_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 DOCUMENT_FILE_SUFFIX = ".txt"
+# The corpus variants a run may index. `text` is BEIR's row as a text file:
+# title on the first line, a blank line, the abstract. `markdown` is the same
+# file with the title as a `#` heading, so the markdown transform reads the
+# document as an outline and the summarizer leads with the title.
+CORPUS_DIRECTORIES = {"text": "documents", "markdown": "documents-markdown"}
+CORPUS_SUFFIXES = {"text": ".txt", "markdown": ".md"}
+STRUCTURAL_CHOICES = frozenset({"off", "markdown"})
+FINDER_SEEDS = frozenset({"both", "full-text", "vector"})
+# Widths a run may ask text-embedding-3-small for (Matryoshka; native 1536).
+EMBEDDING_DIMENSIONS_MAX = 1536
 QRELS_HEADER = ["query-id", "corpus-id", "score"]
 
 
@@ -150,6 +167,18 @@ class RunOptions:
     # Keywords planted beside each summary for full-text search; 0 plants
     # none, the control for whether the row earns its place.
     keywords_max: int = 12
+    # The embedder's width; the model is Matryoshka-trained, so any width up
+    # to its native 1536 is a real vector and the footprint scales with it.
+    embedding_dimensions: int = EMBEDDING_DIMENSIONS
+    # Which materialized corpus is indexed (CORPUS_DIRECTORIES).
+    corpus: str = "text"
+    # Whether the markdown structural transform runs over the roots.
+    structural: str = "off"
+    # The finder's seed lists: both fused, or one alone as a diagnostic.
+    finder_seeds: str = "both"
+    # Vector hits farther than this cosine distance are dropped before
+    # fusion; 1.0 keeps every nearest-k hit.
+    finder_max_vector_distance: float = 0.75
 
 
 def validate_document_id(document_id: str) -> str:
@@ -158,8 +187,9 @@ def validate_document_id(document_id: str) -> str:
     return document_id
 
 
-def document_file_name(document_id: str) -> str:
-    return f"{validate_document_id(document_id)}{DOCUMENT_FILE_SUFFIX}"
+def document_file_name(document_id: str, suffix: str = DOCUMENT_FILE_SUFFIX) -> str:
+    assert suffix in CORPUS_SUFFIXES.values()
+    return f"{validate_document_id(document_id)}{suffix}"
 
 
 def document_text(row: dict[str, Any]) -> str:
@@ -169,6 +199,17 @@ def document_text(row: dict[str, Any]) -> str:
         raise BenchmarkError(f"document {row.get('_id')!r} has no text")
     if title:
         return f"{title}\n\n{body}\n"
+    return f"{body}\n"
+
+
+def document_markdown(row: dict[str, Any]) -> str:
+    """The `markdown` corpus variant: the title as the document's heading."""
+    title = " ".join(str(row.get("title") or "").split())
+    body = str(row.get("text") or "").strip()
+    if not body:
+        raise BenchmarkError(f"document {row.get('_id')!r} has no text")
+    if title:
+        return f"# {title}\n\n{body}\n"
     return f"{body}\n"
 
 
@@ -200,6 +241,9 @@ def materialize_documents(corpus: Path) -> int:
     marker = FIXTURE_ROOT / "documents.json"
     existing = fixture_document_count(FIXTURE_ROOT, MAX_DOCUMENTS)
     if existing == DATASET.document_count and documents.is_dir():
+        # A fixture set up before the markdown variant existed gains it here.
+        if not markdown_documents_complete(existing):
+            materialize_markdown_documents(corpus, existing)
         return existing
     if documents.exists():
         shutil.rmtree(documents)
@@ -216,6 +260,7 @@ def materialize_documents(corpus: Path) -> int:
             document_text(row), encoding="utf-8"
         )
         written += 1
+    materialize_markdown_documents(corpus, written)
     if written != DATASET.document_count:
         raise BenchmarkError(
             f"corpus has {written} documents; the pin expects {DATASET.document_count}"
@@ -229,6 +274,36 @@ def materialize_documents(corpus: Path) -> int:
         },
     )
     return written
+
+
+def markdown_documents_complete(expected_count: int) -> bool:
+    documents = FIXTURE_ROOT / CORPUS_DIRECTORIES["markdown"]
+    if not documents.is_dir():
+        return False
+    suffix = CORPUS_SUFFIXES["markdown"]
+    count = sum(1 for _ in documents.glob(f"*{suffix}"))
+    return count == expected_count
+
+
+def materialize_markdown_documents(corpus: Path, expected_count: int) -> None:
+    """Write the `markdown` corpus variant beside the text one: the same rows
+    with the title as a `#` heading (`document_markdown`)."""
+    assert 0 < expected_count <= MAX_DOCUMENTS
+    documents = FIXTURE_ROOT / CORPUS_DIRECTORIES["markdown"]
+    if documents.exists():
+        shutil.rmtree(documents)
+    documents.mkdir(parents=True)
+    written = 0
+    for row in read_json_lines(corpus, MAX_DOCUMENTS):
+        document_id = validate_document_id(str(row["_id"]))
+        (documents / document_file_name(document_id, CORPUS_SUFFIXES["markdown"])).write_text(
+            document_markdown(row), encoding="utf-8"
+        )
+        written += 1
+    if written != expected_count:
+        raise BenchmarkError(
+            f"markdown corpus has {written} documents; the text corpus has {expected_count}"
+        )
 
 
 def parse_qrels(text: str) -> dict[str, dict[str, int]]:
@@ -330,12 +405,18 @@ id = "embedder"
 [entry.config]
 provider = "endpoint"
 model = "{EMBEDDING_MODEL}"
-dimensions = {EMBEDDING_DIMENSIONS}
+dimensions = {options.embedding_dimensions}
 vectors = "{EMBEDDING_VECTORS}"
 
 [[entry]]
 id = "markdown"
-disabled = true
+disabled = {"false" if options.structural == "markdown" else "true"}
+
+[[entry]]
+id = "finder"
+[entry.config]
+seeds = "{options.finder_seeds}"
+max_vector_distance = {options.finder_max_vector_distance}
 
 [[entry]]
 id = "chunker"
@@ -378,13 +459,14 @@ def load_qrels() -> dict[str, dict[str, int]]:
     return parse_qrels((FIXTURE_ROOT / "qrels.tsv").read_text(encoding="utf-8"))
 
 
-def load_document_ids() -> set[str]:
-    documents = FIXTURE_ROOT / "documents"
+def load_document_ids(corpus: str = "text") -> set[str]:
+    documents = FIXTURE_ROOT / CORPUS_DIRECTORIES[corpus]
+    suffix = CORPUS_SUFFIXES[corpus]
     document_ids: set[str] = set()
-    for path in documents.glob(f"*{DOCUMENT_FILE_SUFFIX}"):
+    for path in documents.glob(f"*{suffix}"):
         if len(document_ids) >= MAX_DOCUMENTS:
             raise BenchmarkError(f"fixture exceeds the {MAX_DOCUMENTS}-document safety limit")
-        document_ids.add(path.name[: -len(DOCUMENT_FILE_SUFFIX)])
+        document_ids.add(path.name[: -len(suffix)])
     if len(document_ids) != DATASET.document_count:
         raise BenchmarkError(
             f"fixture has {len(document_ids)} documents; expected {DATASET.document_count}"
@@ -392,21 +474,26 @@ def load_document_ids() -> set[str]:
     return document_ids
 
 
-def document_id_from_address(address: str, document_ids: set[str]) -> str:
+def document_id_from_address(
+    address: str, document_ids: set[str], suffix: str = DOCUMENT_FILE_SUFFIX
+) -> str:
     """Map a Finder result address back to the BEIR document it was written from."""
     file_name = address.rsplit("/", 1)[-1]
-    if not file_name.endswith(DOCUMENT_FILE_SUFFIX):
+    if not file_name.endswith(suffix):
         raise BenchmarkError(f"result address {address!r} is not a benchmark document")
-    document_id = file_name[: -len(DOCUMENT_FILE_SUFFIX)]
+    document_id = file_name[: -len(suffix)]
     if document_id not in document_ids:
         raise BenchmarkError(f"result address {address!r} names an unknown document")
     return document_id
 
 
 def retrieved_document_ids(
-    results: list[dict[str, Any]], document_ids: set[str]
+    results: list[dict[str, Any]], document_ids: set[str], suffix: str = DOCUMENT_FILE_SUFFIX
 ) -> list[str]:
-    ordered = [document_id_from_address(str(result["address"]), document_ids) for result in results]
+    ordered = [
+        document_id_from_address(str(result["address"]), document_ids, suffix)
+        for result in results
+    ]
     if len(set(ordered)) != len(ordered):
         raise BenchmarkError("Finder returned the same document twice in one ranking")
     return ordered
@@ -436,7 +523,9 @@ def query_command(
         "query": query_text,
         "retrieval_duration_seconds": round(result.duration_seconds, 6),
         "results": results,
-        "retrieved_document_ids": retrieved_document_ids(results, document_ids),
+        "retrieved_document_ids": retrieved_document_ids(
+            results, document_ids, CORPUS_SUFFIXES[options.corpus]
+        ),
     }
 
 
@@ -546,9 +635,13 @@ def model_assignments(options: RunOptions) -> dict[str, str | int]:
     return {
         "summarization": SUMMARIZATION_MODEL,
         "summarization_lane": options.summarization_lane,
+        "corpus": options.corpus,
+        "structural": options.structural,
+        "finder_seeds": options.finder_seeds,
+        "finder_max_vector_distance": options.finder_max_vector_distance,
         "entity_extraction": "disabled",
         "embeddings": EMBEDDING_MODEL,
-        "embedding_dimensions": EMBEDDING_DIMENSIONS,
+        "embedding_dimensions": options.embedding_dimensions,
         "embedding_vectors": EMBEDDING_VECTORS,
     }
 
@@ -592,13 +685,13 @@ def create_run(options: RunOptions) -> tuple[Path, Path, dict[str, Any]]:
 
 
 def index_documents(
-    run_dir: Path, data_dir: Path, composition: Path, log_path: Path
+    run_dir: Path, data_dir: Path, composition: Path, log_path: Path, corpus: str = "text"
 ) -> dict[str, Any]:
     return harness.index_documents(
         run_dir,
         data_dir,
         composition,
-        FIXTURE_ROOT / "documents",
+        FIXTURE_ROOT / CORPUS_DIRECTORIES[corpus],
         fixture_document_count(FIXTURE_ROOT, MAX_DOCUMENTS),
         SOURCES_MAX,
         f"BEIR {DATASET.name}",
@@ -618,7 +711,7 @@ def run_queries(
 ) -> list[dict[str, Any]]:
     completed_count = len(queries)
     assert completed_count <= len(queries_to_run)
-    document_ids = load_document_ids()
+    document_ids = load_document_ids(options.corpus)
     print(f"Query checkpoint: {completed_count}/{len(queries_to_run)} completed", flush=True)
     for index in range(completed_count, len(queries_to_run)):
         query = queries_to_run[index]
@@ -708,7 +801,9 @@ def execute_benchmark(
                 index_log = log_dir / "index.log"
             attempt["indexing_log"] = str(index_log.relative_to(run_dir))
             write_json(run_dir / "manifest.json", manifest)
-            manifest["indexing"] = index_documents(run_dir, data_dir, composition, index_log)
+            manifest["indexing"] = index_documents(
+                run_dir, data_dir, composition, index_log, options.corpus
+            )
         else:
             print_reused_index(manifest)
         attempt = manifest["attempts"][-1]
@@ -823,7 +918,28 @@ def options_from_manifest(manifest: dict[str, Any]) -> RunOptions:
         ),
         summarization_lane=manifest_option_lane(value, "summarization_lane"),
         keywords_max=manifest_option_count(value, "keywords_max", MAX_KEYWORDS),
+        embedding_dimensions=manifest_option_integer(
+            value, "embedding_dimensions", EMBEDDING_DIMENSIONS_MAX
+        ),
+        corpus=manifest_option_choice(value, "corpus", frozenset(CORPUS_DIRECTORIES)),
+        structural=manifest_option_choice(value, "structural", STRUCTURAL_CHOICES),
+        finder_seeds=manifest_option_choice(value, "finder_seeds", FINDER_SEEDS),
+        finder_max_vector_distance=manifest_option_distance(value, "finder_max_vector_distance"),
     )
+
+
+def manifest_option_distance(value: dict[str, Any], name: str) -> float:
+    option = value[name]
+    if type(option) not in (int, float) or not 0.0 < float(option) <= 2.0:
+        raise BenchmarkError(f"run option {name} is not a cosine distance in (0, 2]")
+    return float(option)
+
+
+def manifest_option_choice(value: dict[str, Any], name: str, choices: frozenset[str]) -> str:
+    option = value[name]
+    if option not in choices:
+        raise BenchmarkError(f"run option {name} is not one of {sorted(choices)}")
+    return option
 
 
 def manifest_option_count(value: dict[str, Any], name: str, maximum: int) -> int:
@@ -909,6 +1025,36 @@ def parse_arguments() -> argparse.Namespace:
         help="keywords planted beside each summary for full-text search; 0 plants none",
     )
     run_parser.add_argument(
+        "--embedding-dimensions",
+        type=bounded_argument("embedding-dimensions", EMBEDDING_DIMENSIONS_MAX),
+        default=EMBEDDING_DIMENSIONS,
+        help="the embedder's width; Matryoshka, so anything up to the native 1536",
+    )
+    run_parser.add_argument(
+        "--corpus",
+        choices=sorted(CORPUS_DIRECTORIES),
+        default="text",
+        help="which materialized corpus to index; markdown puts the title in a # heading",
+    )
+    run_parser.add_argument(
+        "--structural",
+        choices=sorted(STRUCTURAL_CHOICES),
+        default="off",
+        help="whether the markdown structural transform runs over the roots",
+    )
+    run_parser.add_argument(
+        "--finder-seeds",
+        choices=sorted(FINDER_SEEDS),
+        default="both",
+        help="the finder's seed lists; one alone shows which search the fusion is carrying",
+    )
+    run_parser.add_argument(
+        "--finder-max-vector-distance",
+        type=distance_argument,
+        default=0.75,
+        help="vector hits farther than this cosine distance are dropped; 1.0 keeps all",
+    )
+    run_parser.add_argument(
         "--summary-target-chars",
         type=bounded_argument("summary-target-chars", MAX_SUMMARY_TARGET_CHARS),
         default=200,
@@ -935,6 +1081,11 @@ def main() -> int:
             summary_target_chars=arguments.summary_target_chars,
             summarization_lane=arguments.summarization_lane,
             keywords_max=arguments.keywords_max,
+            embedding_dimensions=arguments.embedding_dimensions,
+            corpus=arguments.corpus,
+            structural=arguments.structural,
+            finder_seeds=arguments.finder_seeds,
+            finder_max_vector_distance=arguments.finder_max_vector_distance,
         )
         return run_main(lambda: run_benchmark(options))
     return run_main(lambda: resume_benchmark(arguments.run_id))

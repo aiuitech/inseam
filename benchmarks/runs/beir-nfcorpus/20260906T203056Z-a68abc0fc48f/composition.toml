@@ -1,0 +1,58 @@
+[[entry]]
+id = "fs"
+[entry.config]
+host_id = "beir-nfcorpus"
+skip_hidden = true
+gitignore = false
+ignore = []
+
+[[entry]]
+id = "llm"
+[entry.config]
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+transform_model = "google/gemini-2.5-flash-lite"
+transform_reasoning_effort = "low"
+
+[[entry]]
+id = "embedder"
+[entry.config]
+provider = "endpoint"
+model = "openai/text-embedding-3-small"
+dimensions = 384
+vectors = "all"
+
+[[entry]]
+id = "markdown"
+disabled = true
+
+[[entry]]
+id = "finder"
+[entry.config]
+seeds = "full-text"
+
+[[entry]]
+id = "chunker"
+disabled = true
+
+[[entry]]
+id = "summarizer"
+[entry.config]
+target_chars = 12000
+keywords_max = 0
+llm_call_budget = 1
+llm_lane = "interactive"
+
+[[entry]]
+id = "entities"
+disabled = true
+
+[[entry]]
+id = "sweep"
+[entry.config]
+max_sources = 0
+concurrency = 8
+max_fragments_per_source = 400
+max_depth = 6
+max_content_bytes = 2000000
+ignore = []

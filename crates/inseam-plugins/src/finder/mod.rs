@@ -25,6 +25,11 @@ use inseam_seams::SeamError;
 pub struct FinderConfig {
     /// Fragments retrieved from each seed list (full-text and vector).
     pub seed_k: usize,
+    /// Which seed lists run: both, fused by rank, or one alone. One alone
+    /// is a diagnostic — it shows which search the fusion is carrying —
+    /// and a deliberate choice for a node whose embedder is not worth
+    /// asking; query-time, so switching never re-indexes.
+    pub seeds: SeedLists,
     /// The `k` constant in reciprocal rank fusion.
     pub rrf_k: f64,
     /// Personalized PageRank damping: probability a walk continues instead
@@ -44,10 +49,37 @@ pub struct FinderConfig {
     pub weights: RelationWeights,
 }
 
+/// The seed lists a query runs before fusion.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SeedLists {
+    #[default]
+    Both,
+    FullText,
+    Vector,
+}
+
+impl SeedLists {
+    fn runs_full_text(self) -> bool {
+        match self {
+            Self::Both | Self::FullText => true,
+            Self::Vector => false,
+        }
+    }
+
+    fn runs_vector(self) -> bool {
+        match self {
+            Self::Both | Self::Vector => true,
+            Self::FullText => false,
+        }
+    }
+}
+
 impl Default for FinderConfig {
     fn default() -> Self {
         Self {
             seed_k: 60,
+            seeds: SeedLists::Both,
             rrf_k: 60.0,
             damping: 0.5,
             iterations: 12,
@@ -284,16 +316,20 @@ impl Finder for FinderService {
 impl FinderService {
     async fn query_seeds(&self, text: &str) -> Result<Seeds, SeamError> {
         let started = Instant::now();
-        let fts = self.store.search_fts(text, self.config.seed_k).await?;
+        let fts = if self.config.seeds.runs_full_text() {
+            self.store.search_fts(text, self.config.seed_k).await?
+        } else {
+            Vec::new()
+        };
         let mut vector = match self.embedder.dimensions() {
-            Some(_) => {
+            Some(_) if self.config.seeds.runs_vector() => {
                 let qvec = self.embedder.embed(&[text]).await?;
                 match qvec.first() {
                     Some(v) => self.store.search_vector(v, self.config.seed_k).await?,
                     None => Vec::new(),
                 }
             }
-            None => Vec::new(),
+            Some(_) | None => Vec::new(),
         };
         // Nearest-k returns the k nearest whatever the distance; beyond the
         // floor a "neighbor" is noise and must not seed the walk.

@@ -92,13 +92,49 @@ pub async fn summarize_text(
     extractive(text, shape)
 }
 
+/// A document's title — its first line when that line is a markdown
+/// heading — and the text after it. The selection treats headings as
+/// section labels, not sentences, so the title has to be carried
+/// separately: it is the one line most likely to be what a searcher types.
+fn title_and_body(text: &str) -> (Option<String>, &str) {
+    let trimmed = text.trim_start();
+    let Some(first) = trimmed.lines().next() else {
+        return (None, text);
+    };
+    let title = first.trim().trim_start_matches('#').trim();
+    if first.trim_start().starts_with('#') && !title.is_empty() {
+        let body = &trimmed[first.len()..];
+        (Some(extract::strip_links(title)), body)
+    } else {
+        (None, text)
+    }
+}
+
+/// The title, then the text's telling sentences within what the title
+/// leaves of the budget.
+fn title_led_selection(text: &str, budget_chars: usize) -> String {
+    let (title, body) = title_and_body(text);
+    match title {
+        Some(title) => {
+            let title_chars = title.chars().count() + 2;
+            let selected = extract::select(body, budget_chars.saturating_sub(title_chars));
+            if selected.is_empty() {
+                title
+            } else {
+                format!("{title}. {selected}")
+            }
+        }
+        None => extract::select(text, budget_chars),
+    }
+}
+
 async fn llm_summary(
     llm: &dyn GrantedLlm,
     hint: Option<&str>,
     text: &str,
     shape: SummaryShape,
 ) -> Result<Summary, inseam_seams::SeamError> {
-    let input = extract::select(text, shape.llm_input_chars);
+    let input = title_led_selection(text, shape.llm_input_chars);
     let name = hint.unwrap_or("(unnamed source)");
     let system = format!(
         "You write the entry a search index keeps for a file, so that someone looking for \
@@ -160,7 +196,7 @@ pub fn parse_reply(raw: &str) -> (String, Vec<String>) {
 /// The offline summary a small device's profile would produce: the text's
 /// telling sentences, one per section first, within the target.
 pub fn extractive(text: &str, shape: SummaryShape) -> Summary {
-    let selected = extract::select(text, shape.target_chars);
+    let selected = title_led_selection(text, shape.target_chars);
     Summary {
         text: truncate_chars(&collapse_ws(&selected), shape.target_chars),
         kind: SummaryKind::Extractive,
@@ -210,6 +246,23 @@ mod tests {
             "{:?}",
             s.keywords
         );
+    }
+
+    #[test]
+    fn extractive_leads_with_a_heading_title() {
+        let s = extractive(LONG, SHAPE);
+        assert!(s.text.starts_with("Kitchen Reno. "), "{}", s.text);
+        assert!(s.text.chars().count() <= 60);
+    }
+
+    #[test]
+    fn title_and_body_split_only_on_a_leading_heading() {
+        let (title, body) = title_and_body("# A [title](https://x)\n\nBody here.");
+        assert_eq!(title.as_deref(), Some("A title"));
+        assert_eq!(body.trim(), "Body here.");
+        let (none, same) = title_and_body("Plain first line\n\nBody.");
+        assert!(none.is_none());
+        assert_eq!(same, "Plain first line\n\nBody.");
     }
 
     #[tokio::test]
