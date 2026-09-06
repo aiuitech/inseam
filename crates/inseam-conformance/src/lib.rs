@@ -91,6 +91,7 @@ async fn battery(registration: &Arc<Registration>, mimetype: &Mimetype) {
                 is_root: true,
                 text,
                 bytes: None,
+                reference_hops_left: 1,
                 llm: None,
             })
             .await;
@@ -246,6 +247,7 @@ async fn run_golden(
             is_root: check.is_root,
             text: check.text.as_deref(),
             bytes: bytes.as_deref(),
+            reference_hops_left: 1,
             llm: Some(llm),
         })
         .await;

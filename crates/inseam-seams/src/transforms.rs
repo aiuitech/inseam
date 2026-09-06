@@ -79,6 +79,11 @@ pub struct TransformCtx<'a> {
     /// declare [`Transform::wants_bytes`]; `None` for a text fragment, an
     /// unreadable reference, or content over the sweep's byte cap.
     pub bytes: Option<&'a [u8]>,
+    /// How many more content references the sweep will follow under this
+    /// fragment (its crawl depth left). At `0` a reference emitted here is
+    /// stored but never followed, so a link follower can skip the work of
+    /// resolving it precisely; the planner enforces the cap either way.
+    pub reference_hops_left: u32,
     /// Shared (`Arc`) so a sandbox bridge can move the grant into its
     /// instance state; the grant is still per-application and metered.
     pub llm: Option<Arc<dyn GrantedLlm>>,

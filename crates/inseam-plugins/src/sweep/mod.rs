@@ -90,6 +90,13 @@ pub struct SweepConfig {
     /// Sources larger than this are cataloged but not content-indexed
     /// (shape tier).
     pub max_content_bytes: u64,
+    /// How many content references a chain may follow away from a source
+    /// (shape tier): the crawl depth. `1` follows what a source itself
+    /// links to and stops there; `2` also follows what that content links
+    /// to; `0` stores references without ever reading them. Beyond the
+    /// cap a reference is still a fragment — expandable, fetchable — but
+    /// no transform is applied to it and no bytes are read for it.
+    pub max_reference_hops: u32,
     /// `YYYY-MM-DD`; sources last modified before this are cataloged but not
     /// indexed. Tightening never evicts what a looser scope already built.
     pub modified_after: Option<String>,
@@ -109,6 +116,7 @@ impl Default for SweepConfig {
             max_fragments_per_source: 400,
             max_depth: 6,
             max_content_bytes: 2_000_000,
+            max_reference_hops: 1,
             modified_after: None,
             ignore: Vec::new(),
         }
@@ -130,8 +138,11 @@ impl SweepConfig {
 
     fn shape_fingerprint(&self) -> String {
         format!(
-            "sweep-v1|depth={}|fragments={}|content_bytes={}",
-            self.max_depth, self.max_fragments_per_source, self.max_content_bytes
+            "sweep-v1|depth={}|fragments={}|content_bytes={}|hops={}",
+            self.max_depth,
+            self.max_fragments_per_source,
+            self.max_content_bytes,
+            self.max_reference_hops
         )
     }
 
@@ -140,6 +151,7 @@ impl SweepConfig {
             max_depth: self.max_depth,
             max_fragments_per_source: self.max_fragments_per_source,
             max_content_bytes: self.max_content_bytes,
+            max_reference_hops: self.max_reference_hops,
         }
     }
 

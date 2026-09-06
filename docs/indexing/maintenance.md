@@ -44,7 +44,7 @@ Which entry changed decides how much re-work happens ([configuration.md](../conf
 
 - **Query-time** (`finder`, the llm entry's models) — never re-indexes.
 - **Run limits** (`sweep.max_sources` and the `--catalog-only` / `--max-sources` overrides, `sweep.concurrency`, per-transform `llm_call_budget`) — never re-indexes; they just bound or pace each run, so a big rebuild spreads across as many sweeps as the budgets allow.
-- **Shape** (transform configs, transform mounts/unmounts, the sweep's `max_depth`/`max_fragments_per_source`/`max_content_bytes`, the llm `transform_model` for transforms that use it) — stamps stop matching; affected sources re-index on their next sweep.
+- **Shape** (transform configs, transform mounts/unmounts, the sweep's `max_depth`/`max_fragments_per_source`/`max_content_bytes`/`max_reference_hops`, the llm `transform_model` for transforms that use it) — stamps stop matching; affected sources re-index on their next sweep.
 - **Embedding** (the `embedder` entry: provider, model, dimensions, `vectors`) — only the in-place re-embed.
 
 ## Shrinking scope never deletes — ignoring does

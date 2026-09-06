@@ -33,6 +33,9 @@ pub(super) struct PlanLimits {
     pub(super) max_depth: usize,
     pub(super) max_fragments_per_source: usize,
     pub(super) max_content_bytes: u64,
+    /// The crawl depth: content references followed in a chain from the
+    /// source before the planner stops applying transforms to them.
+    pub(super) max_reference_hops: u32,
 }
 
 /// What planning one source produced besides the plan: the counts the
@@ -160,6 +163,10 @@ impl Planner {
         } else {
             referenced.as_deref()
         };
+        let reference_hops_left = self
+            .limits
+            .max_reference_hops
+            .saturating_sub(item.reference_hops);
         let applications = claimants.iter().map(|registration| {
             let ctx = TransformCtx {
                 envelope: &read.envelope,
@@ -171,6 +178,7 @@ impl Planner {
                 } else {
                     None
                 },
+                reference_hops_left,
                 llm: self.grantor.grant(registration),
             };
             registration.transform.apply(ctx)
@@ -234,6 +242,9 @@ struct WorkItem {
     /// non-root; always `None` at the root.
     content_address: Option<Address>,
     depth: usize,
+    /// Content references followed to reach this fragment, itself
+    /// included: the crawl depth the planner caps.
+    reference_hops: u32,
 }
 
 /// The plan under construction.
@@ -277,6 +288,7 @@ impl SubtreeBuild {
                 text: read.content.clone(),
                 content_address: None,
                 depth: 0,
+                reference_hops: 0,
             }]),
             fragment_budget: limits.max_fragments_per_source,
             stats: PlanStats::default(),
@@ -305,7 +317,7 @@ impl SubtreeBuild {
         let planted: usize = sprouts.iter().map(Sprout::count).sum();
         assert!(planted <= self.fragment_budget, "prune respects the fragment budget");
         self.fragment_budget -= planted;
-        self.plant(item.node, item.depth, sprouts, planted);
+        self.plant(item.node, item.depth, item.reference_hops, sprouts, planted);
         self.keyed
             .extend(output.keyed.into_iter().map(|k| (item.node, k)));
         tracing::trace!(transform = %registration.name, planted, "absorbed");
@@ -315,13 +327,20 @@ impl SubtreeBuild {
     /// each sprout becomes a planned fragment, extends the inventory, is
     /// collected as an anchor site when it carries source text, and re-enters
     /// the queue for chained claims.
-    fn plant(&mut self, parent: PlanNode, parent_depth: usize, sprouts: Vec<Sprout>, planted: usize) {
+    fn plant(
+        &mut self,
+        parent: PlanNode,
+        parent_depth: usize,
+        parent_hops: u32,
+        sprouts: Vec<Sprout>,
+        planted: usize,
+    ) {
         // Explicit stack, children pushed in reverse so they pop in order;
         // bounded by the forest size `prune` already enforced.
-        let mut stack: Vec<(PlanNode, usize, Sprout)> = Vec::with_capacity(planted);
-        stack.extend(sprouts.into_iter().rev().map(|s| (parent, parent_depth, s)));
+        let mut stack: Vec<(PlanNode, usize, u32, Sprout)> = Vec::with_capacity(planted);
+        stack.extend(sprouts.into_iter().rev().map(|s| (parent, parent_depth, parent_hops, s)));
         let mut popped: usize = 0;
-        while let Some((parent, parent_depth, sprout)) = stack.pop() {
+        while let Some((parent, parent_depth, parent_hops, sprout)) = stack.pop() {
             popped += 1;
             assert!(popped <= planted, "planting visits each pruned sprout once");
             let Sprout {
@@ -329,8 +348,11 @@ impl SubtreeBuild {
                 relation,
                 children,
             } = sprout;
-            let node = self.push_fragment(parent, relation, fragment, parent_depth + 1);
-            stack.extend(children.into_iter().rev().map(|c| (node, parent_depth + 1, c)));
+            // A fragment with a content reference is one hop further from
+            // the source than its parent.
+            let hops = parent_hops + u32::from(fragment.content_address.is_some());
+            let node = self.push_fragment(parent, relation, fragment, parent_depth + 1, hops);
+            stack.extend(children.into_iter().rev().map(|c| (node, parent_depth + 1, hops, c)));
         }
         assert_eq!(popped, planted);
     }
@@ -341,6 +363,7 @@ impl SubtreeBuild {
         relation: inseam_kernel::fragment::RelationKind,
         fragment: NewFragment,
         depth: usize,
+        reference_hops: u32,
     ) -> PlanNode {
         let index = u32::try_from(self.fragments.len()).expect("fragment cap fits u32");
         let node = PlanNode::Fragment(index);
@@ -359,8 +382,12 @@ impl SubtreeBuild {
             self.texted.push((node, text.clone()));
         }
         // Chained transforms: emitted fragments re-enter claiming as
-        // non-roots. Depth rides along so recursion stays bounded.
-        if !is_derived && depth < self.limits.max_depth {
+        // non-roots. Depth and hops ride along so recursion stays bounded:
+        // a reference past the crawl depth is planted but never followed —
+        // no transform sees it, no bytes are read for it.
+        let within_depth = depth < self.limits.max_depth;
+        let within_hops = reference_hops <= self.limits.max_reference_hops;
+        if !is_derived && within_depth && within_hops {
             self.queue.push_back(WorkItem {
                 node,
                 mimetype: fragment.mimetype.clone(),
@@ -368,6 +395,7 @@ impl SubtreeBuild {
                 text: fragment.text.clone(),
                 content_address: fragment.content_address.clone(),
                 depth,
+                reference_hops,
             });
         }
         self.fragments.push(PlannedFragment {

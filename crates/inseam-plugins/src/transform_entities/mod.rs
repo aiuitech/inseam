@@ -166,6 +166,7 @@ mod tests {
                 is_root: true,
                 text: Some("Dana and the Kitchen Reno."),
                 bytes: None,
+                reference_hops_left: 1,
                 llm: None,
             })
             .await;

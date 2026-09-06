@@ -171,6 +171,7 @@ mod tests {
             is_root: true,
             text,
             bytes: None,
+            reference_hops_left: 1,
             llm: None,
         }
     }

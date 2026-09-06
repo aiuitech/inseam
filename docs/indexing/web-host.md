@@ -47,6 +47,8 @@ Every request, and every redirect hop, passes the same guard before a socket ope
 
 A refused fetch is an error the caller sees (`fetch_bytes`) or a reference left without bytes (the planner), never a silent empty answer.
 
+How far into the web a sweep may go is not the host's dial but the sweep's: `sweep.max_reference_hops` (default 1) bounds how many references a chain follows away from a source, so a page follower mounted beside the links transform can never crawl unbounded ([transforms.md](transforms.md#content-references)). The host bounds each request; the sweep bounds the chain.
+
 ## Serving
 
 `fetch_bytes` on a web address returns the resource under the content type its headers declare; `fetch` and `scan` read it as text. `describe` answers the `links` transform with the content type and declared length from a `HEAD` request (falling back to a body-less `GET` when a server refuses `HEAD`). Nothing is cached: the index holds references, never copies ([../../design/addressing.md](../../design/addressing.md)).
