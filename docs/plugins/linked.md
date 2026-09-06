@@ -15,6 +15,7 @@ Every plugin is the same five declarations — name, config, inject, provide, ap
 | `embedder` | `embedder` | store, llm? | endpoint / hashed / none; declares the embedding identity to the store, which opens the search surface under it |
 | `transforms` | `transforms` | — | the registry transform plugins sign up with |
 | `transform-markdown` | — | transforms | splits markdown by its heading structure |
+| `transform-directory` | — | transforms | folder sources: the composed listing becomes one entry fragment per child, referencing the child ([indexing/transforms.md](../indexing/transforms.md#folders)) |
 | `transform-chunker` | — | transforms | fallback chunking for text with no structure |
 | `transform-summarizer` | — | transforms | the mandatory summary (LLM → extractive → envelope) |
 | `transform-entities` | — | transforms | LLM entity extraction |

@@ -53,6 +53,32 @@ pub(super) struct Planned {
     pub(super) stats: PlanStats,
 }
 
+/// Where a source's content comes from when it is planned: read through the
+/// host's connection (a file), or composed by the sweep before planning (a
+/// folder, whose text is the listing of its landed children —
+/// `design/indexing.md`, folders). Composed content is always text.
+#[derive(Debug, Clone)]
+pub(super) enum PlanContent {
+    Host,
+    Composed(String),
+}
+
+/// One source to plan, with its content's origin.
+#[derive(Debug, Clone)]
+pub(super) struct PlanInput {
+    pub(super) source: EnumeratedSource,
+    pub(super) content: PlanContent,
+}
+
+impl PlanInput {
+    pub(super) fn from_host(source: EnumeratedSource) -> Self {
+        Self {
+            source,
+            content: PlanContent::Host,
+        }
+    }
+}
+
 /// Everything a planner needs, shared across the run's concurrent planners.
 pub(super) struct Planner {
     /// The connection of the host under sweep: where every root's content
@@ -72,8 +98,11 @@ impl Planner {
     /// Build one source's plan by recursive transform application:
     /// registered claimants over the root, then over every emitted fragment,
     /// until nothing claims the output (`design/indexing.md`).
-    pub(super) async fn plan(&self, source: &EnumeratedSource) -> Result<Planned, SeamError> {
-        let read = self.read_source(source).await?;
+    pub(super) async fn plan(&self, input: &PlanInput) -> Result<Planned, SeamError> {
+        let read = match &input.content {
+            PlanContent::Host => self.read_source(&input.source).await?,
+            PlanContent::Composed(text) => composed_read(&input.source, text),
+        };
         let mut build = SubtreeBuild::new(&read, self.limits);
         // Every queued item is the root or a planted fragment, so the queue
         // never outgrows the fragment cap.
@@ -136,10 +165,7 @@ impl Planner {
         })
     }
 
-    async fn read_source_bytes(
-        &self,
-        address: &inseam_kernel::address::Address,
-    ) -> Result<Vec<u8>, SeamError> {
+    async fn read_source_bytes(&self, address: &Address) -> Result<Vec<u8>, SeamError> {
         let permit = Arc::clone(&self.source_read_permits)
             .acquire_owned()
             .await
@@ -184,6 +210,7 @@ impl Planner {
             .saturating_sub(item.reference_hops);
         let applications = claimants.iter().map(|registration| {
             let ctx = TransformCtx {
+                address: &read.source.address,
                 envelope: &read.envelope,
                 mimetype: &item.mimetype,
                 is_root: item.is_root,
@@ -244,6 +271,23 @@ struct SourceRead {
     envelope: Envelope,
     content: Option<String>,
     bytes: Option<Vec<u8>>,
+}
+
+/// The read a composed text stands in for: no host access, the digest and
+/// line count taken from the text itself — so a folder whose listing did
+/// not change carries the same digest the sweep's change detection
+/// compares against, and hits the digest-keyed caches like any file.
+fn composed_read(source: &EnumeratedSource, text: &str) -> SourceRead {
+    assert!(source.envelope.content_type.is_directory(), "only folders are composed today");
+    let mut envelope = source.envelope.clone();
+    envelope.content_digest = Some(ContentDigest::of_bytes(text.as_bytes()));
+    envelope.length = ContentLength::Lines(count_lines(text));
+    SourceRead {
+        source: source.clone(),
+        envelope,
+        content: Some(text.to_string()),
+        bytes: None,
+    }
 }
 
 /// A fragment awaiting transform application: the root, or an emitted

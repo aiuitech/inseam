@@ -74,9 +74,10 @@ async fn index_with(concurrency: usize, corpus: &std::path::Path) -> (inseam_ker
         })
         .await
         .expect("sweeps");
-    assert_eq!(report.indexed, 39, "{report}");
-    assert_eq!(report.extractive_summaries, 39, "{report}");
-    assert!(report.embedded > 39, "every text fragment embedded: {report}");
+    // 39 files, three subfolders, and the root: folders land after files.
+    assert_eq!(report.indexed, 43, "{report}");
+    assert_eq!(report.extractive_summaries, 43, "{report}");
+    assert!(report.embedded > 43, "every text fragment embedded: {report}");
     (kernel, data)
 }
 
@@ -118,7 +119,7 @@ async fn indexing_fills_the_envelope_content_digest_from_the_bytes_it_reads() {
         })
         .await
         .expect("sweeps");
-    assert_eq!(report.indexed, 1, "{report}");
+    assert_eq!(report.indexed, 2, "the note and its folder: {report}");
     let store = kernel.store();
     let host_id = kernel
         .service(&CONNECTIONS)

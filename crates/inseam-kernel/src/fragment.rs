@@ -105,6 +105,29 @@ impl Mimetype {
         Self::parse("text/uri-list").expect("literal mimetype is valid")
     }
 
+    /// A folder source's type: a container whose content is what it holds,
+    /// not bytes of its own (`design/indexing.md`, folders). The
+    /// freedesktop spelling, so a filesystem and a Drive folder share it.
+    pub fn directory() -> Self {
+        Self::parse("inode/directory").expect("literal mimetype is valid")
+    }
+
+    pub fn is_directory(&self) -> bool {
+        self.essence == "inode/directory"
+    }
+
+    /// The kernel-defined type for one entry of a folder's listing: the
+    /// fragment that names a child source and references its address, so
+    /// `expand` on a folder walks to what it holds. Inseam-defined, so no
+    /// transform ever re-decomposes a child through its entry.
+    pub fn directory_entry() -> Self {
+        Self::parse("text/x-inseam-entry").expect("literal mimetype is valid")
+    }
+
+    pub fn is_directory_entry(&self) -> bool {
+        self.essence == "text/x-inseam-entry"
+    }
+
     /// The kernel-defined type for the mandatory summary fragment — the one
     /// derived type the store itself reads (`summary_of`).
     pub fn summary() -> Self {

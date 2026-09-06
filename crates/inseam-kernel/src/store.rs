@@ -20,7 +20,9 @@ use std::time::Instant;
 use libsql::params;
 use thiserror::Error;
 
-use crate::address::{Address, ContentLength, Envelope, HostId, Locator, Property, Timestamp};
+use crate::address::{
+    Address, ContentDigest, ContentLength, Envelope, HostId, Locator, Property, Timestamp,
+};
 use crate::fragment::{
     Extent, FragmentId, FragmentKey, Mimetype, NewFragment, Relation, RelationKind,
 };
@@ -114,9 +116,24 @@ pub struct StoredFragment {
 pub struct SourceIndexMeta {
     pub modified: Option<Timestamp>,
     pub raw_bytes: u64,
+    /// The digest the last run recorded for the content it read — a
+    /// folder's change detector, since a directory's timestamp says nothing
+    /// about what its children now summarize to (`design/indexing.md`).
+    pub content_digest: Option<ContentDigest>,
     pub indexed: bool,
     pub shape_stamp: Option<String>,
     pub mimetypes: Vec<InventoryEntry>,
+}
+
+/// One direct child of a folder source as its listing sees it: the name
+/// (the last locator segment), the child's type, and its summary when a
+/// run has built one. Catalog-only children carry `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderChild {
+    pub address: Address,
+    pub name: String,
+    pub content_type: Mimetype,
+    pub summary: Option<String>,
 }
 
 /// One inventory record: a mimetype present in a source's subtree and
@@ -481,7 +498,7 @@ impl IndexStore {
     ) -> Result<Option<SourceIndexMeta>, StoreError> {
         let row = self
             .first_row(
-                "SELECT modified, raw_bytes, indexed, shape_stamp, mimetypes
+                "SELECT modified, raw_bytes, indexed, shape_stamp, mimetypes, digest
                  FROM sources WHERE host = ?1 AND locator = ?2",
                 params![address.host.as_str(), address.locator.as_str()],
             )
@@ -494,9 +511,11 @@ impl IndexStore {
         let indexed: i64 = row.get(2)?;
         let shape_stamp: Option<String> = row.get(3)?;
         let mimetypes: Option<String> = row.get(4)?;
+        let digest: Option<String> = row.get(5)?;
         Ok(Some(SourceIndexMeta {
             modified: modified.map(Timestamp),
             raw_bytes: u64::try_from(raw_bytes).unwrap_or(0),
+            content_digest: digest.as_deref().and_then(|d| d.parse().ok()),
             indexed: indexed == 1,
             shape_stamp,
             mimetypes: mimetypes
@@ -641,6 +660,74 @@ impl IndexStore {
 
     /// Every cataloged source of a host, as `(id, locator)` — the sweep's
     /// deletion reconciliation diffs this against what enumeration saw.
+    /// The direct children of a folder source — cataloged sources exactly one
+    /// locator segment below `folder` on the same host — in locator order,
+    /// each with its summary when one has landed. This is what a folder's
+    /// own content is composed from (`design/indexing.md`, folders), so the
+    /// sweep reads it after the level below has landed. The locator range
+    /// `<folder>/` ..< `<folder>0` walks the `(host, locator)` index rather
+    /// than scanning the catalog, and the segment test keeps grandchildren
+    /// out. Bounded: at most `limit` children are returned.
+    pub async fn folder_children(
+        &self,
+        folder: &Address,
+        limit: u32,
+    ) -> Result<Vec<FolderChild>, StoreError> {
+        assert!(limit >= 1);
+        let prefix = format!("{}/", folder.locator.as_str());
+        // '0' is the character after '/' in ASCII, so every locator under
+        // the folder sorts strictly between the two bounds.
+        let upper = format!("{}0", folder.locator.as_str());
+        let mut rows = self
+            .catalog
+            .query(
+                "SELECT s.id, s.locator, s.content_type,
+                        (SELECT f.text FROM relations r
+                           JOIN fragments f ON f.id = r.to_fragment
+                          WHERE r.from_fragment = s.root_fragment AND r.kind = ?4
+                            AND (f.mimetype = ?5 OR f.mimetype LIKE ?5 || ';%')
+                          LIMIT 1) AS summary
+                 FROM sources s
+                 WHERE s.host = ?1 AND s.locator >= ?2 AND s.locator < ?3
+                   AND instr(substr(s.locator, length(?2) + 1), '/') = 0
+                 ORDER BY s.locator
+                 LIMIT ?6",
+                params![
+                    folder.host.as_str(),
+                    prefix.as_str(),
+                    upper.as_str(),
+                    RelationKind::derives().as_str(),
+                    Mimetype::summary().to_string(),
+                    i64::from(limit)
+                ],
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let id: i64 = row.get(0)?;
+            let locator: String = row.get(1)?;
+            let content_type: String = row.get(2)?;
+            let summary: Option<String> = row.get(3)?;
+            let name = locator
+                .strip_prefix(&prefix)
+                .ok_or_else(|| corrupt(id, "locator outside the folder's range"))?
+                .to_string();
+            assert!(!name.is_empty());
+            assert!(!name.contains('/'), "a direct child has one more segment");
+            out.push(FolderChild {
+                address: Address::new(
+                    folder.host.clone(),
+                    Locator::new(locator).map_err(|e| corrupt(id, e))?,
+                ),
+                name,
+                content_type: Mimetype::parse(&content_type).map_err(|e| corrupt(id, e))?,
+                summary,
+            });
+        }
+        assert!(out.len() <= usize::try_from(limit).unwrap_or(usize::MAX));
+        Ok(out)
+    }
+
     pub async fn sources_of_host(
         &self,
         host: &HostId,
@@ -2357,6 +2444,114 @@ mod tests {
         s.upsert_source(&a, &env, 10).await.expect("upserts");
         let stored = s.source_by_address(&a).await.expect("ok").expect("present");
         assert_eq!(stored.envelope.content_digest, Some(digest));
+    }
+
+    /// Catalog a source and, when `summary` is given, land a root with a
+    /// `derives` summary under it — the shape `folder_children` reads.
+    async fn catalog_child(s: &IndexStore, address: &str, summary: Option<&str>) {
+        let a = addr(address);
+        let sid = s.upsert_source(&a, &envelope(1, 10), 10).await.expect("upserts");
+        let Some(summary) = summary else {
+            return;
+        };
+        let root = s
+            .insert_fragment(
+                sid,
+                &NewFragment {
+                    mimetype: Mimetype::markdown(),
+                    text: None,
+                    extent: None,
+                    content_address: None,
+                },
+            )
+            .await
+            .expect("inserts");
+        s.set_root_fragment(sid, root).await.expect("sets root");
+        let fragment = s
+            .insert_fragment(
+                sid,
+                &NewFragment {
+                    mimetype: Mimetype::summary().with_param("via", "extractive"),
+                    text: Some(summary.to_string()),
+                    extent: None,
+                    content_address: None,
+                },
+            )
+            .await
+            .expect("inserts");
+        s.insert_relation(&Relation::new(root, RelationKind::derives(), fragment))
+            .await
+            .expect("relates");
+    }
+
+    #[tokio::test]
+    async fn folder_children_lists_direct_children_with_their_summaries() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        catalog_child(&s, "inseam://fs-test/tmp/notes/b.md", Some("about b")).await;
+        catalog_child(&s, "inseam://fs-test/tmp/notes/a.md", None).await;
+        catalog_child(&s, "inseam://fs-test/tmp/notes/sub", Some("a subfolder")).await;
+        // Negative space: a grandchild, a sibling of the folder, a locator
+        // that merely shares the prefix characters, and another host.
+        catalog_child(&s, "inseam://fs-test/tmp/notes/sub/deep.md", Some("deep")).await;
+        catalog_child(&s, "inseam://fs-test/tmp/other.md", Some("other")).await;
+        catalog_child(&s, "inseam://fs-test/tmp/notes-archive/x.md", Some("x")).await;
+        catalog_child(&s, "inseam://fs-other/tmp/notes/c.md", Some("c")).await;
+
+        let children = s
+            .folder_children(&addr("inseam://fs-test/tmp/notes"), 100)
+            .await
+            .expect("lists");
+        let seen: Vec<(&str, Option<&str>)> = children
+            .iter()
+            .map(|c| (c.name.as_str(), c.summary.as_deref()))
+            .collect();
+        assert_eq!(
+            seen,
+            vec![("a.md", None), ("b.md", Some("about b")), ("sub", Some("a subfolder"))]
+        );
+        assert_eq!(
+            children[0].address,
+            addr("inseam://fs-test/tmp/notes/a.md"),
+            "the child's address is the folder's plus the name"
+        );
+    }
+
+    #[tokio::test]
+    async fn folder_children_is_bounded_by_the_limit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        for i in 0..5 {
+            catalog_child(&s, &format!("inseam://fs-test/tmp/notes/{i}.md"), None).await;
+        }
+        let children = s
+            .folder_children(&addr("inseam://fs-test/tmp/notes"), 3)
+            .await
+            .expect("lists");
+        assert_eq!(children.len(), 3);
+        assert!(s
+            .folder_children(&addr("inseam://fs-test/tmp/empty"), 3)
+            .await
+            .expect("lists")
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn index_meta_carries_the_recorded_content_digest() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        let a = addr("inseam://fs-test/tmp/notes");
+        let digest = crate::address::ContentDigest::of_bytes(b"listing");
+        let mut env = envelope(1, 0);
+        env.content_digest = Some(digest);
+        s.upsert_source(&a, &env, 0).await.expect("upserts");
+        let meta = s.index_meta(&a).await.expect("ok").expect("present");
+        assert_eq!(meta.content_digest, Some(digest));
+        // Pair assertion: a source cataloged without one reads back none.
+        let b = addr("inseam://fs-test/tmp/other");
+        s.upsert_source(&b, &envelope(1, 0), 0).await.expect("upserts");
+        let meta = s.index_meta(&b).await.expect("ok").expect("present");
+        assert_eq!(meta.content_digest, None);
     }
 
     #[tokio::test]

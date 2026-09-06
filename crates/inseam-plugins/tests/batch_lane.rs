@@ -139,24 +139,27 @@ async fn index_lane(lane: Option<LlmLane>) -> (inseam_seams::sweep::IndexReport,
 #[tokio::test]
 async fn a_batch_run_parks_every_summary_into_one_job() {
     let (report, fake, _corpus, _data) = index_lane(Some(LlmLane::Batch)).await;
-    assert_eq!(report.indexed, 24, "{report}");
-    assert_eq!(report.llm_summaries, 24, "{report}");
-    assert_eq!(report.llm_batch_jobs, 1, "{report}");
+    // 24 notes and the folder holding them; the folder plans after the
+    // notes land, so its summary is a second, one-request job.
+    assert_eq!(report.indexed, 25, "{report}");
+    assert_eq!(report.llm_summaries, 25, "{report}");
+    assert_eq!(report.llm_batch_jobs, 2, "{report}");
     assert_eq!(fake.chat_calls.load(Ordering::Relaxed), 0, "no synchronous calls");
     let jobs = fake.jobs.lock().expect("lock");
-    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs.len(), 2);
     assert_eq!(jobs[0]["model"], "fake/model", "the job names the base model");
     assert_eq!(jobs[0]["requests"].as_array().expect("requests").len(), 24);
+    assert_eq!(jobs[1]["requests"].as_array().expect("requests").len(), 1);
     assert!(report.spent > 0.0, "job usage is charged: {report}");
 }
 
 #[tokio::test]
 async fn an_interactive_run_answers_each_summary_with_its_own_request() {
     let (report, fake, _corpus, _data) = index_lane(None).await;
-    assert_eq!(report.indexed, 24, "{report}");
-    assert_eq!(report.llm_summaries, 24, "{report}");
+    assert_eq!(report.indexed, 25, "{report}");
+    assert_eq!(report.llm_summaries, 25, "{report}");
     assert_eq!(report.llm_batch_jobs, 0, "{report}");
-    assert_eq!(fake.chat_calls.load(Ordering::Relaxed), 24);
+    assert_eq!(fake.chat_calls.load(Ordering::Relaxed), 25);
     assert!(fake.jobs.lock().expect("lock").is_empty());
 }
 
@@ -176,9 +179,9 @@ async fn switching_lanes_never_re_indexes() {
         llm_lane: lane,
     };
     let first = ops.index(request(Some(LlmLane::Batch))).await.expect("sweeps");
-    assert_eq!(first.indexed, 4, "{first}");
+    assert_eq!(first.indexed, 5, "{first}");
     let second = ops.index(request(None)).await.expect("sweeps");
     assert_eq!(second.indexed, 0, "the interactive run finds nothing dirty: {second}");
-    assert_eq!(second.unchanged, 4, "{second}");
+    assert_eq!(second.unchanged, 5, "{second}");
     assert_eq!(fake.chat_calls.load(Ordering::Relaxed), 0);
 }

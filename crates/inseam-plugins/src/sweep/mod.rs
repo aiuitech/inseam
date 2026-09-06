@@ -19,11 +19,14 @@
 //! **landed** in one store transaction in enumeration order (deterministic
 //! ids), and its search rows flow to the **embedding stage** ([`embed`]),
 //! which embeds batches concurrently and lands them in order with the
-//! `indexed` marks they complete.
+//! `indexed` marks they complete. Folders run through the same pipeline
+//! after every file, deepest level first, their content composed from the
+//! children that just landed ([`folders`]).
 
 pub mod ignore;
 
 mod embed;
+mod folders;
 mod grant;
 mod plan;
 
@@ -53,7 +56,7 @@ use inseam_seams::SeamError;
 use embed::{EmbedStage, PendingRow, RowBuffer};
 use grant::{Grantor, RunMeters};
 use ignore::{IgnoreRule, IgnoreSet};
-use plan::{expected_stamp, PlanLimits, Planned, Planner};
+use plan::{expected_stamp, PlanContent, PlanInput, PlanLimits, Planned, Planner};
 
 /// Catalog-only rows per transaction.
 const CATALOG_CHUNK: usize = 1_000;
@@ -286,10 +289,17 @@ impl Sweep for SweepService {
         // Ignored sources leave the run here, before cataloging and before
         // vanished reconciliation — so a newly ignored source that was
         // indexed earlier is removed by the same path a deleted file takes.
-        let sources: Vec<EnumeratedSource> = enumerated
+        let admitted: Vec<EnumeratedSource> = enumerated
             .into_iter()
             .filter(|s| !self.ignore.matches(&s.address, &s.envelope))
             .collect();
+        // Folders are decided level by level after the files land, since
+        // their content is composed from what landed (`folders`); a folder
+        // whose every file the rules kept out leaves with them.
+        let (folders, files): (Vec<EnumeratedSource>, Vec<EnumeratedSource>) =
+            admitted.into_iter().partition(folders::is_folder);
+        let folders = folders::retain_holding(folders, &files);
+        let sources: Vec<EnumeratedSource> = files.iter().chain(folders.iter()).cloned().collect();
         report.ignored = report.sources_seen - sources.len();
         assert!(report.ignored + sources.len() == report.sources_seen);
 
@@ -308,11 +318,13 @@ impl Sweep for SweepService {
         let indexed_before = self.store.catalog_counts(None).await?.indexed;
         let batch_jobs_before = self.llm.as_ref().map_or(0, |llm| llm.batch_jobs());
         let decisions = self
-            .decide(&sources, cutoff, &registrations, &sweep_shape, dials, &mut report)
+            .decide(&files, cutoff, &registrations, &sweep_shape, dials, &mut report)
             .await?;
         for chunk in decisions.catalog.chunks(CATALOG_CHUNK) {
             self.store.catalog_sources(chunk).await?;
         }
+        let deep_files = u32::try_from(decisions.deep.len())
+            .map_err(|_| SeamError::failed("more than u32::MAX sources chosen for deep indexing"))?;
 
         let grantor = Arc::new(Grantor {
             llm: self.llm.clone(),
@@ -340,10 +352,22 @@ impl Sweep for SweepService {
             // vector search builds it itself, as it does on a fresh node.
             report.vector_index_deferred = self.store.defer_search_vector_index().await?;
         }
-        self.index_deep(decisions.deep, planner, planning, &mut report).await?;
-
+        let files = decisions.deep.into_iter().map(PlanInput::from_host).collect();
+        self.index_deep(files, Arc::clone(&planner), planning, &mut report)
+            .await?;
+        // Vanished sources leave before the folder pass, so a folder's
+        // listing is composed from what is actually there.
         self.reconcile_vanished(&steward, &request.root, &sources, &mut report)
             .await?;
+        let folder_run = FolderRun {
+            registrations: &planner.registrations,
+            sweep_shape: &planner.sweep_shape,
+            dials,
+            deep_count: deep_files,
+        };
+        self.index_folders(folders, folder_run, Arc::clone(&planner), planning, &mut report)
+            .await?;
+
         let orphaned = self.store.gc_keyed_fragments().await?;
         report.keyed_removed = orphaned.len();
         self.store.rebuild_fts().await?;
@@ -396,6 +420,24 @@ struct RunDials {
 struct Decisions<'a> {
     catalog: Vec<CatalogEntry<'a>>,
     deep: Vec<EnumeratedSource>,
+}
+
+/// What the folder pass carries from the file pass: the registry snapshot
+/// and sweep shape the stamps are checked against, the run's dials, and how
+/// many sources the run has already chosen to deep-index — folders count
+/// against the same budget.
+struct FolderRun<'a> {
+    registrations: &'a [Arc<Registration>],
+    sweep_shape: &'a str,
+    dials: RunDials,
+    deep_count: u32,
+}
+
+/// One level's folder decisions: catalog rows and the folders to plan with
+/// their composed content.
+struct FolderDecisions<'a> {
+    catalog: Vec<CatalogEntry<'a>>,
+    deep: Vec<PlanInput>,
 }
 
 impl SweepService {
@@ -547,17 +589,20 @@ impl SweepService {
     /// error.
     async fn index_deep(
         &self,
-        deep: Vec<EnumeratedSource>,
+        deep: Vec<PlanInput>,
         planner: Arc<Planner>,
         concurrency: NonZeroUsize,
         report: &mut IndexReport,
     ) -> Result<(), SeamError> {
+        if deep.is_empty() {
+            return Ok(());
+        }
         let stage = EmbedStage::start(Arc::clone(&self.embedder), Arc::clone(&self.store));
         let mut buffer = RowBuffer::default();
         let planned = stream::iter(deep)
-            .map(|source| {
+            .map(|input| {
                 let planner = Arc::clone(&planner);
-                Spawned(tokio::spawn(async move { planner.plan(&source).await }))
+                Spawned(tokio::spawn(async move { planner.plan(&input).await }))
             })
             .buffered(concurrency.get());
         futures_util::pin_mut!(planned);
@@ -581,6 +626,78 @@ impl SweepService {
         }
         report.embedded += stage.finish().await?;
         Ok(())
+    }
+
+    /// The folder pass (`folders`): deepest level first, each level decided
+    /// against the catalog the levels below just landed, then planned and
+    /// landed through the same pipeline as files. The level loop is bounded
+    /// by the walk's depth cap.
+    async fn index_folders(
+        &self,
+        folders: Vec<EnumeratedSource>,
+        mut run: FolderRun<'_>,
+        planner: Arc<Planner>,
+        concurrency: NonZeroUsize,
+        report: &mut IndexReport,
+    ) -> Result<(), SeamError> {
+        for level in folders::levels(folders) {
+            let decisions = self.decide_folders(&level, &mut run, report).await?;
+            for chunk in decisions.catalog.chunks(CATALOG_CHUNK) {
+                self.store.catalog_sources(chunk).await?;
+            }
+            self.index_deep(decisions.deep, Arc::clone(&planner), concurrency, report)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// The folder dirtiness pass for one level: compose each folder's
+    /// listing from the catalog, compare its digest with the recorded one,
+    /// and spend the run's deep budget on the dirty ones. Folders have no
+    /// modified-after cutoff of their own — a directory's timestamp is not
+    /// its content's recency — but a folder none of whose children is
+    /// deep-indexed yet stays catalog-only, so the cutoff and the budget
+    /// reach it through them.
+    async fn decide_folders<'a>(
+        &self,
+        level: &'a [EnumeratedSource],
+        run: &mut FolderRun<'_>,
+        report: &mut IndexReport,
+    ) -> Result<FolderDecisions<'a>, SeamError> {
+        let mut decisions = FolderDecisions {
+            catalog: Vec::new(),
+            deep: Vec::new(),
+        };
+        for folder in level {
+            let content = folders::compose_content(&self.store, folder).await?;
+            let meta = self.store.index_meta(&folder.address).await?;
+            let dirty =
+                folders::is_dirty(meta.as_ref(), &content.digest, run.registrations, run.sweep_shape);
+            if !dirty && !run.dials.rebuild {
+                report.unchanged += 1;
+                continue;
+            }
+            let has_indexed_child = content.indexed_children > 0;
+            if !has_indexed_child || !run.dials.deep_budget.allows(run.deep_count) {
+                decisions.catalog.push(CatalogEntry {
+                    address: &folder.address,
+                    envelope: &folder.envelope,
+                    raw_bytes: folder.raw_bytes,
+                    mark: CatalogMark::CatalogOnly,
+                });
+                report.catalog_only += 1;
+                continue;
+            }
+            run.deep_count = run
+                .deep_count
+                .checked_add(1)
+                .ok_or_else(|| SeamError::failed("more than u32::MAX sources chosen for deep indexing"))?;
+            decisions.deep.push(PlanInput {
+                source: folder.clone(),
+                content: PlanContent::Composed(content.text),
+            });
+        }
+        Ok(decisions)
     }
 
     /// Remove cataloged sources under the swept scope that enumeration no

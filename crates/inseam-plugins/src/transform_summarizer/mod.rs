@@ -144,7 +144,12 @@ impl Transform for SummarizerTransform {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use inseam_kernel::address::{ContentLength, Envelope, Timestamp};
+    use inseam_kernel::address::{Address, ContentLength, Envelope, Timestamp};
+
+    fn test_address() -> &'static Address {
+        static ADDRESS: std::sync::OnceLock<Address> = std::sync::OnceLock::new();
+        ADDRESS.get_or_init(|| "inseam://fs-test/tmp/note.md".parse().expect("valid address"))
+    }
 
     fn envelope(content_type: &str, hint: &str) -> Envelope {
         Envelope {
@@ -166,6 +171,7 @@ mod tests {
         text: Option<&'a str>,
     ) -> TransformCtx<'a> {
         TransformCtx {
+            address: test_address(),
             envelope,
             mimetype,
             is_root: true,

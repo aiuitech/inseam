@@ -23,6 +23,7 @@ How merging works: when your entry matches a base entry's id, your `config` **re
 | `embedder` | `embedder` | `provider` = `endpoint` \| `hashed` \| `none`, `model`, `dimensions` (unset = the model's native width; validated against the model), `vectors` = `all` \| `summaries` ([indexing/embeddings.md](indexing/embeddings.md)) |
 | `transforms` | `transforms` | — (the registry) |
 | `markdown` | `transform-markdown` | — |
+| `directory` | `transform-directory` | — |
 | `chunker` | `transform-chunker` | `target_chars` (1600) |
 | `summarizer` | `transform-summarizer` | `target_chars` (400), `llm_call_budget` (500), `llm_lane` (`interactive`; `batch` parks summaries into batch-API jobs — `inseam index --batch` does it per run) |
 | `entities` | `transform-entities` | `max_per_source` (12), `llm_call_budget` (500), `llm_lane` (`interactive`) |

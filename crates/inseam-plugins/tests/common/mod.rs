@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use inseam_kernel::address::{Address, Locator};
 use inseam_kernel::substrate::{Composition, Kernel, PluginFactory};
-use inseam_seams::connection::{HostKind, CONNECTIONS};
-use inseam_seams::operations::{Operations, QueryRequest, OPERATIONS};
+use inseam_seams::connection::{CONNECTIONS, HostKind};
+use inseam_seams::operations::{OPERATIONS, Operations, QueryRequest, QueryResult};
 
 pub const OFFLINE_BASE: &str = r#"
 [[entry]]
@@ -35,6 +35,10 @@ plugin = "transforms"
 [[entry]]
 id = "markdown"
 plugin = "transform-markdown"
+
+[[entry]]
+id = "directory"
+plugin = "transform-directory"
 
 [[entry]]
 id = "chunker"
@@ -63,7 +67,11 @@ pub async fn boot(data_dir: &Path, overlay: &str) -> Kernel {
 
 /// Boot with test-only plugin factories beside the first-party set — how a
 /// test mounts a transform that exists nowhere but in that test.
-pub async fn boot_with(data_dir: &Path, overlay: &str, extra: Vec<Arc<dyn PluginFactory>>) -> Kernel {
+pub async fn boot_with(
+    data_dir: &Path,
+    overlay: &str,
+    extra: Vec<Arc<dyn PluginFactory>>,
+) -> Kernel {
     let mut factories = inseam_plugins::factories();
     factories.extend(extra);
     let mut kernel = Kernel::boot(data_dir, factories, Vec::new())
@@ -96,7 +104,10 @@ pub fn address_of(kernel: &Kernel, path: &Path) -> Address {
         .expect("utf-8 path")
         .trim_start_matches('/')
         .to_string();
-    Address::new(host, Locator::new(locator).expect("non-empty relative locator"))
+    Address::new(
+        host,
+        Locator::new(locator).expect("non-empty relative locator"),
+    )
 }
 
 pub async fn reconcile(kernel: &mut Kernel, overlay: &str) {
@@ -127,7 +138,27 @@ pub fn ops(kernel: &Kernel) -> Arc<dyn Operations> {
     kernel.service(&OPERATIONS).expect("operations bound")
 }
 
+/// File results for a query. Folders are sources and rank too — their
+/// summaries cover what they hold — but most tests are about files; the
+/// folder tests count folders explicitly.
 pub async fn hits(operations: &dyn Operations, text: &str) -> usize {
+    results(operations, text)
+        .await
+        .iter()
+        .filter(|r| r.envelope.source_type != "directory")
+        .count()
+}
+
+/// Folder results for a query.
+pub async fn folder_hits(operations: &dyn Operations, text: &str) -> usize {
+    results(operations, text)
+        .await
+        .iter()
+        .filter(|r| r.envelope.source_type == "directory")
+        .count()
+}
+
+async fn results(operations: &dyn Operations, text: &str) -> Vec<QueryResult> {
     operations
         .query(QueryRequest {
             text: text.into(),
@@ -136,5 +167,4 @@ pub async fn hits(operations: &dyn Operations, text: &str) -> usize {
         .await
         .expect("queries")
         .results
-        .len()
 }

@@ -209,7 +209,7 @@ async fn loaded_ocr_transcribes_images_through_the_seam() {
         })
         .await
         .expect("indexes");
-    assert_eq!(report.indexed, 2);
+    assert_eq!(report.indexed, 3, "two sources and their folder: {report:?}");
     assert_eq!(
         report.llm_calls.get("ocr"),
         Some(&1),
@@ -275,9 +275,10 @@ async fn loaded_ocr_transcribes_images_through_the_seam() {
         })
         .await
         .expect("sweeps");
+    // The image's envelope summary is the same, so its folder is untouched.
     assert_eq!(
         (report.indexed, report.unchanged),
-        (1, 1),
+        (1, 2),
         "only the image re-indexed after unmounting ocr: {report}"
     );
     kernel.shutdown().await;

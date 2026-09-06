@@ -22,6 +22,7 @@ pub mod oauth;
 pub mod operations;
 pub mod sweep;
 pub mod transform_chunker;
+pub mod transform_directory;
 pub mod transform_entities;
 pub mod transform_links;
 pub mod transform_markdown;
@@ -45,6 +46,7 @@ pub fn factories() -> Vec<Arc<dyn PluginFactory>> {
         Arc::new(embedder::EmbedderFactory),
         Arc::new(transforms::TransformsRegistryFactory),
         Arc::new(transform_markdown::MarkdownFactory),
+        Arc::new(transform_directory::DirectoryFactory),
         Arc::new(transform_chunker::ChunkerFactory),
         Arc::new(transform_summarizer::SummarizerFactory),
         Arc::new(transform_entities::EntityExtractorFactory),

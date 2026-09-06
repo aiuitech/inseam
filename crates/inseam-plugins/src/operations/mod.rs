@@ -280,7 +280,7 @@ impl Operations for OperationsService {
         // structured application types — one list shared with `fetch` and
         // the chunker, so the three never disagree. Everything else (media,
         // PDFs) is served through a text descendant below.
-        if is_indexable_text(&source.envelope.content_type) {
+        if serves_text(&source.envelope.content_type) {
             let text = self
                 .connection_to(&source.address.host)?
                 .read_lines(&source.address, start, end)
@@ -321,7 +321,7 @@ impl Operations for OperationsService {
     async fn fetch(&self, request: FetchRequest) -> Result<FetchResponse, SeamError> {
         self.guard("fetch")?;
         let source = self.source_at(&request.address).await?;
-        if !is_indexable_text(&source.envelope.content_type) {
+        if !serves_text(&source.envelope.content_type) {
             return Err(SeamError::BinaryFetch(
                 source.address,
                 source.envelope.content_type.to_string(),
@@ -544,6 +544,14 @@ impl Operations for OperationsService {
 }
 
 /// A composition edit's failure in seam vocabulary: a mount the node
+/// What `fetch` and `scan` read through the connection as text: the index's
+/// text types, plus folders — a folder has no bytes, and its host serves
+/// its name listing as text (`design/indexing.md`, folders). Folders stay
+/// out of `is_indexable_text` itself so no text transform ever claims one.
+fn serves_text(mimetype: &inseam_kernel::fragment::Mimetype) -> bool {
+    is_indexable_text(mimetype) || mimetype.is_directory()
+}
+
 /// refused or rolled back is a refusal the owner acts on; a runtime that
 /// does not apply edits is a missing capability; the rest failed.
 fn edit_error(error: SubstrateError) -> SeamError {

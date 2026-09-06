@@ -242,7 +242,7 @@ async fn index_with_reference(
         })
         .await
         .expect("indexes");
-    assert_eq!(report.indexed, 1, "{report}");
+    assert_eq!(report.indexed, 2, "the source and its folder: {report}");
     kernel
 }
 

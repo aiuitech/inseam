@@ -69,10 +69,10 @@ async fn a_node_stewards_several_hosts_and_scopes_are_explicit() {
         })
         .await
         .expect("indexes");
-    assert_eq!(report.indexed, 1);
+    assert_eq!(report.indexed, 2, "the note and the folder holding it");
     let two = HostId::new("fs-two").expect("valid");
     let one = HostId::new("fs-one").expect("valid");
-    assert_eq!(kernel.store().sources_of_host(&two).await.expect("ok").len(), 1);
+    assert_eq!(kernel.store().sources_of_host(&two).await.expect("ok").len(), 2);
     assert!(kernel.store().sources_of_host(&one).await.expect("ok").is_empty());
 
     // A host nobody stewards is unknown, not a crash.

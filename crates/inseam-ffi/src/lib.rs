@@ -84,6 +84,10 @@ id = "markdown"
 plugin = "transform-markdown"
 
 [[entry]]
+id = "directory"
+plugin = "transform-directory"
+
+[[entry]]
 id = "chunker"
 plugin = "transform-chunker"
 
@@ -1349,7 +1353,7 @@ mod tests {
         let report = unsafe { inseam_node_index_dir(node, root.as_ptr(), false, &mut err) };
         assert!(!report.is_null(), "{}", take_string(err));
         let report: serde_json::Value = serde_json::from_str(&take_string(report)).unwrap();
-        assert_eq!(report["indexed"], 2, "{report}");
+        assert_eq!(report["indexed"], 3, "two notes and their folder: {report}");
         // SAFETY: the test still owns the fake through the shell's pointer.
         let calls = unsafe { &*user_data.cast::<FakeEmbedder>() }
             .calls

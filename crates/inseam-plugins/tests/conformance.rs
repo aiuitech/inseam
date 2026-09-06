@@ -18,7 +18,7 @@ use inseam_seams::transforms::TRANSFORMS;
 fn conformance_config(name: &str) -> toml::Table {
     let raw = match name {
         "connections" | "connection-fs" | "connection-google" | "connection-web" | "oauth"
-        | "llm-endpoint" | "transforms" | "transform-markdown" | "transform-chunker"
+        | "llm-endpoint" | "transforms" | "transform-markdown" | "transform-directory" | "transform-chunker"
         | "transform-summarizer" | "transform-entities" | "transform-links" | "finder" | "sweep"
         | "operations" => "",
         "embedder" => "provider = \"hashed\"\nmodel = \"hashed\"\ndimensions = 8",
@@ -38,6 +38,7 @@ fn conformance_config(name: &str) -> toml::Table {
 fn golden_checks_for(name: &str) -> Option<PathBuf> {
     let file = match name {
         "markdown" => "transform_markdown/markdown.checks.toml",
+        "directory" => "transform_directory/directory.checks.toml",
         "chunker" => "transform_chunker/chunker.checks.toml",
         "summarizer" => "transform_summarizer/summarizer.checks.toml",
         "entity-extractor" => "transform_entities/entity-extractor.checks.toml",
@@ -64,11 +65,11 @@ async fn linked_transforms_claim_deterministically_and_survive_hostile_inputs() 
     .await;
     let registrations = kernel.service(&TRANSFORMS).expect("transforms bound").snapshot();
     assert!(
-        registrations.len() >= 5,
-        "markdown, chunker, summarizer, entities, links all registered: {}",
+        registrations.len() >= 6,
+        "markdown, directory, chunker, summarizer, entities, links all registered: {}",
         registrations.len()
     );
-    inseam_conformance::batter_transforms(&kernel, &["text/uri-list"]).await;
+    inseam_conformance::batter_transforms(&kernel, &["text/uri-list", "inode/directory"]).await;
 }
 
 #[tokio::test]

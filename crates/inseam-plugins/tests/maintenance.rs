@@ -90,6 +90,7 @@ async fn vanished_sources_are_removed_and_their_entities_collected() {
     assert_eq!(report.removed, 1, "vanished source reconciled: {report}");
     assert_eq!(report.keyed_removed, 1, "unanchored keyed fragment collected");
     assert_eq!(report.unchanged, 1, "the keeper was untouched");
+    assert_eq!(report.indexed, 1, "the folder's listing lost an entry: {report}");
 
     assert_eq!(common::hits(ops.as_ref(), "xylophones").await, 0, "no stale results");
     assert_eq!(common::hits(ops.as_ref(), "kazoos").await, 1);
@@ -97,7 +98,7 @@ async fn vanished_sources_are_removed_and_their_entities_collected() {
     // A file that reappears is simply new — no tombstone in the way.
     std::fs::write(&doomed, "# Doomed\n\nnotes about xylophones\n").expect("writes");
     let report = index(ops.as_ref(), corpus.path()).await;
-    assert_eq!(report.indexed, 1);
+    assert_eq!(report.indexed, 2, "the note and its folder: {report}");
     assert_eq!(common::hits(ops.as_ref(), "xylophones").await, 1);
 }
 
@@ -112,7 +113,7 @@ async fn ignore_rules_evict_covered_sources_and_readmit_them_when_lifted() {
 
     let mut kernel = common::boot(data.path(), "").await;
     let report = index(common::ops(&kernel).as_ref(), corpus.path()).await;
-    assert_eq!(report.indexed, 2);
+    assert_eq!(report.indexed, 4, "two notes, `Archive`, and the root: {report}");
     assert_eq!(report.ignored, 0);
     assert_eq!(common::hits(common::ops(&kernel).as_ref(), "ocarinas").await, 1);
 
@@ -130,9 +131,12 @@ async fn ignore_rules_evict_covered_sources_and_readmit_them_when_lifted() {
     )
     .await;
     let report = index(common::ops(&kernel).as_ref(), corpus.path()).await;
-    assert_eq!(report.ignored, 1, "the archived note is kept out: {report}");
-    assert_eq!(report.removed, 1, "and its index subtree is gone");
+    // The note leaves, and so does `Archive`: a folder none of whose files
+    // are admitted is no source. The root re-indexes without the entry.
+    assert_eq!(report.ignored, 2, "the archived note and its folder are kept out: {report}");
+    assert_eq!(report.removed, 2, "and their index subtrees are gone");
     assert_eq!(report.unchanged, 1);
+    assert_eq!(report.indexed, 1);
     assert_eq!(common::hits(common::ops(&kernel).as_ref(), "ocarinas").await, 0);
     assert_eq!(common::hits(common::ops(&kernel).as_ref(), "banjos").await, 1);
 
@@ -141,7 +145,7 @@ async fn ignore_rules_evict_covered_sources_and_readmit_them_when_lifted() {
     common::reconcile(&mut kernel, "").await;
     let report = index(common::ops(&kernel).as_ref(), corpus.path()).await;
     assert_eq!(report.ignored, 0);
-    assert_eq!(report.indexed, 1);
+    assert_eq!(report.indexed, 3, "the note, `Archive`, and the root again: {report}");
     assert_eq!(common::hits(common::ops(&kernel).as_ref(), "ocarinas").await, 1);
 }
 
@@ -203,7 +207,7 @@ async fn shape_config_changes_reindex_and_query_time_changes_do_not() {
     )
     .await;
     let report = index(common::ops(&kernel).as_ref(), corpus.path()).await;
-    assert_eq!(report.indexed, 2, "stamp mismatch re-indexes: {report}");
+    assert_eq!(report.indexed, 3, "stamp mismatch re-indexes: {report}");
     assert_eq!(report.unchanged, 0);
 
     // Query-time tier: finder tuning must not dirty anything.
@@ -224,7 +228,7 @@ async fn shape_config_changes_reindex_and_query_time_changes_do_not() {
     )
     .await;
     let report = index(common::ops(&kernel).as_ref(), corpus.path()).await;
-    assert_eq!(report.unchanged, 2, "query-time tuning is free: {report}");
+    assert_eq!(report.unchanged, 3, "query-time tuning is free: {report}");
     assert_eq!(report.indexed, 0);
 
     // Run-metering tier: budgets bound runs, they don't define output.
@@ -240,7 +244,7 @@ async fn shape_config_changes_reindex_and_query_time_changes_do_not() {
     )
     .await;
     let report = index(common::ops(&kernel).as_ref(), corpus.path()).await;
-    assert_eq!(report.unchanged, 2, "metering changes are free: {report}");
+    assert_eq!(report.unchanged, 3, "metering changes are free: {report}");
 }
 
 #[tokio::test]
@@ -259,9 +263,10 @@ async fn plugin_churn_dirties_only_sources_the_plugins_claims_touch() {
     // dirtiness discovered by the sweep, never triggered by the lifecycle.
     common::reconcile(&mut kernel, "[[entry]]\nid = \"chunker\"\ndisabled = true").await;
     let report = index(common::ops(&kernel).as_ref(), corpus.path()).await;
+    // The folder's listing carries the same summary, so it is untouched.
     assert_eq!(
         (report.indexed, report.unchanged),
-        (1, 1),
+        (1, 2),
         "only the txt source re-indexes: {report}"
     );
 
@@ -271,13 +276,13 @@ async fn plugin_churn_dirties_only_sources_the_plugins_claims_touch() {
     let report = index(common::ops(&kernel).as_ref(), corpus.path()).await;
     assert_eq!(
         (report.indexed, report.unchanged),
-        (1, 1),
+        (1, 2),
         "remount dirties only claimed sources: {report}"
     );
 
     // Steady state after the churn.
     let report = index(common::ops(&kernel).as_ref(), corpus.path()).await;
-    assert_eq!(report.unchanged, 2, "converged: {report}");
+    assert_eq!(report.unchanged, 3, "converged: {report}");
 }
 
 #[tokio::test]
@@ -294,17 +299,24 @@ async fn catalog_only_sources_converge_to_deep_indexed_across_runs() {
     .await;
     let ops = common::ops(&kernel);
 
+    // Folders spend the same budget, after the files: one note lands, the
+    // other note and the folder wait.
     let first = index(ops.as_ref(), corpus.path()).await;
-    assert_eq!(first.indexed, 1);
-    assert_eq!(first.catalog_only, 1);
+    assert_eq!(first.indexed, 1, "{first}");
+    assert_eq!(first.catalog_only, 2, "{first}");
 
-    // The catalog-only row carries no stamp, so the next run finishes it.
+    // The catalog-only rows carry no stamp, so the next runs finish them.
     let second = index(ops.as_ref(), corpus.path()).await;
-    assert_eq!(second.indexed, 1, "the deferred source converges: {second}");
+    assert_eq!(second.indexed, 1, "the deferred note converges: {second}");
     assert_eq!(second.unchanged, 1);
+    assert_eq!(second.catalog_only, 1, "the folder waits one more run: {second}");
 
     let third = index(ops.as_ref(), corpus.path()).await;
-    assert_eq!(third.unchanged, 2, "steady state: {third}");
+    assert_eq!(third.indexed, 1, "the folder converges: {third}");
+    assert_eq!(third.unchanged, 2);
+
+    let fourth = index(ops.as_ref(), corpus.path()).await;
+    assert_eq!(fourth.unchanged, 3, "steady state: {fourth}");
 }
 
 #[tokio::test]
@@ -326,7 +338,7 @@ async fn catalog_only_run_catalogs_everything_and_deep_indexes_nothing() {
         })
         .await
         .expect("sweeps");
-    assert_eq!(ingest.catalog_only, 2, "{ingest}");
+    assert_eq!(ingest.catalog_only, 3, "two notes and their folder: {ingest}");
     assert_eq!(ingest.indexed, 0);
     assert_eq!(ingest.fragments, 0);
 
@@ -340,18 +352,25 @@ async fn catalog_only_run_catalogs_everything_and_deep_indexes_nothing() {
         })
         .await
         .expect("lists");
-    assert_eq!(listing.sources, 2);
+    assert_eq!(listing.sources, 3);
     assert_eq!(listing.indexed, 0);
-    assert_eq!(listing.pending, 2);
-    assert_eq!(listing.entries.len(), 2);
+    assert_eq!(listing.pending, 3);
+    assert_eq!(listing.entries.len(), 3);
     assert!(listing.entries.iter().all(|e| !e.indexed));
-    assert!(listing.entries.iter().all(|e| e.raw_bytes > 0));
+    // Files carry their byte size; the folder has no bytes of its own.
+    let is_folder = |content_type: &str| content_type == "inode/directory";
+    let files = listing.entries.iter().filter(|e| !is_folder(&e.content_type)).count();
+    assert_eq!(files, 2);
+    assert!(listing
+        .entries
+        .iter()
+        .all(|e| (e.raw_bytes > 0) == !is_folder(&e.content_type)));
     assert_eq!(common::hits(ops.as_ref(), "alpha").await, 0);
 
     // The request's budget never outlives its run: an unqualified run picks
     // the composition's (unlimited) budget and finishes the job.
     let second = index(ops.as_ref(), corpus.path()).await;
-    assert_eq!(second.indexed, 2, "{second}");
+    assert_eq!(second.indexed, 3, "{second}");
     let listing = ops
         .catalog(CatalogRequest {
             host: None,
@@ -360,7 +379,7 @@ async fn catalog_only_run_catalogs_everything_and_deep_indexes_nothing() {
         })
         .await
         .expect("lists");
-    assert_eq!(listing.indexed, 2);
+    assert_eq!(listing.indexed, 3);
     assert_eq!(listing.pending, 0);
     assert_eq!(listing.entries.len(), 1, "limit bounds entries, not counts");
     assert_eq!(common::hits(ops.as_ref(), "alpha").await, 1);
@@ -386,7 +405,7 @@ async fn request_budget_overrides_the_composition_for_one_run() {
         .await
         .expect("sweeps");
     assert_eq!(report.indexed, 2, "{report}");
-    assert_eq!(report.catalog_only, 1);
+    assert_eq!(report.catalog_only, 2, "the third note and the folder: {report}");
 }
 
 #[tokio::test]
@@ -453,7 +472,7 @@ async fn embedding_change_reembeds_in_place_without_reindexing() {
     let report = index(ops.as_ref(), corpus.path()).await;
     assert!(report.reembedded > 0, "vectors rebuilt: {report}");
     assert_eq!(report.indexed, 0, "the graph was untouched — no transforms re-ran");
-    assert_eq!(report.unchanged, 1);
+    assert_eq!(report.unchanged, 2, "the note and its folder: {report}");
     assert!(!kernel.store().reembed_pending());
     assert_eq!(common::hits(ops.as_ref(), "kitchen renovation").await, 1);
 }
@@ -483,6 +502,9 @@ async fn cutoff_catalogs_without_indexing_and_never_evicts() {
     let report = index(common::ops(&kernel).as_ref(), corpus.path()).await;
     assert_eq!(report.skipped_cutoff, 1);
     assert_eq!(report.indexed, 0);
+    // The folder has no cutoff of its own, but nothing under it is indexed,
+    // so it waits, cataloged, like its file.
+    assert_eq!(report.catalog_only, 1, "{report}");
     // Cataloged — the map is complete — but not indexed, so not findable.
     assert_eq!(
         common::hits(common::ops(&kernel).as_ref(), "trilobites").await,
@@ -492,7 +514,7 @@ async fn cutoff_catalogs_without_indexing_and_never_evicts() {
     // Loosening the horizon picks it up: it was never marked indexed.
     common::reconcile(&mut kernel, "").await;
     let report = index(common::ops(&kernel).as_ref(), corpus.path()).await;
-    assert_eq!(report.indexed, 1, "horizon loosened: {report}");
+    assert_eq!(report.indexed, 2, "horizon loosened, folder follows: {report}");
     assert_eq!(
         common::hits(common::ops(&kernel).as_ref(), "trilobites").await,
         1

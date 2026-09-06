@@ -154,7 +154,7 @@ async fn links_become_typed_references_fetchable_through_the_web_host() {
         })
         .await
         .expect("indexes");
-    assert_eq!(report.indexed, 1, "{report}");
+    assert_eq!(report.indexed, 2, "the note and its folder: {report}");
 
     // Naming the web host as a scope is refused, not an empty sweep.
     let refused = ops

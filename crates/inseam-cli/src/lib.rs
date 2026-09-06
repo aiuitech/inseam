@@ -81,6 +81,10 @@ id = "markdown"
 plugin = "transform-markdown"
 
 [[entry]]
+id = "directory"
+plugin = "transform-directory"
+
+[[entry]]
 id = "chunker"
 plugin = "transform-chunker"
 

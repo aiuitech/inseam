@@ -4,6 +4,7 @@
 //! Service-specific connections (Gmail, Slack, ...) register the same way
 //! on the same seam, linked or loaded.
 
+use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -19,7 +20,7 @@ use inseam_seams::connection::{
     register_as_effect, Capabilities, Connection, EnumeratedSource, HostDescription, HostKind,
     Registration,
 };
-use inseam_seams::text::slice_lines_from_reader;
+use inseam_seams::text::{slice_lines, slice_lines_from_reader};
 use inseam_seams::SeamError;
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -225,8 +226,27 @@ impl FsHost {
     }
 
     async fn read_text_at(&self, path: &Path) -> Result<String, SeamError> {
+        if path.is_dir() {
+            return self.read_directory_text_at(path).await;
+        }
         let bytes = self.read_bytes_at(path).await?;
         Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// A folder's text is its name listing ([`directory_text`]): the fetch
+    /// of a folder address. Under the same gate as a file read.
+    async fn read_directory_text_at(&self, path: &Path) -> Result<String, SeamError> {
+        let _permit = self
+            .reads
+            .acquire()
+            .await
+            .map_err(|e| SeamError::failed(format!("read {}: {e}", path.display())))?;
+        assert!(self.reads.available_permits() < READS_IN_FLIGHT_MAX);
+        let path = path.to_path_buf();
+        let skip_hidden = self.walk.skip_hidden;
+        tokio::task::spawn_blocking(move || directory_text(&path, skip_hidden))
+            .await
+            .map_err(|e| SeamError::failed(format!("directory read task failed: {e}")))?
     }
 
     /// Lines `start..=end` of a file, reading no further than line `end`:
@@ -234,6 +254,10 @@ impl FsHost {
     /// file. The read holds a permit like every other, and runs on the
     /// blocking pool because it is buffered synchronous disk work.
     async fn read_lines_at(&self, path: &Path, start: u64, end: u64) -> Result<String, SeamError> {
+        if path.is_dir() {
+            let text = self.read_directory_text_at(path).await?;
+            return slice_lines(&text, start, end);
+        }
         let _permit = self
             .reads
             .acquire()
@@ -314,6 +338,7 @@ impl FsHost {
     fn walk_sources(&self, dir: &Path) -> Result<Vec<EnumeratedSource>, SeamError> {
         let observed = Timestamp::from(SystemTime::now());
         let mut sources = Vec::new();
+        let mut folders: BTreeSet<PathBuf> = BTreeSet::new();
         let patterns = self.walk.clone();
         let walker = WalkBuilder::new(dir)
             // Every filter stated explicitly: the crate's defaults are
@@ -366,9 +391,93 @@ impl FsHost {
                 envelope,
                 raw_bytes: meta.len(),
             });
+            collect_folders_above(entry.path(), dir, &mut folders);
+        }
+        // Folders are sources too (`design/indexing.md`): every directory
+        // between an enumerated file and the scope root, the root included,
+        // so a folder exists in the index exactly when something under it
+        // does — an empty or wholly ignored directory is no source. They
+        // follow the files, in path order, so a run lands them last.
+        for folder in &folders {
+            sources.push(self.folder_source(folder, observed)?);
         }
         Ok(sources)
     }
+
+    /// A directory as a source: no bytes of its own (the sweep composes its
+    /// content from its children), its name as the hint, its own timestamps.
+    fn folder_source(&self, path: &Path, observed: Timestamp) -> Result<EnumeratedSource, SeamError> {
+        let meta = std::fs::metadata(path)
+            .map_err(|e| SeamError::failed(format!("metadata of {}: {e}", path.display())))?;
+        assert!(meta.is_dir());
+        Ok(EnumeratedSource {
+            address: self.address_for(path)?,
+            envelope: Envelope {
+                source_type: "directory".to_string(),
+                content_type: Mimetype::directory(),
+                length: ContentLength::Bytes(0),
+                created: meta.created().ok().map(Timestamp::from),
+                modified: meta.modified().ok().map(Timestamp::from),
+                observed,
+                properties: Vec::new(),
+                hint: path.file_name().and_then(|n| n.to_str()).map(str::to_string),
+                content_digest: None,
+            },
+            raw_bytes: 0,
+        })
+    }
+}
+
+/// Paths a directory may nest below the scope root before the walk is
+/// considered broken: a bound on the ancestor climb, not a limit users meet.
+const FOLDER_DEPTH_MAX: u32 = 4_096;
+
+/// Add every directory from `file`'s parent up to `root` (inclusive) to
+/// `folders`, stopping early at one already recorded — its ancestors are
+/// recorded too, since they were added on the same climb. The filesystem
+/// root `/` has no locator and is never a folder source.
+fn collect_folders_above(file: &Path, root: &Path, folders: &mut BTreeSet<PathBuf>) {
+    let mut ancestor = file.parent();
+    let mut climbed: u32 = 0;
+    while let Some(dir) = ancestor {
+        climbed += 1;
+        assert!(climbed <= FOLDER_DEPTH_MAX, "the ancestor climb is bounded by the path depth");
+        if !dir.starts_with(root) || dir.parent().is_none() {
+            break;
+        }
+        if !folders.insert(dir.to_path_buf()) {
+            break;
+        }
+        ancestor = dir.parent();
+    }
+}
+
+/// A directory's text, as `fetch` serves it: its entries' names, one per
+/// line in name order, directories marked with a trailing `/`. Hidden
+/// entries follow the walk's `skip_hidden` rule so the listing matches
+/// what enumeration would admit at this level. Bounded by the directory's
+/// entry count.
+fn directory_text(path: &Path, skip_hidden: bool) -> Result<String, SeamError> {
+    let entries = std::fs::read_dir(path)
+        .map_err(|e| SeamError::failed(format!("read {}: {e}", path.display())))?;
+    let mut names: Vec<String> = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| SeamError::failed(format!("read {}: {e}", path.display())))?;
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if skip_hidden && name.starts_with('.') {
+            continue;
+        }
+        let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
+        names.push(if is_dir { format!("{name}/") } else { name });
+    }
+    names.sort();
+    let mut text = names.join("\n");
+    if !text.is_empty() {
+        text.push('\n');
+    }
+    Ok(text)
 }
 
 #[async_trait::async_trait]
@@ -453,12 +562,16 @@ mod tests {
         FsHost::new(HostId::new("fs-test").expect("valid host id"), walk)
     }
 
+    /// The files enumerated under `dir`, relative to it. Folders are
+    /// sources too, but the ignore tests are about which files survive;
+    /// the folder test covers folders.
     async fn names(host: &FsHost, dir: &Path) -> Vec<String> {
         let mut names: Vec<String> = host
             .enumerate(dir.to_str().expect("utf8"))
             .await
             .expect("enumerates")
             .iter()
+            .filter(|s| s.envelope.source_type == "file")
             .map(|s| {
                 s.address
                     .locator
@@ -525,10 +638,66 @@ mod tests {
             .expect("enumerates");
         let names: Vec<_> = sources
             .iter()
+            .filter(|s| s.envelope.source_type == "file")
             .filter_map(|s| s.envelope.hint.as_deref())
             .collect();
         assert_eq!(names, vec!["note.md"]);
         assert_eq!(sources[0].envelope.content_type.essence(), "text/markdown");
+    }
+
+    #[tokio::test]
+    async fn enumerate_lists_the_folders_above_every_file_after_the_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("a/deep")).expect("mkdir");
+        std::fs::create_dir_all(dir.path().join("empty")).expect("mkdir");
+        std::fs::create_dir_all(dir.path().join("ignored")).expect("mkdir");
+        std::fs::write(dir.path().join("a/deep/note.md"), "# hi\n").expect("write");
+        std::fs::write(dir.path().join("top.txt"), "top\n").expect("write");
+        std::fs::write(dir.path().join("ignored/x.txt"), "x\n").expect("write");
+        std::fs::write(dir.path().join(".inseamignore"), "ignored/\n").expect("write");
+
+        let sources = host()
+            .enumerate(dir.path().to_str().expect("utf8"))
+            .await
+            .expect("enumerates");
+        let root = dir.path().canonicalize().expect("canonical");
+        let root_name = root.file_name().and_then(|n| n.to_str()).expect("utf8").to_string();
+        let listed: Vec<(String, &str)> = sources
+            .iter()
+            .map(|s| (s.envelope.hint.clone().expect("hint"), s.envelope.source_type.as_str()))
+            .collect();
+        let files = listed.iter().filter(|(_, t)| *t == "file").count();
+        assert_eq!(files, 2);
+        let folders: Vec<&str> = listed
+            .iter()
+            .skip(files)
+            .map(|(name, kind)| {
+                assert_eq!(*kind, "directory");
+                name.as_str()
+            })
+            .collect();
+        // The scope root, `a`, and `a/deep`; never the empty directory nor
+        // the ignored one, and folders come after every file.
+        assert_eq!(folders, vec![root_name.as_str(), "a", "deep"]);
+        let folder = sources.iter().find(|s| s.envelope.hint.as_deref() == Some("deep")).expect("deep");
+        assert!(folder.envelope.content_type.is_directory());
+        assert_eq!(folder.raw_bytes, 0);
+        assert!(folder.address.locator.as_str().ends_with("/a/deep"));
+    }
+
+    #[tokio::test]
+    async fn a_folder_reads_as_its_name_listing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("sub")).expect("mkdir");
+        std::fs::write(dir.path().join("b.md"), "b\n").expect("write");
+        std::fs::write(dir.path().join("a.md"), "a\n").expect("write");
+        std::fs::write(dir.path().join(".hidden"), "h\n").expect("write");
+        let h = host();
+        let address = h.address_for(&dir.path().canonicalize().expect("canonical")).expect("addr");
+        let text = h.read_text(&address).await.expect("reads");
+        assert_eq!(text, "a.md\nb.md\nsub/\n");
+        assert_eq!(h.read_lines(&address, 2, 3).await.expect("reads"), "b.md\nsub/");
+        assert!(h.read_bytes(&address).await.is_err(), "a folder has no bytes");
     }
 
     #[tokio::test]
@@ -604,12 +773,15 @@ mod tests {
             .enumerate(dir.path().to_str().expect("utf8"))
             .await
             .expect("enumerate");
-        assert_eq!(sources.len(), 64);
+        assert_eq!(sources.len(), 65, "64 files and the folder holding them");
+        let files: Vec<&EnumeratedSource> =
+            sources.iter().filter(|s| s.envelope.source_type == "file").collect();
+        assert_eq!(files.len(), 64);
         let reads_total: usize = 2_048;
         let mut tasks = Vec::with_capacity(reads_total);
         for index in 0..reads_total {
             let host = host.clone();
-            let address = sources[index % sources.len()].address.clone();
+            let address = files[index % files.len()].address.clone();
             tasks.push(tokio::spawn(async move { host.read_bytes(&address).await }));
         }
         let mut landed: usize = 0;

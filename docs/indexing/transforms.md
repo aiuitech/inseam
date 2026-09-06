@@ -26,6 +26,7 @@ The root never carries a reference: its content is the source itself. Linked tra
 ## The first-party transforms
 
 - **Markdown** (structural, `text/markdown` roots) — splits the document by its own heading outline; sections nest as written, `http(s)` links become `text/uri-list` children (`links-to`). Documents with no headings fall back to chunking.
+- **Directory** (structural, `inode/directory` roots) — the handler for folder sources ([folders](#folders)): parses the listing the sweep composed and plants one `text/x-inseam-entry` fragment per child (`contains`), naming the child and its type and referencing its address, so `expand` on a folder walks to what it holds.
 - **Chunker** (structural, other indexable text roots) — paragraph-boundary chunks aimed at `target_chars` (hard break at twice that), with line extents.
 - **Summarizer** (enrichment, every root) — **mandatory**: every indexed source gets a summary fragment (`text/x-inseam-summary`; the root `derives` it). Three qualities depending on circumstance: LLM (when the capability is granted), extractive (when there's text but no LLM), envelope-derived (when the content was never read). The provenance rides the mimetype as `via=llm|extractive|envelope`.
 - **Links** (`transform-links`, structural, `text/uri-list` anywhere — not in the base composition) — the link follower: a link to content in its `follow` list (`image/*` by default) becomes a fragment of that type carrying a **content reference** to the link's web address, related `resolves-to` ([content references](#content-references)). The type comes from the URL's extension first, and from the resource's own headers when the [web host](web-host.md) is mounted and `probe` is on; a link whose type nothing can tell, or that the list excludes, stays a bare link. Without the web host the transform touches no network: references are typed offline and become fetchable once the host is mounted.
@@ -34,6 +35,12 @@ The root never carries a reference: its content is the source itself. Linked tra
 
 The sweep entry's limits prune every transform's output: a depth cap and a per-source fragment cap.
 
+## Folders
+
+A directory is a source too ([design/indexing.md](../../design/indexing.md), folders): type `inode/directory`, `source_type = "directory"`, no bytes of its own. Its content is a **listing** the sweep composes from the catalog once its children have landed — one header line, then one tab-separated line per direct child with the child's name, type, and summary (`(not indexed)` for a child no run has summarized yet), folders first, at most 2,000 entries (`inseam_seams::listing`). That text goes through the transforms like a file's: the summarizer reads it as prose, so a folder's summary is derived from its children's summaries and never from their content, and the directory transform turns it into entry fragments. Entry text is the child's name and type only — a child's summary lives on the child, and repeating it under the folder would rank the folder beside the child on every query.
+
+Because a folder's content is composed from landed state, folders index after every file, deepest level first ([maintenance.md](maintenance.md#how-a-run-moves-plan-in-parallel-land-in-order)). A folder's summary is served like any other: a query about what a folder holds ranks the folder as a result, and `expand` on it lists the entries with their `content_address`. `fetch` of a folder serves the host's name listing ([../finder/operations.md](../finder/operations.md)).
+
 ## Mimetypes the index defines
 
 | Mimetype | Meaning |
@@ -41,5 +48,6 @@ The sweep entry's limits prune every transform's output: a depth cap and a per-s
 | `text/x-inseam-summary;via=<provenance>` | the mandatory summary fragment |
 | `text/x-inseam-entity;kind=<kind>` | a deduplicated entity (the entity plugin's type; a keyed fragment) |
 | `text/uri-list` | a link found inside a fragment |
+| `text/x-inseam-entry` | one child of a folder's listing: its name and type as text, its address as a content reference ([folders](#folders)) |
 
 These are inseam's own derived types: no transform may claim them, and the wasm bridge refuses components that try to emit them.

@@ -143,7 +143,11 @@ impl Transform for EntityExtractorTransform {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use inseam_kernel::address::{ContentLength, Envelope, Timestamp};
+    use inseam_kernel::address::{Address, ContentLength, Envelope, Timestamp};
+
+    fn address() -> Address {
+        "inseam://fs-test/tmp/note.md".parse().expect("valid address")
+    }
 
     #[tokio::test]
     async fn without_llm_capability_emits_nothing() {
@@ -161,6 +165,7 @@ mod tests {
         let m = envelope.content_type.clone();
         let out = EntityExtractorTransform { max_per_source: 5 }
             .apply(TransformCtx {
+                address: &address(),
                 envelope: &envelope,
                 mimetype: &m,
                 is_root: true,

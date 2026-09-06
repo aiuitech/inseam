@@ -1,0 +1,38 @@
+# Golden checks for the `directory` linked transform (docs/plugins/validation.md),
+# run by the conformance suite through the transforms seam. A folder's text
+# is the listing the sweep composed from its landed children
+# (inseam_seams::listing): a header line, then one tab-separated line per
+# child — name, type, summary.
+
+# The claim: every listed child becomes an entry fragment the folder
+# `contains`, naming the child and referencing its address.
+[[check]]
+name = "plants an entry per listed child"
+mimetype = "inode/directory"
+text = "Folder notes: 1 folder, 2 files\nphotos\tinode/directory\tTrip photos.\nreno.md\ttext/markdown\tBudget notes for the kitchen.\nIMG_1.jpg\timage/jpeg\t(not indexed)\n"
+
+[check.expect]
+min_fragments = 3
+max_fragments = 3
+relation = "contains"
+mimetype = "text/x-inseam-entry"
+fragment_contains = "reno.md (text/markdown)"
+
+# The truncation marker is not a child.
+[[check]]
+name = "ignores the more-entries marker"
+mimetype = "inode/directory"
+text = "Folder big: 0 folders, 1 file\na.txt\ttext/plain\t(not indexed)\n(more entries not listed)\n"
+
+[check.expect]
+min_fragments = 1
+max_fragments = 1
+
+# The degrade path: text the node did not compose plants nothing.
+[[check]]
+name = "emits nothing when the text is withheld"
+mimetype = "inode/directory"
+
+[check.expect]
+min_fragments = 0
+max_fragments = 0

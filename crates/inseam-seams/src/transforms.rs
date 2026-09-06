@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use inseam_kernel::address::Envelope;
+use inseam_kernel::address::{Address, Envelope};
 use inseam_kernel::fragment::{FragmentKey, Mimetype, NewFragment, RelationKind, Sprout};
 use inseam_kernel::store::InventoryEntry;
 use inseam_kernel::substrate::{fnv1a, ApplyCx, PluginError, ServiceKey};
@@ -66,6 +66,10 @@ pub trait GrantedLlm: Send + Sync {
 /// Everything a transform application may see. Capabilities are handed in,
 /// never grabbed.
 pub struct TransformCtx<'a> {
+    /// The source being indexed. A transform that emits references relative
+    /// to it (a folder's entries, a document's relative links) builds them
+    /// from here; nothing else about the source is implied.
+    pub address: &'a Address,
     pub envelope: &'a Envelope,
     /// The claimed fragment's mimetype (the envelope's content type at the
     /// root; an emitted mimetype when a chained transform re-enters).

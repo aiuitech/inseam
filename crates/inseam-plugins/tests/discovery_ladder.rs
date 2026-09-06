@@ -55,12 +55,14 @@ async fn the_incremental_discovery_ladder_works_offline() {
         })
         .await
         .expect("indexes");
-    assert_eq!(report.sources_seen, 4);
-    assert_eq!(report.indexed, 4);
+    // Four files and the folder holding them.
+    assert_eq!(report.sources_seen, 5);
+    assert_eq!(report.indexed, 5);
     assert_eq!(report.llm_summaries, 0, "no llm mounted, no llm calls");
-    // Binary png gets an envelope summary; text gets extractive.
+    // Binary png gets an envelope summary; text and the folder's listing
+    // get extractive ones.
     assert_eq!(report.envelope_summaries, 1);
-    assert_eq!(report.extractive_summaries, 3);
+    assert_eq!(report.extractive_summaries, 4);
     assert!(report.fragments > 8, "sections + summaries: {report}");
     assert!(report.spent == 0.0);
 
@@ -75,7 +77,7 @@ async fn the_incremental_discovery_ladder_works_offline() {
         })
         .await
         .expect("indexes");
-    assert_eq!(again.unchanged, 4);
+    assert_eq!(again.unchanged, 5);
     assert_eq!(again.indexed, 0);
 
     // --- rung 1: query ---
@@ -294,7 +296,7 @@ async fn rebuild_reindexes_unchanged_sources() {
         })
         .await
         .expect("rebuilds");
-    assert_eq!(rebuilt.indexed, 1);
+    assert_eq!(rebuilt.indexed, 2, "the note and its folder");
     assert_eq!(rebuilt.unchanged, 0);
 
     // The index stays queryable and singular after the rebuild (no dupes).
@@ -332,7 +334,8 @@ async fn changed_sources_have_their_subtree_replaced() {
         })
         .await
         .expect("indexes");
-    assert_eq!(report.indexed, 1, "mtime/size change re-indexes");
+    // The note's new summary changes its folder's listing, so both re-index.
+    assert_eq!(report.indexed, 2, "mtime/size change re-indexes: {report}");
 
     assert_eq!(common::hits(ops.as_ref(), "ferns").await, 0, "stale fragments gone");
     assert_eq!(common::hits(ops.as_ref(), "orchids").await, 1);

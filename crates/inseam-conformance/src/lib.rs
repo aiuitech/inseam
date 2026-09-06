@@ -18,7 +18,7 @@ pub mod golden;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use inseam_kernel::address::{ContentLength, Envelope, Timestamp};
+use inseam_kernel::address::{Address, ContentLength, Envelope, Timestamp};
 use inseam_kernel::fragment::{Mimetype, Sprout};
 use inseam_kernel::substrate::{Kernel, PluginFactory};
 use inseam_seams::transforms::{
@@ -70,6 +70,15 @@ fn synthetic_envelope(mimetype: &Mimetype) -> Envelope {
     }
 }
 
+/// The address a check's source pretends to have: a fixed one, so a
+/// transform that builds references from it (the directory transform's
+/// entries) emits the same output on every run.
+fn synthetic_address() -> Address {
+    "inseam://conformance/check"
+        .parse()
+        .expect("the conformance address is valid")
+}
+
 /// The same hostile-input battery the wasm harness runs, aimed at a linked
 /// transform through the seam: text withheld, empty text, garbage text,
 /// never a granted LLM. The contract is identical across tiers — degrade to
@@ -86,6 +95,7 @@ async fn battery(registration: &Arc<Registration>, mimetype: &Mimetype) {
         let _output = registration
             .transform
             .apply(TransformCtx {
+                address: &synthetic_address(),
                 envelope: &envelope,
                 mimetype,
                 is_root: true,
@@ -242,6 +252,7 @@ async fn run_golden(
     let output = registration
         .transform
         .apply(TransformCtx {
+            address: &synthetic_address(),
             envelope: &envelope,
             mimetype: &mimetype,
             is_root: check.is_root,

@@ -30,7 +30,7 @@ async fn binary_sources_are_fetched_as_bytes_under_their_content_type() {
         })
         .await
         .expect("indexes");
-    assert_eq!(report.indexed, 2);
+    assert_eq!(report.indexed, 3, "two files and their folder");
 
     let png = common::address_of(&kernel, &corpus.path().join("logo.png"));
     let fetched = ops
