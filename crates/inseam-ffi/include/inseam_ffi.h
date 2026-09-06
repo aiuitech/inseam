@@ -39,6 +39,34 @@ InseamNode *inseam_node_open(const char *data_dir,
                              const char *composition_path,
                              char **error_out);
 
+/* The shell's own embedder (an on-device model), so a node needs no API
+ * key for vectors. embed receives count texts as a JSON array of strings
+ * and returns count × dimensions float32s in one row-major buffer, or
+ * NULL with error_out set. Callbacks may run on any thread, several at
+ * once. Strings are freed through free_string, buffers through
+ * free_floats; release runs exactly once at inseam_node_free. */
+typedef struct InseamEmbedderCallbacks {
+    float *(*embed)(void *user_data,
+                    const char *texts_json,
+                    uint32_t count,
+                    char **error_out);
+    void (*free_string)(void *user_data, char *s);
+    void (*free_floats)(void *user_data, float *floats, uint64_t count);
+    void (*release)(void *user_data);
+} InseamEmbedderCallbacks;
+
+/* Open the node with the shell's embedder mounted: embedder_json is
+ * {model, dimensions} (dimensions 1..=4096); callbacks is copied. The base
+ * composition's `embedder` entry is re-pointed at the `embedder-app` plugin
+ * beneath the node's own composition.toml, which still wins. On failure
+ * release is NOT called. */
+InseamNode *inseam_node_open_with_shell(const char *data_dir,
+                                        const char *composition_path,
+                                        const char *embedder_json,
+                                        const InseamEmbedderCallbacks *callbacks,
+                                        void *user_data,
+                                        char **error_out);
+
 /* Close a node and release its runtime. NULL is a no-op. */
 void inseam_node_free(InseamNode *node);
 
@@ -53,6 +81,55 @@ char *inseam_node_index_dir(const InseamNode *node,
                             const char *dir,
                             bool rebuild,
                             char **error_out);
+
+/* An app-bridged host: the shell enumerates and reads a host only it can
+ * reach (a Photos library, a Notes folder) and the node catalogs, indexes,
+ * and serves it like any other. Every callback may run on any thread, and
+ * several at once. Strings the shell returns (results and error_out
+ * messages) are freed through free_string, buffers through free_bytes;
+ * release runs exactly once when the node is done with the host — after an
+ * unregister and after every in-flight read — and is where the shell frees
+ * user_data. */
+typedef struct InseamHostCallbacks {
+    /* JSON array of {locator, source_type, content_type, bytes, created?,
+     * modified?, title?, properties?: [{key, value}]} under root
+     * (timestamps are Unix seconds). NULL with error_out set on failure. */
+    char *(*enumerate)(void *user_data, const char *root, char **error_out);
+    /* The raw bytes of one locator; length in *len_out. NULL with error_out
+     * set on failure. At most 256 MiB. */
+    uint8_t *(*read_bytes)(void *user_data,
+                           const char *locator,
+                           uint64_t *len_out,
+                           char **error_out);
+    void (*free_string)(void *user_data, char *s);
+    void (*free_bytes)(void *user_data, uint8_t *bytes, uint64_t len);
+    void (*release)(void *user_data);
+} InseamHostCallbacks;
+
+/* Register a bridged host. host_json is {kind, principal, display_name,
+ * capabilities?: {enumerates, change_feed, writable}}; the host id is
+ * derived from kind and principal. callbacks is copied. Returns the
+ * HostView JSON, or NULL with the reason — and then release is NOT called.
+ * At most 32 bridged hosts per node. */
+char *inseam_node_register_host(const InseamNode *node,
+                                const char *host_json,
+                                const InseamHostCallbacks *callbacks,
+                                void *user_data,
+                                char **error_out);
+
+/* Withdraw a bridged host. false with error_out set when no bridged host
+ * has that id. release may run after this returns. */
+bool inseam_node_unregister_host(const InseamNode *node,
+                                 const char *host_id,
+                                 char **error_out);
+
+/* Index a scope (root; "" for all) of one stewarded host. Returns a JSON
+ * IndexReport. */
+char *inseam_node_index_host(const InseamNode *node,
+                             const char *host_id,
+                             const char *root,
+                             bool rebuild,
+                             char **error_out);
 
 /* The hosts this node stewards, as a JSON array of HostView. */
 char *inseam_node_hosts(const InseamNode *node, char **error_out);

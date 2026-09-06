@@ -1493,6 +1493,7 @@ dependencies = [
 name = "inseam-ffi"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "base64",
  "inseam-kernel",
  "inseam-plugins",

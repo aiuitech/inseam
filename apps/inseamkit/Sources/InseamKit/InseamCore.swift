@@ -2,11 +2,11 @@ import CInseamFFI
 import Foundation
 
 /// An error surfaced by the Rust core across the FFI boundary.
-struct CoreError: LocalizedError {
-    let message: String
-    var errorDescription: String? { message }
+public struct CoreError: LocalizedError {
+    public let message: String
+    public var errorDescription: String? { message }
 
-    init(message: String) {
+    public init(message: String) {
         self.message = message
     }
 
@@ -23,16 +23,16 @@ struct CoreError: LocalizedError {
 
 /// Swift face of one open node: owns the FFI handle for its lifetime.
 /// FFI calls block, so callers run them off the main thread.
-final class CoreNode {
+public final class CoreNode {
     private var handle: OpaquePointer?
 
-    static func coreVersion() -> String {
+    public static func coreVersion() -> String {
         guard let pointer = inseam_version() else { return "unknown" }
         defer { inseam_string_free(pointer) }
         return String(cString: pointer)
     }
 
-    static func readSettings(at compositionURL: URL) throws -> ConfigurationSettings {
+    public static func readSettings(at compositionURL: URL) throws -> ConfigurationSettings {
         var error: UnsafeMutablePointer<CChar>?
         guard let json = inseam_settings_read(compositionURL.path, &error) else {
             throw CoreError(taking: error)
@@ -46,7 +46,7 @@ final class CoreNode {
         )
     }
 
-    static func writeSettings(
+    public static func writeSettings(
         _ settings: ConfigurationSettings,
         to compositionURL: URL
     ) throws {
@@ -60,7 +60,7 @@ final class CoreNode {
         }
     }
 
-    init(dataDir: URL) throws {
+    public init(dataDir: URL) throws {
         var error: UnsafeMutablePointer<CChar>?
         guard let handle = inseam_node_open(dataDir.path, nil, &error) else {
             throw CoreError(taking: error)
@@ -68,10 +68,22 @@ final class CoreNode {
         self.handle = handle
     }
 
+    /// Wrap a handle another opener produced (`Bridges.swift` opens with
+    /// the shell's embedder).
+    init(handle: OpaquePointer) {
+        self.handle = handle
+    }
+
+    /// Run one FFI call against the live handle, or fail closed.
+    func withHandle<T>(_ body: (OpaquePointer) throws -> T) throws -> T {
+        guard let handle else { throw CoreError(message: "node is closed") }
+        return try body(handle)
+    }
+
     /// Free the node — the kernel unwinds every fiber. Idempotent, and it
     /// blocks on kernel shutdown, so call it off the main thread. Closing
     /// explicitly lets a reopen release the data dir before the next boot.
-    func close() {
+    public func close() {
         if let handle {
             inseam_node_free(handle)
         }
@@ -84,21 +96,21 @@ final class CoreNode {
 
     /// Per-entry fiber health: which composition entries are active, and
     /// which are parked (failed, or pending on a failed one's services).
-    func health() throws -> [FiberHealth] {
+    public func health() throws -> [FiberHealth] {
         guard let handle else { throw CoreError(message: "node is closed") }
         return try decode([FiberHealth].self) { error in
             inseam_node_health(handle, &error)
         }
     }
 
-    func query(_ text: String, limit: UInt32 = 8) throws -> QueryResponse {
+    public func query(_ text: String, limit: UInt32 = 8) throws -> QueryResponse {
         guard let handle else { throw CoreError(message: "node is closed") }
         return try decode(QueryResponse.self) { error in
             inseam_node_query(handle, text, limit, &error)
         }
     }
 
-    func indexDirectory(_ dir: URL, rebuild: Bool = false) throws -> IndexReport {
+    public func indexDirectory(_ dir: URL, rebuild: Bool = false) throws -> IndexReport {
         guard let handle else { throw CoreError(message: "node is closed") }
         return try decode(IndexReport.self) { error in
             inseam_node_index_dir(handle, dir.path, rebuild, &error)
@@ -107,7 +119,7 @@ final class CoreNode {
 
     /// The hosts this node stewards — the filesystem, and each Google
     /// service once its grant is authorized.
-    func hosts() throws -> [HostView] {
+    public func hosts() throws -> [HostView] {
         guard let handle else { throw CoreError(message: "node is closed") }
         return try decode([HostView].self) { error in
             inseam_node_hosts(handle, &error)
@@ -115,7 +127,7 @@ final class CoreNode {
     }
 
     /// The OAuth grants the node holds and where each stands.
-    func grants() throws -> [GrantView] {
+    public func grants() throws -> [GrantView] {
         guard let handle else { throw CoreError(message: "node is closed") }
         return try decode([GrantView].self) { error in
             inseam_node_grants(handle, &error)
@@ -123,7 +135,7 @@ final class CoreNode {
     }
 
     /// Every composition entry as the running kernel sees it.
-    func plugins() throws -> [PluginView] {
+    public func plugins() throws -> [PluginView] {
         guard let handle else { throw CoreError(message: "node is closed") }
         return try decode([PluginView].self) { error in
             inseam_node_plugins(handle, &error)
@@ -133,7 +145,7 @@ final class CoreNode {
     /// Read and mount one plugin directory into this open node. Directory
     /// parsing and JSON encoding are bounded but blocking, so call off the
     /// main thread along with the FFI call.
-    func installPlugin(id: String, directory: URL) throws -> PluginView {
+    public func installPlugin(id: String, directory: URL) throws -> PluginView {
         guard let handle else { throw CoreError(message: "node is closed") }
         let request = try PluginUpload.request(id: id, directory: directory)
         let encoder = JSONEncoder()
@@ -146,17 +158,17 @@ final class CoreNode {
     }
 
     /// Inspect a chosen directory before presenting the install sheet.
-    static func inspectPluginDirectory(_ directory: URL) throws -> PluginDirectoryInspection {
+    public static func inspectPluginDirectory(_ directory: URL) throws -> PluginDirectoryInspection {
         try PluginUpload.inspect(directory: directory)
     }
 
-    static func pluginIdProblem(_ id: String) -> String? {
+    public static func pluginIdProblem(_ id: String) -> String? {
         PluginUpload.pluginIdProblem(id)
     }
 
     /// Start authorizing a grant over the loopback redirect; the caller
     /// opens `url` in the browser, then blocks on `authorizeAwait`.
-    func authorizeBegin(grant: String) throws -> AuthorizationStarted {
+    public func authorizeBegin(grant: String) throws -> AuthorizationStarted {
         guard let handle else { throw CoreError(message: "node is closed") }
         return try decode(AuthorizationStarted.self) { error in
             inseam_node_authorize_begin(handle, grant, &error)
@@ -165,7 +177,7 @@ final class CoreNode {
 
     /// Wait for the browser to come back — blocks for up to the oauth
     /// entry's timeout, so call it off the main thread.
-    func authorizeAwait(state: String) throws -> GrantView {
+    public func authorizeAwait(state: String) throws -> GrantView {
         guard let handle else { throw CoreError(message: "node is closed") }
         return try decode(GrantView.self) { error in
             inseam_node_authorize_await(handle, state, &error)
@@ -173,14 +185,14 @@ final class CoreNode {
     }
 
     /// Forget a grant's tokens; its hosts withdraw.
-    func revokeGrant(_ grant: String) throws -> GrantView {
+    public func revokeGrant(_ grant: String) throws -> GrantView {
         guard let handle else { throw CoreError(message: "node is closed") }
         return try decode(GrantView.self) { error in
             inseam_node_revoke_grant(handle, grant, &error)
         }
     }
 
-    private func decode<T: Decodable>(
+    func decode<T: Decodable>(
         _ type: T.Type,
         _ call: (inout UnsafeMutablePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
     ) throws -> T {
@@ -195,87 +207,96 @@ final class CoreNode {
 
 // JSON views mirroring the core's `ops` responses (snake_case in transit).
 
-struct QueryResponse: Decodable {
-    let results: [QueryResult]
+public struct QueryResponse: Decodable {
+    public let results: [QueryResult]
 }
 
-struct QueryResult: Decodable, Identifiable {
-    let address: String
-    let score: Double
-    let summary: String?
-    let envelope: EnvelopeView
+public struct QueryResult: Decodable, Identifiable {
+    public let address: String
+    public let score: Double
+    public let summary: String?
+    public let envelope: EnvelopeView
 
-    var id: String { address }
+    public var id: String { address }
 }
 
-struct EnvelopeView: Decodable {
-    let sourceType: String
-    let contentType: String
-    let length: String
-    let created: String?
-    let modified: String?
-    let title: String?
+public struct EnvelopeView: Decodable {
+    public let sourceType: String
+    public let contentType: String
+    public let length: ContentLengthView
+    public let created: String?
+    public let modified: String?
+    public let title: String?
 }
 
-struct FiberHealth: Decodable, Identifiable {
-    let id: String
-    let plugin: String
-    let state: String
-    let error: String?
-    let missing: [String]
-    let missingSecrets: [SecretNeed]
+/// A source's recorded length with its unit — `lines` for text the index
+/// has read (the bound a `scan` range can reach), else `bytes`.
+public struct ContentLengthView: Decodable, CustomStringConvertible {
+    public let unit: String
+    public let value: UInt64
+
+    public var description: String { "\(value) \(unit)" }
+}
+
+public struct FiberHealth: Decodable, Identifiable {
+    public let id: String
+    public let plugin: String
+    public let state: String
+    public let error: String?
+    public let missing: [String]
+    public let missingSecrets: [SecretNeed]
 }
 
 /// A secret a parked entry declared: the environment variable to set and
 /// the owner-facing reason to set it — prose the UI shows verbatim.
-struct SecretNeed: Codable, Identifiable, Equatable {
-    let env: String
-    let purpose: String
+public struct SecretNeed: Codable, Identifiable, Equatable {
+    public let env: String
+    public let purpose: String
 
-    var id: String { env }
+    public var id: String { env }
 }
 
-struct HostView: Decodable, Identifiable {
-    let id: String
-    let kind: String
-    let displayName: String
-    let entry: String
+public struct HostView: Decodable, Identifiable {
+    public let id: String
+    public let kind: String
+    public let displayName: String
+    public let entry: String
 }
 
 /// One OAuth grant as the node reports it (`GrantView`).
-struct GrantView: Decodable, Identifiable {
-    let id: String
-    let provider: String
-    let scopes: [String]
-    let clientIdEnv: String
-    let clientSecretEnv: String?
-    let state: GrantStateView
+public struct GrantView: Decodable, Identifiable {
+    public let id: String
+    public let provider: String
+    public let scopes: [String]
+    public let clientIdEnv: String
+    public let clientSecretEnv: String?
+    public let state: GrantStateView
 }
 
 /// The tagged `GrantState`: `missing_secret` names the variable, `authorized`
 /// carries the account and expiry.
-struct GrantStateView: Decodable {
-    let state: String
-    let env: String?
-    let account: String?
-    let expiresAt: Int64?
-    let scopes: [String]?
+public struct GrantStateView: Decodable {
+    public let state: String
+    public let env: String?
+    public let account: String?
+    public let expiresAt: Int64?
+    public let scopes: [String]?
 
-    var isAuthorized: Bool { state == "authorized" }
-    var isMissingSecret: Bool { state == "missing_secret" }
+    public var isAuthorized: Bool { state == "authorized" }
+    public var isMissingSecret: Bool { state == "missing_secret" }
 }
 
-struct AuthorizationStarted: Decodable {
-    let grant: String
-    let url: String
-    let state: String
-    let redirectUri: String
+public struct AuthorizationStarted: Decodable {
+    public let grant: String
+    public let url: String
+    public let state: String
+    public let redirectUri: String
 }
 
-struct IndexReport: Decodable {
-    let sourcesSeen: Int
-    let indexed: Int
-    let unchanged: Int
-    let removed: Int
-    let fragments: Int
+public struct IndexReport: Decodable {
+    public let sourcesSeen: Int
+    public let indexed: Int
+    public let unchanged: Int
+    public let removed: Int
+    public let fragments: Int
 }

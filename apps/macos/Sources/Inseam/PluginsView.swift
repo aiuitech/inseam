@@ -1,4 +1,5 @@
 import AppKit
+import InseamKit
 import SwiftUI
 
 struct PluginsSettingsTab: View {

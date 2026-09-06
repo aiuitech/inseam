@@ -10,12 +10,21 @@ crate-type = ["staticlib", "lib"]
 inseam-kernel.workspace = true
 inseam-seams.workspace = true
 inseam-plugins.workspace = true
-inseam-wasm-host.workspace = true
+inseam-wasm-host = { workspace = true, optional = true }
 
+async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 toml.workspace = true
+
+[features]
+# The loaded-plugin tier needs wasmtime's Cranelift JIT, which iOS forbids
+# (no executable memory for third-party apps); an iOS build turns this off
+# and mounts linked plugins only until the Pulley interpreter path is proven
+# (`design/ios-app.md`).
+default = ["loaded-plugins"]
+loaded-plugins = ["dep:inseam-wasm-host"]
 
 [dev-dependencies]
 base64.workspace = true

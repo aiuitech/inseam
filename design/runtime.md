@@ -48,5 +48,5 @@ The eight-neighbor graph is deliberately a laptop-space choice. Four-times candi
 
 ## Open questions
 
-- Embedding generation on small devices (bundled small model? remote node as embedding provider?). A deterministic hashed bag-of-words embedder ships as the zero-cost offline fallback; it is a stopgap, not the answer.
-- Minimum supported targets (is mobile a first-class node platform?).
+- Embedding generation on small devices. A deterministic hashed bag-of-words embedder ships as the zero-cost offline fallback; on iOS the app shell provides Apple's on-device sentence embedder through the `embedder-app` bridge ([ios-app](ios-app.md)). Whether that model or a Core ML port of the benchmark embedders is the small-device default is a benchmarking question.
+- Minimum supported targets. Mobile is settled: the phone is a leaf steward with the loaded tier off ([ios-app](ios-app.md)); what remains open is the floor for Linux and Windows builds.

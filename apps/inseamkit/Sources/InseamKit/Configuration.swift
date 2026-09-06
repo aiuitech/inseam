@@ -1,38 +1,38 @@
 import Foundation
 
-struct ConfigurationSettings: Codable {
-    var connections: FeatureToggle
-    var fs: Configurable<FilesystemConfig>
-    var oauth: Configurable<OAuthConfig>
-    var google: Configurable<GoogleConnectionConfig>
-    var llm: Configurable<LanguageModelConfig>
-    var embedder: Configurable<EmbedderConfig>
-    var transforms: FeatureToggle
-    var markdown: FeatureToggle
-    var chunker: Configurable<ChunkerConfig>
-    var summarizer: Configurable<SummarizerConfig>
-    var entities: Configurable<EntityConfig>
-    var finder: Configurable<FinderConfig>
-    var sweep: Configurable<SweepConfig>
-    var operations: FeatureToggle
+public struct ConfigurationSettings: Codable {
+    public var connections: FeatureToggle
+    public var fs: Configurable<FilesystemConfig>
+    public var oauth: Configurable<OAuthConfig>
+    public var google: Configurable<GoogleConnectionConfig>
+    public var llm: Configurable<LanguageModelConfig>
+    public var embedder: Configurable<EmbedderConfig>
+    public var transforms: FeatureToggle
+    public var markdown: FeatureToggle
+    public var chunker: Configurable<ChunkerConfig>
+    public var summarizer: Configurable<SummarizerConfig>
+    public var entities: Configurable<EntityConfig>
+    public var finder: Configurable<FinderConfig>
+    public var sweep: Configurable<SweepConfig>
+    public var operations: FeatureToggle
 }
 
-struct OAuthConfig: Codable {
-    var callbackPort: Int
-    var authorizationTimeoutSecs: UInt64
-    var credentialsDir: String?
-    var grants: [OAuthGrantConfig]
+public struct OAuthConfig: Codable {
+    public var callbackPort: Int
+    public var authorizationTimeoutSecs: UInt64
+    public var credentialsDir: String?
+    public var grants: [OAuthGrantConfig]
 }
 
-struct OAuthGrantConfig: Codable, Identifiable {
-    var formId = UUID()
-    var grantId: String
-    var authorizationUrl: String
-    var tokenUrl: String
-    var scopes: [String]
-    var clientIdEnv: String
-    var clientSecretEnv: String?
-    var authorizationParams: [String: String]
+public struct OAuthGrantConfig: Codable, Identifiable {
+    public var formId = UUID()
+    public var grantId: String
+    public var authorizationUrl: String
+    public var tokenUrl: String
+    public var scopes: [String]
+    public var clientIdEnv: String
+    public var clientSecretEnv: String?
+    public var authorizationParams: [String: String]
 
     enum CodingKeys: String, CodingKey {
         case grantId = "id"
@@ -40,27 +40,47 @@ struct OAuthGrantConfig: Codable, Identifiable {
         case authorizationParams
     }
 
-    var id: UUID { formId }
+    public var id: UUID { formId }
+
+    /// The memberwise initializer, spelled out because a public struct's
+    /// synthesized one stays internal; the apps build a fresh grant from it.
+    public init(
+        grantId: String,
+        authorizationUrl: String,
+        tokenUrl: String,
+        scopes: [String],
+        clientIdEnv: String,
+        clientSecretEnv: String?,
+        authorizationParams: [String: String]
+    ) {
+        self.grantId = grantId
+        self.authorizationUrl = authorizationUrl
+        self.tokenUrl = tokenUrl
+        self.scopes = scopes
+        self.clientIdEnv = clientIdEnv
+        self.clientSecretEnv = clientSecretEnv
+        self.authorizationParams = authorizationParams
+    }
 }
 
 /// The Google Workspace connection entry: which grant it registers, which
 /// Keychain-backed variables hold the client identity, and which services
 /// become hosts once the grant is authorized.
-struct GoogleConnectionConfig: Codable {
-    var grant: String
-    var clientIdEnv: String
+public struct GoogleConnectionConfig: Codable {
+    public var grant: String
+    public var clientIdEnv: String
     /// Empty means a client without a secret: the composition is TOML, which
     /// has no null, so the empty name is the spelling the plugin reads as
     /// "none".
-    var clientSecretEnv: String
-    var services: [String]
-    var sourcesMax: Int
+    public var clientSecretEnv: String
+    public var services: [String]
+    public var sourcesMax: Int
 
     enum CodingKeys: String, CodingKey {
         case grant, clientIdEnv, clientSecretEnv, services, sourcesMax
     }
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         grant = try container.decode(String.self, forKey: .grant)
         clientIdEnv = try container.decode(String.self, forKey: .clientIdEnv)
@@ -72,16 +92,16 @@ struct GoogleConnectionConfig: Codable {
 
 /// The services the Google connection can steward, in catalog order; the
 /// raw value is the composition's spelling.
-enum GoogleService: String, CaseIterable, Identifiable {
+public enum GoogleService: String, CaseIterable, Identifiable {
     case gmail
     case drive
     case calendar
     case contacts
     case tasks
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
 
-    var label: String {
+    public var label: String {
         switch self {
         case .gmail: "Gmail"
         case .drive: "Google Drive"
@@ -92,41 +112,41 @@ enum GoogleService: String, CaseIterable, Identifiable {
     }
 }
 
-struct Configurable<Config: Codable>: Codable {
-    var enabled: Bool
-    var config: Config
+public struct Configurable<Config: Codable>: Codable {
+    public var enabled: Bool
+    public var config: Config
 }
 
-struct FeatureToggle: Codable {
-    var enabled: Bool
+public struct FeatureToggle: Codable {
+    public var enabled: Bool
 }
 
-struct FilesystemConfig: Codable {
-    var hostId: String?
-    var skipHidden: Bool
-    var gitignore: Bool
-    var ignore: [String]
+public struct FilesystemConfig: Codable {
+    public var hostId: String?
+    public var skipHidden: Bool
+    public var gitignore: Bool
+    public var ignore: [String]
 }
 
-struct LanguageModelConfig: Codable {
-    var baseUrl: String
+public struct LanguageModelConfig: Codable {
+    public var baseUrl: String
     /// Empty for a keyless endpoint (a local ollama).
-    var apiKeyEnv: String
-    var transformModel: String
+    public var apiKeyEnv: String
+    public var transformModel: String
     /// Reasoning effort for transform calls as the endpoint spells it
     /// (`none` keeps a thinking model from answering with an empty reply).
-    var transformReasoningEffort: String?
-    var agentModel: String
+    public var transformReasoningEffort: String?
+    public var agentModel: String
 }
 
-enum EmbedderProvider: String, Codable, CaseIterable, Identifiable {
+public enum EmbedderProvider: String, Codable, CaseIterable, Identifiable {
     case endpoint
     case hashed
     case none
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
 
-    var label: String {
+    public var label: String {
         switch self {
         case .endpoint: "API endpoint"
         case .hashed: "Local hashed"
@@ -135,13 +155,13 @@ enum EmbedderProvider: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum VectorScope: String, Codable, CaseIterable, Identifiable {
+public enum VectorScope: String, Codable, CaseIterable, Identifiable {
     case all
     case summaries
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
 
-    var label: String {
+    public var label: String {
         switch self {
         case .all: "Every fragment"
         case .summaries: "Summaries only"
@@ -149,83 +169,103 @@ enum VectorScope: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-struct EmbedderConfig: Codable {
-    var provider: EmbedderProvider
-    var model: String
+public struct EmbedderConfig: Codable {
+    public var provider: EmbedderProvider
+    public var model: String
     /// Nil takes the model's native width.
-    var dimensions: Int?
-    var vectors: VectorScope
+    public var dimensions: Int?
+    public var vectors: VectorScope
 }
 
-struct ChunkerConfig: Codable {
-    var targetChars: Int
+public struct ChunkerConfig: Codable {
+    public var targetChars: Int
 }
 
-struct SummarizerConfig: Codable {
-    var targetChars: Int
-    var llmCallBudget: Int
+public struct SummarizerConfig: Codable {
+    public var targetChars: Int
+    public var llmCallBudget: Int
 }
 
-struct EntityConfig: Codable {
-    var maxPerSource: Int
-    var llmCallBudget: Int
+public struct EntityConfig: Codable {
+    public var maxPerSource: Int
+    public var llmCallBudget: Int
 }
 
-struct FinderConfig: Codable {
-    var seedK: Int
-    var rrfK: Double
-    var damping: Double
-    var iterations: Int
-    var epsilon: Double
-    var maxHints: Int
-    var maxVectorDistance: Double
-    var weights: RelationWeights
+public struct FinderConfig: Codable {
+    public var seedK: Int
+    public var rrfK: Double
+    public var damping: Double
+    public var iterations: Int
+    public var epsilon: Double
+    public var maxHints: Int
+    public var maxVectorDistance: Double
+    public var weights: RelationWeights
 }
 
-struct RelationWeights: Codable {
-    var `default`: Double
-    var byKind: [String: Double]
+public struct RelationWeights: Codable {
+    public var `default`: Double
+    public var byKind: [String: Double]
 }
 
-struct SweepConfig: Codable {
-    var maxSources: Int
-    var concurrency: Int
-    var maxFragmentsPerSource: Int
-    var maxDepth: Int
-    var maxContentBytes: UInt64
-    var modifiedAfter: String?
-    var ignore: [IgnoreRule]
+public struct SweepConfig: Codable {
+    public var maxSources: Int
+    public var concurrency: Int
+    public var maxFragmentsPerSource: Int
+    public var maxDepth: Int
+    public var maxContentBytes: UInt64
+    public var modifiedAfter: String?
+    public var ignore: [IgnoreRule]
 }
 
-struct IgnoreRule: Codable, Identifiable {
-    var id = UUID()
-    var address: String?
-    var host: String?
-    var locator: String?
-    var sourceType: String?
-    var contentType: String?
-    var hint: String?
-    var property: String?
+public struct IgnoreRule: Codable, Identifiable {
+    public var id = UUID()
+    public var address: String?
+    public var host: String?
+    public var locator: String?
+    public var sourceType: String?
+    public var contentType: String?
+    public var hint: String?
+    public var property: String?
 
     enum CodingKeys: String, CodingKey {
         case address, host, locator, sourceType, contentType, hint, property
+    }
+
+    /// Every field defaults to nil so a rule can be built from the one or
+    /// two fields it matches on, the way the apps' "Add rule" buttons do.
+    public init(
+        address: String? = nil,
+        host: String? = nil,
+        locator: String? = nil,
+        sourceType: String? = nil,
+        contentType: String? = nil,
+        hint: String? = nil,
+        property: String? = nil
+    ) {
+        self.address = address
+        self.host = host
+        self.locator = locator
+        self.sourceType = sourceType
+        self.contentType = contentType
+        self.hint = hint
+        self.property = property
     }
 }
 
 // Codable mirrors of the plugin owner operations. JSON uses snake_case at
 // the FFI boundary through CoreNode's encoder and decoder.
 
-struct InstallPluginRequest: Encodable {
-    let id: String
-    let files: [PluginFile]
+public struct InstallPluginRequest: Encodable {
+    public let id: String
+    public let files: [PluginFile]
 }
 
-struct PluginFile: Encodable {
-    let path: String
-    let bytes: String
+public struct PluginFile: Encodable {
+    public let path: String
+    public let bytes: String
 }
 
-enum PluginState: Codable, Equatable {
+public enum PluginState: Codable, Equatable {
     case active
     case pending
     case failed(reason: String)
@@ -235,7 +275,7 @@ enum PluginState: Codable, Equatable {
         case reason
     }
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let state = try container.decode(String.self, forKey: .state)
         switch state {
@@ -252,7 +292,7 @@ enum PluginState: Codable, Equatable {
         }
     }
 
-    func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
         case .active:
@@ -266,15 +306,15 @@ enum PluginState: Codable, Equatable {
     }
 }
 
-struct PluginView: Codable, Identifiable, Equatable {
-    let id: String
-    let plugin: String
-    let state: PluginState
-    let effects: [String]
-    let missing: [String]
-    let missingSecrets: [SecretNeed]
+public struct PluginView: Codable, Identifiable, Equatable {
+    public let id: String
+    public let plugin: String
+    public let state: PluginState
+    public let effects: [String]
+    public let missing: [String]
+    public let missingSecrets: [SecretNeed]
 
-    var stateLabel: String {
+    public var stateLabel: String {
         switch state {
         case .active: "active"
         case .pending:

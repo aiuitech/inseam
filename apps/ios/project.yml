@@ -1,0 +1,79 @@
+# The Inseam iOS app, as an XcodeGen spec: `xcodegen generate` writes
+# Inseam.xcodeproj from this file, so the project is source, never a binary
+# artifact to merge. The Rust core is linked as a static library per
+# platform from Core/<platform>/ (build-core.sh puts it there), through the
+# same CInseamFFI system-library target the macOS app uses via InseamKit.
+name: Inseam
+options:
+  bundleIdPrefix: dev.inseam
+  deploymentTarget:
+    iOS: "26.0"
+  xcodeVersion: "26.0"
+  createIntermediateGroups: true
+packages:
+  InseamKit:
+    path: ../inseamkit
+targets:
+  Inseam:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/Inseam
+    dependencies:
+      - package: InseamKit
+        product: InseamKit
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: inseam
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        # Photos: the library is a bridged host (design/ios-app.md).
+        NSPhotoLibraryUsageDescription: >-
+          inseam indexes your photo library on this device so you can search
+          it by date, place, and content. Nothing leaves the phone.
+        # Contacts: naming a call recording's participant from a contact.
+        NSContactsUsageDescription: >-
+          inseam looks up a contact to record who a call was with.
+        # Speech: transcribing imported call recordings on device.
+        NSSpeechRecognitionUsageDescription: >-
+          inseam transcribes call recordings on this device so their words
+          can be searched.
+        # The app's Documents folder is visible in Files as
+        # "On My iPhone › inseam", and other apps can open files in place —
+        # this is where Apple's call recordings get saved to.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        # "Open in inseam" from the share sheet for an audio file or a
+        # transcript.
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Audio recording
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.audio
+          - CFBundleTypeName: Transcript
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.plain-text
+        # Nightly catch-up sweeps while charging (BGProcessingTask).
+        UIBackgroundModes:
+          - processing
+        BGTaskSchedulerPermittedIdentifiers:
+          - dev.inseam.ios.sweep
+    settings:
+      base:
+        # Swift 5 language mode, like the kit and the macOS app (tools 5.10).
+        SWIFT_VERSION: "5.0"
+        PRODUCT_BUNDLE_IDENTIFIER: dev.inseam.ios
+        CODE_SIGN_STYLE: Automatic
+        # Set DEVELOPMENT_TEAM in Xcode (Signing & Capabilities) — a free
+        # personal team is enough to run on your own iPhone.
+        LIBRARY_SEARCH_PATHS:
+          - $(inherited)
+          - $(SRCROOT)/Core/$(PLATFORM_NAME)
+        # The core's static library was built for a minimum iOS matching
+        # the deployment target; keep them equal.
+        IPHONEOS_DEPLOYMENT_TARGET: "26.0"

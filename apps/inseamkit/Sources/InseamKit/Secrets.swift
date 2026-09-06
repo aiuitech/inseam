@@ -8,18 +8,18 @@ import Security
 /// secret. The composition file itself never holds secrets
 /// (design/composition.md) — the shell provides the environment for the
 /// CLI, and this store provides it for the app.
-enum SecretStore {
+public enum SecretStore {
     /// Keychain service namespace for every item this app owns.
     private static let service = "app.inseam.secrets"
     private static let secretCountMax = 64
 
-    struct SecretStoreError: LocalizedError {
-        let message: String
-        var errorDescription: String? { message }
+    public struct SecretStoreError: LocalizedError {
+        public let message: String
+        public var errorDescription: String? { message }
     }
 
     /// Names of every stored secret, sorted so the UI order is stable.
-    static func names() throws -> [String] {
+    public static func names() throws -> [String] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -38,7 +38,7 @@ enum SecretStore {
     }
 
     /// The secret stored under `name`, or nil when none exists.
-    static func read(name: String) throws -> String? {
+    public static func read(name: String) throws -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -61,7 +61,7 @@ enum SecretStore {
     }
 
     /// Store `value` under `name`, replacing any existing item.
-    static func write(name: String, value: String) throws {
+    public static func write(name: String, value: String) throws {
         try delete(name: name)
         let attributes: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -76,7 +76,7 @@ enum SecretStore {
     }
 
     /// Remove the item stored under `name`; a missing item is not an error.
-    static func delete(name: String) throws {
+    public static func delete(name: String) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -90,7 +90,7 @@ enum SecretStore {
 
     /// Export every stored secret into this process's environment so the
     /// core's `key_env`-style config fields resolve when the node opens.
-    static func exportIntoEnvironment() throws {
+    public static func exportIntoEnvironment() throws {
         let storedNames = try names()
         guard storedNames.count <= secretCountMax else {
             throw SecretStoreError(message: "keychain contains too many Inseam secrets")
@@ -105,7 +105,7 @@ enum SecretStore {
     /// plugins. This supports conventional items named after their env var
     /// without enumerating unrelated Keychain entries or showing access UI.
     /// Returns true when at least one value was exported.
-    static func exportDeclaredIntoEnvironment(names: [String]) throws -> Bool {
+    public static func exportDeclaredIntoEnvironment(names: [String]) throws -> Bool {
         let names = Array(Set(names)).sorted()
         guard names.count <= secretCountMax else { return false }
         var exported = false
@@ -184,7 +184,7 @@ enum SecretStore {
 
     /// A valid environment variable name: nonempty ASCII letters, digits,
     /// and underscores, not starting with a digit.
-    static func isValidName(_ name: String) -> Bool {
+    public static func isValidName(_ name: String) -> Bool {
         guard let first = name.unicodeScalars.first else { return false }
         guard CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_")
             .contains(first) else { return false }

@@ -2,23 +2,23 @@ import Foundation
 
 /// These mirror `inseam_seams::operations`; keep them equal so the app
 /// refuses oversized work before allocating the JSON request.
-let PLUGIN_FILES_MAX: UInt32 = 64
-let PLUGIN_UPLOAD_BYTES_MAX: UInt64 = 32 * 1024 * 1024
-let PLUGIN_ID_CHARS_MAX: UInt32 = 64
+public let PLUGIN_FILES_MAX: UInt32 = 64
+public let PLUGIN_UPLOAD_BYTES_MAX: UInt64 = 32 * 1024 * 1024
+public let PLUGIN_ID_CHARS_MAX: UInt32 = 64
 
 /// Bounds traversal even when a directory contains thousands of empty
 /// folders or non-regular entries that do not count toward the upload.
 private let PLUGIN_DIRECTORY_ENTRIES_MAX: UInt32 = 4_096
 
-struct PluginDirectoryInspection: Identifiable {
-    let directory: URL
-    let files: [URL]
-    let artifact: URL
-    let bytesTotal: UInt64
+public struct PluginDirectoryInspection: Identifiable {
+    public let directory: URL
+    public let files: [URL]
+    public let artifact: URL
+    public let bytesTotal: UInt64
 
-    var id: URL { directory }
+    public var id: URL { directory }
 
-    var suggestedId: String {
+    public var suggestedId: String {
         artifact.deletingPathExtension().lastPathComponent.lowercased()
     }
 }
@@ -63,8 +63,8 @@ private struct PluginIdentifier {
     }
 }
 
-enum PluginUpload {
-    static func pluginIdProblem(_ id: String) -> String? {
+public enum PluginUpload {
+    public static func pluginIdProblem(_ id: String) -> String? {
         do {
             _ = try PluginIdentifier(id)
             return nil
@@ -73,7 +73,7 @@ enum PluginUpload {
         }
     }
 
-    static func inspect(directory: URL) throws -> PluginDirectoryInspection {
+    public static func inspect(directory: URL) throws -> PluginDirectoryInspection {
         let directory = directory.standardizedFileURL
         let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey]
         var traversalError: Error?
@@ -104,7 +104,7 @@ enum PluginUpload {
         )
     }
 
-    static func request(id: String, directory: URL) throws -> InstallPluginRequest {
+    public static func request(id: String, directory: URL) throws -> InstallPluginRequest {
         let id = try PluginIdentifier(id)
         let inspection = try inspect(directory: directory)
         var bytesTotal: UInt64 = 0
