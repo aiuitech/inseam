@@ -132,7 +132,7 @@ async fn merge_collapses_equal_digests_and_leaves_digestless_copies_apart() {
     store.rebuild_fts().await.expect("fts");
 
     let finder = FinderService::new(Arc::clone(&store), embedder, FinderConfig::default());
-    let results = finder.query("espresso descaling", 10).await.expect("queries");
+    let results = finder.query("espresso descaling", 10).await.expect("queries").ranked;
 
     let copies: Vec<_> = results
         .iter()
@@ -220,7 +220,7 @@ async fn relational_relevance_beats_flat_similarity() {
     store.rebuild_fts().await.expect("fts");
 
     let finder = FinderService::new(Arc::clone(&store), embedder, FinderConfig::default());
-    let results = finder.query("kitchen renovation", 10).await.expect("queries");
+    let results = finder.query("kitchen renovation", 10).await.expect("queries").ranked;
     let order: Vec<SourceId> = results.iter().map(|r| r.source.id).collect();
 
     // B matched directly and must lead.
@@ -252,7 +252,7 @@ async fn boost_never_gates_relationless_matches() {
     store.rebuild_fts().await.expect("fts");
 
     let finder = FinderService::new(Arc::clone(&store), embedder, FinderConfig::default());
-    let results = finder.query("espresso descaling", 5).await.expect("queries");
+    let results = finder.query("espresso descaling", 5).await.expect("queries").ranked;
     assert_eq!(results.first().map(|r| r.source.id), Some(sid));
     assert!(results[0].score > 0.0);
 }

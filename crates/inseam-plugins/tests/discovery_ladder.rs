@@ -97,6 +97,20 @@ async fn the_incremental_discovery_ladder_works_offline() {
     assert!(!top.hints.is_empty(), "hints accompany results");
     let hint_extent = top.hints[0].extent.as_deref().expect("hints carry extents");
     assert!(hint_extent.starts_with("lines "), "got {hint_extent}");
+    // The meta describes the query that produced these results: the served
+    // limit, and counts that agree with the results.
+    let meta = &response.meta;
+    assert_eq!(meta.limit, 5);
+    assert!(meta.trace.fts_hits > 0, "full-text search seeded the query");
+    assert!(meta.trace.seeds > 0, "fusion kept the seeds");
+    assert!(
+        meta.trace.candidate_sources >= u32::try_from(response.results.len()).expect("fits"),
+        "the limit cuts candidates, never the other way"
+    );
+    assert!(
+        meta.elapsed_ms >= meta.trace.seeds_ms + meta.trace.graph_ms + meta.trace.rollup_ms,
+        "the operation's wall-clock contains the finder's phases"
+    );
 
     // --- rung 2: expand ---
     let expansion = ops

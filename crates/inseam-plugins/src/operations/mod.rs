@@ -38,7 +38,7 @@ use inseam_seams::operations::{
     ExpandResponse, FetchBytesRequest, FetchBytesResponse, FetchRequest, FetchResponse,
     FileBytes, FragmentHint, FragmentView, GrantView, FETCH_BYTES_MAX,
     HostView, IndexRequest, InstallPluginRequest, OperationRequest, Operations, PluginView,
-    QueryRequest, QueryResponse, QueryResult, RelationView, RepairOutcome, RepairReport,
+    QueryMeta, QueryRequest, QueryResponse, QueryResult, RelationView, RepairOutcome, RepairReport,
     RepairRequest, RevokeGrantRequest, ScanRequest, ScanResponse, StatusReport, OPERATIONS,
 };
 use inseam_seams::sweep::{IndexReport, Sweep, SweepRequest, SWEEP};
@@ -206,9 +206,11 @@ impl OperationsService {
 impl Operations for OperationsService {
     async fn query(&self, request: QueryRequest) -> Result<QueryResponse, SeamError> {
         self.guard("query")?;
+        let started = std::time::Instant::now();
         let limit = request.limit.clamp(1, 50);
-        let ranked = self.finder.query(&request.text, limit).await?;
-        let results = ranked
+        let discovery = self.finder.query(&request.text, limit).await?;
+        let results = discovery
+            .ranked
             .into_iter()
             .map(|r| QueryResult {
                 address: r.source.address.clone(),
@@ -219,7 +221,14 @@ impl Operations for OperationsService {
                 replicas: r.replicas,
             })
             .collect();
-        Ok(QueryResponse { results })
+        let meta = QueryMeta {
+            elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            // The clamp above bounds `limit` to 50, so this conversion
+            // cannot fail.
+            limit: u32::try_from(limit).unwrap_or(50),
+            trace: discovery.trace,
+        };
+        Ok(QueryResponse { results, meta })
     }
 
     async fn expand(&self, request: ExpandRequest) -> Result<ExpandResponse, SeamError> {

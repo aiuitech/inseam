@@ -6,7 +6,7 @@ The boundary operations from [design/node-api.md](../../design/node-api.md), ser
 
 | Rung | Operation | Cost | Returns |
 | --- | --- | --- | --- |
-| 1 | `query { text, limit }` | cheapest | ranked addresses + envelopes, each with a score, summary, fragment hints (text preview + line extent), and any `replicas` — other addresses of the same content, collapsed by content digest |
+| 1 | `query { text, limit }` | cheapest | ranked addresses + envelopes, each with a score, summary, fragment hints (text preview + line extent), and any `replicas` — other addresses of the same content, collapsed by content digest; plus a `meta` block describing the query itself (below) |
 | 2 | `expand { address }` | index-only | the source's fragments (mimetype, extent, preview), its typed relations, and neighboring fragments beyond the source — keyed fragments such as entities and the sources they connect to |
 | 3 | `scan { address, start, end }` | reads a slice | lines `start..=end` (1-based, inclusive) through the fetch path; media sources redirect to their largest text descendant (`served_from_fragment` set) |
 | 4 | `fetch { address }` | full content | the whole source as text |
@@ -15,6 +15,21 @@ The boundary operations from [design/node-api.md](../../design/node-api.md), ser
 `fetch` on a binary source refuses with `BinaryFetch`, naming `fetch_bytes`. `fetch_bytes` serves only what the index has a record of: a cataloged source (its envelope gives the content type) or an address some fragment references (that fragment's mimetype does). Every fragment view in `expand` carries `content_address` when the fragment holds a reference instead of text ([../indexing/transforms.md](../indexing/transforms.md)).
 
 Errors are typed and written as sentences (`no source at …`, `scan start line 200 is beyond the 41-line source`) so both humans and models can correct themselves.
+
+## Query meta
+
+Every `query` response carries a `meta` object beside `results`, so a slow or thin answer can be inspected without a debugger:
+
+| Field | Meaning |
+| --- | --- |
+| `elapsed_ms` | wall-clock for the whole operation, dispatch to response, including rendering the results |
+| `limit` | the limit actually served after clamping the request to 1..=50 |
+| `seeds_ms`, `graph_ms`, `rollup_ms` | the finder's three phases ([algorithm.md](algorithm.md)): hybrid seed retrieval (full-text, query embedding, vector search, fusion), the relation graph load plus relevance walk, and grouping by source plus dressing with envelopes, summaries, and hints |
+| `fts_hits`, `vector_hits`, `seeds` | fragments the full-text and vector searches returned (vector after the distance floor; zero on a node without an embedder), and distinct fragments left after rank fusion |
+| `relations` | relations loaded around the seeds for the walk |
+| `candidate_sources` | distinct sources holding a scored fragment, before the limit cut — how much competition the results won |
+
+`elapsed_ms` always contains the three phases; the remainder is dispatch, the access guard, and building the views. `inseam query` prints the same numbers as one footer line; `--json` carries them verbatim.
 
 ## Owner operations
 

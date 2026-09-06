@@ -58,13 +58,10 @@ pub(super) struct Planner {
     /// The connection of the host under sweep: where every root's content
     /// is read from.
     pub(super) connection: Arc<dyn Connection>,
-<<<<<<< HEAD
     /// The registry, for fragments whose content lives at an address of its
     /// own (`NewFragment::content_address`) — possibly on another host.
     pub(super) connections: Arc<dyn Connections>,
-=======
     pub(super) source_read_permits: Arc<Semaphore>,
->>>>>>> 58598a7c (fix(indexing): resume interrupted batch sweeps)
     pub(super) registrations: Vec<Arc<Registration>>,
     pub(super) grantor: Arc<Grantor>,
     pub(super) sweep_shape: String,

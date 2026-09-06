@@ -1199,6 +1199,7 @@ fn load_composition(
 fn print_results(response: &QueryResponse) {
     if response.results.is_empty() {
         println!("no results");
+        print_query_meta(&response.meta);
         return;
     }
     for (i, r) in response.results.iter().enumerate() {
@@ -1226,6 +1227,26 @@ fn print_results(response: &QueryResponse) {
         }
         println!();
     }
+    print_query_meta(&response.meta);
+}
+
+/// One footer line: how long the query took and what it worked through, so
+/// a slow or thin answer can be read without reaching for `--json`.
+fn print_query_meta(meta: &inseam_seams::operations::QueryMeta) {
+    let t = &meta.trace;
+    println!(
+        "{} ms · seeds {} ms ({} fts + {} vector → {}) · graph {} ms ({} relations) · rollup {} ms ({} sources → limit {})",
+        meta.elapsed_ms,
+        t.seeds_ms,
+        t.fts_hits,
+        t.vector_hits,
+        t.seeds,
+        t.graph_ms,
+        t.relations,
+        t.rollup_ms,
+        t.candidate_sources,
+        meta.limit,
+    );
 }
 
 /// Write fetched bytes to `path`, or to stdout for `-`, so a binary fetch

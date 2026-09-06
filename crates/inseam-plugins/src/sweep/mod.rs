@@ -326,13 +326,10 @@ impl Sweep for SweepService {
         let planning = self.planning_concurrency(&grantor, &registrations, request.llm_lane);
         let planner = Arc::new(Planner {
             connection: Arc::clone(&steward.connection),
-<<<<<<< HEAD
             connections: Arc::clone(&self.connections),
-=======
             source_read_permits: Arc::new(Semaphore::new(
                 self.config.source_reads_in_flight_max.get(),
             )),
->>>>>>> 58598a7c (fix(indexing): resume interrupted batch sweeps)
             registrations,
             grantor: Arc::clone(&grantor),
             sweep_shape,

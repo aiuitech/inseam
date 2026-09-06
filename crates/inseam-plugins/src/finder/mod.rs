@@ -17,7 +17,7 @@ use inseam_kernel::substrate::{
     parse_config, ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, STORE,
 };
 use inseam_seams::embedder::{Embedder, EMBEDDER};
-use inseam_seams::finder::{Expansion, Finder, RankedFragment, RankedSource, FINDER};
+use inseam_seams::finder::{Discovery, Expansion, Finder, QueryTrace, RankedFragment, RankedSource, FINDER};
 use inseam_seams::SeamError;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -198,14 +198,24 @@ impl FinderService {
 
 #[async_trait::async_trait]
 impl Finder for FinderService {
-    async fn query(&self, text: &str, limit: usize) -> Result<Vec<RankedSource>, SeamError> {
-        let query_started = Instant::now();
+    async fn query(&self, text: &str, limit: usize) -> Result<Discovery, SeamError> {
+        let seeds_started = Instant::now();
         let seeds = self.query_seeds(text).await?;
-        if seeds.is_empty() {
-            return Ok(Vec::new());
+        let mut trace = QueryTrace {
+            seeds_ms: millis(seeds_started.elapsed()),
+            fts_hits: seeds.fts_hits,
+            vector_hits: seeds.vector_hits,
+            seeds: count_u32(seeds.fused.len()),
+            ..QueryTrace::default()
+        };
+        if seeds.fused.is_empty() {
+            return Ok(Discovery {
+                ranked: Vec::new(),
+                trace,
+            });
         }
         let graph_started = Instant::now();
-        let seed_ids: Vec<FragmentId> = seeds.keys().map(|id| FragmentId(*id)).collect();
+        let seed_ids: Vec<FragmentId> = seeds.fused.keys().map(|id| FragmentId(*id)).collect();
         let relations = self
             .store
             .relations_near(
@@ -221,25 +231,33 @@ impl Finder for FinderService {
         );
         let edges = weighted_edges(&relations, &self.config.weights);
         let boosted = personalized_pagerank(
-            &seeds,
+            &seeds.fused,
             &edges,
             self.config.damping,
             self.config.iterations,
             self.config.epsilon,
         );
 
-        let mut final_scores: HashMap<i64, f64> = seeds.clone();
+        let mut final_scores: HashMap<i64, f64> = seeds.fused;
         for (id, score) in boosted {
             *final_scores.entry(id).or_insert(0.0) += score;
         }
+        trace.graph_ms = millis(graph_started.elapsed());
+        trace.relations = count_u32(relations.len());
 
-        let results = self.rollup(final_scores, limit).await?;
+        let rollup_started = Instant::now();
+        let rollup = self.rollup(final_scores, limit).await?;
+        trace.rollup_ms = millis(rollup_started.elapsed());
+        trace.candidate_sources = rollup.candidate_sources;
         tracing::info!(
-            results = results.len(),
-            elapsed_ms = query_started.elapsed().as_millis(),
+            results = rollup.ranked.len(),
+            elapsed_ms = trace.seeds_ms + trace.graph_ms + trace.rollup_ms,
             "finder query completed"
         );
-        Ok(results)
+        Ok(Discovery {
+            ranked: rollup.ranked,
+            trace,
+        })
     }
 
     async fn expand(&self, source: &StoredSource) -> Result<Expansion, SeamError> {
@@ -264,7 +282,7 @@ impl Finder for FinderService {
 }
 
 impl FinderService {
-    async fn query_seeds(&self, text: &str) -> Result<HashMap<i64, f64>, SeamError> {
+    async fn query_seeds(&self, text: &str) -> Result<Seeds, SeamError> {
         let started = Instant::now();
         let fts = self.store.search_fts(text, self.config.seed_k).await?;
         let mut vector = match self.embedder.dimensions() {
@@ -284,16 +302,46 @@ impl FinderService {
         // Both lists arrive best-first; fusion cares only about rank.
         let fts_ranked: Vec<i64> = fts.iter().map(|(id, _)| id.0).collect();
         let vec_ranked: Vec<i64> = vector.iter().map(|(id, _)| id.0).collect();
-        let seeds = rrf_fuse(&[&fts_ranked, &vec_ranked], self.config.rrf_k);
+        let fused = rrf_fuse(&[&fts_ranked, &vec_ranked], self.config.rrf_k);
         tracing::info!(
             fts = fts.len(),
             vector = vector.len(),
-            fused = seeds.len(),
+            fused = fused.len(),
             elapsed_ms = started.elapsed().as_millis(),
             "finder seed retrieval completed"
         );
-        Ok(seeds)
+        Ok(Seeds {
+            fused,
+            fts_hits: count_u32(fts.len()),
+            vector_hits: count_u32(vector.len()),
+        })
     }
+}
+
+/// The seeds of one query with where they came from. Fusion keeps only an
+/// id's best rank per list, so `fused` never exceeds `fts_hits + vector_hits`.
+struct Seeds {
+    fused: HashMap<i64, f64>,
+    fts_hits: u32,
+    vector_hits: u32,
+}
+
+/// Ranked sources plus how many sources competed for the limit.
+struct Rollup {
+    ranked: Vec<RankedSource>,
+    candidate_sources: u32,
+}
+
+/// Wall-clock milliseconds for a trace field; a phase that runs longer than
+/// `u64::MAX` ms is not a real phase.
+fn millis(elapsed: std::time::Duration) -> u64 {
+    u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// A collection length as a trace count. Counts are bounded by `seed_k`,
+/// `graph_relation_limit`, and the catalog size, all far below `u32::MAX`.
+fn count_u32(length: usize) -> u32 {
+    u32::try_from(length).unwrap_or(u32::MAX)
 }
 
 impl FinderService {
@@ -303,7 +351,7 @@ impl FinderService {
         &self,
         final_scores: HashMap<i64, f64>,
         limit: usize,
-    ) -> Result<Vec<RankedSource>, SeamError> {
+    ) -> Result<Rollup, SeamError> {
         let ids: Vec<FragmentId> = final_scores.keys().map(|id| FragmentId(*id)).collect();
         let owners = self.store.sources_of_fragments(&ids).await?;
 
@@ -321,6 +369,7 @@ impl FinderService {
             })
             .collect();
         ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let candidate_sources = count_u32(ranked.len());
         ranked.truncate(limit);
 
         let top = ranked.first().map(|(_, s, _)| *s).unwrap_or(1.0);
@@ -358,7 +407,10 @@ impl FinderService {
                 replicas: Vec::new(),
             });
         }
-        Ok(collapse_by_digest(out))
+        Ok(Rollup {
+            ranked: collapse_by_digest(out),
+            candidate_sources,
+        })
     }
 }
 

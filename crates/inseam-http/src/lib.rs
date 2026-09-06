@@ -608,7 +608,7 @@ mod tests {
     use inseam_seams::oauth::{AuthorizationStarted, GrantState};
     use inseam_seams::operations::{
         AwaitAuthorizationRequest, ExpandResponse, FetchResponse, IndexRequest, PluginState,
-        QueryResponse, RepairOutcome, RepairReport, RepairRequest, ScanResponse,
+        QueryMeta, QueryResponse, RepairOutcome, RepairReport, RepairRequest, ScanResponse,
         PLUGIN_UPLOAD_BYTES_MAX,
     };
     use inseam_seams::sweep::IndexReport;
@@ -645,6 +645,7 @@ mod tests {
         async fn query(&self, _request: QueryRequest) -> Result<QueryResponse, SeamError> {
             Ok(QueryResponse {
                 results: Vec::new(),
+                meta: QueryMeta::default(),
             })
         }
 

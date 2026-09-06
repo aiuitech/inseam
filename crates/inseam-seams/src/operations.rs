@@ -16,6 +16,7 @@ use inseam_kernel::substrate::{FiberState, FiberView, Guard, SecretNeed, Service
 use serde::{Deserialize, Serialize};
 
 use crate::connection::{Capabilities, HostKind};
+use crate::finder::QueryTrace;
 use crate::oauth::{AuthorizationCallback, AuthorizationStarted, GrantId, GrantState, Redirect};
 use crate::llm::LlmLane;
 use crate::sweep::{DeepBudget, IndexReport};
@@ -104,6 +105,22 @@ fn default_limit() -> usize {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryResponse {
     pub results: Vec<QueryResult>,
+    /// How the query ran — for a client that wants to know why an answer
+    /// took as long as it did, not for choosing among the results.
+    pub meta: QueryMeta,
+}
+
+/// Timing and shape of one served query. `elapsed_ms` covers the whole
+/// operation as the transport saw it; the trace breaks the provider's share
+/// into phases.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueryMeta {
+    /// Wall-clock from dispatch to response, including result rendering.
+    pub elapsed_ms: u64,
+    /// The limit the node served after clamping the request.
+    pub limit: u32,
+    #[serde(flatten)]
+    pub trace: QueryTrace,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
