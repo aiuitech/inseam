@@ -33,6 +33,7 @@ from harness import (
     bounded_argument,
     complete_run,
     download_verified,
+    finish_attempt,
     fixture_document_count,
     inseam_arguments,
     inseam_identity,
@@ -53,6 +54,7 @@ from harness import (
     run_capture,
     run_logged,
     run_main,
+    set_run_error,
     system_specs,
     update_run_phase,
     utc_now,
@@ -75,14 +77,11 @@ ARCHIVE_SHA256 = "9d1174928696ad08bc15f3f104739519de633c1605a4ec2034e0e3c0087bc5
 QUESTIONS_SHA256 = "f9524b9157cd43aae36b99333a124738804306ea6d07f332d49faa6d3d147905"
 ANSWER_MODEL = "stealth/ox-alpha"
 EVALUATION_MODEL = "stealth/ox-alpha"
-<<<<<<< HEAD
-=======
-EMBEDDING_MODEL = "openai/text-embedding-3-small"
-EMBEDDING_DIMENSIONS = 384
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+# OpenRouter rejects batch jobs above 5,000 requests; the endpoint plugin
+# refuses larger values at boot. Parking 65,536 planners keeps several
+# jobs filling at once.
 SUMMARY_BATCH_REQUESTS_MAX = 5_000
 SUMMARY_BATCH_CONCURRENCY = 65_536
->>>>>>> f463417e (perf(benchmarks): fill concurrent summary batch jobs)
 MAX_QUESTIONS = 1_000
 MAX_TURNS = 64
 MAX_QUERY_RESULTS = 25
@@ -503,7 +502,6 @@ def create_run(options: RunOptions) -> tuple[Path, Path, dict[str, Any]]:
     return run_dir, data_dir, manifest
 
 
-<<<<<<< HEAD
 def benchmark_pins() -> dict[str, str]:
     return {
         "name": "EnterpriseRAG-Bench",
@@ -526,7 +524,9 @@ def model_assignments() -> dict[str, str | int]:
     }
 
 
-def index_documents(run_dir: Path, data_dir: Path, composition: Path) -> dict[str, Any]:
+def index_documents(
+    run_dir: Path, data_dir: Path, composition: Path, log_path: Path | None = None
+) -> dict[str, Any]:
     return harness.index_documents(
         run_dir,
         data_dir,
@@ -535,138 +535,8 @@ def index_documents(run_dir: Path, data_dir: Path, composition: Path) -> dict[st
         fixture_document_count(FIXTURE_ROOT, DOCUMENTS_MAX),
         SOURCES_MAX,
         "EnterpriseRAG-Bench",
-    )
-=======
-def index_documents(
-    run_dir: Path,
-    data_dir: Path,
-    composition: Path,
-    log_path: Path | None = None,
-) -> dict[str, Any]:
-    document_count = fixture_document_count()
-    progress_label = "Indexing benchmark documents"
-    progress_probe: Callable[[float], str] | None = None
-    if document_count is not None:
-        progress_label = f"Indexing {document_count:,} benchmark documents"
-        progress_probe = lambda elapsed_seconds: read_index_progress(
-            data_dir, composition, document_count, elapsed_seconds
-        )
-    started_at = utc_now()
-    if log_path is None:
-        log_path = run_dir / "logs" / "index.log"
-    result = run_logged(
-        [
-            "inseam",
-            "--data-dir",
-            str(data_dir),
-            "--composition",
-            str(composition),
-            "index",
-            str(FIXTURE_ROOT / "documents"),
-        ],
         log_path,
-        timeout_seconds=INDEX_TIMEOUT_SECONDS,
-        progress_label=progress_label,
-        progress_probe=progress_probe,
-        progress_interval_seconds=INDEX_PROGRESS_INTERVAL_SECONDS,
     )
-    finished_at = utc_now()
-    require_success(result, "indexing EnterpriseRAG-Bench")
-    return {
-        "started_at": started_at,
-        "finished_at": finished_at,
-        "duration_seconds": round(result.duration_seconds, 6),
-        "returncode": result.returncode,
-        "log": str(log_path.relative_to(run_dir)),
-        "summary": capture_index_summary(result.stdout),
-    }
-
-
-def prepare_search_index(
-    data_dir: Path, composition: Path, log_dir: Path
-) -> dict[str, Any]:
-    started_at = utc_now()
-    result = run_logged(
-        [
-            "inseam",
-            "--data-dir",
-            str(data_dir),
-            "--composition",
-            str(composition),
-            "repair",
-        ],
-        log_dir / "search-index.log",
-        timeout_seconds=INDEX_TIMEOUT_SECONDS,
-        progress_label="Preparing libSQL vector search index",
-    )
-    require_success(result, "repairing the vector search index")
-    return {
-        "started_at": started_at,
-        "finished_at": utc_now(),
-        "duration_seconds": round(result.duration_seconds, 6),
-        "returncode": result.returncode,
-        "log": str((log_dir / "search-index.log").relative_to(log_dir.parents[1])),
-    }
-
-
-def capture_index_summary(output: str) -> dict[str, Any]:
-    try:
-        return parse_index_summary(output)
-    except BenchmarkError as error:
-        return {"parse_error": str(error)}
-
-
-def parse_index_summary(output: str) -> dict[str, int | float]:
-    sources = INDEX_SOURCE_PATTERN.search(output)
-    fragments = INDEX_FRAGMENT_PATTERN.search(output)
-    summaries = INDEX_SUMMARY_PATTERN.search(output)
-    if sources is None:
-        raise BenchmarkError("index output has no source completion summary")
-    if fragments is None:
-        raise BenchmarkError("index output has no fragment completion summary")
-    if summaries is None:
-        raise BenchmarkError("index output has no transform completion summary")
-    values = [int(value) for value in (*sources.groups(), *fragments.groups())]
-    transform_values = [int(value) for value in summaries.groups()[:4]]
-    if values[0] < 1:
-        raise BenchmarkError("index completion summary reports no sources")
-    if values[0] > 600_001:
-        raise BenchmarkError("index completion summary exceeds the source safety limit")
-    return {
-        "sources_seen": values[0],
-        "sources_indexed": values[1],
-        "sources_unchanged": values[2],
-        "sources_catalog_only": values[3],
-        "sources_past_cutoff": values[4],
-        "sources_ignored": values[5],
-        "fragments": values[6],
-        "relations": values[7],
-        "keyed_fragments": values[8],
-        "summaries_llm": transform_values[0],
-        "summaries_extractive": transform_values[1],
-        "summaries_envelope": transform_values[2],
-        "embeddings": transform_values[3],
-        "cost_usd": float(summaries.group(5)),
-    }
-
-
-def fixture_document_count() -> int | None:
-    marker = FIXTURE_ROOT / "documents.json"
-    if not marker.exists():
-        return None
-    try:
-        payload = json.loads(marker.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise BenchmarkError(f"could not read fixture metadata at {marker}: {error}") from error
-    document_count = payload.get("text_file_count")
-    if type(document_count) is not int:
-        raise BenchmarkError(f"fixture metadata at {marker} has no integer text_file_count")
-    if document_count < 1:
-        raise BenchmarkError(f"fixture metadata at {marker} has an invalid text_file_count")
-    if document_count > 600_000:
-        raise BenchmarkError(f"fixture metadata at {marker} exceeds the document safety limit")
-    return document_count
->>>>>>> 58598a7c (fix(indexing): resume interrupted batch sweeps)
 
 
 def run_queries(
@@ -890,73 +760,6 @@ def execute_benchmark(
     print(f"Benchmark run recorded in {run_dir}")
 
 
-<<<<<<< HEAD
-=======
-def begin_attempt(
-    run_dir: Path,
-    manifest: dict[str, Any],
-    phase: str,
-    identity: dict[str, Any],
-) -> tuple[float, Path]:
-    attempts = manifest["attempts"]
-    assert type(attempts) is list
-    if len(attempts) >= MAX_RUN_ATTEMPTS:
-        raise BenchmarkError(f"run exceeds the {MAX_RUN_ATTEMPTS}-attempt safety limit")
-    attempt_number = len(attempts) + 1
-    log_relative = f"logs/attempt-{attempt_number:03d}"
-    attempts.append(
-        {
-            "attempt_number": attempt_number,
-            "resumed": attempt_number > 1,
-            "started_at": utc_now(),
-            "finished_at": None,
-            "duration_seconds": None,
-            "starting_phase": phase,
-            "starting_queries_completed": manifest["queries_completed"],
-            "ending_queries_completed": None,
-            "status": "running",
-            "error": None,
-            "inseam": identity,
-            "log_directory": log_relative,
-            "search_index_preparation": None,
-            "indexing_log": None,
-        }
-    )
-    manifest["status"] = "running"
-    manifest["phase"] = phase
-    manifest["finished_at"] = None
-    manifest.pop("error", None)
-    write_json(run_dir / "manifest.json", manifest)
-    return time.monotonic(), run_dir / log_relative
-
-
-def finish_attempt(run_dir: Path, manifest: dict[str, Any], started: float) -> None:
-    duration_seconds = round(time.monotonic() - started, 6)
-    assert duration_seconds >= 0.0
-    attempt = manifest["attempts"][-1]
-    attempt["finished_at"] = utc_now()
-    attempt["duration_seconds"] = duration_seconds
-    attempt["ending_queries_completed"] = manifest["queries_completed"]
-    attempt["status"] = manifest["status"]
-    attempt["ending_phase"] = manifest["phase"]
-    attempt["error"] = manifest.get("error")
-    durations = [value["duration_seconds"] for value in manifest["attempts"]]
-    assert all(type(value) in {int, float} for value in durations)
-    manifest["duration_seconds"] = round(sum(durations), 6)
-    manifest["finished_at"] = attempt["finished_at"]
-    manifest["resume_count"] = len(manifest["attempts"]) - 1
-    write_json(run_dir / "manifest.json", manifest)
-
-
-def set_run_error(manifest: dict[str, Any], status: str, error: str) -> None:
-    assert status in {"failed", "interrupted"}
-    assert error
-    manifest["status"] = status
-    manifest["phase"] = status
-    manifest["error"] = error
-
-
->>>>>>> 58598a7c (fix(indexing): resume interrupted batch sweeps)
 def print_run_start(
     run_dir: Path,
     data_dir: Path,
@@ -1001,15 +804,10 @@ def load_resumable_run(
         raise BenchmarkError(f"run `{run_id}` has no composition.toml")
     if composition.read_text(encoding="utf-8") != composition_text(options):
         raise BenchmarkError(f"run `{run_id}` composition does not match its options")
-<<<<<<< HEAD
     data_dir = validate_index_data_path(run_id, manifest, FIXTURE_ROOT)
-    load_index_completion(run_dir, manifest, SOURCES_MAX)
-=======
-    data_dir = validate_index_data_path(run_id, manifest)
     index_required = manifest.get("indexing") is None
     if not index_required:
-        load_index_completion(run_dir, manifest)
->>>>>>> 58598a7c (fix(indexing): resume interrupted batch sweeps)
+        load_index_completion(run_dir, manifest, SOURCES_MAX)
     queries = load_completed_queries(run_dir, manifest, questions)
     return (
         run_dir,
@@ -1090,57 +888,6 @@ def options_from_manifest(manifest: dict[str, Any]) -> RunOptions:
     )
 
 
-<<<<<<< HEAD
-=======
-def manifest_option_integer(value: dict[str, Any], name: str, maximum: int) -> int:
-    option = value[name]
-    if type(option) is not int:
-        raise BenchmarkError(f"run option {name} is not an integer")
-    if option < 1:
-        raise BenchmarkError(f"run option {name} must be at least 1")
-    if option > maximum:
-        raise BenchmarkError(f"run option {name} exceeds the {maximum} safety limit")
-    return option
-
-
-def validate_index_data_path(run_id: str, manifest: dict[str, Any]) -> Path:
-    expected = FIXTURE_ROOT / "nodes" / run_id
-    recorded = manifest.get("index_data_path")
-    if type(recorded) is not str:
-        raise BenchmarkError(f"run `{run_id}` has no index data path")
-    if Path(recorded).resolve() != expected.resolve():
-        raise BenchmarkError(f"run `{run_id}` points at unexpected index data")
-    if not expected.is_dir():
-        raise BenchmarkError(f"run `{run_id}` index data is missing at {expected}")
-    return expected
-
-
-def load_index_completion(run_dir: Path, manifest: dict[str, Any]) -> None:
-    indexing = manifest.get("indexing")
-    if type(indexing) is not dict:
-        raise BenchmarkError(f"run `{manifest['run_id']}` has no completed index record")
-    if indexing.get("returncode") != 0:
-        raise BenchmarkError(f"run `{manifest['run_id']}` indexing did not complete")
-    duration = indexing.get("duration_seconds")
-    if type(duration) not in {int, float}:
-        raise BenchmarkError("completed index record has no duration")
-    if duration <= 0:
-        raise BenchmarkError("completed index record has a non-positive duration")
-    log_value = indexing.get("log", "logs/index.log")
-    if type(log_value) is not str:
-        raise BenchmarkError("completed index record has no log path")
-    log_relative = Path(log_value)
-    if log_relative.is_absolute() or ".." in log_relative.parts:
-        raise BenchmarkError("completed index record has an invalid log path")
-    log_path = run_dir / log_relative
-    if not log_path.is_file():
-        raise BenchmarkError(f"completed index log is missing at {log_path}")
-    summary = indexing.get("summary")
-    if type(summary) is not dict:
-        indexing["summary"] = capture_index_summary(log_path.read_text(encoding="utf-8"))
-
-
->>>>>>> 58598a7c (fix(indexing): resume interrupted batch sweeps)
 def load_completed_queries(
     run_dir: Path,
     manifest: dict[str, Any],

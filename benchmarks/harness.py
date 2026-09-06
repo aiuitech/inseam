@@ -480,9 +480,16 @@ def index_documents(
     document_count: int | None,
     sources_max: int,
     description: str,
+    log_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Run `inseam index` over `documents`, polling `inseam status` for progress."""
+    """Run `inseam index` over `documents`, polling `inseam status` for progress.
+
+    A resumed attempt passes its own `log_path` so every indexing attempt keeps
+    its log; the first attempt writes `logs/index.log` under the run.
+    """
     assert sources_max > 0
+    if log_path is None:
+        log_path = run_dir / "logs" / "index.log"
     progress_label = "Indexing benchmark documents"
     progress_probe: Callable[[float], str] | None = None
     if document_count is not None:
@@ -494,7 +501,7 @@ def index_documents(
     started_at = utc_now()
     result = run_logged(
         [*inseam_arguments(data_dir, composition), "index", str(documents)],
-        run_dir / "logs" / "index.log",
+        log_path,
         timeout_seconds=INDEX_TIMEOUT_SECONDS,
         progress_label=progress_label,
         progress_probe=progress_probe,
@@ -507,7 +514,7 @@ def index_documents(
         "finished_at": finished_at,
         "duration_seconds": round(result.duration_seconds, 6),
         "returncode": result.returncode,
-        "log": "logs/index.log",
+        "log": str(log_path.relative_to(run_dir)),
         "summary": capture_index_summary(result.stdout, sources_max),
     }
 

@@ -14,21 +14,11 @@ Both runners share `harness.py`: bounded external commands with heartbeats, veri
 - the `inseam` CLI on `PATH`
 - `OPENROUTER_API_KEY`
 
-<<<<<<< HEAD
-Both runners use `google/gemini-2.5-flash-lite` through OpenRouter's batch lane for summaries, with low reasoning effort and the reasoning trace excluded, and `openai/text-embedding-3-small` at 384 dimensions for embeddings. Entity extraction, markdown splitting, and chunking are disabled. The default run limits summaries to 500 LLM calls; Inseam uses its deterministic fallback after the summarizer spends that budget. Raise `--llm-call-budget` only after estimating the cost and runtime. Summaries ride the batch lane (`summarizer.llm_lane = "batch"`): the sweep parks up to 4,096 planners on their summary calls and OpenRouter's Batch API takes them as one job of up to 10,000 requests. Embeddings use base64 responses and pack up to 128 inputs per request, with four batches in flight.
-=======
 The harness uses `google/gemini-2.5-flash-lite` through OpenRouter's batch lane for summaries and `stealth/ox-alpha` for answers, citation cleanup, correctness scoring, and fact scoring. Summary calls disable reasoning and exclude the reasoning trace from the response. Entity extraction, markdown splitting, and chunking are disabled. `openai/text-embedding-3-small` embeds one 200-character summary per source at 384 dimensions; source text still enters full-text search.
->>>>>>> ba12a580 (fix(benchmarks): disable summary reasoning)
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-Every `run` invocation creates a new ignored index under the fixture's `nodes/` directory. This prevents a warm index from being reported as a fresh indexing result. Failed and interrupted runs remain on disk with their partial logs and a non-completed manifest.
-=======
-The default run limits summaries to 500 LLM calls. Inseam uses its deterministic fallback after the summarizer spends that budget. Raise `--llm-call-budget` only after estimating the cost and runtime. Summaries ride the batch lane (`summarizer.llm_lane = "batch"`). This pinned benchmark sets the endpoint's job cap to 10,000 requests and parks up to 65,536 source planners, the endpoint queue's hard bound, so several full OpenRouter Batch API jobs can run concurrently. The 64 MiB serialized-job limit may split large requests sooner. Embeddings use base64 responses and pack up to 128 inputs per request, with four batches in flight. The lean source-plus-summary shape fills an embedding request from 256 search rows.
->>>>>>> f463417e (perf(benchmarks): fill concurrent summary batch jobs)
-=======
 The default run limits summaries to 500 LLM calls. Inseam uses its deterministic fallback after the summarizer spends that budget. Raise `--llm-call-budget` only after estimating the cost and runtime. Summaries ride the batch lane (`summarizer.llm_lane = "batch"`). This pinned benchmark sets OpenRouter's job cap to its 5,000-request limit and parks up to 65,536 source planners, so the endpoint can keep its eight job slots busy. The 64 MiB serialized-job limit may split large requests sooner. Embeddings use base64 responses and pack up to 128 inputs per request, with four batches in flight. The lean source-plus-summary shape fills an embedding request from 256 search rows.
->>>>>>> 951f25d0 (fix(indexing): respect OpenRouter batch request limit)
+
+Every `run` invocation creates a new ignored index under the fixture's `nodes/` directory. This prevents a warm index from being reported as a fresh indexing result. Failed and interrupted runs remain on disk with their partial logs and a non-completed manifest.
 
 ## Tests
 
@@ -173,11 +163,7 @@ Resume the same run after an indexing, query, answer, or evaluation failure:
 python3 benchmarks/enterprise_rag_bench.py resume <run-id>
 ```
 
-<<<<<<< HEAD
-Use the directory name under `benchmarks/runs/enterprise-rag-bench/` as `<run-id>`. Resume loads the original options and composition, verifies the dataset and model pins, checks that the index command completed successfully, and reuses that run's ignored data directory. It refuses a missing or incomplete index. It starts with the first question that has no durable record, or goes directly to evaluation when every question is complete.
-=======
-Use the directory name under `benchmarks/runs/` as `<run-id>`. Resume loads the original options and composition, verifies the dataset and model pins, and reuses that run's ignored data directory. If indexing did not finish, it runs the same reconciling sweep again in that node. Sources already marked indexed are unchanged and incur no transform or embedding work; sources that had not reached their indexed mark run again. If indexing finished, resume starts with the first question that has no durable record, or goes directly to evaluation when every question is complete. Each indexing attempt gets its own log.
->>>>>>> 58598a7c (fix(indexing): resume interrupted batch sweeps)
+Use the directory name under `benchmarks/runs/enterprise-rag-bench/` as `<run-id>`. Resume loads the original options and composition, verifies the dataset and model pins, and reuses that run's ignored data directory. If indexing did not finish, it runs the same reconciling sweep again in that node. Sources already marked indexed are unchanged and incur no transform or embedding work; sources that had not reached their indexed mark run again. If indexing finished, resume starts with the first question that has no durable record, or goes directly to evaluation when every question is complete. Each indexing attempt gets its own log.
 
 Each invocation is recorded in `manifest.json` under `attempts`, including its start and finish time, duration, Inseam binary identity, search-index preparation timing and log, starting and ending question counts, status, error, and log directory. The top-level duration is the sum of attempt durations. The index record keeps its original duration and structured completion counts for sources, fragments, relations, transforms, embeddings, and spend.
 
