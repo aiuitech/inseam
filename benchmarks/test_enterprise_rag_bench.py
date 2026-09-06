@@ -173,7 +173,7 @@ class EnterpriseRagBenchTests(unittest.TestCase):
                         composition = run_dir / "composition.toml"
                         composition.write_text(benchmark.composition_text(options))
                         manifest["indexing"] = benchmark.index_documents(
-                            run_dir, data_dir, composition
+                            run_dir, data_dir, composition, run_dir / "logs" / "index.log"
                         )
                         manifest["status"] = "failed"
                         manifest["phase"] = "failed"
@@ -213,8 +213,8 @@ class EnterpriseRagBenchTests(unittest.TestCase):
                         started, _log_dir = benchmark.begin_attempt(
                             run_dir, manifest, "indexing", manifest["inseam"]
                         )
-                        benchmark.set_run_error(manifest, "failed", "source read failed")
-                        benchmark.finish_attempt(run_dir, manifest, started)
+                        benchmark.harness.set_run_error(manifest, "failed", "source read failed")
+                        benchmark.harness.finish_attempt(run_dir, manifest, started)
 
                         with redirect_stdout(io.StringIO()) as output:
                             benchmark.resume_benchmark(manifest["run_id"])

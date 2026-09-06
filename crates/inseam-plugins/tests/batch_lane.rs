@@ -185,3 +185,66 @@ async fn switching_lanes_never_re_indexes() {
     assert_eq!(second.unchanged, 5, "{second}");
     assert_eq!(fake.chat_calls.load(Ordering::Relaxed), 0);
 }
+
+/// The digest-keyed caches (`design/indexing.md`): a rebuild re-runs
+/// decomposition but takes every LLM summary and every vector from the
+/// caches, and a shape change that leaves the summarizer's identity alone
+/// (an unrelated transform's config) does the same.
+#[tokio::test]
+async fn rebuilds_and_shape_changes_reuse_cached_summaries_and_vectors() {
+    let (fake, base) = serve_fake().await;
+    let corpus = tempfile::tempdir().expect("tempdir");
+    // Six notes plus the folder itself, which is a source composed from
+    // its children's summaries and summarized like any file.
+    write_corpus(corpus.path(), 6);
+    let data = tempfile::tempdir().expect("tempdir");
+    let mut kernel = common::boot(data.path(), &overlay(&base)).await;
+    let request = |rebuild| IndexRequest {
+        host: None,
+        root: corpus.path().display().to_string(),
+        rebuild,
+        deep_budget: None,
+        llm_lane: None,
+    };
+    let first = common::ops(&kernel).index(request(false)).await.expect("sweeps");
+    assert_eq!(first.llm_summaries, 7, "{first}");
+    assert_eq!(first.transforms_reused, 0, "{first}");
+    assert_eq!(first.embeddings_reused, 0, "{first}");
+    assert!(first.embedded > 7, "{first}");
+    assert_eq!(fake.chat_calls.load(Ordering::Relaxed), 7);
+
+    let rebuilt = common::ops(&kernel).index(request(true)).await.expect("sweeps");
+    assert_eq!(rebuilt.indexed, 7, "{rebuilt}");
+    assert_eq!(rebuilt.llm_summaries, 7, "cached summaries are still the model's: {rebuilt}");
+    assert_eq!(rebuilt.transforms_reused, 7, "{rebuilt}");
+    assert_eq!(rebuilt.embeddings_reused, first.embedded, "{rebuilt}");
+    assert_eq!(rebuilt.embedded, 0, "{rebuilt}");
+    assert_eq!(fake.chat_calls.load(Ordering::Relaxed), 7, "no new endpoint calls");
+
+    // A sweep shape change dirties every note but leaves the summarizer's
+    // identity alone, so its outputs still hit; the texts are unchanged,
+    // so every vector does too.
+    let reshaped_overlay = format!(
+        "{}\n[[entry]]\nid = \"sweep\"\n[entry.config]\nmax_depth = 3\n",
+        overlay(&base)
+    );
+    common::reconcile(&mut kernel, &reshaped_overlay).await;
+    let reshaped = common::ops(&kernel).index(request(false)).await.expect("sweeps");
+    assert_eq!(reshaped.indexed, 7, "{reshaped}");
+    assert_eq!(reshaped.transforms_reused, 7, "{reshaped}");
+    assert_eq!(reshaped.embeddings_reused, first.embedded, "{reshaped}");
+    assert_eq!(reshaped.embedded, 0, "{reshaped}");
+    assert_eq!(fake.chat_calls.load(Ordering::Relaxed), 7, "no new endpoint calls");
+
+    // A summarizer config change is a new identity: the model is asked again.
+    let resummarized_overlay = overlay(&base).replace(
+        "llm_call_budget = 1000\n",
+        "llm_call_budget = 1000\ntarget_chars = 120\n",
+    );
+    assert_ne!(resummarized_overlay, overlay(&base));
+    common::reconcile(&mut kernel, &resummarized_overlay).await;
+    let resummarized = common::ops(&kernel).index(request(false)).await.expect("sweeps");
+    assert_eq!(resummarized.indexed, 7, "{resummarized}");
+    assert_eq!(resummarized.transforms_reused, 0, "{resummarized}");
+    assert_eq!(fake.chat_calls.load(Ordering::Relaxed), 14);
+}

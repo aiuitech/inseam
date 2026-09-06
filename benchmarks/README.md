@@ -14,11 +14,13 @@ Both runners share `harness.py`: bounded external commands with heartbeats, veri
 - the `inseam` CLI on `PATH`
 - `OPENROUTER_API_KEY`
 
-The harness uses `google/gemini-2.5-flash-lite` through OpenRouter's batch lane for summaries and `stealth/ox-alpha` for answers, citation cleanup, correctness scoring, and fact scoring. Summary calls disable reasoning and exclude the reasoning trace from the response. Entity extraction, markdown splitting, and chunking are disabled. `openai/text-embedding-3-small` embeds one 200-character summary per source at 384 dimensions; source text still enters full-text search.
-
-The default run limits summaries to 500 LLM calls. Inseam uses its deterministic fallback after the summarizer spends that budget. Raise `--llm-call-budget` only after estimating the cost and runtime. Summaries ride the batch lane (`summarizer.llm_lane = "batch"`). This pinned benchmark sets OpenRouter's job cap to its 5,000-request limit and parks up to 65,536 source planners, so the endpoint can keep its eight job slots busy. The 64 MiB serialized-job limit may split large requests sooner. Embeddings use base64 responses and pack up to 128 inputs per request, with four batches in flight. The lean source-plus-summary shape fills an embedding request from 256 search rows.
+Both runners use `google/gemini-2.5-flash-lite` through OpenRouter's batch lane for summaries, with reasoning disabled and the reasoning trace excluded from the response, and `openai/text-embedding-3-small` at 384 dimensions for embeddings. Entity extraction, markdown splitting, and chunking are disabled. EnterpriseRAG-Bench additionally uses `stealth/ox-alpha` for answers, citation cleanup, correctness scoring, and fact scoring, and embeds one 200-character summary per source; BEIR embeds every fragment. Source text always enters full-text search.
 
 Every `run` invocation creates a new ignored index under the fixture's `nodes/` directory. This prevents a warm index from being reported as a fresh indexing result. Failed and interrupted runs remain on disk with their partial logs and a non-completed manifest.
+
+The default run limits summaries to 500 LLM calls. Inseam uses its deterministic fallback after the summarizer spends that budget. Raise `--llm-call-budget` only after estimating the cost and runtime; a budget of at least the corpus size (3,633 for BEIR NFCorpus) asks the model for every summary, which is the run that measures the full indexing process. Summaries ride the batch lane (`summarizer.llm_lane = "batch"`). EnterpriseRAG-Bench sets OpenRouter's job cap to its 5,000-request limit and parks up to 65,536 source planners, so the endpoint can keep its eight job slots busy; the 64 MiB serialized-job limit may split large requests sooner. Embeddings use base64 responses and pack up to 128 inputs per request, with four batches in flight. The lean source-plus-summary shape fills an embedding request from 256 search rows.
+
+Every run records the index's **footprint** beside its duration: the bytes of the node's data directory (database plus write-ahead log) against the bytes of the source documents it was built from, and the ratio between them, measured right after indexing (`indexing.footprint`) and again after the DiskANN build (`search_index_preparation.index_bytes`). The index summary also records how much of the run the node answered from its digest-keyed caches (`embeddings_reused`, `transforms_reused`); a fresh node reports zero for both.
 
 ## Tests
 
@@ -85,7 +87,7 @@ python3 benchmarks/beir.py run --limit 1
 python3 benchmarks/beir.py resume <run-id>
 ```
 
-Resume works exactly as it does for EnterpriseRAG-Bench below: same run directory, same options, verified pins and composition, completed index required, continue from the durable query checkpoint, and a new attempt record.
+Resume works exactly as it does for EnterpriseRAG-Bench below: same run directory, same options, verified pins and composition, the index finished in the same node if its attempt did not complete, continue from the durable query checkpoint, and a new attempt record.
 
 ### Recorded artifacts
 
@@ -163,7 +165,7 @@ Resume the same run after an indexing, query, answer, or evaluation failure:
 python3 benchmarks/enterprise_rag_bench.py resume <run-id>
 ```
 
-Use the directory name under `benchmarks/runs/enterprise-rag-bench/` as `<run-id>`. Resume loads the original options and composition, verifies the dataset and model pins, and reuses that run's ignored data directory. If indexing did not finish, it runs the same reconciling sweep again in that node. Sources already marked indexed are unchanged and incur no transform or embedding work; sources that had not reached their indexed mark run again. If indexing finished, resume starts with the first question that has no durable record, or goes directly to evaluation when every question is complete. Each indexing attempt gets its own log.
+Use the directory name under `benchmarks/runs/enterprise-rag-bench/` as `<run-id>`. Resume loads the original options and composition, verifies the dataset and model pins, and reuses that run's ignored data directory. If indexing did not finish, it runs the same reconciling sweep again in that node. Sources already marked indexed are unchanged and incur no transform or embedding work; sources that had not reached their indexed mark run again, taking any summary or vector the node's caches already hold. If indexing finished, resume starts with the first question that has no durable record, or goes directly to evaluation when every question is complete. Each indexing attempt gets its own log.
 
 Each invocation is recorded in `manifest.json` under `attempts`, including its start and finish time, duration, Inseam binary identity, search-index preparation timing and log, starting and ending question counts, status, error, and log directory. The top-level duration is the sum of attempt durations. The index record keeps its original duration and structured completion counts for sources, fragments, relations, transforms, embeddings, and spend.
 

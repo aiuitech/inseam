@@ -40,6 +40,10 @@ EMBEDDING_MODEL = "openai/text-embedding-3-small"
 EMBEDDING_DIMENSIONS = 384
 MAX_INDEX_CONCURRENCY = 128
 MAX_LLM_CALL_BUDGET = 1_000_000
+# Files one footprint walk may visit: the largest fixture extracts to
+# slightly more than 500,000 documents, and a node's data directory is a
+# handful of files.
+FOOTPRINT_FILES_MAX = 2_000_000
 MAX_RUN_ATTEMPTS = 100
 HASH_BLOCK_BYTES = 8 * 1024 * 1024
 METADATA_TIMEOUT_SECONDS = 30
@@ -57,6 +61,7 @@ INDEX_SOURCE_PATTERN = re.compile(
     r"(\d+) sources seen: (\d+) indexed, (\d+) unchanged, (\d+) catalog-only, "
     r"(\d+) past cutoff, (\d+) ignored"
 )
+INDEX_REUSE_PATTERN = re.compile(r"reused: (\d+) embeddings, (\d+) transform outputs")
 INDEX_FRAGMENT_PATTERN = re.compile(
     r"(\d+) fragments, (\d+) relations, (\d+) keyed fragments anchored"
 )
@@ -490,6 +495,7 @@ def index_documents(
     assert sources_max > 0
     if log_path is None:
         log_path = run_dir / "logs" / "index.log"
+    assert log_path.is_relative_to(run_dir)
     progress_label = "Indexing benchmark documents"
     progress_probe: Callable[[float], str] | None = None
     if document_count is not None:
@@ -516,6 +522,41 @@ def index_documents(
         "returncode": result.returncode,
         "log": str(log_path.relative_to(run_dir)),
         "summary": capture_index_summary(result.stdout, sources_max),
+        "footprint": measure_index_footprint(data_dir, documents),
+    }
+
+
+def directory_bytes(root: Path, files_max: int) -> tuple[int, int]:
+    """Total bytes and file count under `root`, following no symlinks."""
+    assert files_max > 0
+    total_bytes = 0
+    file_count = 0
+    for directory, _, names in os.walk(root, followlinks=False):
+        for name in names:
+            path = Path(directory) / name
+            if path.is_symlink():
+                continue
+            file_count += 1
+            if file_count > files_max:
+                raise BenchmarkError(f"{root} holds more than {files_max} files")
+            total_bytes += path.stat().st_size
+    assert total_bytes >= 0
+    return total_bytes, file_count
+
+
+def measure_index_footprint(data_dir: Path, documents: Path) -> dict[str, Any]:
+    """The index on disk against the source it was built from, so runs can
+    compare what indexing costs in storage as well as in time. The data
+    directory is measured whole (database plus write-ahead log)."""
+    index_bytes, index_files = directory_bytes(data_dir, FOOTPRINT_FILES_MAX)
+    source_bytes, source_files = directory_bytes(documents, FOOTPRINT_FILES_MAX)
+    ratio = round(index_bytes / source_bytes, 4) if source_bytes > 0 else None
+    return {
+        "index_bytes": index_bytes,
+        "index_files": index_files,
+        "source_bytes": source_bytes,
+        "source_files": source_files,
+        "index_to_source_ratio": ratio,
     }
 
 
@@ -530,12 +571,15 @@ def prepare_search_index(
         progress_label="Preparing libSQL vector search index",
     )
     require_success(result, "repairing the vector search index")
+    index_bytes, _ = directory_bytes(data_dir, FOOTPRINT_FILES_MAX)
     return {
         "started_at": started_at,
         "finished_at": utc_now(),
         "duration_seconds": round(result.duration_seconds, 6),
         "returncode": result.returncode,
         "log": str((log_dir / "search-index.log").relative_to(log_dir.parents[1])),
+        # The DiskANN build lands here, so this is the index's final size.
+        "index_bytes": index_bytes,
     }
 
 
@@ -559,6 +603,9 @@ def parse_index_summary(output: str, sources_max: int) -> dict[str, int | float]
         raise BenchmarkError("index output has no transform completion summary")
     values = [int(value) for value in (*sources.groups(), *fragments.groups())]
     transform_values = [int(value) for value in summaries.groups()[:4]]
+    # Binaries before the artifact caches print no reuse line: zero reuse.
+    reuse = INDEX_REUSE_PATTERN.search(output)
+    reuse_values = [0, 0] if reuse is None else [int(value) for value in reuse.groups()]
     if values[0] < 1:
         raise BenchmarkError("index completion summary reports no sources")
     if values[0] > sources_max:
@@ -577,6 +624,8 @@ def parse_index_summary(output: str, sources_max: int) -> dict[str, int | float]
         "summaries_extractive": transform_values[1],
         "summaries_envelope": transform_values[2],
         "embeddings": transform_values[3],
+        "embeddings_reused": reuse_values[0],
+        "transforms_reused": reuse_values[1],
         "cost_usd": float(summaries.group(5)),
     }
 

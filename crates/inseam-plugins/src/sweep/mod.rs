@@ -25,6 +25,7 @@
 
 pub mod ignore;
 
+mod cache;
 mod embed;
 mod folders;
 mod grant;
@@ -339,6 +340,7 @@ impl Sweep for SweepService {
         let planner = Arc::new(Planner {
             connection: Arc::clone(&steward.connection),
             connections: Arc::clone(&self.connections),
+            store: Arc::clone(&self.store),
             source_read_permits: Arc::new(Semaphore::new(
                 self.config.source_reads_in_flight_max.get(),
             )),
@@ -609,6 +611,9 @@ impl SweepService {
         while let Some(joined) = planned.next().await {
             let planned = joined??;
             let written = self.store.write_subtree(&planned.plan).await?;
+            self.store
+                .remember_transform_outputs(&planned.cache_entries)
+                .await?;
             tracing::debug!(address = %planned.plan.address, "indexed");
             tally(report, &planned, &written);
             buffer.push_rows(search_rows_of(&planned, &written));
@@ -624,7 +629,9 @@ impl SweepService {
         for batch in buffer.drain_all() {
             stage.submit(batch).await?;
         }
-        report.embedded += stage.finish().await?;
+        let totals = stage.finish().await?;
+        report.embedded += totals.embedded;
+        report.embeddings_reused += totals.reused;
         Ok(())
     }
 
@@ -751,7 +758,9 @@ impl SweepService {
         for batch in buffer.drain_all() {
             stage.submit(batch).await?;
         }
-        report.embedded += stage.finish().await?;
+        let totals = stage.finish().await?;
+        report.embedded += totals.embedded;
+        report.embeddings_reused += totals.reused;
         self.store.finish_reembed().await?;
         tracing::info!(rows = report.reembedded, "re-embedded search index");
         Ok(())
@@ -789,6 +798,7 @@ fn tally(report: &mut IndexReport, planned: &Planned, written: &SubtreeWritten) 
     report.llm_summaries += planned.stats.llm_summaries;
     report.extractive_summaries += planned.stats.extractive_summaries;
     report.envelope_summaries += planned.stats.envelope_summaries;
+    report.transforms_reused += planned.stats.transforms_reused;
 }
 
 /// The search rows a landed plan contributes: every text-bearing planned

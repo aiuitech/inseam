@@ -204,7 +204,7 @@ class BeirRunTests(unittest.TestCase):
                                 composition = run_dir / "composition.toml"
                                 composition.write_text(beir.composition_text(options))
                                 manifest["indexing"] = beir.index_documents(
-                                    run_dir, data_dir, composition
+                                    run_dir, data_dir, composition, run_dir / "logs" / "index.log"
                                 )
                                 beir.harness.set_run_error(manifest, "failed", "boom")
                                 manifest["attempts"] = []

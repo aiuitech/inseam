@@ -1,6 +1,7 @@
 """Tests for the plumbing every benchmark runner shares."""
 
 import json
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -67,6 +68,51 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(summary["relations"], 1_868_268)
         self.assertEqual(summary["embeddings"], 1_864_381)
         self.assertEqual(summary["cost_usd"], 13.0042)
+
+    def test_parses_index_reuse_counts_and_defaults_them_to_zero(self) -> None:
+        output = (
+            "10 sources seen: 10 indexed, 0 unchanged, 0 catalog-only, "
+            "0 past cutoff, 0 ignored\n"
+            "20 fragments, 10 relations, 0 keyed fragments anchored\n"
+            "reused: 7 embeddings, 3 transform outputs\n"
+            "summaries: 10 llm, 0 extractive, 0 envelope · "
+            "13 embedded · $0.0100 spent\n"
+        )
+        summary = harness.parse_index_summary(output, 100)
+        self.assertEqual(summary["embeddings_reused"], 7)
+        self.assertEqual(summary["transforms_reused"], 3)
+
+        without = harness.parse_index_summary(
+            output.replace("reused: 7 embeddings, 3 transform outputs\n", ""), 100
+        )
+        self.assertEqual(without["embeddings_reused"], 0)
+        self.assertEqual(without["transforms_reused"], 0)
+
+    def test_measures_index_footprint_against_source_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            data_dir = Path(root) / "node"
+            documents = Path(root) / "documents"
+            (data_dir / "nested").mkdir(parents=True)
+            documents.mkdir()
+            (data_dir / "catalog.sqlite3").write_bytes(b"x" * 300)
+            (data_dir / "nested" / "wal").write_bytes(b"y" * 100)
+            (documents / "a.txt").write_bytes(b"a" * 150)
+            (documents / "b.txt").write_bytes(b"b" * 50)
+
+            footprint = harness.measure_index_footprint(data_dir, documents)
+
+        self.assertEqual(footprint["index_bytes"], 400)
+        self.assertEqual(footprint["index_files"], 2)
+        self.assertEqual(footprint["source_bytes"], 200)
+        self.assertEqual(footprint["source_files"], 2)
+        self.assertEqual(footprint["index_to_source_ratio"], 2.0)
+
+    def test_footprint_walk_refuses_more_files_than_the_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            for i in range(3):
+                (Path(root) / f"{i}.txt").write_bytes(b"z")
+            with self.assertRaises(harness.BenchmarkError):
+                harness.directory_bytes(Path(root), 2)
 
     def test_index_summary_rejects_sources_past_the_bound(self) -> None:
         output = (

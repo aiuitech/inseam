@@ -713,6 +713,8 @@ mod tests {
                 embedding_dimensions: 0,
                 embedding_vectors: inseam_kernel::store::VectorScope::All,
                 reembed_pending: false,
+                cached_embeddings: 0,
+                cached_transform_outputs: 0,
             })
         }
 

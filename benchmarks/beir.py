@@ -562,7 +562,9 @@ def create_run(options: RunOptions) -> tuple[Path, Path, dict[str, Any]]:
     return run_dir, data_dir, manifest
 
 
-def index_documents(run_dir: Path, data_dir: Path, composition: Path) -> dict[str, Any]:
+def index_documents(
+    run_dir: Path, data_dir: Path, composition: Path, log_path: Path
+) -> dict[str, Any]:
     return harness.index_documents(
         run_dir,
         data_dir,
@@ -571,6 +573,7 @@ def index_documents(run_dir: Path, data_dir: Path, composition: Path) -> dict[st
         fixture_document_count(FIXTURE_ROOT, MAX_DOCUMENTS),
         SOURCES_MAX,
         f"BEIR {DATASET.name}",
+        log_path,
     )
 
 
@@ -635,7 +638,7 @@ def resume_benchmark(run_id: str) -> None:
     require_fixture()
     require_api_key()
     loaded = load_resumable_run(run_id)
-    run_dir, data_dir, manifest, composition, queries_to_run, options, queries = loaded
+    run_dir, data_dir, manifest, composition, queries_to_run, options, queries, index_required = loaded
     write_run_checkpoint(run_dir, queries)
     execute_benchmark(
         run_dir,
@@ -645,7 +648,7 @@ def resume_benchmark(run_id: str) -> None:
         queries_to_run,
         options,
         queries,
-        False,
+        index_required,
         inseam_identity(),
     )
 
@@ -667,7 +670,16 @@ def execute_benchmark(
     error: BaseException | None = None
     try:
         if index_required:
-            manifest["indexing"] = index_documents(run_dir, data_dir, composition)
+            # The first attempt's log is the run's; a resumed attempt's own
+            # directory keeps every indexing attempt's log apart.
+            attempt = manifest["attempts"][-1]
+            if attempt["attempt_number"] == 1:
+                index_log = run_dir / "logs" / "index.log"
+            else:
+                index_log = log_dir / "index.log"
+            attempt["indexing_log"] = str(index_log.relative_to(run_dir))
+            write_json(run_dir / "manifest.json", manifest)
+            manifest["indexing"] = index_documents(run_dir, data_dir, composition, index_log)
         else:
             print_reused_index(manifest)
         attempt = manifest["attempts"][-1]
@@ -729,6 +741,7 @@ def load_resumable_run(
     list[dict[str, Any]],
     RunOptions,
     list[dict[str, Any]],
+    bool,
 ]:
     validate_run_id(run_id)
     run_dir = RUNS_ROOT / run_id
@@ -753,9 +766,14 @@ def load_resumable_run(
     if composition.read_text(encoding="utf-8") != composition_text(options):
         raise BenchmarkError(f"run `{run_id}` composition does not match its options")
     data_dir = validate_index_data_path(run_id, manifest, FIXTURE_ROOT)
-    load_index_completion(run_dir, manifest, SOURCES_MAX)
+    # No index record means the index attempt never completed: the resumed
+    # attempt runs the reconciling sweep again in the same node, which
+    # skips every source whose indexed mark is durable.
+    index_required = manifest.get("indexing") is None
+    if not index_required:
+        load_index_completion(run_dir, manifest, SOURCES_MAX)
     queries = load_completed_queries(run_dir, manifest, queries_to_run)
-    return run_dir, data_dir, manifest, composition, queries_to_run, options, queries
+    return run_dir, data_dir, manifest, composition, queries_to_run, options, queries, index_required
 
 
 def options_from_manifest(manifest: dict[str, Any]) -> RunOptions:

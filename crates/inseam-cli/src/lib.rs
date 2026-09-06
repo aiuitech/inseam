@@ -922,6 +922,10 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 "content size   {} across cataloged sources",
                 human_bytes(status.content_bytes)
             );
+            println!(
+                "caches         {} embeddings, {} transform outputs",
+                status.cached_embeddings, status.cached_transform_outputs
+            );
         }
         Command::Repair { rebuild } => {
             let ops = kernel.service(&OPERATIONS)?;

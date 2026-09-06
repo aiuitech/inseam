@@ -612,6 +612,12 @@ pub struct StatusReport {
     /// Which fragments carry vectors under the bound identity.
     pub embedding_vectors: VectorScope,
     pub reembed_pending: bool,
+    /// Vectors the digest-keyed embedding cache holds (`design/indexing.md`).
+    #[serde(default)]
+    pub cached_embeddings: u64,
+    /// Transform outputs the digest-keyed transform cache holds.
+    #[serde(default)]
+    pub cached_transform_outputs: u64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

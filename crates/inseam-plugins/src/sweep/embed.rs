@@ -11,6 +11,7 @@ use futures_util::stream::{self, StreamExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use inseam_kernel::address::ContentDigest;
 use inseam_kernel::fragment::FragmentId;
 use inseam_kernel::store::{IndexStore, SearchRow, SourceCompletion, SourceId};
 use inseam_seams::embedder::Embedder;
@@ -125,11 +126,19 @@ impl RowBuffer {
     }
 }
 
+/// What the stage produced: vectors the endpoint computed and vectors the
+/// digest-keyed cache already held (`design/indexing.md`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(super) struct EmbedTotals {
+    pub(super) embedded: usize,
+    pub(super) reused: usize,
+}
+
 /// A running embedding stage. Submit batches, then `finish` to get the
-/// number of rows embedded (or the stage's first error).
+/// totals (or the stage's first error).
 pub(super) struct EmbedStage {
     sender: Option<mpsc::Sender<Batch>>,
-    task: JoinHandle<Result<usize, SeamError>>,
+    task: JoinHandle<Result<EmbedTotals, SeamError>>,
 }
 
 impl EmbedStage {
@@ -153,7 +162,7 @@ impl EmbedStage {
     }
 
     /// Close the stage and wait for every queued batch to land.
-    pub(super) async fn finish(mut self) -> Result<usize, SeamError> {
+    pub(super) async fn finish(mut self) -> Result<EmbedTotals, SeamError> {
         drop(self.sender.take());
         self.task
             .await
@@ -167,34 +176,46 @@ async fn run(
     embedder: Arc<dyn Embedder>,
     store: Arc<IndexStore>,
     receiver: mpsc::Receiver<Batch>,
-) -> Result<usize, SeamError> {
+) -> Result<EmbedTotals, SeamError> {
     let batches = stream::unfold(receiver, |mut receiver| async move {
         receiver.recv().await.map(|batch| (batch, receiver))
     });
     let landed = batches
         .map(|batch| {
             let embedder = Arc::clone(&embedder);
-            tokio::spawn(async move { embed_batch(embedder.as_ref(), batch).await })
+            let store = Arc::clone(&store);
+            tokio::spawn(async move { embed_batch(embedder.as_ref(), &store, batch).await })
         })
         .buffered(EMBED_IN_FLIGHT);
     futures_util::pin_mut!(landed);
-    let mut embedded: usize = 0;
+    let mut totals = EmbedTotals::default();
     while let Some(joined) = landed.next().await {
-        let (rows, completed, embedded_now) =
+        let embedded =
             joined.map_err(|e| SeamError::failed(format!("embedding task failed: {e}")))?;
-        store.land_search_rows(&rows, &completed).await?;
-        embedded += embedded_now;
+        store
+            .land_search_rows(&embedded.rows, &embedded.completed)
+            .await?;
+        totals.embedded += embedded.embedded;
+        totals.reused += embedded.reused;
     }
-    Ok(embedded)
+    Ok(totals)
+}
+
+/// One batch after embedding: the rows to land, the completions riding
+/// them, and where the vectors came from.
+struct EmbeddedBatch {
+    rows: Vec<SearchRow>,
+    completed: Vec<SourceCompletion>,
+    embedded: usize,
+    reused: usize,
 }
 
 /// Embed one batch's rows — those the vector scope covers; the rest land
-/// text-only by design. Never fails: an embedding error leaves the rows
-/// text-searchable only, with a warning, rather than gating the sweep.
-async fn embed_batch(
-    embedder: &dyn Embedder,
-    batch: Batch,
-) -> (Vec<SearchRow>, Vec<SourceCompletion>, usize) {
+/// text-only by design. A row whose text the cache has already embedded
+/// under this model takes its vector from there. Never fails: an embedding
+/// error leaves the rows text-searchable only, with a warning, rather than
+/// gating the sweep.
+async fn embed_batch(embedder: &dyn Embedder, store: &IndexStore, batch: Batch) -> EmbeddedBatch {
     let Batch { rows, completed } = batch;
     let scope = embedder.vectors();
     let wanted: Vec<usize> = if embedder.dimensions().is_some() {
@@ -207,26 +228,18 @@ async fn embed_batch(
         Vec::new()
     };
     let mut vectors: Vec<Option<Vec<f32>>> = vec![None; rows.len()];
+    let mut reused: usize = 0;
     if !wanted.is_empty() {
         let texts: Vec<&str> = wanted.iter().map(|&p| rows[p].text.as_str()).collect();
-        match embedder.embed(&texts).await {
-            Ok(embedded) => {
-                assert_eq!(
-                    embedded.len(),
-                    wanted.len(),
-                    "embedder returns one vector per text"
-                );
-                for (position, vector) in wanted.iter().zip(embedded) {
-                    vectors[*position] = Some(vector);
-                }
-            }
-            Err(e) => {
-                tracing::warn!("embedding failed; rows stay text-searchable only: {e}");
-            }
+        let vectored = embed_texts(embedder, store, &texts).await;
+        reused = vectored.reused;
+        for (position, vector) in wanted.iter().zip(vectored.vectors) {
+            vectors[*position] = vector;
         }
     }
-    let embedded = vectors.iter().filter(|v| v.is_some()).count();
-    assert!(embedded <= rows.len());
+    let with_vector = vectors.iter().filter(|v| v.is_some()).count();
+    assert!(with_vector <= rows.len());
+    assert!(reused <= with_vector);
     let search_rows: Vec<SearchRow> = rows
         .into_iter()
         .zip(vectors)
@@ -237,7 +250,56 @@ async fn embed_batch(
             vector,
         })
         .collect();
-    (search_rows, completed, embedded)
+    EmbeddedBatch {
+        rows: search_rows,
+        completed,
+        embedded: with_vector - reused,
+        reused,
+    }
+}
+
+/// Vectors for `texts`, in order: cache hits by text digest first, the
+/// endpoint for the rest. A cache read failure is logged and treated as a
+/// full miss; an endpoint failure leaves the misses without a vector.
+struct Vectored {
+    vectors: Vec<Option<Vec<f32>>>,
+    reused: usize,
+}
+
+async fn embed_texts(embedder: &dyn Embedder, store: &IndexStore, texts: &[&str]) -> Vectored {
+    let digests: Vec<String> = texts
+        .iter()
+        .map(|text| ContentDigest::of_bytes(text.as_bytes()).to_hex())
+        .collect();
+    let cached = match store.cached_embeddings(&digests).await {
+        Ok(cached) => cached,
+        Err(e) => {
+            tracing::warn!("embedding cache read failed; embedding every row: {e}");
+            std::collections::HashMap::new()
+        }
+    };
+    let mut vectors: Vec<Option<Vec<f32>>> = digests
+        .iter()
+        .map(|digest| cached.get(digest).cloned())
+        .collect();
+    let reused = vectors.iter().filter(|v| v.is_some()).count();
+    let misses: Vec<usize> = (0..texts.len()).filter(|&i| vectors[i].is_none()).collect();
+    assert_eq!(reused + misses.len(), texts.len());
+    if !misses.is_empty() {
+        let missing_texts: Vec<&str> = misses.iter().map(|&i| texts[i]).collect();
+        match embedder.embed(&missing_texts).await {
+            Ok(embedded) => {
+                assert_eq!(embedded.len(), misses.len(), "embedder returns one vector per text");
+                for (position, vector) in misses.iter().zip(embedded) {
+                    vectors[*position] = Some(vector);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("embedding failed; rows stay text-searchable only: {e}");
+            }
+        }
+    }
+    Vectored { vectors, reused }
 }
 
 #[cfg(test)]
@@ -273,41 +335,79 @@ mod tests {
         }
     }
 
+    async fn store() -> (tempfile::TempDir, Arc<IndexStore>) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = IndexStore::open(dir.path()).await.expect("opens");
+        store
+            .declare_embedding(inseam_kernel::store::EmbeddingIdentity {
+                model: "test-model".into(),
+                dimensions: 8,
+                vectors: VectorScope::All,
+            })
+            .await
+            .expect("declares");
+        (dir, Arc::new(store))
+    }
+
+    fn batch(rows: std::ops::Range<i64>) -> Batch {
+        Batch {
+            rows: rows.map(row).collect(),
+            completed: Vec::new(),
+        }
+    }
+
     #[tokio::test]
     async fn summaries_scope_embeds_only_summary_rows_and_keeps_the_rest_text_only() {
-        let batch = Batch {
-            rows: (0..6).map(row).collect(),
-            completed: Vec::new(),
-        };
-        let (rows, _, embedded) = embed_batch(
+        let (_dir, store) = store().await;
+        let embedded = embed_batch(
             &ScopedHashed {
                 scope: VectorScope::Summaries,
             },
-            batch,
+            &store,
+            batch(0..6),
         )
         .await;
-        assert_eq!(embedded, 3);
-        assert_eq!(rows.len(), 6);
-        for (i, r) in rows.iter().enumerate() {
+        assert_eq!(embedded.embedded, 3);
+        assert_eq!(embedded.reused, 0);
+        assert_eq!(embedded.rows.len(), 6);
+        for (i, r) in embedded.rows.iter().enumerate() {
             assert_eq!(r.vector.is_some(), i % 2 == 0, "row {i}");
         }
     }
 
     #[tokio::test]
     async fn all_scope_embeds_every_row() {
-        let batch = Batch {
-            rows: (0..6).map(row).collect(),
-            completed: Vec::new(),
-        };
-        let (rows, _, embedded) = embed_batch(
+        let (_dir, store) = store().await;
+        let embedded = embed_batch(
             &ScopedHashed {
                 scope: VectorScope::All,
             },
-            batch,
+            &store,
+            batch(0..6),
         )
         .await;
-        assert_eq!(embedded, 6);
-        assert!(rows.iter().all(|r| r.vector.is_some()));
+        assert_eq!(embedded.embedded, 6);
+        assert!(embedded.rows.iter().all(|r| r.vector.is_some()));
+    }
+
+    #[tokio::test]
+    async fn text_already_embedded_under_this_model_is_reused_not_re_embedded() {
+        let (_dir, store) = store().await;
+        let embedder = ScopedHashed {
+            scope: VectorScope::All,
+        };
+        let first = embed_batch(&embedder, &store, batch(0..4)).await;
+        store
+            .land_search_rows(&first.rows, &first.completed)
+            .await
+            .expect("lands");
+        assert_eq!(first.embedded, 4);
+
+        // Rows 2..4 repeat texts the store has landed; 4..6 are new.
+        let second = embed_batch(&embedder, &store, batch(2..6)).await;
+        assert_eq!(second.reused, 2);
+        assert_eq!(second.embedded, 2);
+        assert!(second.rows.iter().all(|r| r.vector.is_some()));
     }
 
     fn completion(n: i64) -> SourceCompletion {

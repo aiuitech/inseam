@@ -15,6 +15,7 @@ use inseam_kernel::address::{Address, Envelope};
 use inseam_kernel::fragment::{FragmentKey, Mimetype, NewFragment, RelationKind, Sprout};
 use inseam_kernel::store::InventoryEntry;
 use inseam_kernel::substrate::{fnv1a, ApplyCx, PluginError, ServiceKey};
+use serde::{Deserialize, Serialize};
 
 use crate::llm::LlmLane;
 use crate::SeamError;
@@ -98,7 +99,7 @@ pub struct TransformCtx<'a> {
 /// deduplicates by key and anchors into this source's subtree — a transform
 /// cannot know fragment ids, so it describes the anchor and the sweep
 /// resolves it.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TransformOutput {
     pub sprouts: Vec<Sprout>,
     pub keyed: Vec<KeyedSprout>,
@@ -111,7 +112,7 @@ pub struct TransformOutput {
 /// emitting plugin's; the entity extractor's `entity:person:<name>` /
 /// `text/x-inseam-entity` / `mentions` is one such vocabulary, not the
 /// kernel's.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeyedSprout {
     pub key: FragmentKey,
     pub fragment: NewFragment,
@@ -123,7 +124,7 @@ pub struct KeyedSprout {
 
 /// Where in the emitting source a keyed sprout is anchored — which fragments
 /// get the edge to it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Anchor {
     /// The fragment the transform was applied to.
     Input,

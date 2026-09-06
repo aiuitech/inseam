@@ -340,8 +340,10 @@ impl Relation {
     }
 }
 
-/// A fragment that has not been stored yet — what transforms emit.
-#[derive(Debug, Clone, PartialEq)]
+/// A fragment that has not been stored yet — what transforms emit. It
+/// serializes so a transform's whole output can be cached by input digest
+/// (`design/indexing.md`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NewFragment {
     pub mimetype: Mimetype,
     pub text: Option<String>,
@@ -358,7 +360,7 @@ pub struct NewFragment {
 
 /// A new fragment plus how it hangs off its parent and its own descendants.
 /// Transforms return trees of these; the indexer persists them.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Sprout {
     pub fragment: NewFragment,
     /// Kind of the edge from the parent (input) fragment to this one.

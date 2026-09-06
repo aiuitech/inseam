@@ -188,6 +188,15 @@ pub struct SourceCompletion {
     pub inventory: Vec<InventoryEntry>,
 }
 
+/// What the digest-keyed artifact caches hold (`design/indexing.md`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+pub struct CacheCounts {
+    /// Vectors filed by text digest, model, and width.
+    pub embeddings: u64,
+    /// Transform outputs filed by input digest and transform identity.
+    pub transforms: u64,
+}
+
 /// How a source enters the catalog without a subtree
 /// (`design/index-maintenance.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -643,8 +652,8 @@ impl IndexStore {
         let _write = self.write().await;
         let tx = self.catalog.transaction().await?;
         if !rows.is_empty() {
-            let dims = self.surface()?.dimensions;
-            insert_search_rows_in(&tx, rows, dims).await?;
+            let identity = self.surface()?;
+            insert_search_rows_in(&tx, rows, &identity).await?;
         }
         for completion in completed {
             mark_indexed_in(
@@ -891,8 +900,9 @@ async fn keyed_fragment_in(
 async fn insert_search_rows_in(
     conn: &libsql::Connection,
     rows: &[SearchRow],
-    dims: usize,
+    identity: &EmbeddingIdentity,
 ) -> Result<(), StoreError> {
+    let dims = identity.dimensions;
     for row in rows {
         // An embedder whose output disagrees with its declaration is a
         // plugin fault, reported to the caller — never a crash of the node.
@@ -911,6 +921,39 @@ async fn insert_search_rows_in(
             "INSERT INTO search_rows (id, source, text, ann_vector)
              VALUES (?1, ?2, ?3, CASE WHEN ?4 IS NULL THEN NULL ELSE vector8(?4) END)",
             libsql::params![row.fragment.0, source, row.text.as_str(), vector],
+        )
+        .await?;
+    }
+    remember_embeddings_in(conn, rows, identity).await
+}
+
+/// File every landed vector in the embedding cache under the text's digest
+/// and the surface's model and width. A vector the cache already holds is
+/// left alone (`OR IGNORE`): the cache is append-only until `vacuum`, and
+/// a row landed from a cache hit re-files nothing.
+async fn remember_embeddings_in(
+    conn: &libsql::Connection,
+    rows: &[SearchRow],
+    identity: &EmbeddingIdentity,
+) -> Result<(), StoreError> {
+    if identity.dimensions == 0 {
+        return Ok(());
+    }
+    let dimensions = i64::try_from(identity.dimensions).expect("a vector width fits i64");
+    for row in rows {
+        let Some(vector) = &row.vector else {
+            continue;
+        };
+        let digest = ContentDigest::of_bytes(row.text.as_bytes()).to_hex();
+        conn.execute(
+            "INSERT OR IGNORE INTO embedding_cache (digest, model, dimensions, vector)
+             VALUES (?1, ?2, ?3, ?4)",
+            libsql::params![
+                digest,
+                identity.model.as_str(),
+                dimensions,
+                libsql::Value::Blob(vector_blob(vector))
+            ],
         )
         .await?;
     }
@@ -1402,9 +1445,9 @@ impl IndexStore {
             return Ok(());
         }
         let _write = self.write().await;
-        let dims = self.surface()?.dimensions;
+        let identity = self.surface()?;
         let tx = self.catalog.transaction().await?;
-        insert_search_rows_in(&tx, rows, dims).await?;
+        insert_search_rows_in(&tx, rows, &identity).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -1543,6 +1586,119 @@ impl IndexStore {
             return Ok(false);
         }
         search_vector_index_exists(&self.catalog).await
+    }
+
+    // ------------------------------------------------------------------
+    // Digest-keyed artifact caches (design/indexing.md)
+    // ------------------------------------------------------------------
+
+    /// The cached vectors for these text digests under the bound surface's
+    /// model and width, by digest. Digests the cache lacks are absent from
+    /// the map; the caller embeds exactly those. The vector scope is not
+    /// part of the key: it decides which rows get a vector, never what the
+    /// vector is, so flipping it re-embeds from the cache for free.
+    pub async fn cached_embeddings(
+        &self,
+        digests: &[String],
+    ) -> Result<HashMap<String, Vec<f32>>, StoreError> {
+        let identity = self.surface()?;
+        let mut out = HashMap::with_capacity(digests.len());
+        if identity.dimensions == 0 {
+            return Ok(out);
+        }
+        let dimensions = i64::try_from(identity.dimensions).expect("a vector width fits i64");
+        for chunk in digests.chunks(ID_LIST_CHUNK) {
+            let mut rows = self
+                .catalog
+                .query(
+                    &format!(
+                        "SELECT digest, vector FROM embedding_cache \
+                         WHERE model = ?1 AND dimensions = ?2 AND digest IN ({})",
+                        text_list(chunk)
+                    ),
+                    params![identity.model.as_str(), dimensions],
+                )
+                .await?;
+            while let Some(row) = rows.next().await? {
+                let digest: String = row.get(0)?;
+                let blob: Vec<u8> = row.get(1)?;
+                let vector = vector_from_blob(&blob);
+                check_dimensions(identity.dimensions, &vector)?;
+                out.insert(digest, vector);
+            }
+        }
+        assert!(out.len() <= digests.len());
+        Ok(out)
+    }
+
+    /// The cached transform outputs for these keys, by key. A key names the
+    /// input's content digest and the transform's shape identity
+    /// (`design/indexing.md`); what the value is, is the sweep's business.
+    pub async fn cached_transform_outputs(
+        &self,
+        keys: &[String],
+    ) -> Result<HashMap<String, String>, StoreError> {
+        let mut out = HashMap::with_capacity(keys.len());
+        for chunk in keys.chunks(ID_LIST_CHUNK) {
+            let mut rows = self
+                .catalog
+                .query(
+                    &format!(
+                        "SELECT key, output FROM transform_cache WHERE key IN ({})",
+                        text_list(chunk)
+                    ),
+                    (),
+                )
+                .await?;
+            while let Some(row) = rows.next().await? {
+                out.insert(row.get::<String>(0)?, row.get::<String>(1)?);
+            }
+        }
+        assert!(out.len() <= keys.len());
+        Ok(out)
+    }
+
+    /// File transform outputs under their keys, in one transaction. An
+    /// existing entry is kept: the first output under a key stands until
+    /// `vacuum`, so two planners racing on identical content agree.
+    pub async fn remember_transform_outputs(
+        &self,
+        entries: &[(String, String)],
+    ) -> Result<(), StoreError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let _write = self.write().await;
+        let tx = self.catalog.transaction().await?;
+        for (key, output) in entries {
+            tx.execute(
+                "INSERT OR IGNORE INTO transform_cache (key, output) VALUES (?1, ?2)",
+                params![key.as_str(), output.as_str()],
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// How many artifacts each cache holds, for `status`.
+    pub async fn cache_counts(&self) -> Result<CacheCounts, StoreError> {
+        let embeddings = self
+            .first_row("SELECT COUNT(*) FROM embedding_cache", ())
+            .await?
+            .map(|row| row.get::<i64>(0))
+            .transpose()?
+            .unwrap_or(0);
+        let transforms = self
+            .first_row("SELECT COUNT(*) FROM transform_cache", ())
+            .await?
+            .map(|row| row.get::<i64>(0))
+            .transpose()?
+            .unwrap_or(0);
+        Ok(CacheCounts {
+            embeddings: u64::try_from(embeddings).unwrap_or(0),
+            transforms: u64::try_from(transforms).unwrap_or(0),
+        })
     }
 
     // ------------------------------------------------------------------
@@ -1787,6 +1943,22 @@ const CATALOG_SCHEMA_SQL: &str = "CREATE TABLE IF NOT EXISTS meta (
        key TEXT PRIMARY KEY,
        fragment INTEGER NOT NULL REFERENCES fragments(id) ON DELETE CASCADE
      );
+     -- The digest-keyed artifact caches (design/indexing.md): the expensive
+     -- derived artifacts, stored once per content digest and identity so a
+     -- rebuild re-pays only what actually changed. Catalog tables, not
+     -- search tables: a re-embed drops the search surface and must find
+     -- the vectors still here.
+     CREATE TABLE IF NOT EXISTS embedding_cache (
+       digest TEXT NOT NULL,
+       model TEXT NOT NULL,
+       dimensions INTEGER NOT NULL,
+       vector BLOB NOT NULL,
+       PRIMARY KEY (digest, model, dimensions)
+     ) WITHOUT ROWID;
+     CREATE TABLE IF NOT EXISTS transform_cache (
+       key TEXT PRIMARY KEY,
+       output TEXT NOT NULL
+     ) WITHOUT ROWID;
      CREATE TABLE IF NOT EXISTS plugin_state_meta (
        namespace TEXT PRIMARY KEY,
        version TEXT NOT NULL
@@ -1805,6 +1977,8 @@ const CATALOG_SCHEMA_DROP_SQL: &str = "DROP TABLE IF EXISTS relations;
      DROP TABLE IF EXISTS sources;
      DROP TABLE IF EXISTS plugin_state;
      DROP TABLE IF EXISTS plugin_state_meta;
+     DROP TABLE IF EXISTS embedding_cache;
+     DROP TABLE IF EXISTS transform_cache;
      DROP TABLE IF EXISTS meta;";
 
 /// The embedding identity the index was built with, if one is recorded. An
@@ -2106,6 +2280,25 @@ async fn search_tables_exist(conn: &libsql::Connection) -> Result<bool, StoreErr
 /// `F32_BLOB` column holds and the vector functions read.
 fn vector_blob(vector: &[f32]) -> Vec<u8> {
     vector.iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+
+/// The inverse of [`vector_blob`]: little-endian `f32`s, a trailing partial
+/// word (which `vector_blob` never writes) dropped.
+fn vector_from_blob(blob: &[u8]) -> Vec<f32> {
+    blob.chunks_exact(4)
+        .map(|word| f32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+        .collect()
+}
+
+/// A quoted `IN (...)` list of text keys — digests and cache keys, which
+/// are hex and pipe-joined identifiers with no quote in them; a quote is
+/// still escaped so a stray one can never break the statement.
+fn text_list(keys: &[String]) -> String {
+    assert!(keys.len() <= ID_LIST_CHUNK, "key lists are issued in chunks");
+    keys.iter()
+        .map(|key| format!("'{}'", key.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// A vector's width against the declared surface — checked on the way in
@@ -2425,6 +2618,91 @@ mod tests {
         let stored = s.source_by_address(&a).await.expect("ok").expect("present");
         assert_eq!(stored.id, sid);
         assert_eq!(stored.envelope.hint.as_deref(), Some("note.md"));
+    }
+
+    #[tokio::test]
+    async fn landed_vectors_are_filed_by_text_digest_under_the_surface_identity() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        let rows = vec![
+            SearchRow {
+                fragment: FragmentId(1),
+                source: None,
+                text: "espresso descaling".into(),
+                vector: Some(vec![0.5; 8]),
+            },
+            SearchRow {
+                fragment: FragmentId(2),
+                source: None,
+                text: "text only".into(),
+                vector: None,
+            },
+        ];
+        s.add_search_rows(&rows).await.expect("adds");
+
+        let digest = ContentDigest::of_bytes(b"espresso descaling").to_hex();
+        let missing = ContentDigest::of_bytes(b"text only").to_hex();
+        let cached = s
+            .cached_embeddings(&[digest.clone(), missing.clone()])
+            .await
+            .expect("reads");
+        assert_eq!(cached.get(&digest), Some(&vec![0.5; 8]));
+        assert!(!cached.contains_key(&missing), "rows without a vector file nothing");
+        assert_eq!(s.cache_counts().await.expect("counts").embeddings, 1);
+
+        // Another model's vectors are another identity's business.
+        s.declare_embedding(identity("other-model", 8)).await.expect("declares");
+        let other = s.cached_embeddings(&[digest]).await.expect("reads");
+        assert!(other.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cached_vectors_survive_a_reembed_of_the_search_surface() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        let rows = vec![SearchRow {
+            fragment: FragmentId(1),
+            source: None,
+            text: "kitchen".into(),
+            vector: Some(vec![0.25; 8]),
+        }];
+        s.add_search_rows(&rows).await.expect("adds");
+        s.begin_reembed().await.expect("begins");
+        assert_eq!(s.search_rows_count().await.expect("counts"), 0);
+        let digest = ContentDigest::of_bytes(b"kitchen").to_hex();
+        let cached = s.cached_embeddings(std::slice::from_ref(&digest)).await.expect("reads");
+        assert_eq!(cached.get(&digest), Some(&vec![0.25; 8]));
+    }
+
+    #[tokio::test]
+    async fn transform_outputs_are_filed_first_writer_wins() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        s.remember_transform_outputs(&[("k1".into(), "first".into()), ("k2".into(), "two".into())])
+            .await
+            .expect("remembers");
+        s.remember_transform_outputs(&[("k1".into(), "second".into())])
+            .await
+            .expect("remembers");
+        let cached = s
+            .cached_transform_outputs(&["k1".into(), "k3".into()])
+            .await
+            .expect("reads");
+        assert_eq!(cached.get("k1").map(String::as_str), Some("first"));
+        assert!(!cached.contains_key("k3"));
+        assert_eq!(s.cache_counts().await.expect("counts").transforms, 2);
+    }
+
+    #[test]
+    fn vector_blob_roundtrips() {
+        let vector = vec![0.0, -1.5, 3.25, f32::MAX];
+        assert_eq!(vector_from_blob(&vector_blob(&vector)), vector);
+        assert!(vector_from_blob(&[1, 2, 3]).is_empty());
+    }
+
+    #[test]
+    fn text_list_quotes_and_escapes() {
+        assert_eq!(text_list(&["ab".into(), "c'd".into()]), "'ab','c''d'");
     }
 
     #[tokio::test]

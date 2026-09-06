@@ -99,6 +99,12 @@ pub struct IndexReport {
     pub extractive_summaries: usize,
     pub envelope_summaries: usize,
     pub embedded: usize,
+    /// Vectors taken from the digest-keyed embedding cache instead of the
+    /// endpoint: text the index had already embedded under this model.
+    pub embeddings_reused: usize,
+    /// Transform outputs (LLM summaries, say) taken from the digest-keyed
+    /// transform cache instead of applying the transform again.
+    pub transforms_reused: usize,
     /// The DiskANN index was dropped before landing and rebuilt at the end,
     /// because this run re-landed a large share of the search table.
     pub vector_index_deferred: bool,
@@ -141,6 +147,11 @@ impl fmt::Display for IndexReport {
         if self.llm_batch_jobs > 0 {
             writeln!(f, "llm batch lane: {} jobs", self.llm_batch_jobs)?;
         }
+        writeln!(
+            f,
+            "reused: {} embeddings, {} transform outputs",
+            self.embeddings_reused, self.transforms_reused
+        )?;
         write!(
             f,
             "summaries: {} llm, {} extractive, {} envelope · {} embedded · ${:.4} spent",

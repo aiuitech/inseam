@@ -504,6 +504,7 @@ impl Operations for OperationsService {
         let search_rows = self.store.search_rows_count().await.unwrap_or(0);
         let vector_index_ready = self.store.search_vector_index_ready().await.unwrap_or(false);
         let identity = self.store.embedding_identity();
+        let caches = self.store.cache_counts().await?;
         Ok(StatusReport {
             sources: stats.sources,
             indexed_sources: stats.indexed_sources,
@@ -518,6 +519,8 @@ impl Operations for OperationsService {
             embedding_dimensions: identity.as_ref().map_or(0, |i| i.dimensions),
             embedding_vectors: identity.map_or(VectorScope::All, |i| i.vectors),
             reembed_pending: self.store.reembed_pending(),
+            cached_embeddings: caches.embeddings,
+            cached_transform_outputs: caches.transforms,
         })
     }
 

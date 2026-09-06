@@ -3,9 +3,14 @@
 //! emitted fragments in turn until nothing claims the output — and describe
 //! the result as a [`SubtreePlan`] the store lands in one transaction.
 //!
-//! Planning touches no store: it is the parallel half of the sweep
-//! (`design/indexing.md`), and many planners run at once because transforms
-//! — LLM calls above all — are where indexing spends its time.
+//! Planning writes nothing to the store: it is the parallel half of the
+//! sweep (`design/indexing.md`), and many planners run at once because
+//! transforms — LLM calls above all — are where indexing spends its time.
+//! The one store access is a read: before an LLM transform is applied, the
+//! planner asks the digest-keyed transform cache whether this input under
+//! this transform has an output already ([`super::cache`]). Outputs the
+//! model produced ride the plan back to the sweep, which files them when
+//! the subtree lands.
 
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
@@ -15,16 +20,17 @@ use tokio::sync::Semaphore;
 
 use inseam_kernel::address::{Address, ContentDigest, ContentLength, Envelope};
 use inseam_kernel::fragment::{Extent, Mimetype, NewFragment, Sprout};
-use inseam_kernel::store::InventoryEntry;
+use inseam_kernel::store::{IndexStore, InventoryEntry};
 use inseam_kernel::subtree::{PlanNode, PlannedFragment, PlannedKeyed, Shape, SubtreePlan};
 use inseam_seams::connection::{Connection, Connections, EnumeratedSource};
 use inseam_seams::text::{count_lines, is_indexable_text};
 use inseam_seams::transforms::{
-    participating, prune, shape_stamp, Anchor, DecomposeBudget, KeyedSprout, Registration,
-    TransformCtx, TransformOutput,
+    participating, prune, shape_stamp, Anchor, DecomposeBudget, GrantedLlm, KeyedSprout,
+    Registration, TransformCtx, TransformOutput,
 };
 use inseam_seams::SeamError;
 
+use super::cache::{cache_key, caches_output, decode_output, encode_output, ObservedLlm};
 use super::grant::Grantor;
 
 /// The sweep's decomposition dials (shape tier), as the planner enforces
@@ -46,11 +52,37 @@ pub(super) struct PlanStats {
     pub(super) llm_summaries: usize,
     pub(super) extractive_summaries: usize,
     pub(super) envelope_summaries: usize,
+    /// Transform applications answered from the transform cache.
+    pub(super) transforms_reused: usize,
 }
 
 pub(super) struct Planned {
     pub(super) plan: SubtreePlan,
     pub(super) stats: PlanStats,
+    /// Transform outputs the model produced this plan, keyed for the
+    /// cache; the sweep files them when the subtree lands.
+    pub(super) cache_entries: Vec<(String, String)>,
+}
+
+/// One transform's output for one work item and where it came from.
+struct Applied<'a> {
+    registration: &'a Arc<Registration>,
+    output: TransformOutput,
+    provenance: Provenance,
+}
+
+enum Provenance {
+    /// Applied now; `Some` when the model produced it and it should be filed.
+    Applied(Option<(String, String)>),
+    /// Taken from the transform cache.
+    Reused,
+}
+
+/// What the cache said about one claimant of a work item.
+enum CacheLookup {
+    Hit(TransformOutput),
+    /// Not cached; `Some` when the output can be filed under this key.
+    Miss(Option<String>),
 }
 
 /// Where a source's content comes from when it is planned: read through the
@@ -87,6 +119,8 @@ pub(super) struct Planner {
     /// The registry, for fragments whose content lives at an address of its
     /// own (`NewFragment::content_address`) — possibly on another host.
     pub(super) connections: Arc<dyn Connections>,
+    /// The store, read only, for the transform cache.
+    pub(super) store: Arc<IndexStore>,
     pub(super) source_read_permits: Arc<Semaphore>,
     pub(super) registrations: Vec<Arc<Registration>>,
     pub(super) grantor: Arc<Grantor>,
@@ -117,8 +151,8 @@ impl Planner {
                 continue;
             }
             let outputs = self.apply_claimants(&read, &item).await;
-            for (registration, output) in outputs {
-                build.absorb(&item, registration, output);
+            for applied in outputs {
+                build.absorb(&item, applied);
             }
         }
         let stamp = expected_stamp(&self.registrations, &build.inventory, &self.sweep_shape);
@@ -179,12 +213,9 @@ impl Planner {
     /// claimants are independent of one another (an LLM summary and an
     /// entity extraction of the same fragment overlap in flight) — and
     /// return the outputs in registration order, which keeps budgets and
-    /// planting deterministic.
-    async fn apply_claimants<'a>(
-        &'a self,
-        read: &SourceRead,
-        item: &WorkItem,
-    ) -> Vec<(&'a Arc<Registration>, TransformOutput)> {
+    /// planting deterministic. A claimant whose output the transform cache
+    /// holds for this input is answered from there without being applied.
+    async fn apply_claimants<'a>(&'a self, read: &SourceRead, item: &WorkItem) -> Vec<Applied<'a>> {
         let claimants: Vec<&Arc<Registration>> = self
             .registrations
             .iter()
@@ -208,26 +239,106 @@ impl Planner {
             .limits
             .max_reference_hops
             .saturating_sub(item.reference_hops);
-        let applications = claimants.iter().map(|registration| {
-            let ctx = TransformCtx {
-                address: &read.source.address,
-                envelope: &read.envelope,
-                mimetype: &item.mimetype,
-                is_root: item.is_root,
-                text: item.text.as_deref(),
-                bytes: if registration.transform.wants_bytes() {
-                    item_bytes
-                } else {
-                    None
+        let lookups = self.lookup_cached(&claimants, item, item_bytes).await;
+        assert_eq!(lookups.len(), claimants.len());
+        let applications = claimants.iter().zip(lookups).map(|(registration, lookup)| async move {
+            match lookup {
+                CacheLookup::Hit(output) => Applied {
+                    registration,
+                    output,
+                    provenance: Provenance::Reused,
                 },
-                reference_hops_left,
-                llm: self.grantor.grant(registration),
-            };
-            registration.transform.apply(ctx)
+                CacheLookup::Miss(key) => {
+                    let ctx = TransformCtx {
+                        address: &read.source.address,
+                        envelope: &read.envelope,
+                        mimetype: &item.mimetype,
+                        is_root: item.is_root,
+                        text: item.text.as_deref(),
+                        bytes: if registration.transform.wants_bytes() {
+                            item_bytes
+                        } else {
+                            None
+                        },
+                        reference_hops_left,
+                        llm: None,
+                    };
+                    self.apply_one(registration, ctx, key).await
+                }
+            }
         });
         let outputs = join_all(applications).await;
         assert_eq!(outputs.len(), claimants.len());
-        claimants.into_iter().zip(outputs).collect()
+        outputs
+    }
+
+    /// Apply one transform under an observed LLM grant. The output is
+    /// filed under `key` only when the model produced it
+    /// (`super::cache`); a fallback stays a fallback for this run alone.
+    async fn apply_one<'a>(
+        &self,
+        registration: &'a Arc<Registration>,
+        mut ctx: TransformCtx<'_>,
+        key: Option<String>,
+    ) -> Applied<'a> {
+        let observed: Option<Arc<ObservedLlm>> = self.grantor.grant(registration).map(ObservedLlm::new);
+        ctx.llm = observed
+            .as_ref()
+            .map(|llm| Arc::clone(llm) as Arc<dyn GrantedLlm>);
+        let output = registration.transform.apply(ctx).await;
+        let filed = match (key, &observed) {
+            (Some(key), Some(llm)) if llm.output_is_the_models() => {
+                encode_output(&output).map(|encoded| (key, encoded))
+            }
+            _ => None,
+        };
+        Applied {
+            registration,
+            output,
+            provenance: Provenance::Applied(filed),
+        }
+    }
+
+    /// Ask the transform cache about every cacheable claimant of `item`.
+    /// One read per work item, chunked by the store; a read failure is a
+    /// miss for everyone, logged, because the cache only saves work.
+    async fn lookup_cached(
+        &self,
+        claimants: &[&Arc<Registration>],
+        item: &WorkItem,
+        item_bytes: Option<&[u8]>,
+    ) -> Vec<CacheLookup> {
+        let digest = item_digest(item, item_bytes);
+        let keys: Vec<Option<String>> = claimants
+            .iter()
+            .map(|registration| {
+                digest
+                    .as_ref()
+                    .filter(|_| caches_output(registration))
+                    .map(|digest| cache_key(digest, &item.mimetype, item.is_root, registration))
+            })
+            .collect();
+        let wanted: Vec<String> = keys.iter().flatten().cloned().collect();
+        let mut hits = if wanted.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            match self.store.cached_transform_outputs(&wanted).await {
+                Ok(hits) => hits,
+                Err(e) => {
+                    tracing::warn!("transform cache read failed; applying transforms: {e}");
+                    std::collections::HashMap::new()
+                }
+            }
+        };
+        keys.into_iter()
+            .map(|key| match key {
+                Some(key) => match hits.remove(&key).and_then(|encoded| decode_output(&encoded)) {
+                    Some(output) => CacheLookup::Hit(output),
+                    None => CacheLookup::Miss(Some(key)),
+                },
+                None => CacheLookup::Miss(None),
+            })
+            .collect()
     }
 
     /// The bytes a referenced fragment names, read once per work item
@@ -290,6 +401,17 @@ fn composed_read(source: &EnumeratedSource, text: &str) -> SourceRead {
     }
 }
 
+/// The content a work item presents to its claimants, digested: the text
+/// when the item has text, the bytes otherwise, nothing for a bare
+/// reference — which no cache can key.
+fn item_digest(item: &WorkItem, item_bytes: Option<&[u8]>) -> Option<ContentDigest> {
+    match (&item.text, item_bytes) {
+        (Some(text), _) => Some(ContentDigest::of_bytes(text.as_bytes())),
+        (None, Some(bytes)) => Some(ContentDigest::of_bytes(bytes)),
+        (None, None) => None,
+    }
+}
+
 /// A fragment awaiting transform application: the root, or an emitted
 /// fragment re-entering as a non-root for chained claims.
 struct WorkItem {
@@ -323,6 +445,7 @@ struct SubtreeBuild {
     queue: VecDeque<WorkItem>,
     fragment_budget: usize,
     stats: PlanStats,
+    cache_entries: Vec<(String, String)>,
 }
 
 impl SubtreeBuild {
@@ -351,12 +474,24 @@ impl SubtreeBuild {
             }]),
             fragment_budget: limits.max_fragments_per_source,
             stats: PlanStats::default(),
+            cache_entries: Vec::new(),
         }
     }
 
-    /// Take one transform's output for `item`: tally summaries, prune to the
-    /// remaining budget, plant the sprout forest, and hold the keyed sprouts.
-    fn absorb(&mut self, item: &WorkItem, registration: &Registration, output: TransformOutput) {
+    /// Take one transform's output for `item`: tally summaries and cache
+    /// reuse, prune to the remaining budget, plant the sprout forest, and
+    /// hold the keyed sprouts.
+    fn absorb(&mut self, item: &WorkItem, applied: Applied<'_>) {
+        let Applied {
+            registration,
+            output,
+            provenance,
+        } = applied;
+        match provenance {
+            Provenance::Reused => self.stats.transforms_reused += 1,
+            Provenance::Applied(Some(entry)) => self.cache_entries.push(entry),
+            Provenance::Applied(None) => {}
+        }
         for sprout in &output.sprouts {
             if sprout.fragment.mimetype.is_summary() {
                 match sprout.fragment.mimetype.param("via") {
@@ -506,6 +641,7 @@ impl SubtreeBuild {
                 },
             },
             stats: self.stats,
+            cache_entries: self.cache_entries,
         }
     }
 }
