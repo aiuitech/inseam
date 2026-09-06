@@ -8,7 +8,7 @@ options:
   bundleIdPrefix: dev.inseam
   deploymentTarget:
     iOS: "26.0"
-  xcodeVersion: "26.0"
+  xcodeVersion: "26.6"
   createIntermediateGroups: true
 packages:
   InseamKit:
@@ -31,6 +31,11 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+        "UISupportedInterfaceOrientations~ipad":
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         # Photos: the library is a bridged host (design/ios-app.md).
         NSPhotoLibraryUsageDescription: >-
           inseam indexes your photo library on this device so you can search

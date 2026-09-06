@@ -51,7 +51,7 @@ enum Transcription {
                 lines.append(String(result.text.characters))
             }
         }
-        try await analyzer.analyzeSequence(from: file)
+        _ = try await analyzer.analyzeSequence(from: file)
         try await analyzer.finalizeAndFinishThroughEndOfInput()
         try await collector.value
         return lines.joined(separator: "\n")

@@ -12,7 +12,7 @@ The SwiftUI shell in `apps/ios` embeds the node core through `crates/inseam-ffi`
 
 ## Layout
 
-- `project.yml` — the XcodeGen spec; `xcodegen generate` writes `Inseam.xcodeproj`. Deployment target iOS 26, Swift 5 language mode, `LIBRARY_SEARCH_PATHS` pointing at `Core/<platform>/`.
+- `project.yml` — the XcodeGen spec; `xcodegen generate` writes `Inseam.xcodeproj`. Deployment target iOS 26, Swift 5 language mode, iPhone portrait orientation, all iPad orientations, and `LIBRARY_SEARCH_PATHS` pointing at `Core/<platform>/`.
 - `build-core.sh` — builds `inseam-ffi` for `aarch64-apple-ios` and `aarch64-apple-ios-sim` with `--no-default-features` (the loaded-plugin tier is off on iOS: no JIT) and copies the static libraries under `Core/`.
 - `Sources/Inseam/InseamApp.swift` — the app; opens the node on launch and routes "open in inseam" files to the attach sheet.
 - `Sources/Inseam/NodeModel.swift` — owns the node handle, registers the bridged hosts after every open, runs blocking core calls off the main actor.
@@ -35,7 +35,7 @@ cd apps/ios && xcodegen generate && open Inseam.xcodeproj
 
 In Xcode, pick your team under Signing & Capabilities (a free Apple ID personal team is enough), connect the phone, and Run. Free-team builds expire after seven days and must be reinstalled from Xcode; iCloud, push, App Groups, and TestFlight need the paid Developer Program. Apple Intelligence features need an iPhone 15 Pro or later.
 
-The app's source is checked in ahead of a machine with Xcode: the shared kit's bridges are compiled and tested on macOS (`apps/inseamkit/test.sh` exercises a bridged host and a Swift embedder end to end through the core), but `apps/ios` itself has not been compiled yet — expect the first Xcode build to surface API-level fixes in the platform-specific files.
+The shared kit's bridges are tested on macOS by `apps/inseamkit/test.sh`, which exercises a bridged host and a Swift embedder end to end through the core. Xcode builds the iOS shell and checks its platform APIs.
 
 ## The FFI it uses
 

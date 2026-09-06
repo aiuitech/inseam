@@ -28,7 +28,7 @@ public struct QueryResultRow: View {
             if let summary = result.summary {
                 Text(summary).font(.callout).lineLimit(3)
             }
-            Text("\(result.envelope.contentType) · \(result.envelope.length)")
+            Text(verbatim: "\(result.envelope.contentType) · \(result.envelope.length)")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
