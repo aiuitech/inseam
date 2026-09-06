@@ -1,6 +1,11 @@
 import CInseamFFI
 import Foundation
 
+public enum SettingsWriteScope {
+    case all
+    case preservingShellEmbedder
+}
+
 /// An error surfaced by the Rust core across the FFI boundary.
 public struct CoreError: LocalizedError {
     public let message: String
@@ -48,14 +53,22 @@ public final class CoreNode {
 
     public static func writeSettings(
         _ settings: ConfigurationSettings,
-        to compositionURL: URL
+        to compositionURL: URL,
+        scope: SettingsWriteScope = .all
     ) throws {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         encoder.outputFormatting = [.sortedKeys]
         let json = try String(decoding: encoder.encode(settings), as: UTF8.self)
         var error: UnsafeMutablePointer<CChar>?
-        guard inseam_settings_write(compositionURL.path, json, &error) else {
+        let written: Bool
+        switch scope {
+        case .all:
+            written = inseam_settings_write(compositionURL.path, json, &error)
+        case .preservingShellEmbedder:
+            written = inseam_settings_write_preserving_embedder(compositionURL.path, json, &error)
+        }
+        guard written else {
             throw CoreError(taking: error)
         }
     }
@@ -299,4 +312,5 @@ public struct IndexReport: Decodable {
     public let unchanged: Int
     public let removed: Int
     public let fragments: Int
+    public let stopped: Bool
 }

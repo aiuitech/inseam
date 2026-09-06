@@ -41,10 +41,17 @@ final class AppModel: ObservableObject {
     @Published private(set) var pluginBusy = false
     /// The last plugin list or install outcome shown in Settings.
     @Published private(set) var pluginMessage = ""
+    /// The latest snapshot from the current or most recent index run.
+    @Published private(set) var indexProgress: IndexProgress?
+    @Published private(set) var indexPaused = false
+    @Published private(set) var indexStopping = false
 
     let coreVersion = CoreNode.coreVersion()
     let dataDir: URL
     private var node: CoreNode?
+    private var indexController: IndexController?
+
+    var indexingActive: Bool { indexController != nil }
 
     init() {
         let base = FileManager.default.urls(
@@ -302,14 +309,68 @@ final class AppModel: ObservableObject {
         panel.canChooseFiles = false
         panel.message = "Choose a folder to index"
         guard panel.runModal() == .OK, let dir = panel.url else { return }
-        run("index \(dir.lastPathComponent)") { [weak self] in
-            let report = try node.indexDirectory(dir)
-            return {
-                self?.status = "indexed \(dir.lastPathComponent): "
-                    + "\(report.indexed) indexed, \(report.unchanged) unchanged, "
-                    + "\(report.fragments) fragments"
+        startIndex(label: dir.lastPathComponent) { controller in
+            try node.indexDirectory(dir, controller: controller)
+        }
+    }
+
+    func pauseIndexing() {
+        indexController?.pause()
+        indexPaused = true
+    }
+
+    func resumeIndexing() {
+        indexController?.resume()
+        indexPaused = false
+    }
+
+    func stopIndexing() {
+        indexController?.stop()
+        indexPaused = false
+        indexStopping = true
+    }
+
+    func dismissIndexProgress() {
+        guard !indexingActive else { return }
+        indexProgress = nil
+    }
+
+    private func startIndex(
+        label: String,
+        work: @escaping (IndexController) throws -> IndexReport
+    ) {
+        let controller = IndexController { [weak self] progress in
+            Task { @MainActor in self?.indexProgress = progress }
+        }
+        indexController = controller
+        indexPaused = false
+        indexStopping = false
+        busy = true
+        Task.detached(priority: .userInitiated) {
+            do {
+                let report = try work(controller)
+                await MainActor.run { self.finishIndex(label: label, report: report) }
+            } catch {
+                await MainActor.run {
+                    self.status = "index \(label) failed: \(error.localizedDescription)"
+                    self.finishIndexState()
+                }
             }
         }
+    }
+
+    private func finishIndex(label: String, report: IndexReport) {
+        let verb = report.stopped ? "stopped" : "indexed"
+        status = "\(verb) \(label): \(report.indexed) indexed, "
+            + "\(report.unchanged) unchanged, \(report.fragments) fragments"
+        finishIndexState()
+    }
+
+    private func finishIndexState() {
+        indexController = nil
+        indexPaused = false
+        indexStopping = false
+        busy = false
     }
 
     /// Run blocking core work off the main actor, then apply its main-actor
@@ -398,6 +459,10 @@ struct ContentView: View {
                 .onSubmit { model.query(queryText) }
                 .disabled(model.busy)
 
+            if model.indexProgress != nil {
+                IndexingProcessView()
+            }
+
             if model.results.isEmpty {
                 Spacer()
                 Text(model.status)
@@ -435,5 +500,70 @@ struct ContentView: View {
         .padding()
         .frame(minWidth: 560, minHeight: 420)
         .onAppear { model.openNode() }
+    }
+}
+
+private struct IndexingProcessView: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        if let progress = model.indexProgress {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 9) {
+                    HStack {
+                        Text(progress.phase.label).font(.headline)
+                        Spacer()
+                        Text(countLabel(progress))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    if let fraction = progress.fractionCompleted {
+                        ProgressView(value: fraction)
+                    } else {
+                        ProgressView()
+                    }
+                    if let current = progress.current {
+                        Text(current)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    HStack {
+                        Text("\(progress.indexed) indexed · \(progress.unchanged) unchanged")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        controls
+                    }
+                }
+                .padding(.top, 3)
+            } label: {
+                Label("Indexing process", systemImage: "square.stack.3d.up")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var controls: some View {
+        if model.indexingActive {
+            if model.indexStopping {
+                ProgressView().controlSize(.small)
+                Text("Stopping…").font(.caption)
+            } else if model.indexPaused {
+                Button("Resume") { model.resumeIndexing() }
+                Button("Stop") { model.stopIndexing() }
+            } else {
+                Button("Pause") { model.pauseIndexing() }
+                Button("Stop") { model.stopIndexing() }
+            }
+        } else {
+            Button("Dismiss") { model.dismissIndexProgress() }
+        }
+    }
+
+    private func countLabel(_ progress: IndexProgress) -> String {
+        guard progress.sourcesTotal > 0 else { return "Discovering" }
+        return "\(progress.sourcesComplete) of \(progress.sourcesTotal) sources"
     }
 }

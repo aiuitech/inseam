@@ -9,6 +9,8 @@ The SwiftUI shell in `apps/ios` embeds the node core through `crates/inseam-ffi`
 - **Attaches call recordings.** iOS lets no third-party app record a call, so the recording comes from the Phone app's own recorder (iOS 18.1+), which saves into Notes. Share it from Notes to inseam (the app is an "open in" target for audio and plain text) or save it into *Files › On My iPhone › inseam › Call Recordings*. The attach sheet names the participant — typed or from the contact picker — writes a sidecar with the participant and the call's times, transcribes the audio on device (iOS 26 `SpeechAnalyzer`) when no transcript came along, and indexes. The participant becomes a claimed `participant` property on the recording's envelope.
 - **Observes calls.** With the app running, a call ending posts a local notification reminding you to share the recording; the call's start and end are kept for the attach sheet. CallKit exposes no phone number for calls the app did not place.
 - **Searches** through the same finder as every client, with the shared result row.
+- **Shows each indexing run** as it enumerates, catalogs, indexes, and finalizes. The process view reports source counts and the current address and can pause, resume, or stop the Rust sweep. A stopped run keeps completed sources and the next run resumes.
+- **Configures the node** from a Settings sheet. Connections, model endpoints, indexing limits, ignore rules, search ranking, Keychain secrets, and raw composition use the same validated settings bridge as macOS. Visual saves retain the Apple on-device embedder; raw composition can replace it deliberately.
 
 ## Layout
 
@@ -16,6 +18,7 @@ The SwiftUI shell in `apps/ios` embeds the node core through `crates/inseam-ffi`
 - `build-core.sh` — builds `inseam-ffi` for `aarch64-apple-ios` and `aarch64-apple-ios-sim` with `--no-default-features` (the loaded-plugin tier is off on iOS: no JIT) and copies the static libraries under `Core/`.
 - `Sources/Inseam/InseamApp.swift` — the app; opens the node on launch and routes "open in inseam" files to the attach sheet.
 - `Sources/Inseam/NodeModel.swift` — owns the node handle, registers the bridged hosts after every open, runs blocking core calls off the main actor.
+- `Sources/Inseam/SettingsView.swift` — first-party configuration, Keychain secrets, and raw composition editors for the phone's node.
 - `Sources/Inseam/AppleEmbedder.swift` — `NLContextualEmbedding` (Latin script, 512 dimensions, mean-pooled) as a `ShellEmbedding`.
 - `Sources/Inseam/PhotosHost.swift` — PhotoKit as a `BridgedHostSource`: `photos/<local identifier>` locators; date, place, favorite, and screenshot properties; original bytes on demand.
 - `Sources/Inseam/CallRecordingsHost.swift` — the Documents › Call Recordings folder as a `BridgedHostSource`, the sidecar format, and the import.
@@ -39,4 +42,4 @@ The shared kit's bridges are tested on macOS by `apps/inseamkit/test.sh`, which 
 
 ## The FFI it uses
 
-Beyond the macOS app's surface ([macos-app.md](macos-app.md)): `inseam_node_open_with_shell` (open with the app's embedder), `inseam_node_register_host` / `inseam_node_unregister_host` (bridge a host in and out), and `inseam_node_index_host` (sweep a stewarded host by id). The Swift face is `CoreNode.init(dataDir:embedder:)`, `registerHost`, `unregisterHost`, and `indexHost` in `apps/inseamkit/Sources/InseamKit/Bridges.swift`.
+Beyond the macOS app's surface ([macos-app.md](macos-app.md)): `inseam_node_open_with_shell` (open with the app's embedder), `inseam_node_register_host` / `inseam_node_unregister_host` (bridge a host in and out), and `inseam_node_index_host` (sweep a stewarded host by id). Controlled directory and host calls take a borrowed callback for `IndexProgress` JSON; it returns continue, pause, or stop. `inseam_settings_write_preserving_embedder` gives the visual iOS editor the ordinary validated write path without masking the shell's provider. The Swift faces live in `InseamKit` as `CoreNode`, `IndexController`, and the bridge protocols.

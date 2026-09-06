@@ -5,13 +5,14 @@
 
 use std::fmt;
 use std::num::NonZeroU32;
+use std::sync::Arc;
 
-use inseam_kernel::address::HostId;
+use inseam_kernel::address::{Address, HostId};
 use inseam_kernel::substrate::ServiceKey;
 use serde::{Deserialize, Serialize};
 
-use crate::llm::LlmLane;
 use crate::SeamError;
+use crate::llm::LlmLane;
 
 pub const SWEEP: ServiceKey<dyn Sweep> = ServiceKey::new("sweep");
 
@@ -51,7 +52,6 @@ impl fmt::Display for DeepBudget {
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct SweepRequest {
     /// The host to sweep; its connection interprets `root`.
     pub host: HostId,
@@ -68,11 +68,55 @@ pub struct SweepRequest {
     /// time-insensitive run: summaries collect into the endpoint's batch
     /// jobs instead of one request apiece.
     pub llm_lane: Option<LlmLane>,
+    /// A local owner surface observing and controlling this run. Network
+    /// transports leave it absent; it is process-local and never serialized.
+    pub monitor: Option<Arc<dyn IndexMonitor>>,
 }
 
 #[async_trait::async_trait]
 pub trait Sweep: Send + Sync {
     async fn sweep(&self, request: &SweepRequest) -> Result<IndexReport, SeamError>;
+}
+
+/// A sweep phase owner surfaces can show without learning pipeline internals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexPhase {
+    Preparing,
+    Enumerating,
+    Cataloging,
+    Indexing,
+    Finalizing,
+    Complete,
+}
+
+/// A bounded snapshot emitted at sweep checkpoints.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IndexProgress {
+    pub phase: IndexPhase,
+    pub sources_complete: usize,
+    pub sources_total: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current: Option<Address>,
+    pub indexed: usize,
+    pub unchanged: usize,
+    pub catalog_only: usize,
+    pub ignored: usize,
+    pub stopped: bool,
+}
+
+/// What the owner asks the sweep to do at a checkpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexControl {
+    Continue,
+    Pause,
+    Stop,
+}
+
+/// Process-local observer used by native app transports. Implementations
+/// must return quickly; pause is represented as a state the sweep polls.
+pub trait IndexMonitor: Send + Sync {
+    fn update(&self, progress: &IndexProgress) -> IndexControl;
 }
 
 #[derive(Debug, Default, Clone, serde::Serialize)]
@@ -115,6 +159,9 @@ pub struct IndexReport {
     /// Batch-API jobs the endpoint created across the run's calls (the
     /// batch lane's unit of work; zero on the interactive lane).
     pub llm_batch_jobs: u64,
+    /// The owner stopped the run at a safe checkpoint. Work reported above
+    /// is complete and a later sweep resumes from the remaining dirty rows.
+    pub stopped: bool,
 }
 
 impl fmt::Display for IndexReport {
@@ -142,7 +189,10 @@ impl fmt::Display for IndexReport {
             )?;
         }
         if self.vector_index_deferred {
-            writeln!(f, "vector index: dropped before landing, rebuilt at the end")?;
+            writeln!(
+                f,
+                "vector index: dropped before landing, rebuilt at the end"
+            )?;
         }
         if self.llm_batch_jobs > 0 {
             writeln!(f, "llm batch lane: {} jobs", self.llm_batch_jobs)?;

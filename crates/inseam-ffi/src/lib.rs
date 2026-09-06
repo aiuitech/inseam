@@ -15,7 +15,7 @@
 //!   `inseam_string_free`, and nodes with `inseam_node_free`. Passing
 //!   pointers from anywhere else is undefined behavior.
 
-use std::ffi::{CStr, CString, c_char};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -27,6 +27,7 @@ use inseam_seams::operations::{
     AuthorizeGrantRequest, AwaitAuthorizationRequest, IndexRequest, InstallPluginRequest,
     OPERATIONS, Operations, QueryRequest, RevokeGrantRequest,
 };
+use inseam_seams::sweep::{IndexControl, IndexMonitor, IndexProgress, IndexReport};
 use tokio::runtime::Runtime;
 
 pub mod bridge;
@@ -144,6 +145,46 @@ struct BridgedRegistration {
     dispose: Box<dyn FnOnce() + Send>,
 }
 
+/// Process-local progress callback for one native app index call. The
+/// callback receives an `IndexProgress` JSON snapshot and returns 0 to
+/// continue, 1 to pause, or 2 to stop.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct InseamIndexCallbacks {
+    pub update: Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> u32>,
+}
+
+struct CallbackIndexMonitor {
+    callbacks: InseamIndexCallbacks,
+    user_data: *mut c_void,
+}
+
+// SAFETY: the C contract requires the callback and its context to remain
+// valid for the whole blocking call and to accept calls from any thread.
+unsafe impl Send for CallbackIndexMonitor {}
+// SAFETY: `update` receives shared state only; the shell owns synchronization.
+unsafe impl Sync for CallbackIndexMonitor {}
+
+impl IndexMonitor for CallbackIndexMonitor {
+    fn update(&self, progress: &IndexProgress) -> IndexControl {
+        let Some(update) = self.callbacks.update else {
+            return IndexControl::Stop;
+        };
+        let Ok(json) = serde_json::to_string(progress) else {
+            return IndexControl::Stop;
+        };
+        let Ok(json) = CString::new(json) else {
+            return IndexControl::Stop;
+        };
+        // SAFETY: upheld by the caller for the duration of the blocking call.
+        match unsafe { update(self.user_data, json.as_ptr()) } {
+            0 => IndexControl::Continue,
+            1 => IndexControl::Pause,
+            _ => IndexControl::Stop,
+        }
+    }
+}
+
 impl InseamNode {
     fn kernel(&self) -> MutexGuard<'_, Kernel> {
         self.kernel.lock().unwrap_or_else(PoisonError::into_inner)
@@ -197,6 +238,37 @@ pub unsafe extern "C" fn inseam_settings_write(
         return false;
     };
     match settings::write(Path::new(path), json) {
+        Ok(()) => true,
+        Err(message) => {
+            set_error(error_out, &message);
+            false
+        }
+    }
+}
+
+/// Validate and write settings without changing the composition's embedder
+/// entry. App shells use this so saving unrelated settings does not mask the
+/// on-device provider they mount beneath the owner's overlay.
+///
+/// # Safety
+/// Same contracts as [`inseam_settings_write`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn inseam_settings_write_preserving_embedder(
+    composition_path: *const c_char,
+    settings_json: *const c_char,
+    error_out: *mut *mut c_char,
+) -> bool {
+    // SAFETY: caller contract above.
+    let Some(path) = (unsafe { arg_str(composition_path) }) else {
+        set_error(error_out, "composition_path must be a valid UTF-8 C string");
+        return false;
+    };
+    // SAFETY: caller contract above.
+    let Some(json) = (unsafe { arg_str(settings_json) }) else {
+        set_error(error_out, "settings_json must be a valid UTF-8 C string");
+        return false;
+    };
+    match settings::write_preserving_embedder(Path::new(path), json) {
         Ok(()) => true,
         Err(message) => {
             set_error(error_out, &message);
@@ -369,17 +441,48 @@ pub unsafe extern "C" fn inseam_node_index_dir(
     let Some(dir) = (unsafe { arg_str(dir) }) else {
         return fail(error_out, "dir must be a valid UTF-8 C string");
     };
-    let Some(operations) = handle.operations.as_ref() else {
-        return fail(error_out, &unsettled_message(&handle.kernel()));
-    };
-    let report = handle.runtime.block_on(operations.index(IndexRequest {
-        host: None,
-        root: dir.to_string(),
-        rebuild,
-        deep_budget: None,
-        llm_lane: None,
-    }));
+    let report = index_run(handle, None, dir, rebuild, None);
     json_result(report, error_out)
+}
+
+/// Index a directory while reporting progress and accepting pause or stop.
+/// `callbacks` and `user_data` are borrowed until this blocking call returns.
+///
+/// # Safety
+/// Same contracts as [`inseam_node_index_dir`]; `callbacks` must point to a
+/// complete struct whose function and context are safe from any thread.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn inseam_node_index_dir_controlled(
+    node: *const InseamNode,
+    dir: *const c_char,
+    rebuild: bool,
+    callbacks: *const InseamIndexCallbacks,
+    user_data: *mut c_void,
+    error_out: *mut *mut c_char,
+) -> *mut c_char {
+    // SAFETY: caller contract above.
+    let Some(handle) = (unsafe { node.as_ref() }) else {
+        return fail(error_out, "node handle is null");
+    };
+    // SAFETY: caller contract above.
+    let Some(dir) = (unsafe { arg_str(dir) }) else {
+        return fail(error_out, "dir must be a valid UTF-8 C string");
+    };
+    // SAFETY: caller contract above.
+    let Some(callbacks) = (unsafe { callbacks.as_ref() }) else {
+        return fail(error_out, "index callbacks must not be null");
+    };
+    if callbacks.update.is_none() {
+        return fail(error_out, "index update callback must not be null");
+    }
+    let monitor = Arc::new(CallbackIndexMonitor {
+        callbacks: *callbacks,
+        user_data,
+    });
+    json_result(
+        index_run(handle, None, dir, rebuild, Some(monitor)),
+        error_out,
+    )
 }
 
 /// Register a host the app shell bridges in ([`bridge`]): `host_json` is a
@@ -505,17 +608,82 @@ pub unsafe extern "C" fn inseam_node_index_host(
         Ok(host) => host,
         Err(e) => return fail(error_out, &format!("host_id: {e}")),
     };
-    let Some(operations) = handle.operations.as_ref() else {
-        return fail(error_out, &unsettled_message(&handle.kernel()));
+    let report = index_run(handle, Some(host), root, rebuild, None);
+    json_result(report, error_out)
+}
+
+/// Index one host scope while reporting progress and accepting pause or stop.
+///
+/// # Safety
+/// Same contracts as [`inseam_node_index_host`] and
+/// [`inseam_node_index_dir_controlled`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn inseam_node_index_host_controlled(
+    node: *const InseamNode,
+    host_id: *const c_char,
+    root: *const c_char,
+    rebuild: bool,
+    callbacks: *const InseamIndexCallbacks,
+    user_data: *mut c_void,
+    error_out: *mut *mut c_char,
+) -> *mut c_char {
+    // SAFETY: caller contract above.
+    let Some(handle) = (unsafe { node.as_ref() }) else {
+        return fail(error_out, "node handle is null");
     };
-    let report = handle.runtime.block_on(operations.index(IndexRequest {
-        host: Some(host),
+    // SAFETY: caller contract above.
+    let Some(host_id) = (unsafe { arg_str(host_id) }) else {
+        return fail(error_out, "host_id must be a valid UTF-8 C string");
+    };
+    // SAFETY: caller contract above.
+    let Some(root) = (unsafe { arg_str(root) }) else {
+        return fail(error_out, "root must be a valid UTF-8 C string");
+    };
+    // SAFETY: caller contract above.
+    let Some(callbacks) = (unsafe { callbacks.as_ref() }) else {
+        return fail(error_out, "index callbacks must not be null");
+    };
+    if callbacks.update.is_none() {
+        return fail(error_out, "index update callback must not be null");
+    }
+    let host = match inseam_kernel::address::HostId::new(host_id) {
+        Ok(host) => host,
+        Err(e) => return fail(error_out, &format!("host_id: {e}")),
+    };
+    let monitor = Arc::new(CallbackIndexMonitor {
+        callbacks: *callbacks,
+        user_data,
+    });
+    json_result(
+        index_run(handle, Some(host), root, rebuild, Some(monitor)),
+        error_out,
+    )
+}
+
+fn index_run(
+    handle: &InseamNode,
+    host: Option<inseam_kernel::address::HostId>,
+    root: &str,
+    rebuild: bool,
+    monitor: Option<Arc<dyn IndexMonitor>>,
+) -> Result<IndexReport, SeamError> {
+    let operations = handle
+        .operations
+        .as_ref()
+        .ok_or_else(|| SeamError::Unavailable(unsettled_message(&handle.kernel())))?;
+    let request = IndexRequest {
+        host,
         root: root.to_string(),
         rebuild,
         deep_budget: None,
         llm_lane: None,
-    }));
-    json_result(report, error_out)
+    };
+    match monitor {
+        Some(monitor) => handle
+            .runtime
+            .block_on(operations.index_monitored(request, monitor)),
+        None => handle.runtime.block_on(operations.index(request)),
+    }
 }
 
 /// Put a bridged host into the `connections` registry and remember its

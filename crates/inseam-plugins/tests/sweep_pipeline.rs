@@ -6,9 +6,31 @@
 
 mod common;
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use inseam_kernel::fragment::FragmentId;
 use inseam_seams::connection::CONNECTIONS;
 use inseam_seams::operations::IndexRequest;
+use inseam_seams::sweep::{IndexControl, IndexMonitor, IndexPhase, IndexProgress};
+
+struct StopAfterTwoSources {
+    completed: AtomicU32,
+}
+
+impl IndexMonitor for StopAfterTwoSources {
+    fn update(&self, progress: &IndexProgress) -> IndexControl {
+        if progress.phase != IndexPhase::Indexing || progress.current.is_none() {
+            return IndexControl::Continue;
+        }
+        let completed = self.completed.fetch_add(1, Ordering::SeqCst) + 1;
+        if completed >= 2 {
+            IndexControl::Stop
+        } else {
+            IndexControl::Continue
+        }
+    }
+}
 
 fn write_corpus(dir: &std::path::Path) {
     for d in 0..3 {
@@ -32,7 +54,9 @@ fn write_corpus(dir: &std::path::Path) {
 
 /// Every fragment of the store as `(id, source locator, mimetype, text)`,
 /// in id order: the whole graph's observable identity.
-async fn graph_signature(kernel: &inseam_kernel::substrate::Kernel) -> Vec<(i64, String, String, Option<String>)> {
+async fn graph_signature(
+    kernel: &inseam_kernel::substrate::Kernel,
+) -> Vec<(i64, String, String, Option<String>)> {
     let store = kernel.store();
     let host_id = kernel
         .service(&CONNECTIONS)
@@ -46,22 +70,36 @@ async fn graph_signature(kernel: &inseam_kernel::substrate::Kernel) -> Vec<(i64,
     let mut out = Vec::new();
     for (sid, locator) in store.sources_of_host(&host_id).await.expect("ok") {
         let stored = store.source(sid).await.expect("ok").expect("present");
-        let meta = store.index_meta(&stored.address).await.expect("ok").expect("present");
-        assert!(meta.indexed, "{locator} is marked indexed once its rows landed");
+        let meta = store
+            .index_meta(&stored.address)
+            .await
+            .expect("ok")
+            .expect("present");
+        assert!(
+            meta.indexed,
+            "{locator} is marked indexed once its rows landed"
+        );
         let relative = locator.rsplit('/').take(2).collect::<Vec<_>>().join("/");
         for f in store.fragments_of(sid).await.expect("ok") {
-            out.push((f.id.0, relative.clone(), f.mimetype.to_string(), f.text.clone()));
+            out.push((
+                f.id.0,
+                relative.clone(),
+                f.mimetype.to_string(),
+                f.text.clone(),
+            ));
         }
     }
     out.sort();
     out
 }
 
-async fn index_with(concurrency: usize, corpus: &std::path::Path) -> (inseam_kernel::substrate::Kernel, tempfile::TempDir) {
+async fn index_with(
+    concurrency: usize,
+    corpus: &std::path::Path,
+) -> (inseam_kernel::substrate::Kernel, tempfile::TempDir) {
     let data = tempfile::tempdir().expect("tempdir");
-    let overlay = format!(
-        "[[entry]]\nid = \"sweep\"\n[entry.config]\nconcurrency = {concurrency}\n"
-    );
+    let overlay =
+        format!("[[entry]]\nid = \"sweep\"\n[entry.config]\nconcurrency = {concurrency}\n");
     let kernel = common::boot(data.path(), &overlay).await;
     let ops = common::ops(&kernel);
     let report = ops
@@ -77,7 +115,10 @@ async fn index_with(concurrency: usize, corpus: &std::path::Path) -> (inseam_ker
     // 39 files, three subfolders, and the root: folders land after files.
     assert_eq!(report.indexed, 43, "{report}");
     assert_eq!(report.extractive_summaries, 43, "{report}");
-    assert!(report.embedded > 43, "every text fragment embedded: {report}");
+    assert!(
+        report.embedded > 43,
+        "every text fragment embedded: {report}"
+    );
     (kernel, data)
 }
 
@@ -92,7 +133,10 @@ async fn concurrency_does_not_change_the_index() {
     let a = graph_signature(&sequential).await;
     let b = graph_signature(&concurrent).await;
     assert!(!a.is_empty());
-    assert_eq!(a, b, "same fragments under the same ids regardless of concurrency");
+    assert_eq!(
+        a, b,
+        "same fragments under the same ids regardless of concurrency"
+    );
     assert_eq!(
         sequential.store().search_rows_count().await.expect("ok"),
         concurrent.store().search_rows_count().await.expect("ok"),
@@ -141,7 +185,9 @@ async fn indexing_fills_the_envelope_content_digest_from_the_bytes_it_reads() {
     // exactly BLAKE3 of the file's raw bytes.
     assert_eq!(
         stored.envelope.content_digest,
-        Some(inseam_kernel::address::ContentDigest::of_bytes(b"# hi\n\ndigest me\n")),
+        Some(inseam_kernel::address::ContentDigest::of_bytes(
+            b"# hi\n\ndigest me\n"
+        )),
     );
 }
 
@@ -165,4 +211,63 @@ async fn search_rows_reference_landed_fragments_only() {
         .filter(|f| f.text.as_deref().is_some_and(|t| !t.trim().is_empty()))
         .count();
     assert_eq!(rows, texted, "one search row per text-bearing fragment");
+}
+
+#[tokio::test]
+async fn a_stopped_run_lands_completed_sources_and_the_next_run_resumes() {
+    let corpus = tempfile::tempdir().expect("tempdir");
+    for index in 0..5_u32 {
+        std::fs::write(
+            corpus.path().join(format!("note-{index}.txt")),
+            format!("body {index}\n"),
+        )
+        .expect("write");
+    }
+    let data = tempfile::tempdir().expect("tempdir");
+    let kernel = common::boot(data.path(), "").await;
+    let operations = common::ops(&kernel);
+    let request = || IndexRequest {
+        host: None,
+        root: corpus.path().display().to_string(),
+        rebuild: false,
+        deep_budget: None,
+        llm_lane: None,
+    };
+
+    let stopped = operations
+        .index_monitored(
+            request(),
+            Arc::new(StopAfterTwoSources {
+                completed: AtomicU32::new(0),
+            }),
+        )
+        .await
+        .expect("stopped sweep returns its completed report");
+    assert!(stopped.stopped);
+    assert_eq!(stopped.indexed, 2);
+    assert_eq!(
+        kernel
+            .store()
+            .catalog_counts(None)
+            .await
+            .expect("counts")
+            .indexed,
+        2
+    );
+
+    let resumed = operations.index(request()).await.expect("resume sweep");
+    assert!(!resumed.stopped);
+    assert_eq!(
+        resumed.indexed, 4,
+        "three files and their folder: {resumed}"
+    );
+    assert_eq!(
+        kernel
+            .store()
+            .catalog_counts(None)
+            .await
+            .expect("counts")
+            .indexed,
+        6
+    );
 }

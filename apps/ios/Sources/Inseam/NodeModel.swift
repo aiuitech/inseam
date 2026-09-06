@@ -14,6 +14,9 @@ final class NodeModel {
     private(set) var busy = false
     private(set) var nodeOpen = false
     private(set) var hosts: [HostView] = []
+    private(set) var indexProgress: IndexProgress?
+    private(set) var indexPaused = false
+    private(set) var indexStopping = false
     /// Failed and pending composition entries, one line each.
     private(set) var parkedWarnings: [String] = []
     /// A recording the user is attaching to a call (the attach sheet).
@@ -25,8 +28,11 @@ final class NodeModel {
     let callObserver = CallObserver()
 
     private var node: CoreNode?
-    private var photosHostId: String?
     private var recordingsHostId: String?
+    private var indexController: IndexController?
+
+    var indexingActive: Bool { indexController != nil }
+    var compositionURL: URL { dataDir.appendingPathComponent("composition.toml") }
 
     init() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -50,24 +56,24 @@ final class NodeModel {
         run("open node") { [weak self] in
             old?.close()
             try FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
-            let node: CoreNode
-            if let embedder = AppleEmbedder.ifAvailable() {
-                node = try CoreNode(dataDir: dataDir, embedder: embedder)
-            } else {
-                node = try CoreNode(dataDir: dataDir)
+            try SecretStore.exportIntoEnvironment()
+            var node = try Self.makeNode(dataDir: dataDir)
+            var health = try node.health()
+            let missingNames = health.flatMap(\.missingSecrets).map(\.env)
+            if try SecretStore.exportDeclaredIntoEnvironment(names: missingNames) {
+                node.close()
+                node = try Self.makeNode(dataDir: dataDir)
+                health = try node.health()
             }
-            let health = try node.health()
             let recordingsView = try node.registerHost(recordings.description, source: recordings)
-            var photosView: HostView?
             if let photos = PhotosHost.ifAuthorized() {
-                photosView = try node.registerHost(photos.description, source: photos)
+                _ = try node.registerHost(photos.description, source: photos)
             }
             let hosts = try node.hosts()
             return {
                 self?.node = node
                 self?.nodeOpen = true
                 self?.recordingsHostId = recordingsView.id
-                self?.photosHostId = photosView?.id
                 self?.hosts = hosts
                 self?.parkedWarnings = Self.parkedWarnings(in: health)
                 self?.status = "node open · core \(self?.coreVersion ?? "")"
@@ -93,7 +99,7 @@ final class NodeModel {
     /// run and resumable, so this can be run again to continue.
     func indexPhotos() {
         guard let node else { return }
-        run("index photos") { [weak self] in
+        startIndex(label: "photos", node: node) { controller in
             let photos = try PhotosHost.requestingAccess()
             let view: HostView
             if let existing = try node.hosts().first(where: { $0.kind == PhotosHost.kind }) {
@@ -101,22 +107,36 @@ final class NodeModel {
             } else {
                 view = try node.registerHost(photos.description, source: photos)
             }
-            let report = try node.indexHost(view.id)
-            let hosts = try node.hosts()
-            return {
-                self?.photosHostId = view.id
-                self?.hosts = hosts
-                self?.status = Self.describe(report, of: "photos")
-            }
+            return try node.indexHost(view.id, controller: controller)
         }
     }
 
     func indexCallRecordings() {
         guard let node, let hostId = recordingsHostId else { return }
-        run("index call recordings") { [weak self] in
-            let report = try node.indexHost(hostId)
-            return { self?.status = Self.describe(report, of: "call recordings") }
+        startIndex(label: "call recordings", node: node) { controller in
+            try node.indexHost(hostId, controller: controller)
         }
+    }
+
+    func pauseIndexing() {
+        indexController?.pause()
+        indexPaused = true
+    }
+
+    func resumeIndexing() {
+        indexController?.resume()
+        indexPaused = false
+    }
+
+    func stopIndexing() {
+        indexController?.stop()
+        indexPaused = false
+        indexStopping = true
+    }
+
+    func dismissIndexProgress() {
+        guard !indexingActive else { return }
+        indexProgress = nil
     }
 
     /// Start attaching a recording: from a file the share sheet handed us
@@ -138,13 +158,60 @@ final class NodeModel {
             try Transcription.transcribe(imported, into: recordings)
             return {
                 self?.status = "attached \(imported.lastPathComponent)"
-                self?.indexCallRecordings()
+                Task { @MainActor [weak self] in
+                    self?.indexCallRecordings()
+                }
             }
         }
     }
 
     private static func describe(_ report: IndexReport, of what: String) -> String {
-        "indexed \(what): \(report.indexed) indexed, \(report.unchanged) unchanged, \(report.fragments) fragments"
+        let verb = report.stopped ? "stopped" : "indexed"
+        return "\(verb) \(what): \(report.indexed) indexed, \(report.unchanged) unchanged, \(report.fragments) fragments"
+    }
+
+    nonisolated private static func makeNode(dataDir: URL) throws -> CoreNode {
+        if let embedder = AppleEmbedder.ifAvailable() {
+            return try CoreNode(dataDir: dataDir, embedder: embedder)
+        }
+        return try CoreNode(dataDir: dataDir)
+    }
+
+    private func startIndex(
+        label: String,
+        node: CoreNode,
+        work: @escaping @Sendable (IndexController) throws -> IndexReport
+    ) {
+        let controller = IndexController { [weak self] progress in
+            Task { @MainActor in self?.indexProgress = progress }
+        }
+        indexController = controller
+        indexPaused = false
+        indexStopping = false
+        busy = true
+        Task.detached(priority: .userInitiated) {
+            do {
+                let report = try work(controller)
+                let hosts = (try? node.hosts()) ?? []
+                await MainActor.run {
+                    self.hosts = hosts
+                    self.status = Self.describe(report, of: label)
+                    self.finishIndexState()
+                }
+            } catch {
+                await MainActor.run {
+                    self.status = "index \(label) failed: \(error.localizedDescription)"
+                    self.finishIndexState()
+                }
+            }
+        }
+    }
+
+    private func finishIndexState() {
+        indexController = nil
+        indexPaused = false
+        indexStopping = false
+        busy = false
     }
 
     private static func parkedWarnings(in health: [FiberHealth]) -> [String] {

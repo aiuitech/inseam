@@ -44,20 +44,24 @@ use inseam_kernel::store::{
     CatalogEntry, CatalogMark, IndexStore, KeyedFragment, SourceCompletion, SubtreeWritten,
 };
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError, STORE,
+    ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError, STORE, parse_config,
 };
-use inseam_seams::connection::{Connections, EnumeratedSource, Registration as ConnectionRegistration, CONNECTIONS};
-use inseam_seams::dates::parse_ymd_epoch;
-use inseam_seams::embedder::{Embedder, EMBEDDER};
-use inseam_seams::llm::{self, Llm, LlmLane, LLM};
-use inseam_seams::sweep::{DeepBudget, IndexReport, Sweep, SweepRequest, SWEEP};
-use inseam_seams::transforms::{Registration, Transforms, TRANSFORMS};
 use inseam_seams::SeamError;
+use inseam_seams::connection::{
+    CONNECTIONS, Connections, EnumeratedSource, Registration as ConnectionRegistration,
+};
+use inseam_seams::dates::parse_ymd_epoch;
+use inseam_seams::embedder::{EMBEDDER, Embedder};
+use inseam_seams::llm::{self, LLM, Llm, LlmLane};
+use inseam_seams::sweep::{
+    DeepBudget, IndexControl, IndexPhase, IndexProgress, IndexReport, SWEEP, Sweep, SweepRequest,
+};
+use inseam_seams::transforms::{Registration, TRANSFORMS, Transforms};
 
 use embed::{EmbedStage, PendingRow, RowBuffer};
 use grant::{Grantor, RunMeters};
 use ignore::{IgnoreRule, IgnoreSet};
-use plan::{expected_stamp, PlanContent, PlanInput, PlanLimits, Planned, Planner};
+use plan::{PlanContent, PlanInput, PlanLimits, Planned, Planner, expected_stamp};
 
 /// Catalog-only rows per transaction.
 const CATALOG_CHUNK: usize = 1_000;
@@ -69,6 +73,11 @@ const CATALOG_CHUNK: usize = 1_000;
 /// dial sits below it because landing is the sweep's serial stage and the
 /// rebuild runs once, after everything is in.
 const VECTOR_INDEX_DEFER_PERCENT: u64 = 50;
+/// A paused app run polls four times per second for at most 24 hours. iOS
+/// cannot keep a foreground run alive longer than that in practice, and a
+/// fixed ceiling keeps a forgotten pause from retaining pipeline memory.
+const PAUSE_POLLS_MAX: u32 = 24 * 60 * 60 * 4;
+const PAUSE_POLL_MS: u64 = 250;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -218,8 +227,8 @@ impl Plugin for SweepPlugin {
 
     async fn apply(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
         self.config.cutoff()?; // fail on a bad date now, not mid-index
-        let ignore = IgnoreSet::compile(&self.config.ignore)
-            .map_err(|e| PluginError(e.to_string()))?; // and on a bad glob
+        let ignore =
+            IgnoreSet::compile(&self.config.ignore).map_err(|e| PluginError(e.to_string()))?; // and on a bad glob
         let transform_model = cx
             .facts(&LLM)
             .and_then(|f| f.str(llm::facts::TRANSFORM_MODEL))
@@ -269,117 +278,13 @@ pub struct SweepService {
 #[async_trait::async_trait]
 impl Sweep for SweepService {
     async fn sweep(&self, request: &SweepRequest) -> Result<IndexReport, SeamError> {
-        let cutoff = self
-            .config
-            .cutoff()
-            .map_err(|e| SeamError::failed(e.to_string()))?;
         let mut report = IndexReport::default();
-        // Resolved per run, not at apply: connections come and go with
-        // their own fibers, and the registry binding never changes identity
-        // for it — mounting a mailbox does not restart the sweep.
-        let steward = self.steward_of(&request.host)?;
-
-        // A pending embedding migration blocks search: resolve it before the
-        // sweep so even a zero-change run leaves the index queryable.
-        if self.store.reembed_pending() {
-            self.reembed(&mut report).await?;
-        }
-
-        let enumerated = steward.connection.enumerate(&request.root).await?;
-        report.sources_seen = enumerated.len();
-        // Ignored sources leave the run here, before cataloging and before
-        // vanished reconciliation — so a newly ignored source that was
-        // indexed earlier is removed by the same path a deleted file takes.
-        let admitted: Vec<EnumeratedSource> = enumerated
-            .into_iter()
-            .filter(|s| !self.ignore.matches(&s.address, &s.envelope))
-            .collect();
-        // Folders are decided level by level after the files land, since
-        // their content is composed from what landed (`folders`); a folder
-        // whose every file the rules kept out leaves with them.
-        let (folders, files): (Vec<EnumeratedSource>, Vec<EnumeratedSource>) =
-            admitted.into_iter().partition(folders::is_folder);
-        let folders = folders::retain_holding(folders, &files);
-        let sources: Vec<EnumeratedSource> = files.iter().chain(folders.iter()).cloned().collect();
-        report.ignored = report.sources_seen - sources.len();
-        assert!(report.ignored + sources.len() == report.sources_seen);
-
-        // The registry snapshot, with LLM-hungry registrations' fingerprints
-        // extended by the transform model (a model change reshapes their
-        // output; design/index-maintenance.md shape tier).
-        let registrations = self.stamped_registrations();
-        let sweep_shape = self.config.shape_fingerprint();
-
-        // A request's budget wins for this run only; the composition's dial
-        // is the steady state every unqualified run returns to.
-        let dials = RunDials {
-            rebuild: request.rebuild,
-            deep_budget: request.deep_budget.unwrap_or_else(|| self.config.deep_budget()),
+        let Some(prepared) = self.prepare_run(request, &mut report).await? else {
+            return Ok(report);
         };
-        let indexed_before = self.store.catalog_counts(None).await?.indexed;
-        let batch_jobs_before = self.llm.as_ref().map_or(0, |llm| llm.batch_jobs());
-        let decisions = self
-            .decide(&files, cutoff, &registrations, &sweep_shape, dials, &mut report)
+        let finalization = self.execute_run(request, prepared, &mut report).await?;
+        self.finalize_run(request, finalization, &mut report)
             .await?;
-        for chunk in decisions.catalog.chunks(CATALOG_CHUNK) {
-            self.store.catalog_sources(chunk).await?;
-        }
-        let deep_files = u32::try_from(decisions.deep.len())
-            .map_err(|_| SeamError::failed("more than u32::MAX sources chosen for deep indexing"))?;
-
-        let grantor = Arc::new(Grantor {
-            llm: self.llm.clone(),
-            model: self.transform_model.clone(),
-            batch_model: self.transform_batch_model.clone(),
-            lane_override: request.llm_lane,
-            reasoning_effort: self.transform_reasoning_effort.clone(),
-            bus: self.bus.clone(),
-            meters: RunMeters::for_registrations(&registrations),
-        });
-        let planning = self.planning_concurrency(&grantor, &registrations, request.llm_lane);
-        let planner = Arc::new(Planner {
-            connection: Arc::clone(&steward.connection),
-            connections: Arc::clone(&self.connections),
-            store: Arc::clone(&self.store),
-            source_read_permits: Arc::new(Semaphore::new(
-                self.config.source_reads_in_flight_max.get(),
-            )),
-            registrations,
-            grantor: Arc::clone(&grantor),
-            sweep_shape,
-            limits: self.config.limits(),
-        });
-        if defers_vector_index(decisions.deep.len(), indexed_before) {
-            // The index comes back in `rebuild_fts` below; until then a
-            // vector search builds it itself, as it does on a fresh node.
-            report.vector_index_deferred = self.store.defer_search_vector_index().await?;
-        }
-        let files = decisions.deep.into_iter().map(PlanInput::from_host).collect();
-        self.index_deep(files, Arc::clone(&planner), planning, &mut report)
-            .await?;
-        // Vanished sources leave before the folder pass, so a folder's
-        // listing is composed from what is actually there.
-        self.reconcile_vanished(&steward, &request.root, &sources, &mut report)
-            .await?;
-        let folder_run = FolderRun {
-            registrations: &planner.registrations,
-            sweep_shape: &planner.sweep_shape,
-            dials,
-            deep_count: deep_files,
-        };
-        self.index_folders(folders, folder_run, Arc::clone(&planner), planning, &mut report)
-            .await?;
-
-        let orphaned = self.store.gc_keyed_fragments().await?;
-        report.keyed_removed = orphaned.len();
-        self.store.rebuild_fts().await?;
-        for (entry, calls) in grantor.meters.calls_by_entry() {
-            report.llm_calls.insert(entry.to_string(), calls);
-        }
-        if let Some(llm) = &self.llm {
-            report.spent = llm.spent();
-            report.llm_batch_jobs = llm.batch_jobs().saturating_sub(batch_jobs_before);
-        }
         Ok(report)
     }
 }
@@ -442,10 +347,333 @@ struct FolderDecisions<'a> {
     deep: Vec<PlanInput>,
 }
 
+struct EnumeratedRun {
+    steward: Arc<ConnectionRegistration>,
+    sources: Vec<EnumeratedSource>,
+    folders: Vec<EnumeratedSource>,
+    files: Vec<EnumeratedSource>,
+}
+
+struct PreparedRun {
+    steward: Arc<ConnectionRegistration>,
+    sources: Vec<EnumeratedSource>,
+    folders: Vec<EnumeratedSource>,
+    registrations: Vec<Arc<Registration>>,
+    sweep_shape: String,
+    dials: RunDials,
+    indexed_before: u64,
+    batch_jobs_before: u64,
+    deep: Vec<EnumeratedSource>,
+    deep_count: u32,
+}
+
+struct Finalization {
+    grantor: Arc<Grantor>,
+    batch_jobs_before: u64,
+}
+
 impl SweepService {
+    async fn prepare_run(
+        &self,
+        request: &SweepRequest,
+        report: &mut IndexReport,
+    ) -> Result<Option<PreparedRun>, SeamError> {
+        let cutoff = self
+            .config
+            .cutoff()
+            .map_err(|error| SeamError::failed(error.to_string()))?;
+        let Some(run) = self.enumerate_run(request, report).await? else {
+            return Ok(None);
+        };
+        if self
+            .stop_at_phase(request, IndexPhase::Cataloging, report)
+            .await
+        {
+            return Ok(None);
+        }
+        let registrations = self.stamped_registrations();
+        let sweep_shape = self.config.shape_fingerprint();
+        let dials = self.run_dials(request);
+        let indexed_before = self.store.catalog_counts(None).await?.indexed;
+        let batch_jobs_before = self.llm.as_ref().map_or(0, |llm| llm.batch_jobs());
+        let decisions = self
+            .decide(
+                &run.files,
+                cutoff,
+                &registrations,
+                &sweep_shape,
+                dials,
+                report,
+            )
+            .await?;
+        for chunk in decisions.catalog.chunks(CATALOG_CHUNK) {
+            self.store.catalog_sources(chunk).await?;
+        }
+        if self
+            .stop_at_phase(request, IndexPhase::Indexing, report)
+            .await
+        {
+            return Ok(None);
+        }
+        let deep_count = u32::try_from(decisions.deep.len()).map_err(|_| {
+            SeamError::failed("more than u32::MAX sources chosen for deep indexing")
+        })?;
+        Ok(Some(PreparedRun {
+            steward: run.steward,
+            sources: run.sources,
+            folders: run.folders,
+            registrations,
+            sweep_shape,
+            dials,
+            indexed_before,
+            batch_jobs_before,
+            deep: decisions.deep,
+            deep_count,
+        }))
+    }
+
+    async fn enumerate_run(
+        &self,
+        request: &SweepRequest,
+        report: &mut IndexReport,
+    ) -> Result<Option<EnumeratedRun>, SeamError> {
+        if self
+            .stop_at_phase(request, IndexPhase::Preparing, report)
+            .await
+        {
+            return Ok(None);
+        }
+        // Connections come and go without changing the registry binding,
+        // so resolve the steward for each run rather than at plugin apply.
+        let steward = self.steward_of(&request.host)?;
+        // A pending migration blocks search. Resolve it before enumeration
+        // so even a zero-change run leaves the index queryable.
+        if self.store.reembed_pending() {
+            self.reembed(report).await?;
+        }
+        if self
+            .stop_at_phase(request, IndexPhase::Enumerating, report)
+            .await
+        {
+            return Ok(None);
+        }
+        let enumerated = steward.connection.enumerate(&request.root).await?;
+        Ok(Some(self.admit_enumerated(steward, enumerated, report)))
+    }
+
+    fn admit_enumerated(
+        &self,
+        steward: Arc<ConnectionRegistration>,
+        enumerated: Vec<EnumeratedSource>,
+        report: &mut IndexReport,
+    ) -> EnumeratedRun {
+        report.sources_seen = enumerated.len();
+        let admitted: Vec<EnumeratedSource> = enumerated
+            .into_iter()
+            .filter(|source| !self.ignore.matches(&source.address, &source.envelope))
+            .collect();
+        let (folders, files): (Vec<EnumeratedSource>, Vec<EnumeratedSource>) =
+            admitted.into_iter().partition(folders::is_folder);
+        let folders = folders::retain_holding(folders, &files);
+        let sources = files.iter().chain(folders.iter()).cloned().collect();
+        report.ignored = report.sources_seen - files.len() - folders.len();
+        assert!(report.ignored + files.len() + folders.len() == report.sources_seen);
+        EnumeratedRun {
+            steward,
+            sources,
+            folders,
+            files,
+        }
+    }
+
+    fn run_dials(&self, request: &SweepRequest) -> RunDials {
+        RunDials {
+            rebuild: request.rebuild,
+            deep_budget: request
+                .deep_budget
+                .unwrap_or_else(|| self.config.deep_budget()),
+        }
+    }
+
+    async fn execute_run(
+        &self,
+        request: &SweepRequest,
+        run: PreparedRun,
+        report: &mut IndexReport,
+    ) -> Result<Finalization, SeamError> {
+        let PreparedRun {
+            steward,
+            sources,
+            folders,
+            registrations,
+            sweep_shape,
+            dials,
+            indexed_before,
+            batch_jobs_before,
+            deep,
+            deep_count,
+        } = run;
+        let grantor = Arc::new(Grantor {
+            llm: self.llm.clone(),
+            model: self.transform_model.clone(),
+            batch_model: self.transform_batch_model.clone(),
+            lane_override: request.llm_lane,
+            reasoning_effort: self.transform_reasoning_effort.clone(),
+            bus: self.bus.clone(),
+            meters: RunMeters::for_registrations(&registrations),
+        });
+        let planning = self.planning_concurrency(&grantor, &registrations, request.llm_lane);
+        let planner =
+            Arc::new(self.planner_for(&steward, registrations, sweep_shape, Arc::clone(&grantor)));
+        if defers_vector_index(deep.len(), indexed_before) {
+            report.vector_index_deferred = self.store.defer_search_vector_index().await?;
+        }
+        let files = deep.into_iter().map(PlanInput::from_host).collect();
+        self.index_deep(files, Arc::clone(&planner), planning, request, report)
+            .await?;
+        if !report.stopped {
+            self.reconcile_vanished(&steward, &request.root, &sources, report)
+                .await?;
+            let folder_run = FolderRun {
+                registrations: &planner.registrations,
+                sweep_shape: &planner.sweep_shape,
+                dials,
+                deep_count,
+            };
+            self.index_folders(
+                folders,
+                folder_run,
+                Arc::clone(&planner),
+                planning,
+                request,
+                report,
+            )
+            .await?;
+        }
+        Ok(Finalization {
+            grantor,
+            batch_jobs_before,
+        })
+    }
+
+    fn planner_for(
+        &self,
+        steward: &Arc<ConnectionRegistration>,
+        registrations: Vec<Arc<Registration>>,
+        sweep_shape: String,
+        grantor: Arc<Grantor>,
+    ) -> Planner {
+        Planner {
+            connection: Arc::clone(&steward.connection),
+            connections: Arc::clone(&self.connections),
+            store: Arc::clone(&self.store),
+            source_read_permits: Arc::new(Semaphore::new(
+                self.config.source_reads_in_flight_max.get(),
+            )),
+            registrations,
+            grantor,
+            sweep_shape,
+            limits: self.config.limits(),
+        }
+    }
+
+    async fn finalize_run(
+        &self,
+        request: &SweepRequest,
+        finalization: Finalization,
+        report: &mut IndexReport,
+    ) -> Result<(), SeamError> {
+        if self
+            .checkpoint(request, IndexPhase::Finalizing, None, report)
+            .await
+        {
+            report.stopped = true;
+        }
+        report.keyed_removed = self.store.gc_keyed_fragments().await?.len();
+        self.store.rebuild_fts().await?;
+        for (entry, calls) in finalization.grantor.meters.calls_by_entry() {
+            report.llm_calls.insert(entry.to_string(), calls);
+        }
+        if let Some(llm) = &self.llm {
+            report.spent = llm.spent();
+            report.llm_batch_jobs = llm
+                .batch_jobs()
+                .saturating_sub(finalization.batch_jobs_before);
+        }
+        let _ = self
+            .checkpoint(request, IndexPhase::Complete, None, report)
+            .await;
+        Ok(())
+    }
+
+    async fn stop_at_phase(
+        &self,
+        request: &SweepRequest,
+        phase: IndexPhase,
+        report: &mut IndexReport,
+    ) -> bool {
+        if !self.checkpoint(request, phase, None, report).await {
+            return false;
+        }
+        self.mark_stopped(request, report).await;
+        true
+    }
+
+    async fn mark_stopped(&self, request: &SweepRequest, report: &mut IndexReport) {
+        report.stopped = true;
+        let _ = self
+            .checkpoint(request, IndexPhase::Complete, None, report)
+            .await;
+    }
+
+    /// Publish one progress snapshot and honor the owner's command. Pausing
+    /// sleeps on the async runtime rather than holding an executor thread.
+    async fn checkpoint(
+        &self,
+        request: &SweepRequest,
+        phase: IndexPhase,
+        current: Option<inseam_kernel::address::Address>,
+        report: &IndexReport,
+    ) -> bool {
+        let Some(monitor) = &request.monitor else {
+            return false;
+        };
+        let complete = report
+            .indexed
+            .saturating_add(report.unchanged)
+            .saturating_add(report.catalog_only)
+            .saturating_add(report.skipped_cutoff)
+            .saturating_add(report.ignored)
+            .min(report.sources_seen);
+        let progress = IndexProgress {
+            phase,
+            sources_complete: complete,
+            sources_total: report.sources_seen,
+            current,
+            indexed: report.indexed,
+            unchanged: report.unchanged,
+            catalog_only: report.catalog_only,
+            ignored: report.ignored,
+            stopped: report.stopped,
+        };
+        for _poll_index in 0..PAUSE_POLLS_MAX {
+            match monitor.update(&progress) {
+                IndexControl::Continue => return false,
+                IndexControl::Stop => return true,
+                IndexControl::Pause => {
+                    tokio::time::sleep(std::time::Duration::from_millis(PAUSE_POLL_MS)).await;
+                }
+            }
+        }
+        true
+    }
+
     /// The connection stewarding `host`, if it can be swept at all: a
     /// fetch-only edge has nothing to enumerate and is refused by name.
-    fn steward_of(&self, host: &inseam_kernel::address::HostId) -> Result<Arc<ConnectionRegistration>, SeamError> {
+    fn steward_of(
+        &self,
+        host: &inseam_kernel::address::HostId,
+    ) -> Result<Arc<ConnectionRegistration>, SeamError> {
         let steward = self
             .connections
             .resolve(host)
@@ -570,8 +798,9 @@ impl SweepService {
                 report.unchanged += 1;
                 continue;
             }
-            let deep_count = u32::try_from(decisions.deep.len())
-                .map_err(|_| SeamError::failed("more than u32::MAX sources chosen for deep indexing"))?;
+            let deep_count = u32::try_from(decisions.deep.len()).map_err(|_| {
+                SeamError::failed("more than u32::MAX sources chosen for deep indexing")
+            })?;
             if !dials.deep_budget.allows(deep_count) {
                 // Catalog-only: no stamp is recorded, so the source stays
                 // dirty and is deep-indexed once a later run has budget.
@@ -594,6 +823,7 @@ impl SweepService {
         deep: Vec<PlanInput>,
         planner: Arc<Planner>,
         concurrency: NonZeroUsize,
+        request: &SweepRequest,
         report: &mut IndexReport,
     ) -> Result<(), SeamError> {
         if deep.is_empty() {
@@ -616,6 +846,7 @@ impl SweepService {
                 .await?;
             tracing::debug!(address = %planned.plan.address, "indexed");
             tally(report, &planned, &written);
+            let current = Some(planned.plan.address.clone());
             buffer.push_rows(search_rows_of(&planned, &written));
             buffer.push_completion(SourceCompletion {
                 source: written.source,
@@ -624,6 +855,13 @@ impl SweepService {
             });
             for batch in buffer.drain_ready() {
                 stage.submit(batch).await?;
+            }
+            if self
+                .checkpoint(request, IndexPhase::Indexing, current, report)
+                .await
+            {
+                report.stopped = true;
+                break;
             }
         }
         for batch in buffer.drain_all() {
@@ -645,6 +883,7 @@ impl SweepService {
         mut run: FolderRun<'_>,
         planner: Arc<Planner>,
         concurrency: NonZeroUsize,
+        request: &SweepRequest,
         report: &mut IndexReport,
     ) -> Result<(), SeamError> {
         for level in folders::levels(folders) {
@@ -652,8 +891,17 @@ impl SweepService {
             for chunk in decisions.catalog.chunks(CATALOG_CHUNK) {
                 self.store.catalog_sources(chunk).await?;
             }
-            self.index_deep(decisions.deep, Arc::clone(&planner), concurrency, report)
-                .await?;
+            self.index_deep(
+                decisions.deep,
+                Arc::clone(&planner),
+                concurrency,
+                request,
+                report,
+            )
+            .await?;
+            if report.stopped {
+                break;
+            }
         }
         Ok(())
     }
@@ -678,8 +926,12 @@ impl SweepService {
         for folder in level {
             let content = folders::compose_content(&self.store, folder).await?;
             let meta = self.store.index_meta(&folder.address).await?;
-            let dirty =
-                folders::is_dirty(meta.as_ref(), &content.digest, run.registrations, run.sweep_shape);
+            let dirty = folders::is_dirty(
+                meta.as_ref(),
+                &content.digest,
+                run.registrations,
+                run.sweep_shape,
+            );
             if !dirty && !run.dials.rebuild {
                 report.unchanged += 1;
                 continue;
@@ -695,10 +947,9 @@ impl SweepService {
                 report.catalog_only += 1;
                 continue;
             }
-            run.deep_count = run
-                .deep_count
-                .checked_add(1)
-                .ok_or_else(|| SeamError::failed("more than u32::MAX sources chosen for deep indexing"))?;
+            run.deep_count = run.deep_count.checked_add(1).ok_or_else(|| {
+                SeamError::failed("more than u32::MAX sources chosen for deep indexing")
+            })?;
             decisions.deep.push(PlanInput {
                 source: folder.clone(),
                 content: PlanContent::Composed(content.text),
@@ -864,15 +1115,15 @@ impl<T> std::future::Future for Spawned<T> {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        std::pin::Pin::new(&mut self.0)
-            .poll(cx)
-            .map(|joined| joined.map_err(|e| SeamError::failed(format!("planner task failed: {e}"))))
+        std::pin::Pin::new(&mut self.0).poll(cx).map(|joined| {
+            joined.map_err(|e| SeamError::failed(format!("planner task failed: {e}")))
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{lane_independent_model, scope_covers, SweepConfig};
+    use super::{SweepConfig, lane_independent_model, scope_covers};
 
     #[test]
     fn source_reads_have_a_separate_fixed_bound() {
@@ -900,7 +1151,10 @@ mod tests {
     fn scope_covers_the_prefix_its_children_and_everything_for_the_empty_prefix() {
         assert!(scope_covers("Users/greg/Notes", "Users/greg/Notes"));
         assert!(scope_covers("Users/greg/Notes", "Users/greg/Notes/a.md"));
-        assert!(!scope_covers("Users/greg/Notes", "Users/greg/Notes-old/a.md"));
+        assert!(!scope_covers(
+            "Users/greg/Notes",
+            "Users/greg/Notes-old/a.md"
+        ));
         assert!(!scope_covers("Users/greg/Notes", "Users/greg"));
         assert!(scope_covers("", "any/locator/at/all"));
         assert!(scope_covers("", "1a2b3c"));
@@ -925,7 +1179,11 @@ mod defer_tests {
             (usize::MAX, u64::MAX, true),
         ];
         for (deep, indexed, expected) in cases {
-            assert_eq!(defers_vector_index(*deep, *indexed), *expected, "deep={deep} indexed={indexed}");
+            assert_eq!(
+                defers_vector_index(*deep, *indexed),
+                *expected,
+                "deep={deep} indexed={indexed}"
+            );
         }
     }
 }

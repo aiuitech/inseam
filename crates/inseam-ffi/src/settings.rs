@@ -3,15 +3,15 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use inseam_kernel::address::HostId;
-use inseam_kernel::substrate::{parse_config, Composition, Entry, ENTRY_COUNT_MAX};
+use inseam_kernel::substrate::{Composition, ENTRY_COUNT_MAX, Entry, parse_config};
 use inseam_plugins::connection_fs::{FsConnectionConfig, WalkConfig};
 use inseam_plugins::connection_google::{GoogleConnection, GoogleConnectionConfig};
 use inseam_plugins::embedder::{EmbedderConfig, Provider};
 use inseam_plugins::finder::FinderConfig;
 use inseam_plugins::llm_endpoint::LlmEndpointConfig;
 use inseam_plugins::oauth::{OAuthConfig, OAuthPlugin};
-use inseam_plugins::sweep::ignore::IgnoreSet;
 use inseam_plugins::sweep::SweepConfig;
+use inseam_plugins::sweep::ignore::IgnoreSet;
 use inseam_plugins::transform_chunker::ChunkerConfig;
 use inseam_plugins::transform_entities::EntityExtractorConfig;
 use inseam_plugins::transform_summarizer::SummarizerConfig;
@@ -63,6 +63,23 @@ pub(crate) fn read(path: &Path) -> Result<SettingsDocument, String> {
 }
 
 pub(crate) fn write(path: &Path, json: &str) -> Result<(), String> {
+    write_mode(path, json, WriteMode::All)
+}
+
+/// Save the first-party settings an app shell can own while leaving its
+/// `embedder` overlay untouched. The shell supplies that provider beneath
+/// the owner's composition, and writing endpoint defaults would mask it.
+pub(crate) fn write_preserving_embedder(path: &Path, json: &str) -> Result<(), String> {
+    write_mode(path, json, WriteMode::PreserveEmbedder)
+}
+
+#[derive(Clone, Copy)]
+enum WriteMode {
+    All,
+    PreserveEmbedder,
+}
+
+fn write_mode(path: &Path, json: &str, mode: WriteMode) -> Result<(), String> {
     let settings: SettingsDocument =
         serde_json::from_str(json).map_err(|error| format!("settings JSON: {error}"))?;
     settings.validate()?;
@@ -70,7 +87,7 @@ pub(crate) fn write(path: &Path, json: &str) -> Result<(), String> {
         true => Composition::load(path).map_err(|error| error.to_string())?,
         false => Composition::default(),
     };
-    settings.apply(&mut overlay)?;
+    settings.apply(&mut overlay, mode)?;
     let rendered = overlay.to_toml();
     Composition::parse(&rendered, &path.display().to_string())
         .map_err(|error| error.to_string())?;
@@ -134,13 +151,16 @@ impl SettingsDocument {
         validate_sweep(&self.sweep.config)
     }
 
-    fn apply(self, composition: &mut Composition) -> Result<(), String> {
+    fn apply(self, composition: &mut Composition, mode: WriteMode) -> Result<(), String> {
         apply_toggle(composition, "connections", self.connections);
         apply_config(composition, "fs", self.fs)?;
         apply_config(composition, "oauth", self.oauth)?;
         apply_config(composition, "google", self.google)?;
         apply_config(composition, "llm", self.llm)?;
-        apply_config(composition, "embedder", self.embedder)?;
+        match mode {
+            WriteMode::All => apply_config(composition, "embedder", self.embedder)?,
+            WriteMode::PreserveEmbedder => {}
+        }
         apply_toggle(composition, "transforms", self.transforms);
         apply_toggle(composition, "markdown", self.markdown);
         apply_config(composition, "chunker", self.chunker)?;
@@ -426,6 +446,30 @@ mod tests {
         assert!(!reread.fs.config.skip_hidden);
         assert!(!reread.embedder.enabled);
         assert_eq!(reread.sweep.config.max_depth, 9);
+    }
+
+    #[test]
+    fn shell_settings_write_leaves_the_owner_embedder_entry_untouched() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("composition.toml");
+        let embedder = "[[entry]]\nid = \"embedder\"\nplugin = \"embedder\"\n[entry.config]\nprovider = \"none\"\n";
+        std::fs::write(&path, embedder).unwrap();
+        let mut settings = read(&path).unwrap();
+        settings.embedder.enabled = false;
+        settings.sweep.config.max_sources = 17;
+
+        write_preserving_embedder(&path, &serde_json::to_string(&settings).unwrap()).unwrap();
+
+        let overlay = Composition::load(&path).unwrap();
+        let saved = overlay
+            .entries
+            .iter()
+            .find(|entry| entry.id == "embedder")
+            .unwrap();
+        assert_eq!(saved.plugin.as_deref(), Some("embedder"));
+        assert!(!saved.is_disabled());
+        assert_eq!(saved.config["provider"].as_str(), Some("none"));
+        assert_eq!(read(&path).unwrap().sweep.config.max_sources, 17);
     }
 
     #[test]

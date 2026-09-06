@@ -42,7 +42,7 @@ use inseam_seams::operations::{
     RepairRequest, RevokeGrantRequest, ScanRequest, ScanResponse, StatusReport, OPERATIONS,
     SCAN_LINES_MAX,
 };
-use inseam_seams::sweep::{IndexReport, Sweep, SweepRequest, SWEEP};
+use inseam_seams::sweep::{IndexMonitor, IndexReport, Sweep, SweepRequest, SWEEP};
 use inseam_seams::dates::ymd;
 use inseam_seams::text::{check_line_range, count_lines, is_indexable_text, preview, slice_lines};
 use inseam_seams::SeamError;
@@ -200,6 +200,24 @@ impl OperationsService {
             Verdict::Allow => Ok(()),
             Verdict::Deny(reason) => Err(SeamError::Refused(reason)),
         }
+    }
+
+    async fn index_run(
+        &self,
+        request: IndexRequest,
+        monitor: Option<Arc<dyn IndexMonitor>>,
+    ) -> Result<IndexReport, SeamError> {
+        let steward = self.host_for_index(&request)?;
+        self.sweep
+            .sweep(&SweepRequest {
+                host: steward.host.id.clone(),
+                root: request.root,
+                rebuild: request.rebuild,
+                deep_budget: request.deep_budget,
+                llm_lane: request.llm_lane,
+                monitor,
+            })
+            .await
     }
 }
 
@@ -365,16 +383,16 @@ impl Operations for OperationsService {
 
     async fn index(&self, request: IndexRequest) -> Result<IndexReport, SeamError> {
         // Owner operation: not boundary-guarded (local transports only).
-        let steward = self.host_for_index(&request)?;
-        self.sweep
-            .sweep(&SweepRequest {
-                host: steward.host.id.clone(),
-                root: request.root,
-                rebuild: request.rebuild,
-                deep_budget: request.deep_budget,
-                llm_lane: request.llm_lane,
-            })
-            .await
+        self.index_run(request, None).await
+    }
+
+    async fn index_monitored(
+        &self,
+        request: IndexRequest,
+        monitor: Arc<dyn IndexMonitor>,
+    ) -> Result<IndexReport, SeamError> {
+        // Owner operation: not boundary-guarded (local transports only).
+        self.index_run(request, Some(monitor)).await
     }
 
     async fn catalog(&self, request: CatalogRequest) -> Result<CatalogResponse, SeamError> {

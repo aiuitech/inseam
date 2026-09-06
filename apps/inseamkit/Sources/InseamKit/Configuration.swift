@@ -210,9 +210,12 @@ public struct RelationWeights: Codable {
 public struct SweepConfig: Codable {
     public var maxSources: Int
     public var concurrency: Int
+    public var batchConcurrency: Int
+    public var sourceReadsInFlightMax: Int
     public var maxFragmentsPerSource: Int
     public var maxDepth: Int
     public var maxContentBytes: UInt64
+    public var maxReferenceHops: Int
     public var modifiedAfter: String?
     public var ignore: [IgnoreRule]
 }

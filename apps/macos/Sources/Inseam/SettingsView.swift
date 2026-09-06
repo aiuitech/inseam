@@ -142,7 +142,7 @@ struct ConfigurationSettingsTab: View {
             Button("Reload") { load() }
             Button("Save Changes") { save() }
                 .keyboardShortcut("s", modifiers: .command)
-                .disabled(settings == nil)
+                .disabled(settings == nil || model.busy)
         }
         .padding(.horizontal, 16)
         .frame(height: 52)
@@ -603,6 +603,12 @@ private struct IndexConfigurationView: View {
                 SettingsNumberField("Maximum sources", value: $settings.sweep.config.maxSources)
                 SettingsNumberField("Concurrent sources", value: $settings.sweep.config.concurrency)
                 SettingsNumberField(
+                    "Concurrent batch sources", value: $settings.sweep.config.batchConcurrency
+                )
+                SettingsNumberField(
+                    "Concurrent source reads", value: $settings.sweep.config.sourceReadsInFlightMax
+                )
+                SettingsNumberField(
                     "Fragments per source",
                     value: $settings.sweep.config.maxFragmentsPerSource
                 )
@@ -610,6 +616,9 @@ private struct IndexConfigurationView: View {
                 SettingsNumberField(
                     "Maximum content bytes",
                     value: $settings.sweep.config.maxContentBytes
+                )
+                SettingsNumberField(
+                    "Reference follow depth", value: $settings.sweep.config.maxReferenceHops
                 )
                 LabeledContent("Modified on or after") {
                     TextField(
@@ -982,6 +991,7 @@ struct AdvancedSettingsTab: View {
                 Spacer()
                 Button("Reload File") { load() }
                 Button("Save & Reopen Node") { save() }
+                    .disabled(model.busy)
             }
         }
         .padding()
@@ -1044,7 +1054,8 @@ struct SecretsSettingsTab: View {
                     .font(.body.monospaced())
                     .frame(width: 220)
                 SecureField("Secret value", text: $newValue)
-                Button("Save to Keychain") { save() }.disabled(newValue.isEmpty)
+                Button("Save to Keychain") { save() }
+                    .disabled(newValue.isEmpty || model.busy)
             }
             Text(message).font(.caption).foregroundStyle(.secondary)
         }

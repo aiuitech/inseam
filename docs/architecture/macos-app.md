@@ -15,6 +15,7 @@ A C ABI static library (`libinseam_ffi.a`) with a hand-maintained header at `cra
 | `inseam_node_health` | Per-entry fiber health JSON: `{id, plugin, state, error, missing, missing_secrets}` per composition entry — "what is parked and why", with each missing secret's variable name and owner-facing purpose |
 | `inseam_node_query` | Finder query → `QueryResponse` JSON |
 | `inseam_node_index_dir` | Index a local directory → `IndexReport` JSON |
+| `inseam_node_index_dir_controlled` / `inseam_node_index_host_controlled` | Index with `IndexProgress` callbacks and cooperative continue, pause, or stop control |
 | `inseam_node_hosts` | The hosts the node stewards → `HostView[]` JSON |
 | `inseam_node_grants` | The OAuth grants the node holds → `GrantView[]` JSON |
 | `inseam_node_authorize_begin` / `inseam_node_authorize_await` | Start a loopback authorization (returns the provider URL the app opens) and block until the browser comes back |
@@ -38,6 +39,7 @@ Two SwiftPM packages, no Xcode project. The model layer is the `InseamKit` libra
 
 - `Sources/CInseamFFI/module.modulemap` — system-library target exposing the FFI header and linking `inseam_ffi`.
 - `Sources/InseamKit/InseamCore.swift` — `CoreNode`: RAII wrapper over the handle (with explicit `close()` so Settings can reopen), JSON decoding into Swift structs (snake_case converted).
+- `Sources/InseamKit/Indexing.swift` — the shared progress snapshots and thread-safe `IndexController` behind the two apps' pause, resume, and stop buttons.
 - `Sources/InseamKit/Configuration.swift` — Codable mirrors of the first-party config types and the plugin install/list messages.
 - `Sources/InseamKit/PluginUpload.swift` — parse one chosen directory into a bounded `InstallPluginRequest`: regular non-hidden files, relative paths, base64 bytes, one `.wasm` artifact, and the same id/file/byte limits as Rust.
 - `Sources/InseamKit/Secrets.swift` — `SecretStore`, the Keychain wrapper behind the Secrets tab.
@@ -49,6 +51,7 @@ Two SwiftPM packages, no Xcode project. The model layer is the `InseamKit` libra
 `apps/macos` (depends on `InseamKit` by path):
 
 - `Sources/Inseam/ContentView.swift` — the main window and `AppModel`: open node on launch (data dir `~/Library/Application Support/inseam`, shared with the CLI), run blocking node calls in detached tasks, and publish their results to the windows.
+- The main window's indexing process card shows the sweep phase, source count, current address, indexed and unchanged counts, and pause, resume, stop, or dismiss controls.
 - `Sources/Inseam/PluginsView.swift` — the Plugins Settings tab: loaded and linked entry states, directory picker, id confirmation sheet, progress, and core errors shown verbatim.
 - `Sources/Inseam/SettingsView.swift` — the Settings scene (⌘,): visual Configuration, Plugins, Secrets, and Advanced tabs.
 

@@ -6,6 +6,7 @@ import SwiftUI
 struct ContentView: View {
     @Environment(NodeModel.self) private var model
     @State private var queryText = ""
+    @State private var showingSettings = false
 
     var body: some View {
         @Bindable var model = model
@@ -19,6 +20,9 @@ struct ContentView: View {
                     .autocorrectionDisabled()
                     .onSubmit { model.query(queryText) }
                     .disabled(model.busy)
+                if model.indexProgress != nil {
+                    IndexingProcessView()
+                }
                 if model.results.isEmpty {
                     hostsSection
                     Spacer()
@@ -42,17 +46,26 @@ struct ContentView: View {
             .foregroundStyle(Brand.node)
             .navigationTitle("inseam")
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
                     if model.busy {
                         ProgressView()
                     } else {
                         Button("attach recording") { model.beginAttach(fileURL: nil) }
                             .font(Brand.font(.caption))
                     }
+                    Button {
+                        showingSettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
                 }
             }
             .sheet(item: $model.pendingAttachment) { attachment in
                 AttachRecordingView(attachment: attachment)
+            }
+            .sheet(isPresented: $showingSettings) {
+                SettingsView()
+                    .environment(model)
             }
         }
         .preferredColorScheme(.dark)
@@ -78,6 +91,68 @@ struct ContentView: View {
             .tint(Brand.thread)
             .disabled(!model.nodeOpen || model.busy)
         }
+    }
+}
+
+private struct IndexingProcessView: View {
+    @Environment(NodeModel.self) private var model
+
+    var body: some View {
+        if let progress = model.indexProgress {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack {
+                    Label(progress.phase.label.lowercased(), systemImage: "square.stack.3d.up")
+                        .font(Brand.font(.headline))
+                    Spacer()
+                    Text(countLabel(progress))
+                        .font(Brand.font(.caption))
+                        .foregroundStyle(.secondary)
+                }
+                if let fraction = progress.fractionCompleted {
+                    ProgressView(value: fraction).tint(Brand.thread)
+                } else {
+                    ProgressView().tint(Brand.thread)
+                }
+                if let current = progress.current {
+                    Text(current)
+                        .font(Brand.font(.caption2))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                HStack {
+                    Text("\(progress.indexed) indexed · \(progress.unchanged) unchanged")
+                        .font(Brand.font(.caption))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    controls
+                }
+            }
+            .padding(12)
+            .background(Brand.node.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    @ViewBuilder
+    private var controls: some View {
+        if model.indexingActive {
+            if model.indexStopping {
+                Text("stopping…").font(Brand.font(.caption))
+            } else if model.indexPaused {
+                Button("resume") { model.resumeIndexing() }
+                Button("stop") { model.stopIndexing() }
+            } else {
+                Button("pause") { model.pauseIndexing() }
+                Button("stop") { model.stopIndexing() }
+            }
+        } else {
+            Button("dismiss") { model.dismissIndexProgress() }
+        }
+    }
+
+    private func countLabel(_ progress: IndexProgress) -> String {
+        guard progress.sourcesTotal > 0 else { return "discovering" }
+        return "\(progress.sourcesComplete) / \(progress.sourcesTotal)"
     }
 }
 

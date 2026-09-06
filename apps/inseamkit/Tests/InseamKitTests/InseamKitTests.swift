@@ -4,7 +4,7 @@
 import SwiftUI
 import Testing
 
-import InseamKit
+@testable import InseamKit
 
 #if canImport(AppKit)
 import AppKit
@@ -99,5 +99,61 @@ import AppKit
     @Test func fitIsBoundedByElementsMax() {
         let count = StitchStrip.elementsFitting(width: 1_000_000, height: 1)
         #expect(count == StitchStrip.elementsMax)
+    }
+}
+
+@Suite struct IndexControllerTests {
+    private let progressJSON = """
+        {
+          "phase": "indexing",
+          "sources_complete": 3,
+          "sources_total": 10,
+          "current": "inseam://fs-test/notes/three.txt",
+          "indexed": 2,
+          "unchanged": 1,
+          "catalog_only": 0,
+          "ignored": 0,
+          "stopped": false
+        }
+        """
+
+    @Test func decodesProgressAndReturnsEachControlState() throws {
+        let received = LockedProgress()
+        let controller = IndexController { progress in received.set(progress) }
+
+        #expect(controller.receive(progressJSON: progressJSON) == 0)
+        let progress = try #require(received.value)
+        #expect(progress.phase == .indexing)
+        #expect(progress.sourcesComplete == 3)
+        #expect(progress.fractionCompleted == 0.3)
+
+        controller.pause()
+        #expect(controller.receive(progressJSON: progressJSON) == 1)
+        controller.resume()
+        #expect(controller.receive(progressJSON: progressJSON) == 0)
+        controller.stop()
+        #expect(controller.receive(progressJSON: progressJSON) == 2)
+    }
+
+    @Test func malformedProgressFailsClosed() {
+        let controller = IndexController { _ in }
+        #expect(controller.receive(progressJSON: "not json") == 2)
+    }
+}
+
+private final class LockedProgress: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: IndexProgress?
+
+    var value: IndexProgress? {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored
+    }
+
+    func set(_ progress: IndexProgress) {
+        lock.lock()
+        stored = progress
+        lock.unlock()
     }
 }

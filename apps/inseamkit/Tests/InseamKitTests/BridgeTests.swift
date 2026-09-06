@@ -145,4 +145,30 @@ private func offlineDataDir() throws -> URL {
         }
         #expect(try node.hosts().filter { $0.id == view.id }.count == 1)
     }
+
+    @Test func aControlledIndexCallReportsProgressAndStopsBeforeReading() throws {
+        let dir = try offlineDataDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let node = try CoreNode(dataDir: dir, embedder: UnitEmbedder())
+        defer { node.close() }
+        let source = TableHost([
+            ("notes/one", "text/plain", "one"),
+            ("notes/two", "text/plain", "two"),
+        ])
+        let host = try node.registerHost(
+            BridgedHostDescription(kind: "phone", principal: "controlled", displayName: "Phone"),
+            source: source
+        )
+        let phases = Locked<[IndexPhase]>([])
+        let controller = IndexController { progress in
+            phases.mutate { $0.append(progress.phase) }
+        }
+        controller.stop()
+
+        let report = try node.indexHost(host.id, controller: controller)
+
+        #expect(report.stopped)
+        #expect(source.reads.read().isEmpty)
+        #expect(phases.read() == [.preparing, .complete])
+    }
 }

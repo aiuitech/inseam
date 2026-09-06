@@ -57,6 +57,14 @@ Tightening `cutoff.modified_after` or `budget.max_content_bytes` stops *future* 
 
 Out-of-cutoff sources are still *cataloged* (address + envelope, no fragments) when first seen, so the catalog stays a complete map of the host; already-indexed sources that fall behind a tightened cutoff are left entirely untouched.
 
+## A running sweep is observable and controllable
+
+Local app transports may attach an `IndexMonitor` to an owner-initiated sweep. The sweep reports stable phases (`preparing`, `enumerating`, `cataloging`, `indexing`, `finalizing`, `complete`), the number of enumerated sources, the number settled so far, the current source address, and the main report counts. This is a process-local attachment, not part of the serialized node API. An HTTP caller cannot leave a callback inside the node after its request goes away.
+
+Pause and stop are cooperative. The sweep checks before enumeration, between phases, and after each source lands. Pause keeps the blocking owner operation alive and polls its control state four times per second, with a fixed 24-hour ceiling. Stop drops the bounded planning stream, finishes the embedding batches for sources already written, rebuilds the physical search index when needed, and returns an `IndexReport` with `stopped = true`. A later sweep sees completed source marks and resumes with the remaining dirty sources. There is no second checkpoint format.
+
+The progress path adds no network or disk reads. It serializes one small snapshot per landed source, so its CPU and callback cost is `O(sources)` beside transform and embedding work that is already at least `O(sources)`. A pause retains at most the configured planning concurrency and row-buffer bounds. The 250 ms control poll is four callback calls per second and no busy-waiting executor thread. Source reads, LLM calls, and embeddings remain the throughput limit by several orders of magnitude.
+
 [Ignore](ignore.md) is the deliberate exception: an ignore rule is a membership statement, not a scope dial, so an ignored source is absent from the catalog and one indexed before a rule covered it is removed — by the vanished path above, since it has left enumeration.
 
 ## Paths not taken
@@ -66,6 +74,7 @@ Out-of-cutoff sources are still *cataloged* (address + envelope, no fragments) w
 - **Per-transform invalidation.** Rejected for now: subtree granularity keeps the delete-cascade model and never mixes shapes within a source.
 - **Eviction on scope shrinkage.** Rejected — see above; deletion of valid, paid-for index data must be explicit.
 - **A composition-version counter instead of a stamp.** A counter invalidates on *any* composition edit, including query-time tiers; the stamp invalidates only on entries that change what a subtree looks like.
+- **Cancelling the app's Swift task.** The FFI operation is blocking, so cancelling its wrapper task would only hide the UI while Rust kept indexing. Control crosses the same FFI call and reaches the sweep instead.
 
 ## Settled since
 

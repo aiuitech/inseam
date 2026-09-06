@@ -32,6 +32,12 @@ bool inseam_settings_write(const char *composition_path,
                            const char *settings_json,
                            char **error_out);
 
+/* Validate and write first-party settings without changing the embedder
+ * entry. Used by an app shell that mounts its own on-device provider. */
+bool inseam_settings_write_preserving_embedder(const char *composition_path,
+                                               const char *settings_json,
+                                               char **error_out);
+
 /* Open the node under data_dir. composition_path may be NULL: then
  * <data_dir>/composition.toml is layered over the built-in base composition
  * when present. */
@@ -82,6 +88,22 @@ char *inseam_node_index_dir(const InseamNode *node,
                             bool rebuild,
                             char **error_out);
 
+/* Live control for one blocking index call. update receives an
+ * IndexProgress JSON snapshot and returns 0 to continue, 1 to pause, or 2
+ * to stop. A paused run polls update four times per second. The callback and
+ * user_data are borrowed until the call returns and may be used from any
+ * thread. */
+typedef struct InseamIndexCallbacks {
+    uint32_t (*update)(void *user_data, const char *progress_json);
+} InseamIndexCallbacks;
+
+char *inseam_node_index_dir_controlled(const InseamNode *node,
+                                       const char *dir,
+                                       bool rebuild,
+                                       const InseamIndexCallbacks *callbacks,
+                                       void *user_data,
+                                       char **error_out);
+
 /* An app-bridged host: the shell enumerates and reads a host only it can
  * reach (a Photos library, a Notes folder) and the node catalogs, indexes,
  * and serves it like any other. Every callback may run on any thread, and
@@ -130,6 +152,14 @@ char *inseam_node_index_host(const InseamNode *node,
                              const char *root,
                              bool rebuild,
                              char **error_out);
+
+char *inseam_node_index_host_controlled(const InseamNode *node,
+                                        const char *host_id,
+                                        const char *root,
+                                        bool rebuild,
+                                        const InseamIndexCallbacks *callbacks,
+                                        void *user_data,
+                                        char **error_out);
 
 /* The hosts this node stewards, as a JSON array of HostView. */
 char *inseam_node_hosts(const InseamNode *node, char **error_out);

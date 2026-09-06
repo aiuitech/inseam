@@ -72,6 +72,12 @@ Everything a phone number would have carried automatically is carried by the sid
 
 Recordings live in the app's Documents folder because that is visible in Files and reachable by "open in place" with no entitlement at all — it works on a free personal team. An iCloud Drive container (`NSUbiquitousContainers`) would show the same folder on every device and is where this moves once distribution is paid anyway; the node's data directory stays local on every platform because the index is per node ([discovery](discovery.md)).
 
+## The owner can configure the leaf
+
+The phone owns a composition and Keychain just as the Mac does, so it exposes the same first-party configuration groups: connections, models, indexing, search, secrets, and the raw composition. Saving the visual form validates and atomically writes through `inseam-ffi`, then reopens the node. Secrets remain out of the composition and use the shared `app.inseam.secrets` Keychain namespace.
+
+The one deliberate difference is the embedder. The iOS shell mounts `embedder-app` beneath the owner's overlay. A visual settings save preserves any `embedder` entry already in that overlay instead of writing the desktop endpoint defaults over the on-device model. The Models page therefore reports the Apple provider as read-only. An owner can still replace it deliberately in the raw composition editor. Configuration saves are disabled while an operation holds the node, so the app never closes a handle beneath a blocking FFI call.
+
 ## Building and testing on a phone
 
 Xcode (the iOS SDK) is required; the Command Line Tools alone build the macOS app but cannot cross-compile the Rust core for `aarch64-apple-ios` — every C build script asks `xcrun` for the SDK. The project is an XcodeGen spec (`apps/ios/project.yml`) so the `.xcodeproj` is generated, never merged; `apps/ios/build-core.sh` builds the core for device and simulator with the loaded tier off.

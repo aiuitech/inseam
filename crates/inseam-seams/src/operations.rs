@@ -9,6 +9,8 @@
 //! monotonic — no listener can force-allow what another denied
 //! (`design/access-control.md`).
 
+use std::sync::Arc;
+
 use inseam_kernel::address::{Address, ContentLength, HostId};
 use inseam_kernel::fragment::{Extent, FragmentId, Relation};
 use inseam_kernel::store::VectorScope;
@@ -19,7 +21,7 @@ use crate::connection::{Capabilities, HostKind};
 use crate::finder::QueryTrace;
 use crate::oauth::{AuthorizationCallback, AuthorizationStarted, GrantId, GrantState, Redirect};
 use crate::llm::LlmLane;
-use crate::sweep::{DeepBudget, IndexReport};
+use crate::sweep::{DeepBudget, IndexMonitor, IndexReport};
 use crate::SeamError;
 
 pub const OPERATIONS: ServiceKey<dyn Operations> = ServiceKey::new("operations");
@@ -47,6 +49,16 @@ pub trait Operations: Send + Sync {
     async fn fetch_bytes(&self, request: FetchBytesRequest) -> Result<FetchBytesResponse, SeamError>;
     /// Owner operation: reconcile the index over a scope of one host.
     async fn index(&self, request: IndexRequest) -> Result<IndexReport, SeamError>;
+    /// The same operation with a process-local progress and control monitor.
+    /// Transports without a live process use [`Operations::index`].
+    async fn index_monitored(
+        &self,
+        request: IndexRequest,
+        monitor: Arc<dyn IndexMonitor>,
+    ) -> Result<IndexReport, SeamError> {
+        let _ = monitor;
+        self.index(request).await
+    }
     /// Owner operation: the hosts this node stewards, with what each
     /// connection supports — the local view of the stewardship records the
     /// roster will publish.
