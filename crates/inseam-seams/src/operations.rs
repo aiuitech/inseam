@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use inseam_kernel::address::{Address, ContentLength, HostId};
+use inseam_kernel::address::{Address, ContentDigest, ContentLength, HostId};
 use inseam_kernel::fragment::{Extent, FragmentId, Relation};
 use inseam_kernel::network::{HostRecord, NodeId, NodeRecord};
 use inseam_kernel::store::VectorScope;
@@ -110,45 +110,28 @@ pub trait Operations: Send + Sync {
     /// stands afterwards.
     async fn configure(&self, settings: Settings) -> Result<Settings, SeamError>;
 
-    // The network operations default to "no network" so a provider built
-    // before the roster and sync seams existed keeps compiling and answers
-    // honestly; a provider on a networked node overrides every one.
+    // The network operations are required, not defaulted: a provider on a
+    // node without the network entries mounted answers each one with
+    // `SeamError::Unavailable` naming the missing entry, so a transport
+    // never has to guess whether "no network" means unmounted or broken.
 
     /// Owner operation: the network as this node sees it — every roster
     /// node with what the last sync learned about it, every host with its
     /// stewards, and the size of the replicated log.
-    async fn network(&self) -> Result<NetworkView, SeamError> {
-        Err(network_unavailable())
-    }
+    async fn network(&self) -> Result<NetworkView, SeamError>;
     /// Owner operation: mint an invitation for another node to join
     /// through this one; the owner carries its text form across.
-    async fn invite(&self) -> Result<Invitation, SeamError> {
-        Err(network_unavailable())
-    }
+    async fn invite(&self) -> Result<Invitation, SeamError>;
     /// Owner operation: join the network an invitation names — dial the
     /// inviter, present the token, sync once — and report the network as
     /// it looks afterwards.
-    async fn join(&self, request: JoinRequest) -> Result<NetworkView, SeamError> {
-        let _ = request;
-        Err(network_unavailable())
-    }
+    async fn join(&self, request: JoinRequest) -> Result<NetworkView, SeamError>;
     /// Owner operation: expel a node — every node stops admitting it and
     /// drops its logs; this node disconnects it now.
-    async fn expel(&self, request: ExpelRequest) -> Result<NetworkView, SeamError> {
-        let _ = request;
-        Err(network_unavailable())
-    }
+    async fn expel(&self, request: ExpelRequest) -> Result<NetworkView, SeamError>;
     /// Owner operation: one sync round with every dialable node now, and
     /// the network as it looks afterwards.
-    async fn sync_now(&self) -> Result<NetworkView, SeamError> {
-        Err(network_unavailable())
-    }
-}
-
-fn network_unavailable() -> SeamError {
-    SeamError::Unavailable(
-        "this node has no network: the roster and sync seams are not mounted".to_string(),
-    )
+    async fn sync_now(&self) -> Result<NetworkView, SeamError>;
 }
 
 /// The first-party settings document on the wire. Its typed shape
@@ -196,6 +179,23 @@ pub struct QueryMeta {
     pub limit: u32,
     #[serde(flatten)]
     pub trace: QueryTrace,
+    /// What each node the query fanned out to answered
+    /// (`design/discovery.md`): its result count, or why it gave none.
+    /// Empty on a node that fanned out to nobody.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remote: Vec<FanOutSummary>,
+}
+
+/// One fanned-out node's part in a query, as the caller sees it: how many
+/// results it contributed before the merge, how long it took, and the
+/// error when it contributed none. A failed node never fails the query.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FanOutSummary {
+    pub node: NodeId,
+    pub results: u32,
+    pub elapsed_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -211,6 +211,10 @@ pub struct QueryResult {
     /// time (`design/finder.md`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub replicas: Vec<Address>,
+    /// The node whose index produced this result when a fan-out did;
+    /// `None` for the answering node's own index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<NodeId>,
 }
 
 /// Envelope fields rendered for clients: dates as `YYYY-MM-DD`, length as
@@ -228,6 +232,11 @@ pub struct EnvelopeView {
     pub modified: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// The envelope's content digest, when the steward has one — carried
+    /// so results merged across nodes collapse by it exactly as one node's
+    /// results do (`design/finder.md`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_digest: Option<ContentDigest>,
 }
 
 /// One fragment that earned its source a place in the ranking: enough to
@@ -437,6 +446,10 @@ pub struct CatalogSourceView {
     pub raw_bytes: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modified: Option<String>,
+    /// The steward's node when the row was learned from a peer's log;
+    /// absent for a source this node stewards itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<NodeId>,
 }
 
 /// One stewarded host as owner surfaces show it.
@@ -697,6 +710,10 @@ pub struct StatusReport {
     /// Transform outputs the digest-keyed transform cache holds.
     #[serde(default)]
     pub cached_transform_outputs: u64,
+    /// Sources learned from peers' logs rather than stewarded here; counted
+    /// within `sources`.
+    #[serde(default)]
+    pub remote_sources: u64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

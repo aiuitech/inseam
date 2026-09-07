@@ -795,6 +795,7 @@ mod tests {
                 reembed_pending: false,
                 cached_embeddings: 0,
                 cached_transform_outputs: 0,
+                remote_sources: 0,
             })
         }
 

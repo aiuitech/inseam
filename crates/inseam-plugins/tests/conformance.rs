@@ -20,7 +20,7 @@ fn conformance_config(name: &str) -> toml::Table {
         "connections" | "connection-fs" | "connection-google" | "connection-web" | "oauth"
         | "llm-endpoint" | "transforms" | "transform-markdown" | "transform-directory" | "transform-chunker"
         | "transform-summarizer" | "transform-entities" | "transform-links" | "finder" | "sweep"
-        | "operations" => "",
+        | "operations" | "node" | "transport-iroh" | "roster" | "sync" | "routing" => "",
         "embedder" => "provider = \"hashed\"\nmodel = \"hashed\"\ndimensions = 8",
         other => panic!(
             "linked plugin `{other}` is not enrolled in the conformance suite; add a minimal \

@@ -36,6 +36,7 @@ machine-uid = "0.6.0"
 globset = "0.4.20"
 hmac = "0.12.1"
 ignore = "0.4.23"
+iroh = "1.1.0"
 libsql = { version = "0.9.30", default-features = false, features = ["core"] }
 mime_guess = "2.0.5"
 minisign = "0.9.1"

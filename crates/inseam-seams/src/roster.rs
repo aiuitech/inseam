@@ -25,12 +25,24 @@ use inseam_kernel::address::{HostId, Timestamp};
 use inseam_kernel::network::{
     Endpoint, HostRecord, NodeId, NodeRecord, StewardshipRecord, ENDPOINTS_MAX,
 };
-use inseam_kernel::substrate::ServiceKey;
+use inseam_kernel::substrate::{Notify, ServiceKey};
 
 use crate::transport::{InvitationToken, PeerAddress};
 use crate::SeamError;
 
 pub const ROSTER: ServiceKey<dyn Roster> = ServiceKey::new("roster");
+
+/// Fired after the roster tables changed: the sync seam emits it once an
+/// exchange applied a roster record from a peer, and the roster provider
+/// emits it after publishing or expelling. It carries no payload on
+/// purpose — a listener re-reads the roster, so a burst of applied entries
+/// collapses into one read and nothing it holds can go stale. The roster
+/// provider itself listens here to refresh the in-memory admission view
+/// its synchronous `admit` answers from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RosterChanged;
+
+impl Notify for RosterChanged {}
 
 /// How long an invitation stays open: a day covers "I'll set the laptop up
 /// tonight" without leaving a live token around for a week.

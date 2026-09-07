@@ -13,6 +13,7 @@ futures-util.workspace = true
 gethostname.workspace = true
 globset.workspace = true
 ignore.workspace = true
+iroh.workspace = true
 mime_guess.workspace = true
 pulldown-cmark.workspace = true
 rand.workspace = true

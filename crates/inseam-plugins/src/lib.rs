@@ -18,10 +18,14 @@ pub mod connections;
 pub mod embedder;
 pub mod finder;
 pub mod llm_endpoint;
+pub mod node;
 pub mod oauth;
 pub mod operations;
+pub mod roster;
+pub mod routing;
 pub mod settings;
 pub mod sweep;
+pub mod sync;
 pub mod transform_chunker;
 pub mod transform_directory;
 pub mod transform_entities;
@@ -29,6 +33,7 @@ pub mod transform_links;
 pub mod transform_markdown;
 pub mod transform_summarizer;
 pub mod transforms;
+pub mod transport_iroh;
 
 use std::sync::Arc;
 
@@ -38,7 +43,12 @@ use inseam_kernel::substrate::PluginFactory;
 /// set (the CLI, the macOS app).
 pub fn factories() -> Vec<Arc<dyn PluginFactory>> {
     vec![
+        Arc::new(node::NodeFactory),
+        Arc::new(transport_iroh::IrohTransportFactory),
         Arc::new(connections::ConnectionsRegistryFactory),
+        Arc::new(roster::RosterFactory),
+        Arc::new(sync::SyncFactory),
+        Arc::new(routing::RoutingFactory),
         Arc::new(connection_fs::FsConnectionFactory),
         Arc::new(connection_google::GoogleConnectionFactory),
         Arc::new(connection_web::WebConnectionFactory),
