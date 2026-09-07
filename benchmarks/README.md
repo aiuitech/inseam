@@ -172,6 +172,7 @@ The composition dials, each recorded under the manifest's `options` and `models`
 - `--keywords-max` (12): keywords planted beside each summary; 0 plants none.
 - `--vectors` (`summaries`): the embedder's scope; `all` embeds every section too.
 - `--finder-seeds` (`both`): `full-text` or `vector` runs one seed list alone, a diagnostic for which search the fusion is carrying.
+- `--hints-llm-call-budget` (0): mounts the hints transform with that many calls per run, one per document, planting cues, a synopsis, discriminators, and shared glossary, identifier, and entity fragments ([design/indexing.md](../design/indexing.md)); about $4 on the batch lane for a 25,000-document slice, and the batch jobs can take hours to return.
 
 The runner prints each active phase immediately. During indexing it polls `inseam status` every 30 seconds and prints elapsed time, fully indexed sources against the fixture total, cataloged sources, and search rows. A failed status probe reports `status unavailable` but does not fail the index. Other long commands retain their five-second elapsed-time heartbeat.
 
