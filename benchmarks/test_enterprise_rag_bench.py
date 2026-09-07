@@ -62,8 +62,8 @@ class EnterpriseRagBenchTests(unittest.TestCase):
         self.assertEqual(scores["document_hit_rate_pct"], 100.0)
         self.assertEqual(scores["mean_reciprocal_rank"], 0.75)
 
-    def test_composition_uses_lean_remote_index(self) -> None:
-        options = benchmark.RunOptions(1, 8, 12, 8, 500, 4, False)
+    def test_composition_defaults_to_whole_document_full_text_rows(self) -> None:
+        options = benchmark.RunOptions(1, 8, 12, 8, 0, 4, False)
 
         composition = benchmark.composition_text(options)
 
@@ -74,13 +74,33 @@ class EnterpriseRagBenchTests(unittest.TestCase):
         self.assertIn('transform_reasoning_effort = "none"', composition)
         self.assertIn('agent_model = "stealth/ox-alpha"', composition)
         self.assertIn('batch_requests_max = 5000', composition)
+        self.assertIn('provider = "none"', composition)
+        self.assertNotIn("text-embedding", composition)
+        self.assertIn("target_chars = 24000", composition)
+        self.assertIn('batch_concurrency = 65536', composition)
+        self.assertEqual(composition.count("disabled = true"), 3)
+        self.assertEqual(composition.count("llm_call_budget = 0"), 1)
+
+    def test_composition_mounts_the_embedder_and_sections_on_request(self) -> None:
+        options = benchmark.RunOptions(
+            1, 8, 12, 8, 500, 4, False,
+            summary_target_chars=200,
+            structural="markdown",
+            embedding_vectors="summaries",
+        )
+
+        composition = benchmark.composition_text(options)
+
         self.assertIn('model = "openai/text-embedding-3-small"', composition)
         self.assertIn('dimensions = 384', composition)
         self.assertIn('vectors = "summaries"', composition)
         self.assertIn('target_chars = 200', composition)
-        self.assertIn('batch_concurrency = 65536', composition)
-        self.assertEqual(composition.count("disabled = true"), 3)
+        self.assertEqual(composition.count("disabled = true"), 2)
         self.assertEqual(composition.count("llm_call_budget = 500"), 1)
+
+    def test_a_retrieval_only_run_cannot_ask_for_evaluation(self) -> None:
+        with self.assertRaises(benchmark.BenchmarkError):
+            benchmark.RunOptions(1, 8, 12, 8, 0, 4, False, skip_agent=True)
 
     def test_run_records_manifest_timings_results_and_scores(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_text:
@@ -148,9 +168,9 @@ class EnterpriseRagBenchTests(unittest.TestCase):
                     "entity_extraction": "disabled",
                     "answer_generation": "stealth/ox-alpha",
                     "answer_evaluation": "skipped",
-                    "embeddings": "openai/text-embedding-3-small",
-                    "embedding_dimensions": 384,
-                    "embedding_vectors": "summaries",
+                    "embeddings": "disabled",
+                    "embedding_dimensions": 0,
+                    "embedding_vectors": "none",
                 },
             )
             self.assertEqual(

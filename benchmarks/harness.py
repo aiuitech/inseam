@@ -724,9 +724,14 @@ def finish_attempt(run_dir: Path, manifest: dict[str, Any], started: float) -> N
     attempt["status"] = manifest["status"]
     attempt["ending_phase"] = manifest["phase"]
     attempt["error"] = manifest.get("error")
+    # An attempt whose process was killed recorded no duration; the total
+    # is the sum of what was measured, and the count of what was not sits
+    # beside it so the total is never read as the whole story.
     durations = [value["duration_seconds"] for value in manifest["attempts"]]
-    assert all(type(value) in {int, float} for value in durations)
-    manifest["duration_seconds"] = round(sum(durations), 6)
+    measured = [value for value in durations if value is not None]
+    assert all(type(value) in {int, float} for value in measured)
+    manifest["duration_seconds"] = round(sum(measured), 6)
+    manifest["attempts_unmeasured"] = len(durations) - len(measured)
     manifest["finished_at"] = attempt["finished_at"]
     manifest["resume_count"] = len(manifest["attempts"]) - 1
     write_json(run_dir / "manifest.json", manifest)
@@ -769,13 +774,41 @@ def record_run_outcome(
     finish_attempt(run_dir, manifest, started)
 
 
-def validate_resumable_status(run_id: str, manifest: dict[str, Any]) -> None:
+def validate_resumable_status(
+    run_id: str, manifest: dict[str, Any], after_kill: bool = False
+) -> None:
+    """A run resumes from `failed` or `interrupted`. A `running` record means
+    a process may still own the run, so it is refused — unless the operator
+    says that process is gone (`after_kill`), in which case the attempt it
+    left open is closed as interrupted, with no duration, before resuming.
+    """
     if manifest.get("run_id") != run_id:
         raise BenchmarkError(f"run directory and manifest ID differ for `{run_id}`")
     status = manifest.get("status")
+    if status == "running" and after_kill:
+        close_killed_attempt(manifest)
+        return
     if status not in {"failed", "interrupted"}:
-        message = f"run `{run_id}` has status {status!r}; expected failed or interrupted"
+        message = (
+            f"run `{run_id}` has status {status!r}; expected failed or interrupted "
+            "(pass --after-kill if its process was killed without recording an outcome)"
+        )
         raise BenchmarkError(message)
+
+
+def close_killed_attempt(manifest: dict[str, Any]) -> None:
+    attempts = manifest.get("attempts")
+    if type(attempts) is not list or not attempts:
+        raise BenchmarkError("a running manifest has no attempt to close")
+    attempt = attempts[-1]
+    if attempt.get("status") != "running":
+        raise BenchmarkError("the run's last attempt is not marked running")
+    error = "process ended without recording an outcome"
+    attempt["status"] = "interrupted"
+    attempt["ending_phase"] = manifest.get("phase")
+    attempt["ending_queries_completed"] = manifest.get("queries_completed")
+    attempt["error"] = error
+    set_run_error(manifest, "interrupted", error)
 
 
 def validate_run_id(run_id: str) -> None:

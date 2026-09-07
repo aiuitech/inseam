@@ -14,11 +14,11 @@ Both runners share `harness.py`: bounded external commands with heartbeats, veri
 - the `inseam` CLI on `PATH`
 - `OPENROUTER_API_KEY`
 
-Both runners use `google/gemini-2.5-flash-lite` through OpenRouter's batch lane for summaries, with reasoning disabled and the reasoning trace excluded from the response, and `openai/text-embedding-3-small` at 384 dimensions for embeddings. Entity extraction, markdown splitting, and chunking are disabled, so each source's subtree is its summary and its keywords and nothing else: the summary is the one vector, and summary plus keywords are what full-text search sees. EnterpriseRAG-Bench additionally uses `stealth/ox-alpha` for answers, citation cleanup, correctness scoring, and fact scoring, and summarizes to 200 characters; BEIR's summary target is a run option (`--summary-target-chars`), because a target past the longest abstract makes every abstract its own summary — the whole text embedded and searchable, no model call — which is the right shape for a corpus of short text files.
+Both runners name `google/gemini-2.5-flash-lite` through OpenRouter's batch lane for summaries, with reasoning disabled and the reasoning trace excluded from the response, and `openai/text-embedding-3-small` at 384 dimensions for embeddings; entity extraction and chunking are disabled. What each run actually buys is a run option. BEIR embeds every abstract whole (`--summary-target-chars` past the longest abstract makes each its own summary, no model call) and searches by full-text and vector seeds together. EnterpriseRAG-Bench's defaults are the shape its corpus rewarded ([design/benchmarking.md](../design/benchmarking.md)): no embedder (`--vectors none`), no structural transform, no model calls (`--llm-call-budget 0`), and a summary target past the longest document, so each document is one full-text row holding its whole text. It additionally uses `stealth/ox-alpha` for answers, citation cleanup, correctness scoring, and fact scoring.
 
 Every `run` invocation creates a new ignored index under the fixture's `nodes/` directory. This prevents a warm index from being reported as a fresh indexing result. Failed and interrupted runs remain on disk with their partial logs and a non-completed manifest.
 
-The default run limits summaries to 500 LLM calls. Inseam uses its deterministic fallback after the summarizer spends that budget. Raise `--llm-call-budget` only after estimating the cost and runtime; a budget of at least the corpus size (3,633 for BEIR NFCorpus) asks the model for every summary, which is the run that measures the full indexing process. Summaries ride the batch lane (`summarizer.llm_lane = "batch"`). EnterpriseRAG-Bench sets OpenRouter's job cap to its 5,000-request limit and parks up to 65,536 source planners, so the endpoint can keep its eight job slots busy; the 64 MiB serialized-job limit may split large requests sooner. Embeddings use base64 responses and pack up to 128 inputs per request, with four batches in flight. The lean source-plus-summary shape fills an embedding request from 256 search rows.
+BEIR's default run limits summaries to 500 LLM calls, and EnterpriseRAG-Bench's makes none. Inseam uses its deterministic fallback after the summarizer spends its budget. Raise `--llm-call-budget` only after estimating the cost and runtime; a budget of at least the corpus size (3,633 for BEIR NFCorpus) asks the model for every summary, which is the run that measures the full indexing process. Summaries ride the batch lane (`summarizer.llm_lane = "batch"`). EnterpriseRAG-Bench sets OpenRouter's job cap to its 5,000-request limit and parks up to 65,536 source planners, so the endpoint can keep its eight job slots busy; the 64 MiB serialized-job limit may split large requests sooner. Embeddings use base64 responses and pack up to 128 inputs per request, with four batches in flight. The lean source-plus-summary shape fills an embedding request from 256 search rows.
 
 Every run records the index's **footprint** beside its duration: the bytes of the node's data directory (database plus write-ahead log) against the bytes of the source documents it was built from, and the ratio between them, measured right after indexing (`indexing.footprint`) and again after the DiskANN build (`search_index_preparation.index_bytes`). The index summary also records how much of the run the node answered from its digest-keyed caches (`embeddings_reused`, `transforms_reused`); a fresh node reports zero for both.
 
@@ -101,7 +101,7 @@ python3 benchmarks/beir.py run --limit 1
 python3 benchmarks/beir.py resume <run-id>
 ```
 
-Resume works exactly as it does for EnterpriseRAG-Bench below: same run directory, same options, verified pins and composition, the index finished in the same node if its attempt did not complete, continue from the durable query checkpoint, and a new attempt record.
+Resume works exactly as it does for EnterpriseRAG-Bench below: same run directory, same options, verified pins and composition, the index finished in the same node if its attempt did not complete, continue from the durable query checkpoint, and a new attempt record. A run whose process was killed outright (out of memory, a lost terminal) still reads `running`, because nothing was left to record an outcome; resume refuses it, since another process may own the run, unless you pass `--after-kill`, which closes that attempt as interrupted with no duration and continues. The manifest's `attempts_unmeasured` counts such attempts beside the total duration.
 
 ### Recorded artifacts
 
@@ -116,7 +116,7 @@ A run lives under `benchmarks/runs/beir-nfcorpus/<UTC timestamp>-<inseam commit>
 
 ## EnterpriseRAG-Bench
 
-[EnterpriseRAG-Bench](https://github.com/onyx-dot-app/EnterpriseRAG-Bench) is 500 questions over slightly more than 500,000 synthetic enterprise documents. The harness pins dataset release `v1.0.0`, verifies the published checksums, and checks out the evaluator at a pinned revision. Beyond the shared model policy, it uses `stealth/ox-alpha` for answers, citation cleanup, correctness scoring, and fact scoring. Its composition embeds one 200-character summary per source (`vectors = "summaries"`); source text still enters full-text search. Reserve at least 20 GB of local disk before a full run: the 1.26 GB download, its extracted files, and a fresh index.
+[EnterpriseRAG-Bench](https://github.com/onyx-dot-app/EnterpriseRAG-Bench) is 500 questions over slightly more than 500,000 synthetic enterprise documents. The harness pins dataset release `v1.0.0`, verifies the published checksums, and checks out the evaluator at a pinned revision. Beyond the shared model policy, it uses `stealth/ox-alpha` for answers, citation cleanup, correctness scoring, and fact scoring. Its default composition mounts no embedder and holds each document as one full-text row of its whole text (`--vectors none`, `--structural off`, `--summary-target-chars 24000`, `--llm-call-budget 0`); see the slice and retrieval-only section below for how that shape was chosen and how to try another. Reserve at least 20 GB of local disk before a full run: the 1.26 GB download, its extracted files, and a fresh index.
 
 ### Set up the fixture
 
@@ -139,11 +139,12 @@ python3 benchmarks/enterprise_rag_bench.py run
 
 A full run creates a fresh index and evaluates all 500 questions. It can take hours and makes many embedding and LLM requests. `--limit` limits questions and evaluator work, but indexing still covers the full corpus so retrieval scores remain meaningful.
 
-To summarize every source in the pinned 511,962-document fixture through the largest configured batch lane, opt into the full transform budget explicitly:
+To summarize every source in the pinned 511,962-document fixture through the largest configured batch lane, opt into the full transform budget explicitly, and give the summarizer a target the documents do not fit in, or it has nothing to shorten:
 
 ```sh
 python3 benchmarks/enterprise_rag_bench.py run \
   --llm-call-budget 511962 \
+  --summary-target-chars 400 \
   --index-concurrency 128
 ```
 

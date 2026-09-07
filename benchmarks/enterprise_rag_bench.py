@@ -118,6 +118,9 @@ CORPUS_SLICE_SEED = 0
 CORPUS_SLICE_MAX = DOCUMENTS_MAX
 # The embedder's vector scopes, plus `none`: no embedder mounted at all.
 EMBEDDER_CHOICES = VECTOR_SCOPES | frozenset({"none"})
+# Past the longest document in the release (22,060 characters), so every
+# document is its own summary and no model is asked to shorten one.
+SUMMARY_TARGET_CHARS_WHOLE_DOCUMENT = 24_000
 
 
 @dataclass(frozen=True)
@@ -136,8 +139,10 @@ class RunOptions:
     # documents (CORPUS_SLICE_SEED).
     corpus_slice: int = 0
     # The summarizer's target length; text within it is its own summary and
-    # costs no model call.
-    summary_target_chars: int = 200
+    # costs no model call. The default is past the longest document, so each
+    # document is its own summary: one full-text row holding the whole text,
+    # which scored best on the corpus (design/benchmarking.md).
+    summary_target_chars: int = SUMMARY_TARGET_CHARS_WHOLE_DOCUMENT
     # Keywords planted beside each summary for full-text search; 0 plants none.
     keywords_max: int = 12
     # Whether the markdown structural transform (which claims plain text too)
@@ -146,7 +151,9 @@ class RunOptions:
     structural: str = "off"
     # The embedder's scope: `summaries` is one vector per source; `none`
     # mounts no embedder, so the index is full-text only and costs nothing.
-    embedding_vectors: str = "summaries"
+    # The default is none: on this corpus vector seeds lowered the fused
+    # ranking below full-text alone (design/benchmarking.md).
+    embedding_vectors: str = "none"
     # Vector seeds farther than this cosine distance are dropped before
     # fusion, so a weak vector list cannot drag a strong full-text one.
     finder_max_vector_distance: float = 0.75
@@ -830,10 +837,10 @@ def run_benchmark(options: RunOptions) -> None:
     )
 
 
-def resume_benchmark(run_id: str) -> None:
+def resume_benchmark(run_id: str, after_kill: bool = False) -> None:
     require_fixture()
     evaluator_environment()
-    loaded = load_resumable_run(run_id)
+    loaded = load_resumable_run(run_id, after_kill)
     (
         run_dir,
         data_dir,
@@ -943,6 +950,7 @@ def print_run_start(
 
 def load_resumable_run(
     run_id: str,
+    after_kill: bool,
 ) -> tuple[
     Path,
     Path,
@@ -961,7 +969,7 @@ def load_resumable_run(
     manifest = read_json_object(manifest_path)
     migrate_manifest(manifest)
     options = options_from_manifest(manifest)
-    validate_resumable_manifest(run_id, manifest, options)
+    validate_resumable_manifest(run_id, manifest, options, after_kill)
     questions = load_questions(options.question_limit)
     composition = run_dir / "composition.toml"
     if not composition.is_file():
@@ -1023,9 +1031,9 @@ def legacy_attempt(manifest: dict[str, Any], duration_seconds: float) -> dict[st
 
 
 def validate_resumable_manifest(
-    run_id: str, manifest: dict[str, Any], options: RunOptions
+    run_id: str, manifest: dict[str, Any], options: RunOptions, after_kill: bool
 ) -> None:
-    validate_resumable_status(run_id, manifest)
+    validate_resumable_status(run_id, manifest, after_kill)
     if manifest.get("benchmark") != benchmark_pins():
         raise BenchmarkError(f"run `{run_id}` uses different benchmark inputs")
     if manifest.get("models") != model_assignments(options):
@@ -1108,8 +1116,8 @@ def parse_arguments() -> argparse.Namespace:
     run_parser.add_argument(
         "--llm-call-budget",
         type=count_argument("llm-call-budget", MAX_LLM_CALL_BUDGET),
-        default=500,
-        help="summary calls per indexing run; 0 makes the index model-free",
+        default=0,
+        help="summary calls per indexing run; 0 (the default) makes the index model-free",
     )
     run_parser.add_argument(
         "--evaluation-parallelism",
@@ -1135,13 +1143,13 @@ def parse_arguments() -> argparse.Namespace:
     run_parser.add_argument(
         "--summary-target-chars",
         type=bounded_argument("summary-target-chars", MAX_SUMMARY_TARGET_CHARS),
-        default=200,
+        default=SUMMARY_TARGET_CHARS_WHOLE_DOCUMENT,
     )
     run_parser.add_argument(
         "--keywords-max", type=count_argument("keywords-max", MAX_KEYWORDS), default=12
     )
     run_parser.add_argument("--structural", choices=sorted(STRUCTURAL_CHOICES), default="off")
-    run_parser.add_argument("--vectors", choices=sorted(EMBEDDER_CHOICES), default="summaries")
+    run_parser.add_argument("--vectors", choices=sorted(EMBEDDER_CHOICES), default="none")
     run_parser.add_argument("--finder-seeds", choices=sorted(FINDER_SEEDS), default="both")
     run_parser.add_argument(
         "--finder-max-vector-distance", type=distance_argument, default=0.75
@@ -1151,6 +1159,11 @@ def parse_arguments() -> argparse.Namespace:
         help="reuse a completed index and continue a failed or interrupted run",
     )
     resume_parser.add_argument("run_id", help="existing run directory name")
+    resume_parser.add_argument(
+        "--after-kill",
+        action="store_true",
+        help="the run still reads `running` because its process was killed; close that attempt and resume",
+    )
     return parser.parse_args()
 
 
@@ -1177,7 +1190,7 @@ def main() -> int:
             finder_max_vector_distance=arguments.finder_max_vector_distance,
         )
         return run_main(lambda: run_benchmark(options))
-    return run_main(lambda: resume_benchmark(arguments.run_id))
+    return run_main(lambda: resume_benchmark(arguments.run_id, arguments.after_kill))
 
 
 if __name__ == "__main__":

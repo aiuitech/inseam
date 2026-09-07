@@ -30,9 +30,35 @@ All loops and external commands have fixed limits. The EnterpriseRAG-Bench harne
 
 Transform call budgets stay explicit. The default is 500 summary calls per indexing run, followed by Inseam's deterministic fallback. A full 511,962-call budget therefore means at most one model request per source before question answering, and the operator must opt into that cost. For that full-corpus run, the benchmark pins OpenRouter's maximum job size at 5,000 requests and the sweep's parked planning window at 65,536 sources. This keeps all eight provider job slots available without changing the indexed shape; the endpoint's 64 MiB upload bound may produce smaller jobs for larger source bodies.
 
-The EnterpriseRAG-Bench composition bounds the vector surface to one 200-character summary per source and disables markdown splitting, chunking, and entities. Full source text remains in full-text search. This trades structural and graph recall for predictable indexing time and storage; benchmark scores, not an assumption, decide whether that trade is acceptable.
+The EnterpriseRAG-Bench composition is the leanest shape the corpus rewarded (see *What the corpus taught*): no embedder, no structural transforms, no entities, no model calls, and a summarizer target past the longest document, so each document is its own summary — one full-text row holding the whole text, found by BM25 alone. The model assignments above remain in the composition for the agent and the judge, and every dial is a run option, so a run that mounts the embedder, splits sections, or buys model summaries records exactly what it changed. The first composition bounded the index to one 200-character model summary per source with the structural transforms off, on the assumption that full source text still reached full-text search; it did not — the root fragment carries no text row, so the index searched only the summaries — and the slice runs below measured what that cost.
 
 The BEIR composition keeps everything else identical but embeds every fragment (`vectors = "all"`). At 3,633 short abstracts the full surface costs cents, and a retrieval benchmark should measure the search surface a user gets by default rather than the lean shape adopted for a half-million-document corpus. The manifest records the scope under `models.embedding_vectors` so the two benchmarks are never compared as if they shared a composition.
+
+## What the corpus taught
+
+EnterpriseRAG-Bench's documents are short exports (median 3.7 KB, none past 22 KB) that open with a subject line, and its questions name the things they want: a metric, a ticket, a customer, a date. A full index takes hours, so the shapes were compared on a 25,000-document slice (every document a question expects, 809 of them, plus a seeded sample of the rest), retrieval only, all 500 questions, scored on the top eight. Slice numbers are development numbers: comparable with each other, never with a full run, since the distractor set is a twentieth of the corpus. Index time and size are the slice's; cost is what the run spent on OpenRouter.
+
+| shape | recall % | hit % | MRR | index | size | cost |
+| --- | --- | --- | --- | --- | --- | --- |
+| summaries only: 200-char extractive summary + keywords, one vector each (the first composition) | 48.0 | 53.8 | 0.405 | 50 s | 308 MB | $0.02 |
+| + sections in full-text (markdown transform over plain text) | 80.7 | 83.8 | 0.664 | 76 s | 678 MB | $0.02 |
+| sections + 600-char extractive summary | 82.1 | 85.3 | 0.629 | 73 s | 713 MB | $0.07 |
+| sections + 600-char summary led by the title line | 81.8 | 85.1 | 0.644 | 75 s | 713 MB | $0.07 |
+| sections + 1,200-char extractive summary | 82.1 | 85.1 | 0.666 | 81 s | 759 MB | $0.15 |
+| sections + whole document as its summary, embedded | 84.1 | 87.2 | 0.726 | 88 s | 998 MB | $0.53 |
+| same, full-text seeds only | 85.3 | 88.1 | 0.775 | | | |
+| same, vector seeds only | 57.1 | 64.0 | 0.445 | | | |
+| same, both seed lists, vector distance floor 0.5 in place of 0.75 | 83.1 | 86.4 | 0.729 | | | |
+| sections + 600-char summary, no embedder | 84.8 | 87.5 | 0.734 | 13 s | 305 MB | $0 |
+| **whole document as one full-text row, no sections, no embedder** | **86.1** | **88.5** | **0.801** | **13 s** | **252 MB** | **$0** |
+
+Three findings, each settled by a row above rather than by taste:
+
+- **Full text in the index is the whole game.** The first composition had the structural transforms off and searched 200-character summaries; putting each document's text into full-text search took recall from 48% to 81%, and nothing else came close. The lean shape adopted for a half-million documents had removed the one thing the questions needed.
+- **Vectors do not pay here.** With the whole document embedded, vector seeds alone found 57% and fused with full-text seeds scored *below* full-text alone (0.726 against 0.775 MRR): reciprocal-rank fusion gives the weaker list an equal vote. Dropping the embedder entirely made the index cheaper by every measure — 13 s instead of 88 s, 252 MB instead of 998 MB, nothing spent — and better. This is a property of identifier-shaped questions over prose exports, not of vectors: NFCorpus's topical queries need them (`benchmarking` BEIR section). It is why the runner's `--vectors` dial exists and why the Finder's seed lists are configurable — the composition decides, per corpus, whether to buy vectors.
+- **One row per document beats sections.** BM25 over a row holding the whole document scored 0.801 MRR against 0.734–0.775 for the same text split into paragraph sections: a question's terms are spread over the document, and section rows split their evidence. A document's own text as its summary is also the leanest shape the kernel can hold — one text row, one inverted index, the catalog — at 2.05 bytes of index per byte of source. The summary an agent is served is then the document itself, which is what an agent would fetch next anyway.
+
+Two things were measured and left alone. The title-led extractive summary was neutral on this corpus once sections were in full-text (the title line is in the first section either way). Model summaries were not bought at all: with the document itself as the summary there is nothing for a model to write, and the 400-character query-shaped summary that NFCorpus preferred to a 200-character précis is the shape to try on a corpus whose documents do not fit in a row. *Rejected:* a tighter vector distance floor to make fusion safe (0.5 in place of 0.75 recovered nothing; the vector list is weak throughout, not merely at its tail); weighting the two seed lists (a dial with no principled setting — the corpus should choose whether to mount an embedder, not how much to believe it).
 
 ## Scoring
 

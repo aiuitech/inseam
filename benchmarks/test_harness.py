@@ -2,6 +2,7 @@
 
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -204,3 +205,46 @@ class HarnessTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KilledAttemptTests(unittest.TestCase):
+    def manifest(self) -> dict:
+        return {
+            "run_id": "20260101T000000Z-abcdefabcdef",
+            "status": "running",
+            "phase": "querying",
+            "queries_completed": 7,
+            "attempts": [
+                {"attempt_number": 1, "status": "interrupted", "duration_seconds": 12.5},
+                {"attempt_number": 2, "status": "running", "duration_seconds": None},
+            ],
+        }
+
+    def test_a_running_record_is_refused_without_after_kill(self) -> None:
+        with self.assertRaises(harness.BenchmarkError):
+            harness.validate_resumable_status(
+                "20260101T000000Z-abcdefabcdef", self.manifest()
+            )
+
+    def test_after_kill_closes_the_open_attempt_as_interrupted(self) -> None:
+        manifest = self.manifest()
+        harness.validate_resumable_status(
+            "20260101T000000Z-abcdefabcdef", manifest, after_kill=True
+        )
+        self.assertEqual(manifest["status"], "interrupted")
+        self.assertEqual(manifest["attempts"][-1]["status"], "interrupted")
+        self.assertEqual(manifest["attempts"][-1]["ending_queries_completed"], 7)
+        self.assertIsNone(manifest["attempts"][-1]["duration_seconds"])
+
+    def test_totals_skip_attempts_that_recorded_no_duration(self) -> None:
+        manifest = self.manifest()
+        harness.close_killed_attempt(manifest)
+        manifest["attempts"].append(
+            {"attempt_number": 3, "status": "running", "duration_seconds": None}
+        )
+        manifest["status"] = "completed"
+        manifest["phase"] = "completed"
+        with tempfile.TemporaryDirectory() as directory:
+            harness.finish_attempt(Path(directory), manifest, time.monotonic())
+        self.assertEqual(manifest["attempts_unmeasured"], 1)
+        self.assertGreaterEqual(manifest["duration_seconds"], 12.5)

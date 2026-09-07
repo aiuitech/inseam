@@ -742,10 +742,10 @@ def run_benchmark(options: RunOptions) -> None:
     )
 
 
-def resume_benchmark(run_id: str) -> None:
+def resume_benchmark(run_id: str, after_kill: bool = False) -> None:
     require_fixture()
     require_api_key()
-    loaded = load_resumable_run(run_id)
+    loaded = load_resumable_run(run_id, after_kill)
     run_dir, data_dir, manifest, composition, queries_to_run, options, queries, index_required = loaded
     write_run_checkpoint(run_dir, queries)
     execute_benchmark(
@@ -843,6 +843,7 @@ def print_scores(aggregate: dict[str, Any]) -> None:
 
 def load_resumable_run(
     run_id: str,
+    after_kill: bool,
 ) -> tuple[
     Path,
     Path,
@@ -863,7 +864,7 @@ def load_resumable_run(
         raise BenchmarkError(f"cannot resume manifest schema {manifest.get('schema_version')!r}")
     if type(manifest.get("attempts")) is not list:
         raise BenchmarkError("run manifest has no attempts list")
-    validate_resumable_status(run_id, manifest)
+    validate_resumable_status(run_id, manifest, after_kill)
     if manifest.get("benchmark") != benchmark_pins():
         raise BenchmarkError(f"run `{run_id}` uses different benchmark inputs")
     options = options_from_manifest(manifest)
@@ -1026,6 +1027,11 @@ def parse_arguments() -> argparse.Namespace:
         help="reuse a completed index and continue a failed or interrupted run",
     )
     resume_parser.add_argument("run_id", help="existing run directory name")
+    resume_parser.add_argument(
+        "--after-kill",
+        action="store_true",
+        help="the run still reads `running` because its process was killed; close that attempt and resume",
+    )
     return parser.parse_args()
 
 
@@ -1049,7 +1055,7 @@ def main() -> int:
             finder_max_vector_distance=arguments.finder_max_vector_distance,
         )
         return run_main(lambda: run_benchmark(options))
-    return run_main(lambda: resume_benchmark(arguments.run_id))
+    return run_main(lambda: resume_benchmark(arguments.run_id, arguments.after_kill))
 
 
 if __name__ == "__main__":
