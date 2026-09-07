@@ -236,6 +236,7 @@ impl Finder for FinderService {
         let mut trace = QueryTrace {
             seeds_ms: millis(seeds_started.elapsed()),
             fts_hits: seeds.fts_hits,
+            lexical_hits: seeds.lexical_hits,
             vector_hits: seeds.vector_hits,
             seeds: count_u32(seeds.fused.len()),
             ..QueryTrace::default()
@@ -318,11 +319,17 @@ impl FinderService {
         let started = Instant::now();
         // Function words go: a query that ORs "the" matches every row of a
         // large index and BM25 scores them all, for rows that rank last.
-        let fts = if self.config.seeds.runs_full_text() {
-            let lexical = inseam_seams::extract::strip_stopwords(text);
-            self.store.search_fts(&lexical, self.config.seed_k).await?
+        // Prose rows and lexical rows are two seed lists, each ranked by
+        // its own table's statistics and fused by rank: a one-line term row
+        // and a whole document are not comparable by BM25 score.
+        let (fts, lexical) = if self.config.seeds.runs_full_text() {
+            let query = inseam_seams::extract::strip_stopwords(text);
+            (
+                self.store.search_fts(&query, self.config.seed_k).await?,
+                self.store.search_fts_lexical(&query, self.config.seed_k).await?,
+            )
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
         let mut vector = match self.embedder.dimensions() {
             Some(_) if self.config.seeds.runs_vector() => {
@@ -338,12 +345,17 @@ impl FinderService {
         // floor a "neighbor" is noise and must not seed the walk.
         vector.retain(|(_, distance)| f64::from(*distance) <= self.config.max_vector_distance);
 
-        // Both lists arrive best-first; fusion cares only about rank.
+        // Every list arrives best-first; fusion cares only about rank.
         let fts_ranked: Vec<i64> = fts.iter().map(|(id, _)| id.0).collect();
+        let lexical_ranked: Vec<i64> = lexical.iter().map(|(id, _)| id.0).collect();
         let vec_ranked: Vec<i64> = vector.iter().map(|(id, _)| id.0).collect();
-        let fused = rrf_fuse(&[&fts_ranked, &vec_ranked], self.config.rrf_k);
+        let fused = rrf_fuse(
+            &[&fts_ranked, &lexical_ranked, &vec_ranked],
+            self.config.rrf_k,
+        );
         tracing::info!(
             fts = fts.len(),
+            lexical = lexical.len(),
             vector = vector.len(),
             fused = fused.len(),
             elapsed_ms = started.elapsed().as_millis(),
@@ -352,16 +364,18 @@ impl FinderService {
         Ok(Seeds {
             fused,
             fts_hits: count_u32(fts.len()),
+            lexical_hits: count_u32(lexical.len()),
             vector_hits: count_u32(vector.len()),
         })
     }
 }
 
 /// The seeds of one query with where they came from. Fusion keeps only an
-/// id's best rank per list, so `fused` never exceeds `fts_hits + vector_hits`.
+/// id's best rank per list, so `fused` never exceeds the lists' sum.
 struct Seeds {
     fused: HashMap<i64, f64>,
     fts_hits: u32,
+    lexical_hits: u32,
     vector_hits: u32,
 }
 

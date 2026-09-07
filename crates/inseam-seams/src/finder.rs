@@ -52,6 +52,8 @@ pub struct QueryTrace {
     pub rollup_ms: u64,
     /// Fragments the full-text search returned.
     pub fts_hits: u32,
+    /// Lexical full-text seeds (terms, names, identifiers), the second list.
+    pub lexical_hits: u32,
     /// Fragments the vector search returned within the distance floor;
     /// zero when the node has no embedder.
     pub vector_hits: u32,

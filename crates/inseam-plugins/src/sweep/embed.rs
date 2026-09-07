@@ -256,6 +256,7 @@ async fn embed_batch(embedder: &dyn Embedder, store: &IndexStore, batch: Batch) 
             source: row.source,
             text: row.text,
             vector,
+            role: row.role,
         })
         .collect();
     EmbeddedBatch {

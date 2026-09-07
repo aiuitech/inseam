@@ -1251,10 +1251,11 @@ fn print_results(response: &QueryResponse) {
 fn print_query_meta(meta: &inseam_seams::operations::QueryMeta) {
     let t = &meta.trace;
     println!(
-        "{} ms · seeds {} ms ({} fts + {} vector → {}) · graph {} ms ({} relations) · rollup {} ms ({} sources → limit {})",
+        "{} ms · seeds {} ms ({} fts + {} lexical + {} vector → {}) · graph {} ms ({} relations) · rollup {} ms ({} sources → limit {})",
         meta.elapsed_ms,
         t.seeds_ms,
         t.fts_hits,
+        t.lexical_hits,
         t.vector_hits,
         t.seeds,
         t.graph_ms,

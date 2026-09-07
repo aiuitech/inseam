@@ -48,6 +48,10 @@ const SEARCH_VECTOR_MIGRATION_BATCH_ROWS: u64 = 4_096;
 #[cfg(test)]
 const SEARCH_VECTOR_MIGRATION_BATCH_ROWS: u64 = 1;
 const SEARCH_VECTOR_MIGRATION_BATCHES_MAX: u64 = 1_000_000;
+/// The full-text split reads the catalog's text in batches of this many
+/// rows, each landed in its own transaction.
+const SEARCH_FTS_MIGRATION_BATCH_ROWS: i64 = 4_096;
+const SEARCH_FTS_MIGRATION_BATCHES_MAX: u64 = 1_000_000;
 pub const RELATION_HOPS_MAX: u32 = 4;
 pub const RELATION_LIMIT_MAX: u32 = 100_000;
 
@@ -56,6 +60,7 @@ pub const RELATION_LIMIT_MAX: u32 = 100_000;
 const SEARCH_SCHEMA_DROP_SQL: &str = "DROP TRIGGER IF EXISTS search_rows_after_insert;
      DROP TRIGGER IF EXISTS search_rows_after_delete;
      DROP TABLE IF EXISTS search_fts;
+     DROP TABLE IF EXISTS search_fts_lexical;
      DROP TABLE IF EXISTS search_rows;";
 
 #[derive(Debug, Error)]
@@ -154,13 +159,15 @@ pub struct InventoryEntry {
 }
 
 /// A row bound for the search tables: a text-bearing fragment and its
-/// (optional) embedding.
+/// (optional) embedding. The role decides which full-text table the text
+/// enters: prose rows and lexical rows keep separate statistics.
 #[derive(Debug, Clone)]
 pub struct SearchRow {
     pub fragment: FragmentId,
     pub source: Option<SourceId>,
     pub text: String,
     pub vector: Option<Vec<f32>>,
+    pub role: SearchRole,
 }
 
 /// What the store assigned when it landed a [`SubtreePlan`]: the source's
@@ -529,6 +536,11 @@ impl IndexStore {
             Some(mismatch) => Some(mismatch),
         };
 
+        // A surface built with one full-text table is recognised before the
+        // schema statements run, since those create the lexical table
+        // (empty) and would hide the difference.
+        let split_pending = search_tables_exist(&self.catalog).await?
+            && !search_fts_lexical_exists(&self.catalog).await?;
         // `IF NOT EXISTS` deliberately leaves tables built under a different
         // identity in place: searches refuse while the re-embed is pending,
         // and `begin_reembed` recreates them under the new dimensions.
@@ -536,6 +548,9 @@ impl IndexStore {
             .execute_batch(&search_schema_sql(identity.dimensions))
             .await?;
         migrate_search_text_layout(&self.catalog).await?;
+        if split_pending {
+            migrate_search_role_layout(&self.catalog).await?;
+        }
         ensure_search_vector_schema(&self.catalog, identity.dimensions).await?;
         let mut search = self.search();
         search.surface = Some(identity);
@@ -994,7 +1009,10 @@ async fn insert_search_rows_in(
             .await?;
         }
         conn.execute(
-            "INSERT INTO search_fts (rowid, text) VALUES (?1, ?2)",
+            &format!(
+                "INSERT INTO {} (rowid, text) VALUES (?1, ?2)",
+                search_fts_table(row.role)
+            ),
             libsql::params![row.fragment.0, row.text.as_str()],
         )
         .await?;
@@ -1536,17 +1554,45 @@ impl IndexStore {
         self.catalog
             .execute("INSERT INTO search_fts (search_fts) VALUES ('optimize')", ())
             .await?;
+        self.catalog
+            .execute(
+                "INSERT INTO search_fts_lexical (search_fts_lexical) VALUES ('optimize')",
+                (),
+            )
+            .await?;
         repair_search_vector_index(&self.catalog, surface.dimensions, SearchIndexRepair::Ensure)
             .await?;
         Ok(())
     }
 
-    /// Full-text seed search: fragment ids with BM25 scores, best first.
+    /// Full-text seed search over prose rows (content and summaries):
+    /// fragment ids with BM25 scores, best first.
     pub async fn search_fts(
         &self,
         query: &str,
         k: usize,
     ) -> Result<Vec<(FragmentId, f32)>, StoreError> {
+        self.search_fts_in("search_fts", query, k).await
+    }
+
+    /// Full-text seed search over lexical rows (keywords, terms,
+    /// identifiers, entities, entries): the same shape as [`Self::search_fts`],
+    /// ranked by that table's own statistics.
+    pub async fn search_fts_lexical(
+        &self,
+        query: &str,
+        k: usize,
+    ) -> Result<Vec<(FragmentId, f32)>, StoreError> {
+        self.search_fts_in("search_fts_lexical", query, k).await
+    }
+
+    async fn search_fts_in(
+        &self,
+        table: &str,
+        query: &str,
+        k: usize,
+    ) -> Result<Vec<(FragmentId, f32)>, StoreError> {
+        assert!(table == "search_fts" || table == "search_fts_lexical");
         self.refuse_while_reembed_pending()?;
         self.surface()?;
         let matcher = fts_match_expression(query);
@@ -1556,8 +1602,10 @@ impl IndexStore {
         let rows = self
             .catalog
             .query(
-                "SELECT rowid, bm25(search_fts) FROM search_fts
-                 WHERE search_fts MATCH ?1 ORDER BY bm25(search_fts) LIMIT ?2",
+                &format!(
+                    "SELECT rowid, bm25({table}) FROM {table}
+                     WHERE {table} MATCH ?1 ORDER BY bm25({table}) LIMIT ?2"
+                ),
                 libsql::params![matcher, bounded_limit(k)],
             )
             .await?;
@@ -2207,13 +2255,117 @@ fn search_schema_sql(dims: usize) -> String {
          -- this index each purge scans every (vector-wide) row, and a full
          -- index run scans the table once per source.
          CREATE INDEX IF NOT EXISTS search_rows_by_source ON search_rows(source);
+         -- Two inverted indexes, one per kind of text. BM25 normalises a
+         -- row's score by the table's average row length, so a table that
+         -- mixed whole documents with hundreds of thousands of one-line
+         -- terms and names ranked documents by the wrong statistics; each
+         -- kind now keeps its own (`design/finder.md`).
          CREATE VIRTUAL TABLE IF NOT EXISTS search_fts
+           USING fts5(text, {SEARCH_FTS_CONTENTLESS});
+         CREATE VIRTUAL TABLE IF NOT EXISTS search_fts_lexical
            USING fts5(text, {SEARCH_FTS_CONTENTLESS});
          CREATE TRIGGER IF NOT EXISTS search_rows_after_delete
            AFTER DELETE ON search_rows BEGIN
              DELETE FROM search_fts WHERE rowid = old.id;
+             DELETE FROM search_fts_lexical WHERE rowid = old.id;
            END;"
     )
+}
+
+/// The full-text table a row's role sends its text to: prose (content and
+/// summaries, hints included) in `search_fts`, names and terms in
+/// `search_fts_lexical`.
+fn search_fts_table(role: SearchRole) -> &'static str {
+    match role {
+        SearchRole::Content | SearchRole::Summary => "search_fts",
+        SearchRole::Lexical => "search_fts_lexical",
+    }
+}
+
+/// Bring a surface built with one full-text table into the two-table
+/// layout: both inverted indexes are rebuilt from the catalog's text, in
+/// bounded batches, each its own transaction, so an interruption leaves
+/// the next open to continue. No re-embed, no re-index.
+async fn migrate_search_role_layout(conn: &libsql::Connection) -> Result<(), StoreError> {
+    assert!(search_tables_exist(conn).await?);
+    tracing::info!("splitting the full-text index into prose and lexical tables");
+    conn.execute_batch(&format!(
+        "DROP TRIGGER IF EXISTS search_rows_after_delete;
+         DROP TABLE IF EXISTS search_fts;
+         DROP TABLE IF EXISTS search_fts_lexical;
+         CREATE VIRTUAL TABLE search_fts USING fts5(text, {SEARCH_FTS_CONTENTLESS});
+         CREATE VIRTUAL TABLE search_fts_lexical USING fts5(text, {SEARCH_FTS_CONTENTLESS});
+         CREATE TRIGGER search_rows_after_delete
+           AFTER DELETE ON search_rows BEGIN
+             DELETE FROM search_fts WHERE rowid = old.id;
+             DELETE FROM search_fts_lexical WHERE rowid = old.id;
+           END;"
+    ))
+    .await?;
+    let mut last_id: i64 = 0;
+    for _ in 0..SEARCH_FTS_MIGRATION_BATCHES_MAX {
+        let landed = migrate_search_role_batch(conn, last_id).await?;
+        match landed {
+            Some(id) => last_id = id,
+            None => break,
+        }
+    }
+    assert!(search_fts_lexical_exists(conn).await?);
+    Ok(())
+}
+
+/// One batch of the split: the search rows after `last_id`, each filed by
+/// its role. Returns the last id filed, or `None` when nothing was left.
+async fn migrate_search_role_batch(
+    conn: &libsql::Connection,
+    last_id: i64,
+) -> Result<Option<i64>, StoreError> {
+    let mut rows = conn
+        .query(
+            "SELECT f.id, f.source, f.mimetype, f.text FROM fragments f
+             JOIN search_rows s ON s.id = f.id
+             WHERE f.id > ?1 AND f.text IS NOT NULL
+             ORDER BY f.id LIMIT ?2",
+            params![last_id, SEARCH_FTS_MIGRATION_BATCH_ROWS],
+        )
+        .await?;
+    let mut batch: Vec<(i64, SearchRole, String)> = Vec::new();
+    while let Some(row) = rows.next().await? {
+        let id: i64 = row.get(0)?;
+        let source: Option<i64> = row.get(1)?;
+        let mimetype: String = row.get(2)?;
+        let text: String = row.get(3)?;
+        let role = Mimetype::parse(&mimetype)
+            .map(|m| SearchRole::of(&m, source.is_none()))
+            .unwrap_or(SearchRole::Content);
+        batch.push((id, role, text));
+    }
+    let Some(&(last, _, _)) = batch.last() else {
+        return Ok(None);
+    };
+    let tx = conn.transaction().await?;
+    for (id, role, text) in &batch {
+        tx.execute(
+            &format!(
+                "INSERT INTO {} (rowid, text) VALUES (?1, ?2)",
+                search_fts_table(*role)
+            ),
+            params![*id, text.as_str()],
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(Some(last))
+}
+
+async fn search_fts_lexical_exists(conn: &libsql::Connection) -> Result<bool, StoreError> {
+    let mut rows = conn
+        .query(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'search_fts_lexical'",
+            (),
+        )
+        .await?;
+    Ok(rows.next().await?.is_some())
 }
 
 /// The FTS5 options that make `search_fts` contentless yet deletable; also
@@ -2833,12 +2985,14 @@ mod tests {
                 source: None,
                 text: "espresso descaling".into(),
                 vector: Some(vec![0.5; 8]),
+                role: SearchRole::Content,
             },
             SearchRow {
                 fragment: FragmentId(2),
                 source: None,
                 text: "text only".into(),
                 vector: None,
+                role: SearchRole::Content,
             },
         ];
         s.add_search_rows(&rows).await.expect("adds");
@@ -2868,6 +3022,7 @@ mod tests {
             source: None,
             text: "kitchen".into(),
             vector: Some(vec![0.25; 8]),
+            role: SearchRole::Content,
         }];
         s.add_search_rows(&rows).await.expect("adds");
         s.begin_reembed().await.expect("begins");
@@ -2900,13 +3055,16 @@ mod tests {
                  CREATE TRIGGER search_rows_after_delete AFTER DELETE ON search_rows BEGIN
                    INSERT INTO search_fts (search_fts, rowid, text)
                      VALUES ('delete', old.id, old.text); END;
-                 INSERT INTO search_rows (id, source, text) VALUES (7, NULL, 'legacy moodboard');",
+                 INSERT INTO search_rows (id, source, text) VALUES (7, NULL, 'legacy moodboard');
+                 INSERT INTO fragments (id, source, mimetype, text)
+                   VALUES (7, NULL, 'text/x-inseam-summary', 'legacy moodboard');",
             )
             .await
             .expect("builds the legacy layout");
         drop(s);
         let s = store(dir.path()).await;
         assert!(!search_column_exists(&s.catalog, "text").await.expect("reads columns"));
+        assert!(search_fts_lexical_exists(&s.catalog).await.expect("reads tables"));
         let hits = s.search_fts("moodboard", 5).await.expect("searches");
         assert_eq!(hits.first().map(|(id, _)| *id), Some(FragmentId(7)));
         s.add_search_rows(&[SearchRow {
@@ -2914,6 +3072,7 @@ mod tests {
             source: None,
             text: "new moodboard".into(),
             vector: None,
+            role: SearchRole::Content,
         }])
         .await
         .expect("adds after migration");
@@ -2925,6 +3084,73 @@ mod tests {
         let hits = s.search_fts("moodboard", 5).await.expect("searches");
         assert_eq!(hits.first().map(|(id, _)| *id), Some(FragmentId(8)));
         assert_eq!(hits.len(), 1, "the trigger removed the deleted row's terms");
+    }
+
+    /// Prose and lexical rows are two inverted indexes with their own
+    /// statistics: a term row is found by the lexical search and never by
+    /// the prose one, and the other way round.
+    #[tokio::test]
+    async fn lexical_rows_land_in_their_own_full_text_table() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        s.add_search_rows(&[
+            SearchRow {
+                fragment: FragmentId(1),
+                source: Some(SourceId(1)),
+                text: "the kitchen renovation budget".into(),
+                vector: None,
+                role: SearchRole::Content,
+            },
+            SearchRow {
+                fragment: FragmentId(2),
+                source: None,
+                text: "kitchen".into(),
+                vector: None,
+                role: SearchRole::Lexical,
+            },
+        ])
+        .await
+        .expect("adds");
+        let prose: Vec<FragmentId> = s.search_fts("kitchen", 5).await.expect("searches")
+            .into_iter().map(|(id, _)| id).collect();
+        let lexical: Vec<FragmentId> = s.search_fts_lexical("kitchen", 5).await.expect("searches")
+            .into_iter().map(|(id, _)| id).collect();
+        assert_eq!(prose, vec![FragmentId(1)]);
+        assert_eq!(lexical, vec![FragmentId(2)]);
+        s.catalog
+            .execute("DELETE FROM search_rows WHERE id = 2", ())
+            .await
+            .expect("deletes");
+        assert!(s.search_fts_lexical("kitchen", 5).await.expect("searches").is_empty());
+    }
+
+    /// A surface built with one full-text table is split at the next
+    /// declaration, both tables rebuilt from the catalog's text by role.
+    #[tokio::test]
+    async fn a_single_table_surface_is_split_by_role_in_place() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        s.catalog
+            .execute_batch(
+                "DROP TRIGGER search_rows_after_delete;
+                 DROP TABLE search_fts_lexical;
+                 INSERT INTO fragments (id, source, mimetype, text)
+                   VALUES (11, NULL, 'text/x-inseam-summary', 'prose about the moodboard'),
+                          (12, NULL, 'text/x-inseam-term', 'moodboard');
+                 INSERT INTO search_rows (id, source) VALUES (11, NULL), (12, NULL);
+                 INSERT INTO search_fts (rowid, text)
+                   VALUES (11, 'prose about the moodboard'), (12, 'moodboard');",
+            )
+            .await
+            .expect("builds the single-table layout");
+        drop(s);
+        let s = store(dir.path()).await;
+        let prose: Vec<FragmentId> = s.search_fts("moodboard", 5).await.expect("searches")
+            .into_iter().map(|(id, _)| id).collect();
+        let lexical: Vec<FragmentId> = s.search_fts_lexical("moodboard", 5).await.expect("searches")
+            .into_iter().map(|(id, _)| id).collect();
+        assert_eq!(prose, vec![FragmentId(11)]);
+        assert_eq!(lexical, vec![FragmentId(12)]);
     }
 
     /// An embedding cache built WITHOUT ROWID is moved to the rowid layout
@@ -2948,6 +3174,7 @@ mod tests {
             source: None,
             text: "kitchen".into(),
             vector: Some(vec![0.25; 8]),
+            role: SearchRole::Content,
         }])
         .await
         .expect("adds");
@@ -2975,6 +3202,7 @@ mod tests {
             source: None,
             text: "renovation budget".into(),
             vector: None,
+            role: SearchRole::Content,
         }])
         .await
         .expect("lands without a vector column");
@@ -3264,18 +3492,21 @@ mod tests {
                 source: Some(SourceId(1)),
                 text: "kitchen renovation budget and demolition plan".into(),
                 vector: Some(unit(0)),
+                role: SearchRole::Content,
             },
             SearchRow {
                 fragment: FragmentId(2),
                 source: Some(SourceId(2)),
                 text: "quarterly tax filing checklist".into(),
                 vector: Some(unit(3)),
+                role: SearchRole::Content,
             },
             SearchRow {
                 fragment: FragmentId(3),
                 source: None,
                 text: "unembedded fragment about renovation permits".into(),
                 vector: None,
+                role: SearchRole::Content,
             },
         ])
         .await
@@ -3297,6 +3528,7 @@ mod tests {
             source: Some(SourceId(3)),
             text: "renovation moodboard links".into(),
             vector: Some(unit(5)),
+            role: SearchRole::Content,
         }])
         .await
         .expect("adds");
@@ -3381,6 +3613,7 @@ mod tests {
             source: None,
             text: "row".into(),
             vector: Some(vector.clone()),
+            role: SearchRole::Content,
         }])
         .await
         .expect("lands");
@@ -3419,6 +3652,7 @@ mod tests {
             source: Some(SourceId(1)),
             text: "deferred".into(),
             vector: Some(vector.clone()),
+            role: SearchRole::Content,
         }])
         .await
         .expect("adds");
@@ -3431,6 +3665,7 @@ mod tests {
             source: Some(SourceId(1)),
             text: "landed without the index".into(),
             vector: Some(vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            role: SearchRole::Content,
         }])
         .await
         .expect("adds under no index");
@@ -3450,6 +3685,7 @@ mod tests {
                 source: Some(SourceId(1)),
                 text: "kitchen renovation".into(),
                 vector: Some(vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+                role: SearchRole::Content,
             }])
             .await
             .expect("adds");
@@ -3482,6 +3718,7 @@ mod tests {
                 v[0] = 1.0;
                 v
             }),
+            role: SearchRole::Content,
         }])
         .await
         .expect("adds under new dims");
@@ -3588,6 +3825,7 @@ mod tests {
             source: None,
             text: "x".into(),
             vector: Some(vec![1.0; 3]),
+            role: SearchRole::Content,
         };
         assert!(matches!(
             s.add_search_rows(&[row]).await,
@@ -3741,12 +3979,14 @@ mod tests {
                 source: None,
                 text: "Greg".into(),
                 vector: None,
+                role: SearchRole::Content,
             },
             SearchRow {
                 fragment: orphan,
                 source: None,
                 text: "Nobody".into(),
                 vector: None,
+                role: SearchRole::Content,
             },
         ])
         .await
@@ -3870,6 +4110,7 @@ mod tests {
                 source: Some(written.source),
                 text: text.into(),
                 vector: Some(vec![0.5; 8]),
+                role: SearchRole::Content,
             })
             .collect();
         s.land_search_rows(
