@@ -152,13 +152,21 @@ impl EmbedStage {
     }
 
     /// Queue a batch; waits while `EMBED_IN_FLIGHT` batches are already
-    /// queued. A stage that has stopped refuses — `finish` has its error.
-    pub(super) async fn submit(&self, batch: Batch) -> Result<(), SeamError> {
+    /// queued. A stage that has stopped refuses with the error that stopped
+    /// it — the stage's own failure, not the refusal, is what the operator
+    /// needs to read.
+    pub(super) async fn submit(&mut self, batch: Batch) -> Result<(), SeamError> {
         let sender = self.sender.as_ref().expect("submit before finish");
-        sender
-            .send(batch)
-            .await
-            .map_err(|_| SeamError::failed("embedding stage stopped early"))
+        if sender.send(batch).await.is_ok() {
+            return Ok(());
+        }
+        match (&mut self.task).await {
+            Ok(Ok(_)) => Err(SeamError::failed("embedding stage stopped early")),
+            Ok(Err(stage_error)) => Err(stage_error),
+            Err(join_error) => Err(SeamError::failed(format!(
+                "embedding stage task failed: {join_error}"
+            ))),
+        }
     }
 
     /// Close the stage and wait for every queued batch to land.

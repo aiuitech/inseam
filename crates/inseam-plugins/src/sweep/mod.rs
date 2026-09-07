@@ -830,7 +830,7 @@ impl SweepService {
         if deep.is_empty() {
             return Ok(());
         }
-        let stage = EmbedStage::start(Arc::clone(&self.embedder), Arc::clone(&self.store));
+        let mut stage = EmbedStage::start(Arc::clone(&self.embedder), Arc::clone(&self.store));
         let mut buffer = RowBuffer::default();
         let planned = stream::iter(deep)
             .map(|input| {
@@ -994,7 +994,7 @@ impl SweepService {
         let targets = self.store.reembed_targets().await?;
         report.reembedded = targets.len();
         self.store.begin_reembed().await?;
-        let stage = EmbedStage::start(Arc::clone(&self.embedder), Arc::clone(&self.store));
+        let mut stage = EmbedStage::start(Arc::clone(&self.embedder), Arc::clone(&self.store));
         let mut buffer = RowBuffer::default();
         for target in targets {
             buffer.push_rows([PendingRow {

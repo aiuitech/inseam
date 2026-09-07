@@ -141,11 +141,16 @@ class EnterpriseRagBenchTests(unittest.TestCase):
                 {
                     "summarization": "google/gemini-2.5-flash-lite",
                     "summarization_lane": "batch",
+                    "corpus": "full",
+                    "structural": "off",
+                    "finder_seeds": "both",
+                    "finder_max_vector_distance": 0.75,
                     "entity_extraction": "disabled",
                     "answer_generation": "stealth/ox-alpha",
-                    "answer_evaluation": "stealth/ox-alpha",
+                    "answer_evaluation": "skipped",
                     "embeddings": "openai/text-embedding-3-small",
                     "embedding_dimensions": 384,
+                    "embedding_vectors": "summaries",
                 },
             )
             self.assertEqual(
@@ -173,7 +178,7 @@ class EnterpriseRagBenchTests(unittest.TestCase):
                         composition = run_dir / "composition.toml"
                         composition.write_text(benchmark.composition_text(options))
                         manifest["indexing"] = benchmark.index_documents(
-                            run_dir, data_dir, composition, run_dir / "logs" / "index.log"
+                            run_dir, data_dir, composition, options, run_dir / "logs" / "index.log"
                         )
                         manifest["status"] = "failed"
                         manifest["phase"] = "failed"

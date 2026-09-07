@@ -21,6 +21,15 @@ from pathlib import Path
 from typing import Any, Callable
 
 from harness import (
+    distance_argument,
+    manifest_option_distance,
+    FINDER_SEEDS,
+    MAX_KEYWORDS,
+    MAX_SUMMARY_TARGET_CHARS,
+    STRUCTURAL_CHOICES,
+    count_argument,
+    manifest_option_choice,
+    manifest_option_count,
     EMBEDDING_DIMENSIONS,
     EMBEDDING_MODEL,
     FIXTURES_ROOT,
@@ -108,30 +117,9 @@ MAX_QREL_ROWS = 100_000
 # `inseam query` clamps its result limit to 50, so a larger cutoff would
 # silently score a truncated ranking.
 MAX_QUERY_RESULTS = 50
-# The summarizer target a run may ask for; past the longest NFCorpus
-# abstract by a wide margin, so any real corpus can be embedded whole.
-MAX_SUMMARY_TARGET_CHARS = 100_000
 SUMMARIZATION_LANES = frozenset({"batch", "interactive"})
-MAX_KEYWORDS = 100
 
 
-def distance_argument(raw: str) -> float:
-    value = float(raw)
-    if not 0.0 < value <= 2.0:
-        raise argparse.ArgumentTypeError("finder-max-vector-distance must be in (0, 2]")
-    return value
-
-
-def count_argument(name: str, maximum: int) -> Callable[[str], int]:
-    def parse(raw: str) -> int:
-        value = int(raw)
-        if value < 0:
-            raise argparse.ArgumentTypeError(f"{name} must be at least 0")
-        if value > maximum:
-            raise argparse.ArgumentTypeError(f"{name} must be at most {maximum}")
-        return value
-
-    return parse
 METRIC_CUTOFFS = (1, 3, 5, 10)
 SETUP_TIMEOUT_SECONDS = 1_800
 QUERY_TIMEOUT_SECONDS = 600
@@ -143,8 +131,6 @@ DOCUMENT_FILE_SUFFIX = ".txt"
 # document as an outline and the summarizer leads with the title.
 CORPUS_DIRECTORIES = {"text": "documents", "markdown": "documents-markdown"}
 CORPUS_SUFFIXES = {"text": ".txt", "markdown": ".md"}
-STRUCTURAL_CHOICES = frozenset({"off", "markdown"})
-FINDER_SEEDS = frozenset({"both", "full-text", "vector"})
 # Widths a run may ask text-embedding-3-small for (Matryoshka; native 1536).
 EMBEDDING_DIMENSIONS_MAX = 1536
 QRELS_HEADER = ["query-id", "corpus-id", "score"]
@@ -926,31 +912,6 @@ def options_from_manifest(manifest: dict[str, Any]) -> RunOptions:
         finder_seeds=manifest_option_choice(value, "finder_seeds", FINDER_SEEDS),
         finder_max_vector_distance=manifest_option_distance(value, "finder_max_vector_distance"),
     )
-
-
-def manifest_option_distance(value: dict[str, Any], name: str) -> float:
-    option = value[name]
-    if type(option) not in (int, float) or not 0.0 < float(option) <= 2.0:
-        raise BenchmarkError(f"run option {name} is not a cosine distance in (0, 2]")
-    return float(option)
-
-
-def manifest_option_choice(value: dict[str, Any], name: str, choices: frozenset[str]) -> str:
-    option = value[name]
-    if option not in choices:
-        raise BenchmarkError(f"run option {name} is not one of {sorted(choices)}")
-    return option
-
-
-def manifest_option_count(value: dict[str, Any], name: str, maximum: int) -> int:
-    option = value[name]
-    if type(option) is not int:
-        raise BenchmarkError(f"run option {name} is not an integer")
-    if option < 0:
-        raise BenchmarkError(f"run option {name} must be at least 0")
-    if option > maximum:
-        raise BenchmarkError(f"run option {name} exceeds the {maximum} safety limit")
-    return option
 
 
 def manifest_option_lane(value: dict[str, Any], name: str) -> str:

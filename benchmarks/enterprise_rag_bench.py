@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import re
 import shutil
 import sys
@@ -16,28 +17,39 @@ from typing import Any
 from harness import (
     EMBEDDING_DIMENSIONS,
     EMBEDDING_MODEL,
+    FINDER_SEEDS,
     FIXTURES_ROOT,
     INDEX_PROGRESS_INTERVAL_SECONDS,
     INDEX_TIMEOUT_SECONDS,
     MAX_INDEX_CONCURRENCY,
+    MAX_KEYWORDS,
     MAX_LLM_CALL_BUDGET,
+    MAX_SUMMARY_TARGET_CHARS,
     METADATA_TIMEOUT_SECONDS,
     OPENROUTER_BASE_URL,
     PROGRESS_INTERVAL_SECONDS,
     RUNS_ROOT as ALL_RUNS_ROOT,
+    STRUCTURAL_CHOICES,
     SUMMARIZATION_LANE,
     SUMMARIZATION_MODEL,
+    VECTOR_SCOPES,
     BenchmarkError,
     CommandResult,
     begin_attempt,
     bounded_argument,
     complete_run,
+    count_argument,
+    distance_argument,
     download_verified,
     finish_attempt,
     fixture_document_count,
     inseam_arguments,
     inseam_identity,
     load_index_completion,
+    manifest_option_boolean,
+    manifest_option_choice,
+    manifest_option_count,
+    manifest_option_distance,
     manifest_option_integer,
     manifest_options_object,
     new_run_id,
@@ -95,6 +107,17 @@ QUERY_TIMEOUT_SECONDS = 600
 AGENT_TIMEOUT_SECONDS = 1_800
 EVALUATION_TIMEOUT_SECONDS = 604_800
 DOCUMENT_ID_PATTERN = re.compile(r"dsid_[0-9a-f]{32}")
+# A corpus slice is every document any question expects plus a seeded random
+# sample of the rest, hard-linked under `slices/<count>/documents`, so a
+# retrieval strategy can be compared in minutes instead of the hours a full
+# index takes. Its scores are development numbers: the distractor set is a
+# fraction of the corpus, so they are comparable only with other slices of
+# the same size, never with a full run. The seed is fixed so every slice of
+# a size holds the same documents.
+CORPUS_SLICE_SEED = 0
+CORPUS_SLICE_MAX = DOCUMENTS_MAX
+# The embedder's vector scopes, plus `none`: no embedder mounted at all.
+EMBEDDER_CHOICES = VECTOR_SCOPES | frozenset({"none"})
 
 
 @dataclass(frozen=True)
@@ -106,6 +129,34 @@ class RunOptions:
     llm_call_budget: int
     evaluation_parallelism: int
     skip_evaluation: bool
+    # Retrieval only: no agent answer, no judge. The retrieval block is the
+    # whole score, which is what a change to indexing is measured by.
+    skip_agent: bool = False
+    # 0 indexes the full corpus; a count indexes a slice of that many
+    # documents (CORPUS_SLICE_SEED).
+    corpus_slice: int = 0
+    # The summarizer's target length; text within it is its own summary and
+    # costs no model call.
+    summary_target_chars: int = 200
+    # Keywords planted beside each summary for full-text search; 0 plants none.
+    keywords_max: int = 12
+    # Whether the markdown structural transform (which claims plain text too)
+    # runs, so each source's text reaches full-text search through its
+    # sections. `off` leaves the summary and keywords as the only text rows.
+    structural: str = "off"
+    # The embedder's scope: `summaries` is one vector per source; `none`
+    # mounts no embedder, so the index is full-text only and costs nothing.
+    embedding_vectors: str = "summaries"
+    # Vector seeds farther than this cosine distance are dropped before
+    # fusion, so a weak vector list cannot drag a strong full-text one.
+    finder_max_vector_distance: float = 0.75
+    # Which seed lists the Finder runs before fusion; one alone is a
+    # diagnostic for which search the fusion is carrying.
+    finder_seeds: str = "both"
+
+    def __post_init__(self) -> None:
+        if self.skip_agent and not self.skip_evaluation:
+            raise BenchmarkError("a retrieval-only run has no answers to evaluate")
 
 
 def extract_documents(archive: Path) -> None:
@@ -279,23 +330,27 @@ batch_requests_max = {SUMMARY_BATCH_REQUESTS_MAX}
 [[entry]]
 id = "embedder"
 [entry.config]
-provider = "endpoint"
-model = "{EMBEDDING_MODEL}"
-dimensions = {EMBEDDING_DIMENSIONS}
-vectors = "summaries"
+{embedder_config(options)}
 
 [[entry]]
 id = "markdown"
-disabled = true
+disabled = {"false" if options.structural == "markdown" else "true"}
 
 [[entry]]
 id = "chunker"
 disabled = true
 
 [[entry]]
+id = "finder"
+[entry.config]
+seeds = "{options.finder_seeds}"
+max_vector_distance = {options.finder_max_vector_distance}
+
+[[entry]]
 id = "summarizer"
 [entry.config]
-target_chars = 200
+target_chars = {options.summary_target_chars}
+keywords_max = {options.keywords_max}
 llm_call_budget = {options.llm_call_budget}
 llm_lane = "{SUMMARIZATION_LANE}"
 
@@ -316,16 +371,98 @@ ignore = []
 '''
 
 
-def load_questions(limit: int) -> list[dict[str, Any]]:
+def embedder_config(options: RunOptions) -> str:
+    if options.embedding_vectors == "none":
+        return 'provider = "none"'
+    return (
+        f'provider = "endpoint"\nmodel = "{EMBEDDING_MODEL}"\n'
+        f"dimensions = {EMBEDDING_DIMENSIONS}\n"
+        f'vectors = "{options.embedding_vectors}"'
+    )
+
+
+def corpus_root(options: RunOptions) -> Path:
+    """The fixture root whose `documents` directory a run indexes."""
+    if options.corpus_slice == 0:
+        return FIXTURE_ROOT
+    return FIXTURE_ROOT / "slices" / str(options.corpus_slice)
+
+
+def corpus_document_paths() -> list[Path]:
+    documents = FIXTURE_ROOT / "documents"
+    paths: list[Path] = []
+    for path in sorted(documents.rglob("*.txt")):
+        paths.append(path)
+        if len(paths) > DOCUMENTS_MAX:
+            raise BenchmarkError(f"corpus has more than {DOCUMENTS_MAX} documents")
+    if len(paths) < DOCUMENTS_MIN:
+        raise BenchmarkError(f"corpus has only {len(paths)} documents; run setup first")
+    return paths
+
+
+def corpus_slice_members(count: int, questions: list[dict[str, Any]]) -> list[Path]:
+    """Every expected document, then a seeded sample of the rest, up to `count`."""
+    assert 0 < count <= CORPUS_SLICE_MAX
+    paths = corpus_document_paths()
+    expected_ids: set[str] = set()
+    for question in questions:
+        expected_ids.update(str(value) for value in question.get("expected_doc_ids", []))
+    expected = [path for path in paths if DOCUMENT_ID_PATTERN.search(path.name) and
+                DOCUMENT_ID_PATTERN.search(path.name).group(0) in expected_ids]
+    if len(expected) > count:
+        raise BenchmarkError(
+            f"the questions expect {len(expected)} documents; a slice must hold at least that"
+        )
+    found = {DOCUMENT_ID_PATTERN.search(p.name).group(0) for p in expected}
+    missing = expected_ids - found
+    if missing:
+        raise BenchmarkError(f"{len(missing)} expected documents are not in the corpus")
+    rest = [path for path in paths if path not in set(expected)]
+    sampler = random.Random(CORPUS_SLICE_SEED)
+    sampled = sampler.sample(rest, count - len(expected))
+    members = sorted(expected + sampled)
+    assert len(members) == count
+    return members
+
+
+def materialize_corpus_slice(count: int) -> Path:
+    """Hard-link a slice's documents under `slices/<count>/documents`, once."""
+    root = FIXTURE_ROOT / "slices" / str(count)
+    documents = root / "documents"
+    marker = root / "documents.json"
+    if marker.exists() and documents.is_dir():
+        return root
+    if documents.exists():
+        shutil.rmtree(documents)
+    members = corpus_slice_members(count, load_questions(MAX_QUESTIONS, exact=False))
+    source_root = FIXTURE_ROOT / "documents"
+    for path in members:
+        target = documents / path.relative_to(source_root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.link(path, target)
+    write_json(
+        marker,
+        {
+            "archive_sha256": ARCHIVE_SHA256,
+            "extracted_at": utc_now(),
+            "text_file_count": len(members),
+            "slice_seed": CORPUS_SLICE_SEED,
+        },
+    )
+    print(f"Corpus slice of {count:,} documents ready at {root}", flush=True)
+    return root
+
+
+def load_questions(limit: int, exact: bool = True) -> list[dict[str, Any]]:
     question_path = FIXTURE_ROOT / "questions.jsonl"
     lines = question_path.read_text(encoding="utf-8").splitlines()
     if len(lines) > MAX_QUESTIONS:
         raise BenchmarkError(f"questions file has {len(lines)} rows; hard limit is {MAX_QUESTIONS}")
     questions = [json.loads(line) for line in lines if line.strip()]
-    if len(questions) < limit:
+    if exact and len(questions) < limit:
         raise BenchmarkError(f"requested {limit} questions but the fixture has {len(questions)}")
     selected = questions[:limit]
-    assert len(selected) == limit
+    assert len(selected) <= limit
     return selected
 
 
@@ -379,6 +516,22 @@ def question_commands(
     )
     require_success(query, f"querying {question_id}")
     query_results = parse_query_results(query.stdout, MAX_QUERY_RESULTS)
+    addresses = [str(result["address"]) for result in query_results]
+    retrieved_document_ids = extract_document_ids(addresses)
+    if options.skip_agent:
+        return {
+            "question_id": question_id,
+            "question_type": question.get("question_type"),
+            "question": question_text,
+            "retrieval_duration_seconds": round(query.duration_seconds, 6),
+            "answer_duration_seconds": 0.0,
+            "duration_seconds": round(query.duration_seconds, 6),
+            "results": query_results,
+            "retrieved_document_ids": retrieved_document_ids,
+            "agent_document_ids": [],
+            "document_ids": retrieved_document_ids,
+            "answer": "",
+        }
     agent = run_logged(
         [
             *inseam_arguments(data_dir, composition),
@@ -394,8 +547,6 @@ def question_commands(
         progress_label=f"{progress_prefix} answer",
     )
     require_success(agent, f"answering {question_id}")
-    addresses = [str(result["address"]) for result in query_results]
-    retrieved_document_ids = extract_document_ids(addresses)
     agent_document_ids = extract_document_ids([agent.stdout])
     document_ids = extract_document_ids([*retrieved_document_ids, *agent_document_ids])
     return {
@@ -478,7 +629,7 @@ def create_run(options: RunOptions) -> tuple[Path, Path, dict[str, Any]]:
         "finished_at": None,
         "duration_seconds": None,
         "benchmark": benchmark_pins(),
-        "models": model_assignments(),
+        "models": model_assignments(options),
         "timeouts_seconds": {
             "setup_command": SETUP_TIMEOUT_SECONDS,
             "finder_query": QUERY_TIMEOUT_SECONDS,
@@ -512,27 +663,38 @@ def benchmark_pins() -> dict[str, str]:
     }
 
 
-def model_assignments() -> dict[str, str | int]:
+def model_assignments(options: RunOptions) -> dict[str, str | int]:
+    corpus = "full" if options.corpus_slice == 0 else f"slice-{options.corpus_slice}"
     return {
         "summarization": SUMMARIZATION_MODEL,
         "summarization_lane": SUMMARIZATION_LANE,
+        "corpus": corpus,
+        "structural": options.structural,
+        "finder_seeds": options.finder_seeds,
+        "finder_max_vector_distance": options.finder_max_vector_distance,
         "entity_extraction": "disabled",
-        "answer_generation": ANSWER_MODEL,
-        "answer_evaluation": EVALUATION_MODEL,
-        "embeddings": EMBEDDING_MODEL,
-        "embedding_dimensions": EMBEDDING_DIMENSIONS,
+        "answer_generation": "skipped" if options.skip_agent else ANSWER_MODEL,
+        "answer_evaluation": "skipped" if options.skip_evaluation else EVALUATION_MODEL,
+        "embeddings": "disabled" if options.embedding_vectors == "none" else EMBEDDING_MODEL,
+        "embedding_dimensions": 0 if options.embedding_vectors == "none" else EMBEDDING_DIMENSIONS,
+        "embedding_vectors": options.embedding_vectors,
     }
 
 
 def index_documents(
-    run_dir: Path, data_dir: Path, composition: Path, log_path: Path | None = None
+    run_dir: Path,
+    data_dir: Path,
+    composition: Path,
+    options: RunOptions,
+    log_path: Path | None = None,
 ) -> dict[str, Any]:
+    root = corpus_root(options)
     return harness.index_documents(
         run_dir,
         data_dir,
         composition,
-        FIXTURE_ROOT / "documents",
-        fixture_document_count(FIXTURE_ROOT, DOCUMENTS_MAX),
+        root / "documents",
+        fixture_document_count(root, DOCUMENTS_MAX),
         SOURCES_MAX,
         "EnterpriseRAG-Bench",
         log_path,
@@ -649,6 +811,8 @@ def pip_freeze(run_dir: Path) -> None:
 def run_benchmark(options: RunOptions) -> None:
     require_fixture()
     evaluator_environment()
+    if options.corpus_slice > 0:
+        materialize_corpus_slice(options.corpus_slice)
     questions = load_questions(options.question_limit)
     run_dir, data_dir, manifest = create_run(options)
     composition = run_dir / "composition.toml"
@@ -724,7 +888,7 @@ def execute_benchmark(
             attempt["indexing_log"] = str(index_log.relative_to(run_dir))
             write_json(run_dir / "manifest.json", manifest)
             manifest["indexing"] = index_documents(
-                run_dir, data_dir, composition, index_log
+                run_dir, data_dir, composition, options, index_log
             )
         else:
             print_reused_index(manifest)
@@ -796,8 +960,8 @@ def load_resumable_run(
         raise BenchmarkError(f"benchmark run `{run_id}` does not exist")
     manifest = read_json_object(manifest_path)
     migrate_manifest(manifest)
-    validate_resumable_manifest(run_id, manifest)
     options = options_from_manifest(manifest)
+    validate_resumable_manifest(run_id, manifest, options)
     questions = load_questions(options.question_limit)
     composition = run_dir / "composition.toml"
     if not composition.is_file():
@@ -858,19 +1022,18 @@ def legacy_attempt(manifest: dict[str, Any], duration_seconds: float) -> dict[st
     }
 
 
-def validate_resumable_manifest(run_id: str, manifest: dict[str, Any]) -> None:
+def validate_resumable_manifest(
+    run_id: str, manifest: dict[str, Any], options: RunOptions
+) -> None:
     validate_resumable_status(run_id, manifest)
     if manifest.get("benchmark") != benchmark_pins():
         raise BenchmarkError(f"run `{run_id}` uses different benchmark inputs")
-    if manifest.get("models") != model_assignments():
+    if manifest.get("models") != model_assignments(options):
         raise BenchmarkError(f"run `{run_id}` uses different models")
 
 
 def options_from_manifest(manifest: dict[str, Any]) -> RunOptions:
     value = manifest_options_object(manifest, set(RunOptions.__annotations__))
-    skip_evaluation = value["skip_evaluation"]
-    if type(skip_evaluation) is not bool:
-        raise BenchmarkError("run option skip_evaluation is not a boolean")
     return RunOptions(
         question_limit=manifest_option_integer(value, "question_limit", MAX_QUESTIONS),
         query_limit=manifest_option_integer(value, "query_limit", MAX_QUERY_RESULTS),
@@ -878,13 +1041,21 @@ def options_from_manifest(manifest: dict[str, Any]) -> RunOptions:
         index_concurrency=manifest_option_integer(
             value, "index_concurrency", MAX_INDEX_CONCURRENCY
         ),
-        llm_call_budget=manifest_option_integer(
-            value, "llm_call_budget", MAX_LLM_CALL_BUDGET
-        ),
+        llm_call_budget=manifest_option_count(value, "llm_call_budget", MAX_LLM_CALL_BUDGET),
         evaluation_parallelism=manifest_option_integer(
             value, "evaluation_parallelism", 64
         ),
-        skip_evaluation=skip_evaluation,
+        skip_evaluation=manifest_option_boolean(value, "skip_evaluation"),
+        skip_agent=manifest_option_boolean(value, "skip_agent"),
+        corpus_slice=manifest_option_count(value, "corpus_slice", CORPUS_SLICE_MAX),
+        summary_target_chars=manifest_option_integer(
+            value, "summary_target_chars", MAX_SUMMARY_TARGET_CHARS
+        ),
+        keywords_max=manifest_option_count(value, "keywords_max", MAX_KEYWORDS),
+        structural=manifest_option_choice(value, "structural", STRUCTURAL_CHOICES),
+        embedding_vectors=manifest_option_choice(value, "embedding_vectors", EMBEDDER_CHOICES),
+        finder_seeds=manifest_option_choice(value, "finder_seeds", FINDER_SEEDS),
+        finder_max_vector_distance=manifest_option_distance(value, "finder_max_vector_distance"),
     )
 
 
@@ -936,8 +1107,9 @@ def parse_arguments() -> argparse.Namespace:
     )
     run_parser.add_argument(
         "--llm-call-budget",
-        type=bounded_argument("llm-call-budget", MAX_LLM_CALL_BUDGET),
+        type=count_argument("llm-call-budget", MAX_LLM_CALL_BUDGET),
         default=500,
+        help="summary calls per indexing run; 0 makes the index model-free",
     )
     run_parser.add_argument(
         "--evaluation-parallelism",
@@ -948,6 +1120,31 @@ def parse_arguments() -> argparse.Namespace:
         "--skip-evaluation",
         action="store_true",
         help="skip the LLM-judged answer metrics",
+    )
+    run_parser.add_argument(
+        "--skip-agent",
+        action="store_true",
+        help="retrieval only: no agent answers, no judge (implies --skip-evaluation)",
+    )
+    run_parser.add_argument(
+        "--corpus-slice",
+        type=count_argument("corpus-slice", CORPUS_SLICE_MAX),
+        default=0,
+        help="index a slice of this many documents (every expected one plus a seeded sample)",
+    )
+    run_parser.add_argument(
+        "--summary-target-chars",
+        type=bounded_argument("summary-target-chars", MAX_SUMMARY_TARGET_CHARS),
+        default=200,
+    )
+    run_parser.add_argument(
+        "--keywords-max", type=count_argument("keywords-max", MAX_KEYWORDS), default=12
+    )
+    run_parser.add_argument("--structural", choices=sorted(STRUCTURAL_CHOICES), default="off")
+    run_parser.add_argument("--vectors", choices=sorted(EMBEDDER_CHOICES), default="summaries")
+    run_parser.add_argument("--finder-seeds", choices=sorted(FINDER_SEEDS), default="both")
+    run_parser.add_argument(
+        "--finder-max-vector-distance", type=distance_argument, default=0.75
     )
     resume_parser = subparsers.add_parser(
         "resume",
@@ -969,7 +1166,15 @@ def main() -> int:
             index_concurrency=arguments.index_concurrency,
             llm_call_budget=arguments.llm_call_budget,
             evaluation_parallelism=arguments.evaluation_parallelism,
-            skip_evaluation=arguments.skip_evaluation,
+            skip_evaluation=arguments.skip_evaluation or arguments.skip_agent,
+            skip_agent=arguments.skip_agent,
+            corpus_slice=arguments.corpus_slice,
+            summary_target_chars=arguments.summary_target_chars,
+            keywords_max=arguments.keywords_max,
+            structural=arguments.structural,
+            embedding_vectors=arguments.vectors,
+            finder_seeds=arguments.finder_seeds,
+            finder_max_vector_distance=arguments.finder_max_vector_distance,
         )
         return run_main(lambda: run_benchmark(options))
     return run_main(lambda: resume_benchmark(arguments.run_id))

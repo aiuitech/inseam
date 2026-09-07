@@ -438,6 +438,11 @@ struct SearchState {
     reembed_from: Option<EmbeddingIdentity>,
 }
 
+/// How long a connection waits for another process's write to land before
+/// reporting the database locked. A subtree lands in one short transaction,
+/// so a status probe beside an indexing run waits milliseconds, not this.
+const BUSY_TIMEOUT_MS: u32 = 5_000;
+
 pub struct IndexStore {
     #[expect(dead_code, reason = "keeps the database handle alive for its connections")]
     db: libsql::Database,
@@ -476,6 +481,14 @@ impl IndexStore {
         // transaction each.
         catalog.query("PRAGMA synchronous = NORMAL", ()).await?;
         catalog.query("PRAGMA foreign_keys = ON", ()).await?;
+        // A second process — `inseam status` beside a running `inseam
+        // index` — opens the same file, and its schema convergence takes
+        // the write lock. Without a busy timeout SQLite answers "database is
+        // locked" the instant a subtree transaction holds it; with one it
+        // waits, bounded, for that transaction to land.
+        catalog
+            .query(&format!("PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}"), ())
+            .await?;
         converge_schema(&catalog).await?;
         Ok(Self {
             db,
@@ -520,6 +533,7 @@ impl IndexStore {
         self.catalog
             .execute_batch(&search_schema_sql(identity.dimensions))
             .await?;
+        migrate_search_text_layout(&self.catalog).await?;
         ensure_search_vector_schema(&self.catalog, identity.dimensions).await?;
         let mut search = self.search();
         search.surface = Some(identity);
@@ -957,14 +971,29 @@ async fn insert_search_rows_in(
             Some(s) => libsql::Value::Integer(s.0),
             None => libsql::Value::Null,
         };
-        let vector = match &row.vector {
-            Some(v) if dims > 0 => libsql::Value::Blob(vector_blob(v)),
-            _ => libsql::Value::Null,
-        };
+        // At zero dimensions the surface is full-text only and the table
+        // has no vector column to name.
+        if dims == 0 {
+            conn.execute(
+                "INSERT INTO search_rows (id, source) VALUES (?1, ?2)",
+                libsql::params![row.fragment.0, source],
+            )
+            .await?;
+        } else {
+            let vector = match &row.vector {
+                Some(v) => libsql::Value::Blob(vector_blob(v)),
+                None => libsql::Value::Null,
+            };
+            conn.execute(
+                "INSERT INTO search_rows (id, source, ann_vector)
+                 VALUES (?1, ?2, CASE WHEN ?3 IS NULL THEN NULL ELSE vector8(?3) END)",
+                libsql::params![row.fragment.0, source, vector],
+            )
+            .await?;
+        }
         conn.execute(
-            "INSERT INTO search_rows (id, source, text, ann_vector)
-             VALUES (?1, ?2, ?3, CASE WHEN ?4 IS NULL THEN NULL ELSE vector8(?4) END)",
-            libsql::params![row.fragment.0, source, row.text.as_str(), vector],
+            "INSERT INTO search_fts (rowid, text) VALUES (?1, ?2)",
+            libsql::params![row.fragment.0, row.text.as_str()],
         )
         .await?;
     }
@@ -1941,11 +1970,63 @@ async fn converge_schema(conn: &libsql::Connection) -> Result<(), StoreError> {
         conn.execute_batch(CATALOG_SCHEMA_DROP_SQL).await?;
     }
     conn.execute_batch(CATALOG_SCHEMA_SQL).await?;
+    migrate_embedding_cache_layout(conn).await?;
     conn.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
         params![SCHEMA_VERSION],
     )
     .await?;
+    Ok(())
+}
+
+/// Whether a table was created with the given fragment in its statement.
+/// The catalog keeps the statement that created each table, so a layout
+/// change is visible without a version to bump — the same test the vector
+/// index uses for its parameters.
+async fn table_sql_contains(
+    conn: &libsql::Connection,
+    table: &str,
+    fragment: &str,
+) -> Result<bool, StoreError> {
+    let mut rows = conn
+        .query(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            params![table],
+        )
+        .await?;
+    let Some(row) = rows.next().await? else {
+        return Ok(false);
+    };
+    let sql: String = row.get(0)?;
+    Ok(sql.contains(fragment))
+}
+
+/// Move an embedding cache built as a WITHOUT ROWID table into the rowid
+/// layout, in one transaction: the rows are the same, only their pages
+/// change. Nothing is re-embedded.
+async fn migrate_embedding_cache_layout(conn: &libsql::Connection) -> Result<(), StoreError> {
+    if !table_sql_contains(conn, "embedding_cache", "WITHOUT ROWID").await? {
+        return Ok(());
+    }
+    tracing::info!("moving the embedding cache into its rowid layout");
+    conn.execute_batch(
+        "BEGIN;
+         ALTER TABLE embedding_cache RENAME TO embedding_cache_legacy;
+         CREATE TABLE embedding_cache (
+           id INTEGER PRIMARY KEY,
+           digest TEXT NOT NULL,
+           model TEXT NOT NULL,
+           dimensions INTEGER NOT NULL,
+           vector BLOB NOT NULL,
+           UNIQUE (digest, model, dimensions)
+         );
+         INSERT INTO embedding_cache (digest, model, dimensions, vector)
+           SELECT digest, model, dimensions, vector FROM embedding_cache_legacy;
+         DROP TABLE embedding_cache_legacy;
+         COMMIT;",
+    )
+    .await?;
+    assert!(!table_sql_contains(conn, "embedding_cache", "WITHOUT ROWID").await?);
     Ok(())
 }
 
@@ -2003,13 +2084,19 @@ const CATALOG_SCHEMA_SQL: &str = "CREATE TABLE IF NOT EXISTS meta (
      -- rebuild re-pays only what actually changed. Catalog tables, not
      -- search tables: a re-embed drops the search surface and must find
      -- the vectors still here.
+     -- A rowid table, not WITHOUT ROWID: an index b-tree keeps only a
+     -- quarter of a page in-row, so a 1.5 KB vector spilled to an overflow
+     -- page apiece and the cache cost 4.5 KB per 384-wide vector. In a table
+     -- b-tree two vectors share a page (measured: 111 MB to 52 MB for
+     -- 25,000 vectors).
      CREATE TABLE IF NOT EXISTS embedding_cache (
+       id INTEGER PRIMARY KEY,
        digest TEXT NOT NULL,
        model TEXT NOT NULL,
        dimensions INTEGER NOT NULL,
        vector BLOB NOT NULL,
-       PRIMARY KEY (digest, model, dimensions)
-     ) WITHOUT ROWID;
+       UNIQUE (digest, model, dimensions)
+     );
      CREATE TABLE IF NOT EXISTS transform_cache (
        key TEXT PRIMARY KEY,
        output TEXT NOT NULL
@@ -2092,11 +2179,17 @@ async fn set_embedding_meta(
     Ok(())
 }
 
-/// The derived search tables' schema. The FTS5 table is external-content over
-/// `search_rows`, kept in sync by triggers so inserts and deletes never
-/// leave the two out of step — the pair to `rebuild_fts` only compacting.
-/// The vector column exists only under an embedding identity with dims;
-/// at zero dims the surface is FTS-only.
+/// The derived search tables' schema. A search row is a fragment id, its
+/// source, and its vector; the text it was made from is not kept here — the
+/// fragment holds it, and the FTS5 table is *contentless*: it keeps the
+/// inverted index and nothing else, and `contentless_delete` lets a row be
+/// deleted by id without handing the text back. (An external-content table
+/// over `search_rows` stored every fragment's text a second time; nothing
+/// ever read that copy, since results carry fragment ids and the Finder
+/// reads text from the fragment.) A trigger keeps the two in step on
+/// delete; inserts land in both in [`insert_search_rows_in`]. The vector
+/// column exists only under an embedding identity with dims; at zero dims
+/// the surface is FTS-only.
 fn search_schema_sql(dims: usize) -> String {
     let vector_column = if dims > 0 {
         format!(",\n           ann_vector F8_BLOB({dims})")
@@ -2106,25 +2199,53 @@ fn search_schema_sql(dims: usize) -> String {
     format!(
         "CREATE TABLE IF NOT EXISTS search_rows (
            id INTEGER PRIMARY KEY,
-           source INTEGER,
-           text TEXT NOT NULL{vector_column}
+           source INTEGER{vector_column}
          );
          -- Subtree rebuilds and source deletions purge by source; without
          -- this index each purge scans every (vector-wide) row, and a full
          -- index run scans the table once per source.
          CREATE INDEX IF NOT EXISTS search_rows_by_source ON search_rows(source);
          CREATE VIRTUAL TABLE IF NOT EXISTS search_fts
-           USING fts5(text, content='search_rows', content_rowid='id');
-         CREATE TRIGGER IF NOT EXISTS search_rows_after_insert
-           AFTER INSERT ON search_rows BEGIN
-             INSERT INTO search_fts (rowid, text) VALUES (new.id, new.text);
-           END;
+           USING fts5(text, {SEARCH_FTS_CONTENTLESS});
          CREATE TRIGGER IF NOT EXISTS search_rows_after_delete
            AFTER DELETE ON search_rows BEGIN
-             INSERT INTO search_fts (search_fts, rowid, text)
-               VALUES ('delete', old.id, old.text);
+             DELETE FROM search_fts WHERE rowid = old.id;
            END;"
     )
+}
+
+/// The FTS5 options that make `search_fts` contentless yet deletable; also
+/// the mark by which a current table is told from the external-content
+/// layout it replaced.
+const SEARCH_FTS_CONTENTLESS: &str = "content='', contentless_delete=1";
+
+/// Bring a search surface built with the external-content layout — its text
+/// stored a second time in `search_rows` — into the contentless one, in
+/// place: the inverted index is rebuilt from the copy about to be dropped,
+/// then the column goes. One transaction, no re-embed, no re-index.
+async fn migrate_search_text_layout(conn: &libsql::Connection) -> Result<(), StoreError> {
+    if !table_sql_contains(conn, "search_fts", "content='search_rows'").await? {
+        return Ok(());
+    }
+    tracing::info!("moving the full-text index into its contentless layout");
+    conn.execute_batch(&format!(
+        "BEGIN;
+         DROP TRIGGER IF EXISTS search_rows_after_insert;
+         DROP TRIGGER IF EXISTS search_rows_after_delete;
+         DROP TABLE search_fts;
+         CREATE VIRTUAL TABLE search_fts USING fts5(text, {SEARCH_FTS_CONTENTLESS});
+         INSERT INTO search_fts (rowid, text) SELECT id, text FROM search_rows;
+         ALTER TABLE search_rows DROP COLUMN text;
+         CREATE TRIGGER search_rows_after_delete
+           AFTER DELETE ON search_rows BEGIN
+             DELETE FROM search_fts WHERE rowid = old.id;
+           END;
+         COMMIT;"
+    ))
+    .await?;
+    assert!(table_sql_contains(conn, "search_fts", SEARCH_FTS_CONTENTLESS).await?);
+    assert!(!search_column_exists(conn, "text").await?);
+    Ok(())
 }
 
 async fn ensure_search_vector_schema(
@@ -2754,6 +2875,112 @@ mod tests {
         assert_eq!(cached.get(&digest), Some(&vec![0.25; 8]));
     }
 
+    /// A search surface built as external-content FTS kept every text a
+    /// second time in `search_rows`. Declaring an embedding over such a node
+    /// moves it to the contentless layout in place: the same rows are still
+    /// found, and the duplicate column is gone.
+    #[tokio::test]
+    async fn an_external_content_search_surface_migrates_to_contentless_in_place() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        s.catalog
+            .execute_batch(
+                "DROP TRIGGER search_rows_after_delete;
+                 DROP TABLE search_fts;
+                 DROP TABLE search_rows;
+                 CREATE TABLE search_rows (
+                   id INTEGER PRIMARY KEY, source INTEGER, text TEXT NOT NULL,
+                   ann_vector F8_BLOB(8));
+                 CREATE VIRTUAL TABLE search_fts
+                   USING fts5(text, content='search_rows', content_rowid='id');
+                 CREATE TRIGGER search_rows_after_insert AFTER INSERT ON search_rows BEGIN
+                   INSERT INTO search_fts (rowid, text) VALUES (new.id, new.text); END;
+                 CREATE TRIGGER search_rows_after_delete AFTER DELETE ON search_rows BEGIN
+                   INSERT INTO search_fts (search_fts, rowid, text)
+                     VALUES ('delete', old.id, old.text); END;
+                 INSERT INTO search_rows (id, source, text) VALUES (7, NULL, 'legacy moodboard');",
+            )
+            .await
+            .expect("builds the legacy layout");
+        drop(s);
+        let s = store(dir.path()).await;
+        assert!(!search_column_exists(&s.catalog, "text").await.expect("reads columns"));
+        let hits = s.search_fts("moodboard", 5).await.expect("searches");
+        assert_eq!(hits.first().map(|(id, _)| *id), Some(FragmentId(7)));
+        s.add_search_rows(&[SearchRow {
+            fragment: FragmentId(8),
+            source: None,
+            text: "new moodboard".into(),
+            vector: None,
+        }])
+        .await
+        .expect("adds after migration");
+        assert_eq!(s.search_fts("moodboard", 5).await.expect("searches").len(), 2);
+        s.catalog
+            .execute("DELETE FROM search_rows WHERE id = 7", ())
+            .await
+            .expect("deletes");
+        let hits = s.search_fts("moodboard", 5).await.expect("searches");
+        assert_eq!(hits.first().map(|(id, _)| *id), Some(FragmentId(8)));
+        assert_eq!(hits.len(), 1, "the trigger removed the deleted row's terms");
+    }
+
+    /// An embedding cache built WITHOUT ROWID is moved to the rowid layout
+    /// at open, keeping every vector.
+    #[tokio::test]
+    async fn a_without_rowid_embedding_cache_migrates_at_open() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = store(dir.path()).await;
+        s.catalog
+            .execute_batch(
+                "DROP TABLE embedding_cache;
+                 CREATE TABLE embedding_cache (
+                   digest TEXT NOT NULL, model TEXT NOT NULL, dimensions INTEGER NOT NULL,
+                   vector BLOB NOT NULL, PRIMARY KEY (digest, model, dimensions)
+                 ) WITHOUT ROWID;",
+            )
+            .await
+            .expect("builds the legacy layout");
+        s.add_search_rows(&[SearchRow {
+            fragment: FragmentId(1),
+            source: None,
+            text: "kitchen".into(),
+            vector: Some(vec![0.25; 8]),
+        }])
+        .await
+        .expect("adds");
+        drop(s);
+        let s = store(dir.path()).await;
+        assert!(!table_sql_contains(&s.catalog, "embedding_cache", "WITHOUT ROWID")
+            .await
+            .expect("reads sql"));
+        let digest = ContentDigest::of_bytes(b"kitchen").to_hex();
+        let cached = s.cached_embeddings(std::slice::from_ref(&digest)).await.expect("reads");
+        assert_eq!(cached.get(&digest), Some(&vec![0.25; 8]));
+        assert_eq!(s.cache_counts().await.expect("counts").embeddings, 1);
+    }
+
+    /// With no embedder (zero dimensions) the surface is full-text only:
+    /// rows land without a vector column to name, and full-text search
+    /// finds them.
+    #[tokio::test]
+    async fn an_fts_only_surface_lands_rows_and_searches_them() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = IndexStore::open(dir.path()).await.expect("opens");
+        s.declare_embedding(identity("none", 0)).await.expect("declares");
+        s.add_search_rows(&[SearchRow {
+            fragment: FragmentId(3),
+            source: None,
+            text: "renovation budget".into(),
+            vector: None,
+        }])
+        .await
+        .expect("lands without a vector column");
+        let hits = s.search_fts("renovation", 5).await.expect("searches");
+        assert_eq!(hits.first().map(|(id, _)| *id), Some(FragmentId(3)));
+        assert!(!search_column_exists(&s.catalog, "ann_vector").await.expect("reads"));
+    }
+
     #[tokio::test]
     async fn transform_outputs_are_filed_first_writer_wins() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -3097,8 +3324,8 @@ mod tests {
         vector[2] = 1.0;
         s.catalog
             .execute(
-                "INSERT INTO search_rows (id, source, text, vector)
-                 VALUES (41, NULL, 'legacy vector', ?1)",
+                "INSERT INTO search_rows (id, source, vector)
+                 VALUES (41, NULL, ?1)",
                 params![libsql::Value::Blob(vector_blob(&vector))],
             )
             .await

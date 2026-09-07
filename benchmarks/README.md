@@ -147,7 +147,30 @@ python3 benchmarks/enterprise_rag_bench.py run \
   --index-concurrency 128
 ```
 
-`--index-concurrency` remains the interactive-lane fallback. The summary batch lane uses its separately pinned `batch_concurrency = 65536`.
+`--index-concurrency` remains the interactive-lane fallback. The summary batch lane uses its separately pinned `batch_concurrency = 65536`. `--llm-call-budget 0` makes the index model-free: every summary is extractive, and the run costs only its embeddings.
+
+### Iterate on a slice, retrieval only
+
+A full index takes hours, so a change to how the corpus is indexed is compared on a **slice** first:
+
+```sh
+python3 benchmarks/enterprise_rag_bench.py run \
+  --skip-agent \
+  --corpus-slice 25000 \
+  --llm-call-budget 0 \
+  --structural markdown \
+  --summary-target-chars 600
+```
+
+`--corpus-slice N` indexes every document any question expects plus a seeded random sample of the rest, N documents in all, hard-linked once under `benchmarks/fixtures/enterprise-rag-bench/slices/<N>/documents`. The seed is fixed, so every slice of a size holds the same documents. `--skip-agent` runs only the Finder query per question and scores the retrieval block (document recall, hit rate, mean reciprocal rank over the top `--query-limit`); it implies `--skip-evaluation`. Slice scores are development numbers — the distractor set is a fraction of the corpus, so compare them only with other slices of the same size, never with a full run — and the manifest records `models.corpus` as `slice-<N>` so the two are never confused. The strategies measured this way, and what each cost, are in [design/benchmarking.md](../design/benchmarking.md).
+
+The composition dials, each recorded under the manifest's `options` and `models`:
+
+- `--structural` (`off`): `markdown` mounts the markdown structural transform, which also claims plain text, so each document's text reaches full-text search through its sections. With it off, the summary and keywords are the only text rows.
+- `--summary-target-chars` (200): the summarizer's target; text within it is its own summary. A target past the longest document embeds every document whole.
+- `--keywords-max` (12): keywords planted beside each summary; 0 plants none.
+- `--vectors` (`summaries`): the embedder's scope; `all` embeds every section too.
+- `--finder-seeds` (`both`): `full-text` or `vector` runs one seed list alone, a diagnostic for which search the fusion is carrying.
 
 The runner prints each active phase immediately. During indexing it polls `inseam status` every 30 seconds and prints elapsed time, fully indexed sources against the fixture total, cataloged sources, and search rows. A failed status probe reports `status unavailable` but does not fail the index. Other long commands retain their five-second elapsed-time heartbeat.
 

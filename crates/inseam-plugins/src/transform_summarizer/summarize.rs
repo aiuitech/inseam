@@ -92,18 +92,33 @@ pub async fn summarize_text(
     extractive(text, shape)
 }
 
+/// The longest first line taken as a plain-text title. Subject lines,
+/// issue summaries, and page names fit well within it; a paragraph does not.
+const TITLE_CHARS_MAX: usize = 160;
+
 /// A document's title — its first line when that line is a markdown
-/// heading — and the text after it. The selection treats headings as
-/// section labels, not sentences, so the title has to be carried
-/// separately: it is the one line most likely to be what a searcher types.
+/// heading, or a short line standing alone before a blank line, the way an
+/// export names an email, a ticket, or a page — and the text after it. The
+/// selection treats headings as section labels, not sentences, so the title
+/// has to be carried separately: it is the one line most likely to be what
+/// a searcher types.
 fn title_and_body(text: &str) -> (Option<String>, &str) {
     let trimmed = text.trim_start();
-    let Some(first) = trimmed.lines().next() else {
+    let mut lines = trimmed.lines();
+    let Some(first) = lines.next() else {
         return (None, text);
     };
+    let heading = first.trim_start().starts_with('#');
     let title = first.trim().trim_start_matches('#').trim();
-    if first.trim_start().starts_with('#') && !title.is_empty() {
-        let body = &trimmed[first.len()..];
+    if title.is_empty() {
+        return (None, text);
+    }
+    let body = &trimmed[first.len()..];
+    if heading {
+        return (Some(extract::strip_links(title)), body);
+    }
+    let stands_alone = lines.next().is_some_and(|second| second.trim().is_empty());
+    if stands_alone && title.chars().count() <= TITLE_CHARS_MAX {
         (Some(extract::strip_links(title)), body)
     } else {
         (None, text)
@@ -260,9 +275,19 @@ mod tests {
         let (title, body) = title_and_body("# A [title](https://x)\n\nBody here.");
         assert_eq!(title.as_deref(), Some("A title"));
         assert_eq!(body.trim(), "Body here.");
-        let (none, same) = title_and_body("Plain first line\n\nBody.");
+        let (none, same) = title_and_body("Plain first line\nBody on the next line.");
         assert!(none.is_none());
-        assert_eq!(same, "Plain first line\n\nBody.");
+        assert_eq!(same, "Plain first line\nBody on the next line.");
+    }
+
+    #[test]
+    fn title_and_body_take_a_short_line_standing_alone_as_the_title() {
+        let (title, body) = title_and_body("Subject: the reno permit\n\nBody here.");
+        assert_eq!(title.as_deref(), Some("Subject: the reno permit"));
+        assert_eq!(body.trim(), "Body here.");
+        let paragraph = format!("{}\n\nBody.", "word ".repeat(40));
+        let (none, _) = title_and_body(&paragraph);
+        assert!(none.is_none(), "a paragraph-long first line is not a title");
     }
 
     #[tokio::test]

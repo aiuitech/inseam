@@ -40,6 +40,18 @@ EMBEDDING_MODEL = "openai/text-embedding-3-small"
 EMBEDDING_DIMENSIONS = 384
 MAX_INDEX_CONCURRENCY = 128
 MAX_LLM_CALL_BUDGET = 1_000_000
+# Composition dials both runners expose. A summarizer target past a corpus's
+# longest document embeds every document whole (`via=verbatim`); the ceiling
+# is wide enough for any real corpus. Keywords planted beside a summary are a
+# count, where 0 plants none. `structural` mounts the markdown transform (which
+# also claims plain text) so a source's text reaches full-text search through
+# its sections; `vectors` is the embedder's scope; `finder_seeds` runs one seed
+# list alone as a diagnostic.
+MAX_SUMMARY_TARGET_CHARS = 100_000
+MAX_KEYWORDS = 100
+STRUCTURAL_CHOICES = frozenset({"off", "markdown"})
+VECTOR_SCOPES = frozenset({"summaries", "all"})
+FINDER_SEEDS = frozenset({"both", "full-text", "vector"})
 # Files one footprint walk may visit: the largest fixture extracts to
 # slightly more than 500,000 documents, and a node's data directory is a
 # handful of files.
@@ -854,6 +866,60 @@ def positive_bounded(value: int, name: str, maximum: int) -> int:
 
 def bounded_argument(name: str, maximum: int) -> Callable[[str], int]:
     return lambda value: positive_bounded(int(value), name, maximum)
+
+
+def count_argument(name: str, maximum: int) -> Callable[[str], int]:
+    """An argparse type for a count: zero allowed, bounded above."""
+
+    def parse(raw: str) -> int:
+        value = int(raw)
+        if value < 0:
+            raise argparse.ArgumentTypeError(f"{name} must be at least 0")
+        if value > maximum:
+            raise argparse.ArgumentTypeError(f"{name} must be at most {maximum}")
+        return value
+
+    return parse
+
+
+def manifest_option_count(value: dict[str, Any], name: str, maximum: int) -> int:
+    option = value[name]
+    if type(option) is not int:
+        raise BenchmarkError(f"run option {name} is not an integer")
+    if option < 0:
+        raise BenchmarkError(f"run option {name} must be at least 0")
+    if option > maximum:
+        raise BenchmarkError(f"run option {name} exceeds the {maximum} safety limit")
+    return option
+
+
+def manifest_option_choice(value: dict[str, Any], name: str, choices: frozenset[str]) -> str:
+    option = value[name]
+    if option not in choices:
+        raise BenchmarkError(f"run option {name} is not one of {sorted(choices)}")
+    return option
+
+
+def distance_argument(raw: str) -> float:
+    """An argparse type for a cosine distance in (0, 2]."""
+    value = float(raw)
+    if not 0.0 < value <= 2.0:
+        raise argparse.ArgumentTypeError("a cosine distance must be in (0, 2]")
+    return value
+
+
+def manifest_option_distance(value: dict[str, Any], name: str) -> float:
+    option = value[name]
+    if type(option) not in (int, float) or not 0.0 < float(option) <= 2.0:
+        raise BenchmarkError(f"run option {name} is not a cosine distance in (0, 2]")
+    return float(option)
+
+
+def manifest_option_boolean(value: dict[str, Any], name: str) -> bool:
+    option = value[name]
+    if type(option) is not bool:
+        raise BenchmarkError(f"run option {name} is not a boolean")
+    return option
 
 
 def run_main(command: Callable[[], None]) -> int:

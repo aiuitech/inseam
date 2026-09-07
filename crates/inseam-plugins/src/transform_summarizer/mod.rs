@@ -109,7 +109,7 @@ impl Plugin for SummarizerPlugin {
                 llm_call_budget: self.config.llm_call_budget,
                 llm_lane: self.config.llm_lane,
                 shape_fingerprint: format!(
-                    "summarizer-v2|target_chars={}|llm_input_chars={}|keywords_max={}",
+                    "summarizer-v3|target_chars={}|llm_input_chars={}|keywords_max={}",
                     self.config.target_chars, self.config.llm_input_chars, self.config.keywords_max
                 ),
             },
