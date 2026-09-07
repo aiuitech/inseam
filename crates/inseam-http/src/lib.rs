@@ -28,12 +28,13 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use axum::extract::Query;
 use axum::response::{Html, IntoResponse, Redirect as HttpRedirect, Response};
-use inseam_kernel::address::HostId;
+use inseam_kernel::address::{HostId, Timestamp};
+use inseam_kernel::network::NodeId;
 use inseam_seams::oauth::{AuthorizationCallback, GrantId, Redirect};
 use inseam_seams::operations::{
     AuthorizeGrantRequest, CatalogRequest, CatalogResponse, ExpandRequest, ExpandResponse,
-    FetchBytesRequest, FetchBytesResponse, FetchRequest, FetchResponse, GrantView, HostView,
-    IndexRequest, InstallPluginRequest,
+    ExpelRequest, FetchBytesRequest, FetchBytesResponse, FetchRequest, FetchResponse, GrantView,
+    HostView, IndexRequest, InstallPluginRequest, JoinRequest, NetworkView,
     Operations, PluginView, QueryRequest, QueryResponse, RevokeGrantRequest, ScanRequest,
     ScanResponse, Settings, StatusReport,
 };
@@ -209,6 +210,18 @@ struct HttpGrantRequest {
     grant: GrantId,
 }
 
+/// A minted invitation as the console shows it: the text the owner
+/// carries to the joining node, and beside it what that text names, so
+/// the console can say who it is from and when it lapses without parsing
+/// the text itself.
+#[derive(Debug, Serialize)]
+struct InvitationResponse {
+    /// `inseam-invite:…`, exactly what `inseam network join` takes.
+    invitation: String,
+    node: NodeId,
+    expires: Timestamp,
+}
+
 #[derive(Debug, Deserialize)]
 struct HttpIndexRequest {
     #[serde(default)]
@@ -291,6 +304,11 @@ fn owner_router(state: &AppState) -> Router<AppState> {
         .route("/grants/revoke", post(revoke_grant))
         .route("/plugins", get(plugins))
         .route("/settings", get(settings).put(configure))
+        .route("/network", get(network))
+        .route("/network/invite", post(invite))
+        .route("/network/join", post(join))
+        .route("/network/expel", post(expel))
+        .route("/network/sync", post(sync_now))
         .route(
             "/plugins/install",
             post(install_plugin).layer(DefaultBodyLimit::max(PLUGIN_UPLOAD_BODY_BYTES_MAX)),
@@ -499,6 +517,42 @@ async fn status(State(state): State<AppState>) -> Result<Json<StatusReport>, Api
     Ok(Json(state.operations.get().status().await?))
 }
 
+/// The network as this node sees it (`design/roster.md`).
+async fn network(State(state): State<AppState>) -> Result<Json<NetworkView>, ApiError> {
+    Ok(Json(state.operations.get().network().await?))
+}
+
+/// Mint an invitation; the reply carries its text form for the owner to
+/// copy to the joining node.
+async fn invite(State(state): State<AppState>) -> Result<Json<InvitationResponse>, ApiError> {
+    let invitation = state.operations.get().invite().await?;
+    Ok(Json(InvitationResponse {
+        invitation: invitation.to_string(),
+        node: invitation.node,
+        expires: invitation.expires,
+    }))
+}
+
+/// Join through an invitation's text; the reply is the network afterwards.
+async fn join(
+    State(state): State<AppState>,
+    Json(request): Json<JoinRequest>,
+) -> Result<Json<NetworkView>, ApiError> {
+    Ok(Json(state.operations.get().join(request).await?))
+}
+
+async fn expel(
+    State(state): State<AppState>,
+    Json(request): Json<ExpelRequest>,
+) -> Result<Json<NetworkView>, ApiError> {
+    Ok(Json(state.operations.get().expel(request).await?))
+}
+
+/// One sync round with every dialable node now.
+async fn sync_now(State(state): State<AppState>) -> Result<Json<NetworkView>, ApiError> {
+    Ok(Json(state.operations.get().sync_now().await?))
+}
+
 async fn catalog(
     State(state): State<AppState>,
     Json(request): Json<CatalogRequest>,
@@ -677,13 +731,15 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use inseam_seams::SeamError;
     use inseam_seams::oauth::{AuthorizationStarted, GrantState};
+    use inseam_kernel::network::{HostRecord, NodeCapabilities, NodeRecord};
     use inseam_seams::operations::{
-        AwaitAuthorizationRequest, ExpandResponse, ExpelRequest, FetchResponse, IndexRequest,
-        JoinRequest, NetworkView, PluginState, QueryMeta, QueryResponse, RepairOutcome,
+        AwaitAuthorizationRequest, ExpandResponse, FetchResponse, IndexRequest, LogSummary,
+        NetworkHostView, NetworkNodeView, PluginState, QueryMeta, QueryResponse, RepairOutcome,
         RepairReport, RepairRequest, ScanResponse, PLUGIN_UPLOAD_BYTES_MAX,
     };
     use inseam_seams::roster::Invitation;
     use inseam_seams::sweep::IndexReport;
+    use inseam_seams::transport::InvitationToken;
     use tower::ServiceExt;
 
     use super::*;
@@ -700,6 +756,61 @@ mod tests {
         authorized: Mutex<Option<AuthorizeGrantRequest>>,
         completed: Mutex<Option<AuthorizationCallback>>,
         installed: Mutex<Option<InstallPluginRequest>>,
+        joined: Mutex<Option<JoinRequest>>,
+        expelled: Mutex<Option<ExpelRequest>>,
+        sync_rounds: std::sync::atomic::AtomicU32,
+    }
+
+    fn node_record(byte: u8, name: &str) -> NodeRecord {
+        NodeRecord {
+            id: NodeId::from_bytes([byte; 32]),
+            display_name: name.to_string(),
+            endpoints: Vec::new(),
+            capabilities: NodeCapabilities {
+                always_on: false,
+                deep_index: true,
+                relays: true,
+            },
+        }
+    }
+
+    /// Two nodes, one host stewarded by the peer: enough shape for a
+    /// transport test to see every field cross the wire.
+    fn network_view() -> NetworkView {
+        let host = HostId::new("fs-peer").expect("valid");
+        NetworkView {
+            local: node_record(1, "mini"),
+            nodes: vec![
+                NetworkNodeView {
+                    record: node_record(1, "mini"),
+                    is_local: true,
+                    live: true,
+                    last_sync: None,
+                    last_error: None,
+                    hosts: Vec::new(),
+                },
+                NetworkNodeView {
+                    record: node_record(2, "laptop"),
+                    is_local: false,
+                    live: false,
+                    last_sync: Some("2026-09-07".to_string()),
+                    last_error: Some("dial failed".to_string()),
+                    hosts: vec![host.clone()],
+                },
+            ],
+            hosts: vec![NetworkHostView {
+                host: HostRecord {
+                    id: host,
+                    kind: "fs".to_string(),
+                    display_name: "Laptop disk".to_string(),
+                },
+                stewards: vec![NodeId::from_bytes([2; 32])],
+            }],
+            log: LogSummary {
+                entries: 9,
+                origins: 2,
+            },
+        }
     }
 
     fn grant_view(state: GrantState) -> GrantView {
@@ -882,23 +993,35 @@ mod tests {
         }
 
         async fn network(&self) -> Result<NetworkView, SeamError> {
-            Err(unused())
+            Ok(network_view())
         }
 
         async fn invite(&self) -> Result<Invitation, SeamError> {
-            Err(unused())
+            Ok(Invitation {
+                node: NodeId::from_bytes([1; 32]),
+                endpoints: Vec::new(),
+                token: InvitationToken::new("one-time").expect("valid"),
+                expires: Timestamp(1_800_000_000),
+            })
         }
 
-        async fn join(&self, _request: JoinRequest) -> Result<NetworkView, SeamError> {
-            Err(unused())
+        async fn join(&self, request: JoinRequest) -> Result<NetworkView, SeamError> {
+            if !request.invitation.starts_with("inseam-invite:") {
+                return Err(SeamError::Refused("invitation: not one".to_string()));
+            }
+            *self.joined.lock().unwrap_or_else(|error| error.into_inner()) = Some(request);
+            Ok(network_view())
         }
 
-        async fn expel(&self, _request: ExpelRequest) -> Result<NetworkView, SeamError> {
-            Err(unused())
+        async fn expel(&self, request: ExpelRequest) -> Result<NetworkView, SeamError> {
+            *self.expelled.lock().unwrap_or_else(|error| error.into_inner()) = Some(request);
+            Ok(network_view())
         }
 
         async fn sync_now(&self) -> Result<NetworkView, SeamError> {
-            Err(unused())
+            self.sync_rounds
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(network_view())
         }
     }
 
@@ -1236,6 +1359,133 @@ mod tests {
         // matches verbatim and invents nothing.
         assert_eq!(index_request(&app, &cookie, "/srv").await, StatusCode::BAD_REQUEST);
         assert_eq!(index_request(&app, &cookie, "/srv/notes/sub").await, StatusCode::BAD_REQUEST);
+    }
+
+    /// One owner request with an optional JSON body, answered as status
+    /// and parsed body; every network route is exercised through it.
+    async fn owner_json(
+        app: &Router,
+        cookie: Option<&str>,
+        method: &str,
+        path: &str,
+        body: Option<&str>,
+    ) -> (StatusCode, serde_json::Value) {
+        let mut builder = Request::builder().method(method).uri(path);
+        if let Some(cookie) = cookie {
+            builder = builder.header(COOKIE, cookie);
+        }
+        let request = match body {
+            Some(json) => builder
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(json.to_string())),
+            None => builder.body(Body::empty()),
+        }
+        .expect("valid request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 64 * 1024).await.expect("body");
+        let value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, value)
+    }
+
+    #[tokio::test]
+    async fn the_network_route_serves_the_owner_view() {
+        let app = test_router(Arc::new(StubOperations::default()), Vec::new());
+        let cookie = login_cookie(&app).await;
+        let (status, body) = owner_json(&app, Some(&cookie), "GET", "/api/v1/owner/network", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["local"]["display_name"], "mini");
+        assert_eq!(body["nodes"][1]["last_error"], "dial failed");
+        assert_eq!(body["nodes"][1]["hosts"][0], "fs-peer");
+        assert_eq!(body["hosts"][0]["stewards"][0], "02".repeat(32));
+        assert_eq!(body["log"]["entries"], 9);
+        let (status, _) = owner_json(&app, None, "GET", "/api/v1/owner/network", None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn the_invite_route_answers_with_the_text_the_owner_carries() {
+        let app = test_router(Arc::new(StubOperations::default()), Vec::new());
+        let cookie = login_cookie(&app).await;
+        let (status, body) =
+            owner_json(&app, Some(&cookie), "POST", "/api/v1/owner/network/invite", None).await;
+        assert_eq!(status, StatusCode::OK);
+        let text = body["invitation"].as_str().expect("the text form");
+        let parsed: Invitation = text.parse().expect("the text parses back");
+        assert_eq!(parsed.node, NodeId::from_bytes([1; 32]));
+        assert_eq!(body["node"], "01".repeat(32));
+        assert_eq!(body["expires"], 1_800_000_000);
+        assert!(body.get("token").is_none(), "the token travels only inside the text");
+        let (status, _) = owner_json(&app, None, "POST", "/api/v1/owner/network/invite", None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn the_join_route_hands_the_invitation_to_the_operation() {
+        let operations = Arc::new(StubOperations::default());
+        let app = test_router(Arc::clone(&operations), Vec::new());
+        let cookie = login_cookie(&app).await;
+        let request = r#"{"invitation":"inseam-invite:abc"}"#;
+        let (status, body) =
+            owner_json(&app, Some(&cookie), "POST", "/api/v1/owner/network/join", Some(request)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["nodes"].as_array().map(Vec::len), Some(2));
+        let joined = operations.joined.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        assert_eq!(joined.expect("the operation ran").invitation, "inseam-invite:abc");
+        // The operation's refusal is the owner's answer, not a 500.
+        let (status, body) = owner_json(
+            &app,
+            Some(&cookie),
+            "POST",
+            "/api/v1/owner/network/join",
+            Some(r#"{"invitation":"nope"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["error"]["code"], "refused");
+        let (status, _) = owner_json(&app, None, "POST", "/api/v1/owner/network/join", Some(request)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn the_expel_route_names_the_node_to_the_operation() {
+        let operations = Arc::new(StubOperations::default());
+        let app = test_router(Arc::clone(&operations), Vec::new());
+        let cookie = login_cookie(&app).await;
+        let request = format!(r#"{{"node":"{}"}}"#, "02".repeat(32));
+        let (status, body) =
+            owner_json(&app, Some(&cookie), "POST", "/api/v1/owner/network/expel", Some(&request)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["local"]["id"], "01".repeat(32));
+        let expelled = operations.expelled.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        assert_eq!(expelled.expect("the operation ran").node, NodeId::from_bytes([2; 32]));
+        // A malformed id never reaches the operation.
+        let (status, _) = owner_json(
+            &app,
+            Some(&cookie),
+            "POST",
+            "/api/v1/owner/network/expel",
+            Some(r#"{"node":"short"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        let (status, _) = owner_json(&app, None, "POST", "/api/v1/owner/network/expel", Some(&request)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn the_sync_route_runs_one_round_and_answers_with_the_view() {
+        let operations = Arc::new(StubOperations::default());
+        let app = test_router(Arc::clone(&operations), Vec::new());
+        let cookie = login_cookie(&app).await;
+        let (status, body) =
+            owner_json(&app, Some(&cookie), "POST", "/api/v1/owner/network/sync", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["log"]["origins"], 2);
+        assert_eq!(operations.sync_rounds.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let (status, _) = owner_json(&app, None, "POST", "/api/v1/owner/network/sync", None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(operations.sync_rounds.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]

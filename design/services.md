@@ -26,8 +26,14 @@ Each seam names its definition, its expected providers, and the capability facts
 - **`operations`** — the registry behind the [node API](node-api.md): plugins register typed operations (scoped boundary or owner — the owner's grant operations among them); transport plugins (CLI, HTTP, MCP) consume the registry and stay logic-free. Boundary enforcement is a waterfall on operation dispatch: [access-control](access-control.md) property filtering and future rate limits/audit are listeners, and denial is monotonic — a later listener can never force-allow what one denied.
 - **`oauth`** — the node's OAuth 2.0 grants ([connections](connections.md)), a registry: configured on the `oauth` entry or registered by the connection that knows the provider (endpoints, scopes, client-credential variables); authorized by the owner through the browser from any client — a loopback redirect for local transports, a transport-served redirect delivered back for remote ones — refreshed by the provider, announced on change (`GrantChanged`, carrying the signed-in account); host connections consume a grant by id and receive live access tokens. Linked provider: `oauth` (authorization code + PKCE, owner-private credential files).
 - **`verification`** — property-verification methods ([access-control](access-control.md)): confirmation links, OAuth proofs, future attestations. Community-extensible, typically loaded.
-- **`sync`** — catalog replication across node connections ([address-sync](address-sync.md)). Future.
-- **`routing`** — resolving an address to a path toward its steward ([network](network.md)). Future.
+
+## Network plane
+
+- **`node`** — this node's identity ([roster](roster.md)): the keypair, minted once into the data directory and never configured or synced; its id, display name, and capability bits (`always_on`, `deep_index`, `relays`). Linked provider: `node`. Facts: `id`, `display_name`.
+- **`transport`** — node↔node connections ([connections](connections.md)): dial a peer by node id and roster endpoints, one request/response exchange per protocol name over one ALPN, handlers registered per protocol as effects, an admission policy the roster installs, sessions in both directions as local knowledge. Linked provider: `transport-iroh`. Facts: `relay`, `id`.
+- **`roster`** — the network's self-description as this node reads it ([roster](roster.md)): nodes, hosts, stewardships; this node's own records published from the connections registry and republished on endpoint rotation; invitations minted and redeemed; expulsions published. It is the transport's admission policy. Linked provider: `roster`. Facts: `id`.
+- **`sync`** — catalog and roster replication ([address-sync](address-sync.md)): a round with every dialable node on a timer, one exchange with one named peer (how a join presents its invitation), and the status both leave behind. Linked provider: `sync`, serving `inseam/sync/1` on the transport. Facts: `interval_secs`.
+- **`routing`** — resolving a host to the node that serves it and carrying the ladder's reads there, directly or through a relay under a hop limit, and discovery fan-out ([network](network.md), [discovery](discovery.md)). Linked provider: `routing`, serving `inseam/route/1`. Consumed optionally by `operations`, which keeps every local operation on a node composed without it.
 
 ## Open questions
 

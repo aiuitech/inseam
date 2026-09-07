@@ -1,6 +1,6 @@
 # Routing
 
-How a node reads a source that another node stewards, and how a query reaches other nodes' indexes. The `routing` plugin (`crates/inseam-plugins/src/routing/`) provides the `routing` seam (`inseam-seams::routing`) and serves the `inseam/route/1` protocol on the transport, so the same code is the requester on one node and the steward — or the relay — on another. The reasoning is in [design/network.md](../../design/network.md) and [design/discovery.md](../../design/discovery.md).
+How a node reads a source that another node stewards. The `routing` plugin (`crates/inseam-plugins/src/routing/`) provides the `routing` seam (`inseam-seams::routing`) and serves the `inseam/route/1` protocol on the transport, so the same code is the requester on one node and the steward — or the relay — on another. Query fan-out rides the same seam and protocol and has its own page, [discovery.md](discovery.md). The reasoning is in [design/network.md](../../design/network.md).
 
 ## Locating a host
 
@@ -22,11 +22,19 @@ A stewardship claim by this node itself for a host its registry no longer holds 
 2. When none answers, ask the peers this node holds a live session with to relay, at most four (`RELAY_PEERS_MAX`), skipping anyone already tried.
 3. When nobody answers, the error is `Unreachable`, naming the host and every node tried — stewards and relays — so an owner sees which node to bring up.
 
-A relay that receives a request for a host it does not steward forwards it the same way, with two rules that keep a request from wandering: it decrements the request's hop budget (`HOPS_MAX`, four, the requester's own hop included) and appends itself to the request's `visited` list, and it never forwards to a node already in that list. A request with no budget left, one whose `visited` list already names the relay (a loop), or one that lands on a node that does not advertise `relays` is answered "unreachable through me" rather than forwarded, and the requester moves on to its next candidate. The `visited` list is therefore bounded at five entries and never names a node twice; a request that breaks either bound is refused by name before it is served.
+A relay that receives a request for a host it does not steward forwards it the same way, with two rules that keep a request from wandering: it decrements the request's hop budget (`HOPS_MAX`, four, the requester's own hop included, so A→B→C is two) and appends itself to the request's `visited` list, and it never forwards to a node already in that list. The `visited` list is therefore bounded at five entries and never names a node twice; a request that breaks either bound is refused by name before it is served.
 
-A steward's own typed answer — no such source, a range past the end, a fetch too large — crosses the wire as that error, distinct from a relay's "unreachable": a client never retries a refusal. `read_lines` checks its range before dialing and the steward checks it again on receipt.
+A steward's own typed answer — no such source, a range past the end, a fetch too large — crosses the wire as that error, distinct from a relay's "unreachable": a client never retries a refusal. `read_lines` checks its range before dialing and the steward checks it again on receipt. Each routed read is bounded end to end by `request_timeout_secs`; a candidate that runs past it is the next candidate's turn.
 
-Queries are never relayed: a fan-out reaches every target directly, and a relayed query would answer from the relay's own index and be counted twice.
+## What is never forwarded
+
+A relay answers "unreachable through me" — and the requester moves on to its next candidate — instead of forwarding when:
+
+- the request has no hop budget left;
+- the relay is itself in the request's `visited` list (a loop);
+- the relay's own `node` entry says `relays = false` ([identity.md](identity.md)).
+
+Two things never cross a second hop at all. A malformed request — a hop budget past four, a `visited` list past five names or naming a node twice, an empty query, a bad line range, a body past 64 KiB — is refused by name before anything is served. And a query is never relayed: a fan-out reaches every target directly, and a relayed query would answer from the relay's own index and be counted twice.
 
 ## The wire: `inseam/route/1`
 
@@ -44,19 +52,24 @@ One request, one reply, per transport exchange. The request is JSON:
 | `describe` | `address` | the steward's connection |
 | `expand` | `address` | the steward's index, through the same rung the operations layer serves |
 | `scan` | `address`, `start`, `end` | the steward's index and connection — the same checks, clamp, and media fallback as a local scan |
-| `query` | `text`, `limit` (1..=50) | the receiving node's own index; never forwarded |
+| `query` | `text`, `limit` (1..=50) | the receiving node's own index; never forwarded ([discovery.md](discovery.md)) |
 
-The reply's first byte is a framing tag: `0` and the rest is a JSON `RouteResponse` — `{"kind": "text" \| "envelope" \| "expand" \| "scan" \| "query" \| "error", "value": …}`; `1` and the rest is the raw bytes of a successful `read_bytes`. Bytes ride raw because base64 inside JSON would inflate a maximal fetch by a third and past the transport's 40 MiB message bound. An `error` value carries `kind` (the `SeamError` variant in snake case: `unknown_source`, `nothing_to_scan`, `refused`, `unavailable`, `unreachable`, …) and `message`; the requester rebuilds the typed variants whose data it already holds (the address, the host) and carries the rest as a failure with the steward's sentence.
+The reply's first byte is a framing tag: `0` and the rest is a JSON `RouteResponse` — `{"kind": "text" \| "envelope" \| "expand" \| "scan" \| "query" \| "error", "value": …}`; `1` and the rest is the raw bytes of a successful `read_bytes`. Bytes ride raw because base64 inside JSON would inflate a maximal fetch by a third and past the transport's 40 MiB message bound ([transport.md](transport.md)). An `error` value carries `kind` (the `SeamError` variant in snake case: `unknown_source`, `nothing_to_scan`, `refused`, `unavailable`, `unreachable`, …) and `message`; the requester rebuilds the typed variants whose data it already holds (the address, the host) and carries the rest as a failure with the steward's sentence.
 
-## Fan-out
+## Errors
 
-`routing.fan_out(text, limit)` sends a `query` to every other roster node that advertises `deep_index`, in parallel, and returns one `FanOutReply` per node tried — its results stamped with `via` (the node's id), or `error` saying why it gave none. Targets are ordered live-session first, then `always_on`, then roster order, and cut to `fan_out_nodes_max`. Each exchange is bounded by `fan_out_timeout_ms`, twice: the timeout is handed to the transport and enforced by a timer of the plugin's own, so a fan-out answers on time even if a transport misbehaves. A node that times out or refuses is a reply with an error, never a failed fan-out. With `fan_out = false` the seam returns no replies and dials nobody.
+What an owner sees when a read of a remote source fails, at the CLI or as the HTTP error kind:
 
-The merge of local and remote results — rank fusion, dedupe by address, collapse by digest — belongs to the operations layer: [../finder/operations.md](../finder/operations.md#across-the-network).
+| Error | Meaning |
+| --- | --- |
+| `no connection on this node stewards host …` (`unknown_host`) | the address is cataloged but no roster node claims to steward its host — every steward withdrew, or the node was expelled. Without the `routing` entry, every host this node does not steward reads this way |
+| `no steward of host … answered (tried …)` (`unreachable`) | stewards and relays were tried and none answered; the sentence names the host and every node tried, so the owner sees which node to bring up |
+| `node … is not admitted to this network` (`not_admitted`) | a dial was refused at the door: this node is not in the peer's roster yet (the peer has not synced since this node joined), or was expelled |
+| the steward's own error | `no source at …`, a range past the end, a fetch past 32 MiB — the host's answer, carried across the wire typed and never retried |
 
 ## Configuration
 
-The `routing` entry (`[routing]` in the composition, `deny_unknown_fields`):
+The `routing` entry (`[routing]`, `deny_unknown_fields`):
 
 | Field | Default | Meaning |
 | --- | --- | --- |

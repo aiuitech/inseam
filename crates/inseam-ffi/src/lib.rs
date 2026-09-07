@@ -111,6 +111,26 @@ plugin = "sweep"
 [[entry]]
 id = "operations"
 plugin = "operations"
+
+[[entry]]
+id = "node"
+plugin = "node"
+
+[[entry]]
+id = "transport"
+plugin = "transport-iroh"
+
+[[entry]]
+id = "roster"
+plugin = "roster"
+
+[[entry]]
+id = "sync"
+plugin = "sync"
+
+[[entry]]
+id = "routing"
+plugin = "routing"
 "#;
 
 /// An open node: the runtime, the kernel (owning fibers and effects until

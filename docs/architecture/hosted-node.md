@@ -133,6 +133,24 @@ or `"unlimited"`) to override the composition's `sweep.max_sources` for that
 run; `POST /api/v1/owner/catalog` lists the catalog (`host`, `filter` =
 `all` | `indexed` | `pending`, `limit`).
 
+## Network
+
+The owner's network operations ([../network/README.md](../network/README.md))
+are five routes under `/api/v1/owner/network`:
+
+| Route | Body | Answers |
+| --- | --- | --- |
+| `GET /api/v1/owner/network` | — | the network as this node sees it: its own record; every node with `live`, `last_sync`, `last_error`, and its hosts; every host with its stewards; the log's size |
+| `POST /api/v1/owner/network/invite` | — | `{ "invitation": "inseam-invite:…", "node", "expires" }` — the text the owner carries to the joining node, exactly what `inseam network join` takes, with the inviting node's id and the expiry beside it so a console can show them without parsing the text |
+| `POST /api/v1/owner/network/join` | `{ "invitation": "inseam-invite:…" }` | dials the inviter with the token, syncs once, answers with the network |
+| `POST /api/v1/owner/network/expel` | `{ "node": "<64 hex>" }` | publishes the expulsion, disconnects the node, answers with the network |
+| `POST /api/v1/owner/network/sync` | — | one sync round with every dialable node, then the network |
+
+Each is the operation of the same name
+([../finder/operations.md](../finder/operations.md#owner-operations)); on a
+node composed without the network entries, each answers `unavailable`
+naming the entry it lacks.
+
 ## Web console
 
 `apps/web` is a React, TypeScript, Vite, and shadcn client. It shows node
@@ -159,3 +177,36 @@ host loopback and expects a TLS reverse proxy for remote access.
 
 One running process owns one data directory. A service with several owners
 runs one process and persistent volume per personal trust domain.
+
+## Backbone
+
+A hosted node is the natural backbone of its owner's network
+([../network/README.md](../network/README.md)): it is always on, so it is
+the node the owner's laptops and phones keep a standing connection to, the
+meeting point through which the roster and the catalog converge, and the
+node worth deep-indexing on. Its composition says so — `always_on = true`
+on the `node` entry, a fixed `bind_port` on the `transport` entry, and
+`relay` naming the network's own iroh relay run beside it, so no traffic
+depends on public relay infrastructure
+([../network/transport.md](../network/transport.md#relays)):
+
+```toml
+[[entry]]
+id = "node"
+[entry.config]
+display_name = "hosted"
+always_on = true
+
+[[entry]]
+id = "transport"
+[entry.config]
+bind_port = 7000
+relay = "https://relay.example"
+```
+
+The container package publishes only the HTTP port today; a backbone also
+needs its QUIC port (`bind_port`, UDP) reachable from the internet, and the
+relay is a separate server the operator runs. The owner invites their other
+devices from the hosted node (`POST /api/v1/owner/network/invite`) and
+expels a lost one from it, since it is the node that is always there to run
+the command on ([../network/joining.md](../network/joining.md)).

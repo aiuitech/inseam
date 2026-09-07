@@ -95,6 +95,13 @@ mod tests {
         assert_eq!(settings.google.config.services.len(), 5);
         assert_eq!(settings.embedder.config.dimensions, None);
         assert_eq!(settings.finder.config.weights.by_kind["mentions"], 0.8);
+        assert!(settings.node.enabled);
+        assert_eq!(settings.node.config.display_name, None);
+        assert!(settings.transport.enabled);
+        assert_eq!(settings.transport.config.relay, "n0");
+        assert!(settings.roster.enabled);
+        assert!(settings.sync.enabled);
+        assert!(settings.routing.enabled);
     }
 
     #[test]

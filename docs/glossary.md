@@ -16,15 +16,30 @@ The inseam vocabulary, one page. Definitions here are canonical; the linked desi
 - **Node** — a running inseam instance; a participant in the network. Distinct from a host even on the same machine: the host holds the sources, the node does the networking.
 - **Steward** — the node that speaks for a host: publishes its addresses, indexes it, serves fetches from it. Every host joins the network through a steward.
 - **Local host / remote host** — a host its steward reaches through the local machine (filesystem, OS APIs) vs. through a service's own protocol (OAuth + REST, IMAP). The only difference is which connection plugin is used.
-- **Connection** — an edge owned by a node: node↔node (the inseam protocol: sync, query, fetch routing) or node→host (how a steward reaches a host). Carries protocol, credentials, and capabilities. A node holds many, one per host, registered by connection plugins into the `connections` seam. ([design/connections.md](../design/connections.md))
+- **Connection** — an edge from a node to a host it stewards: how the steward reaches it. Carries protocol, credentials, and capabilities. A node holds many, one per host, registered by connection plugins into the `connections` seam. Node↔node edges are the transport, below, not connections. ([design/connections.md](../design/connections.md))
 - **Grant** — one OAuth authorization against a provider account (`google`, `slack-work`): endpoints, scopes, and which environment variables hold the client's own credentials — configured on the `oauth` entry or registered by the connection that knows the provider. Authorized once by the owner from any client; host connections consume it by id for live access tokens and follow its changes. ([plugins/oauth.md](plugins/oauth.md))
-- **Network** — the graph of nodes: a private network forming a single trust domain with no central authority. ([design/network.md](../design/network.md))
+- **Network** — the graph of nodes: a private network forming a single trust domain with no central authority. Addresses and reachability are global; sessions are local. ([design/network.md](../design/network.md), [network/README.md](network/README.md))
+- **Node id** — a node's Ed25519 public key as 64 hex characters: the dial target, the origin of every record it publishes, and what a peer authenticates on the wire. Minted once into `<data-dir>/node/secret.key`; never configured, never synced. ([network/identity.md](network/identity.md))
+- **Transport** — the node↔node seam: QUIC dialed by node id over iroh, one ALPN with a protocol name per stream, admission on the first stream. ([network/transport.md](network/transport.md))
+- **Session** — a live connection with one peer, in either direction, held by the node that has it. Local knowledge only: `live` in a listing is what this node learned by trying, never a synced fact.
+- **Backbone** — the convention of one always-on node with a stable endpoint (`always_on = true`), through which outbound-only nodes reach the network and updates converge. An ordinary node, never privileged; a hosted node is the natural one. ([design/roster.md](../design/roster.md))
+- **Relay** — two things. iroh's packet relay: a server that forwards encrypted QUIC packets when no direct path exists (`relay = "n0"` for the public ones, or the network's own URL). And a relaying node: one with `relays = true` that forwards a routed read for a host it does not steward toward one that does, under a hop limit. ([network/transport.md](network/transport.md), [network/routing.md](network/routing.md))
+- **Admission (network)** — whether a peer may connect: the roster's answer on the transport's accept path — members admitted, the expelled refused, strangers only with an open invitation. ([network/roster.md](network/roster.md))
 
 ## Sync
 
 - **Catalog** — a node's local copy of every known address, envelope, and host record: its complete, offline-available picture of the network. ([design/address-sync.md](../design/address-sync.md))
-- **Address sync** — full, unfiltered copying of the catalog across node↔node connections; eventually consistent, and the origin node wins conflicts.
-- **Tombstone** — the synced record of a deleted source, so deletions spread instead of lingering.
+- **Address sync** — full, unfiltered copying of the catalog across node↔node connections; eventually consistent, and the origin node wins conflicts. ([network/sync.md](network/sync.md))
+- **Roster** — the network's synced self-description: node records (id, display name, endpoints, capabilities), host records (id, kind, display name), and stewardship records (which node serves which host, with what capabilities and roots). Replicates through the same log as the catalog. ([network/roster.md](network/roster.md))
+- **Stewardship record** — a steward's claim on a host, published by the roster plugin from its connections registry and withdrawn by a tombstone when the connection goes. Carries capabilities and configured roots, never credentials.
+- **Log** — a node's append-only record of what it originates — sources, roster records, expulsions — held in the store beside the catalog; every node keeps a copy of every log it has seen. ([network/sync.md](network/sync.md))
+- **Origin** — the node that wrote a log entry, and the only authority on what it says. A catalog row's `origin` is its steward when the row came from a peer's log.
+- **Epoch** — which incarnation of an origin's log an entry belongs to; minted when a store is created or rebuilt, so a rebuilt node's fresh log supersedes its old one instead of being ignored.
+- **Sequence** — an entry's position in its origin's log within an epoch: monotonic, starting at one, never reused.
+- **Version vector** — the highest (epoch, sequence) a node holds per origin: what it tells a peer so the peer ships exactly what it lacks.
+- **Tombstone** — the log entry that withdraws what its key names — a gone source, a withdrawn stewardship — so removals spread instead of lingering; kept until a later entry under the key replaces it.
+- **Invitation** — one string (`inseam-invite:…`) an owner carries from one node to another: the inviter's id and endpoints, a one-time token, and an expiry 24 hours out. Presented in the admission handshake, spent on first use, held in memory only. ([network/roster.md](network/roster.md))
+- **Expulsion** — the record that removes a node for good: any node may publish it; every node purges the expelled node's log and rows and refuses its key from then on.
 
 ## Discovery
 
@@ -44,6 +59,7 @@ The inseam vocabulary, one page. Definitions here are canonical; the linked desi
 - **Expand** — an operation returning one source's fragments and relations from the serving node's index, so a client can navigate a result's structure instead of searching again.
 - **Scan** — an operation reading a range of a source (lines for text; media redirects to a text descendant such as a transcript), so a client can peek into a large source without fetching all of it.
 - **Discovery** — querying indexes (local first, then better-placed connected nodes) to get ranked addresses and envelopes, then fetching sources step by step. ([design/discovery.md](../design/discovery.md))
+- **Fan-out** — sending a query, in parallel, to every other node advertising `deep_index`, then merging by rank with the local list. A result from another node carries `via`, that node's id; `meta.remote` says what each node contributed. ([network/discovery.md](network/discovery.md))
 
 ## Trust
 
@@ -73,6 +89,6 @@ The inseam vocabulary, one page. Definitions here are canonical; the linked desi
 - **Capability** — something a plugin is handed, never something it grabs: the metered LLM handle, source bytes, host allowlists. For loaded plugins the manifest declares what's requested and the bridge narrows it; plugins get no raw network access.
 - **Release cooldown** — the wait period a newly seen loaded-plugin version sits through before activating, counted from when *this node* first saw it. Asking for wider capabilities than the approved version needs explicit consent regardless of the wait. ([design/plugins.md](../design/plugins.md))
 - **Conformance harness** — the one validation gate for loaded plugins (`inseam plugin check`): static checks, a mount check, a hostile-input battery, and the plugin's own golden checks. Identical when authoring, in registry CI, and at install. ([plugins/validation.md](plugins/validation.md))
-- **Admission** — the validation run a node performs the first time it sees an artifact; failure refuses the plugin with the failing check named. Cached by content hash. ([plugins/validation.md](plugins/validation.md))
+- **Admission (plugins)** — the validation run a node performs the first time it sees an artifact; failure refuses the plugin with the failing check named. Cached by content hash. ([plugins/validation.md](plugins/validation.md))
 - **Golden checks** — a plugin's own tests, written as data (`<name>.checks.toml`): input → expected output shape, run through the real bridge (loaded) or the seam (linked) with canned capabilities. Mandatory: at least one check that proves the claim and one that pins the degrade path. Any node can re-run them without trusting anything. ([plugins/validation.md](plugins/validation.md))
 - **Registry (v0)** — the repository's `plugins/` tree: a sha256 index, an advisory feed, and CI gates (reproducible build, harness, AI review); `inseam plugin install` verifies everything locally. ([design/registry.md](../design/registry.md))

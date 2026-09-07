@@ -18,12 +18,18 @@ use crate::connection_google::{GoogleConnection, GoogleConnectionConfig};
 use crate::embedder::{EmbedderConfig, Provider};
 use crate::finder::FinderConfig;
 use crate::llm_endpoint::LlmEndpointConfig;
+use crate::node::{NodeConfig, NodeFactory};
 use crate::oauth::{OAuthConfig, OAuthPlugin};
+use crate::roster::{RosterConfig, RosterPlugin};
+use crate::routing::{RoutingConfig, RoutingPlugin};
 use crate::sweep::SweepConfig;
 use crate::sweep::ignore::IgnoreSet;
+use crate::sync::{SyncConfig, SyncPlugin};
 use crate::transform_chunker::ChunkerConfig;
 use crate::transform_entities::EntityExtractorConfig;
 use crate::transform_summarizer::SummarizerConfig;
+use crate::transport_iroh::{Settings as TransportSettings, TransportConfig};
+use inseam_kernel::substrate::PluginFactory;
 use inseam_seams::dates::parse_ymd_epoch;
 
 /// Why a document could not be read from a composition or written back:
@@ -59,6 +65,13 @@ pub struct SettingsDocument {
     pub finder: Configurable<FinderConfig>,
     pub sweep: Configurable<SweepConfig>,
     pub operations: Toggle,
+    /// The network entries (`design/roster.md`): identity and presentation,
+    /// the iroh transport, the roster, replication, and routing.
+    pub node: Configurable<NodeConfig>,
+    pub transport: Configurable<TransportConfig>,
+    pub roster: Configurable<RosterConfig>,
+    pub sync: Configurable<SyncConfig>,
+    pub routing: Configurable<RoutingConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +113,11 @@ impl SettingsDocument {
             finder: configurable(composition, "finder")?,
             sweep: configurable(composition, "sweep")?,
             operations: toggle(composition, "operations")?,
+            node: configurable(composition, "node")?,
+            transport: configurable(composition, "transport")?,
+            roster: configurable(composition, "roster")?,
+            sync: configurable(composition, "sync")?,
+            routing: configurable(composition, "routing")?,
         })
     }
 
@@ -113,6 +131,7 @@ impl SettingsDocument {
         validate_transforms(self)?;
         validate_finder(&self.finder.config)?;
         validate_sweep(&self.sweep.config)?;
+        validate_network(self)?;
         Ok(())
     }
 
@@ -141,6 +160,11 @@ impl SettingsDocument {
             config_patch("finder", self.finder)?,
             config_patch("sweep", self.sweep)?,
             toggle_patch("operations", self.operations),
+            config_patch("node", self.node)?,
+            config_patch("transport", self.transport)?,
+            config_patch("roster", self.roster)?,
+            config_patch("sync", self.sync)?,
+            config_patch("routing", self.routing)?,
         ]);
         Ok(patches)
     }
@@ -321,6 +345,36 @@ fn validate_sweep(config: &SweepConfig) -> Result<(), SettingsError> {
     Ok(())
 }
 
+/// The network entries checked the way their plugins check them at mount:
+/// each factory (or the transport's settings parser) is the one validator,
+/// so the document can never accept what the node would refuse.
+fn validate_network(settings: &SettingsDocument) -> Result<(), SettingsError> {
+    NodeFactory
+        .build(&config_table("node", &settings.node.config)?)
+        .map_err(|error| format!("node: {error}"))?;
+    TransportSettings::try_from(&settings.transport.config)
+        .map_err(|error| format!("transport: {error}"))?;
+    RosterPlugin::from_config(&config_table("roster", &settings.roster.config)?)
+        .map_err(|error| format!("roster: {error}"))?;
+    SyncPlugin::from_config(&config_table("sync", &settings.sync.config)?)
+        .map_err(|error| format!("sync: {error}"))?;
+    RoutingPlugin::from_config(&config_table("routing", &settings.routing.config)?)
+        .map_err(|error| format!("routing: {error}"))?;
+    Ok(())
+}
+
+/// A config as the TOML table its plugin's factory parses.
+fn config_table<T: Serialize>(id: &str, config: &T) -> Result<toml::Table, SettingsError> {
+    let value = toml::Value::try_from(config)
+        .map_err(|error| format!("serialize `{id}` config: {error}"))?;
+    match value {
+        toml::Value::Table(table) => Ok(table),
+        _ => Err(SettingsError::from(format!(
+            "`{id}` config did not serialize as a table"
+        ))),
+    }
+}
+
 fn finite_positive(name: &str, value: f64) -> Result<(), SettingsError> {
     if !value.is_finite() || value <= 0.0 {
         return Err(SettingsError::from(format!("{name} must be a finite number greater than zero")));
@@ -367,6 +421,11 @@ mod tests {
             "[[entry]]\nid = \"finder\"\nplugin = \"finder\"\n",
             "[[entry]]\nid = \"sweep\"\nplugin = \"sweep\"\n",
             "[[entry]]\nid = \"operations\"\nplugin = \"operations\"\n",
+            "[[entry]]\nid = \"node\"\nplugin = \"node\"\n",
+            "[[entry]]\nid = \"transport\"\nplugin = \"transport-iroh\"\n",
+            "[[entry]]\nid = \"roster\"\nplugin = \"roster\"\n",
+            "[[entry]]\nid = \"sync\"\nplugin = \"sync\"\n",
+            "[[entry]]\nid = \"routing\"\nplugin = \"routing\"\n",
         );
         Composition::parse(text, "test").unwrap()
     }
@@ -410,5 +469,58 @@ mod tests {
         document.fs.config.roots = vec!["notes".to_string()];
         let error = document.validate().unwrap_err().to_string();
         assert!(error.contains("fs.roots"), "{error}");
+    }
+
+    #[test]
+    fn network_entries_round_trip_with_their_defaults() {
+        let document = SettingsDocument::from_composition(&base()).unwrap();
+        assert!(document.node.enabled);
+        assert_eq!(document.node.config.display_name, None);
+        assert!(document.node.config.deep_index);
+        assert_eq!(document.transport.config.relay, "n0");
+        assert_eq!(document.transport.config.bind_port, 0);
+        assert_eq!(document.roster.config.endpoint_poll_secs, 30);
+        assert_eq!(document.sync.config.interval_secs, 60);
+        assert!(document.routing.config.fan_out);
+
+        let mut edited = document;
+        edited.node.config.display_name = Some("Greg's mini".to_string());
+        edited.node.config.always_on = true;
+        edited.transport.config.relay = "none".to_string();
+        edited.transport.config.bind_port = 4433;
+        edited.sync.config.interval_secs = 15;
+        edited.routing.enabled = false;
+        let mut overlay = Composition::default();
+        edited.apply(&mut overlay, WriteMode::All).unwrap();
+        let layered = base().layered(overlay).unwrap();
+        let reread = SettingsDocument::from_composition(&layered).unwrap();
+        assert_eq!(reread.node.config.display_name.as_deref(), Some("Greg's mini"));
+        assert!(reread.node.config.always_on);
+        assert_eq!(reread.transport.config.relay, "none");
+        assert_eq!(reread.transport.config.bind_port, 4433);
+        assert_eq!(reread.sync.config.interval_secs, 15);
+        assert!(!reread.routing.enabled);
+    }
+
+    /// One bad edit to an otherwise valid document.
+    type BadEdit = Box<dyn Fn(&mut SettingsDocument)>;
+
+    #[test]
+    fn invalid_network_fields_are_refused_by_entry() {
+        let cases: Vec<(&str, BadEdit)> = vec![
+            ("node", Box::new(|d| d.node.config.display_name = Some("   ".to_string()))),
+            ("transport", Box::new(|d| d.transport.config.relay = "ftp://relay".to_string())),
+            ("transport", Box::new(|d| d.transport.config.idle_timeout_secs = 1)),
+            ("roster", Box::new(|d| d.roster.config.endpoint_poll_secs = 0)),
+            ("sync", Box::new(|d| d.sync.config.interval_secs = 0)),
+            ("sync", Box::new(|d| d.sync.config.peers_per_round_max = 0)),
+            ("routing", Box::new(|d| d.routing.config.fan_out_timeout_ms = 0)),
+        ];
+        for (entry, edit) in cases {
+            let mut document = SettingsDocument::from_composition(&base()).unwrap();
+            edit(&mut document);
+            let error = document.validate().unwrap_err().to_string();
+            assert!(error.starts_with(&format!("{entry}:")), "{entry}: {error}");
+        }
     }
 }

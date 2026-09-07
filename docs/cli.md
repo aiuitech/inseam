@@ -14,14 +14,24 @@ inseam hosts                        # the hosts this node stewards and what each
 inseam grants                       # the OAuth grants this node holds and where each stands
 inseam authorize <grant>            # sign in to a provider: prints the URL, waits for the browser
 inseam revoke <grant>               # forget a grant's tokens; its hosts withdraw
-inseam query "kitchen renovation"   # ranked results with summaries and hints; --json for raw output
+inseam network                      # this node and every roster node: live or not, last sync, hosts; the log's size; --json
+inseam network invite               # mint a one-time invitation (inseam-invite:…), open for 24 hours (network/joining.md)
+inseam network join <invitation>    # dial the inviter with the token, sync once, print the network
+inseam network expel <node-id>      # publish the expulsion: the node is purged and refused everywhere from now on
+inseam network sync                 # one sync round with every dialable node now, then the network
+inseam query "kitchen renovation"   # ranked results with summaries and hints; --json for raw output.
+                                    # a result from another node's index says `via <node>`, and the
+                                    # footer has one line per node the query fanned out to (network/discovery.md)
 inseam expand <address>             # one source's fragments, relations, connected keyed fragments (entities)
 inseam scan <address> --start 120 --end 160   # read a line range of a source
 inseam fetch <address>              # the whole source as text
 inseam fetch <address> --output f   # its raw bytes (an image, a PDF, a linked file) to a file; `-` is stdout
 inseam agent "when did I ...?"      # a live LLM using query/expand/scan/fetch as tools
 inseam models [--embeddings]        # the endpoint's model catalog, cheapest first; against ollama, installed models with widths
-inseam status                       # store stats, sizes, embedding identity (model, dims, vector scope), DiskANN readiness, pending re-embeds, cache sizes
+inseam status                       # store stats, sizes, embedding identity (model, dims, vector scope), DiskANN readiness, pending re-embeds,
+                                    # cache sizes, and remote sources — rows learned from other nodes' logs
+inseam catalog                      # every cataloged source, indexed or pending; a row from another node shows its origin;
+                                    # --host <id>, --indexed | --pending, --limit
 inseam repair                       # convert legacy vectors and build a missing DiskANN index
 inseam repair --rebuild             # reconstruct an existing DiskANN index
 inseam plugins                      # every running plugin, its state, and its live effects
@@ -44,6 +54,18 @@ Repair uses the existing resident vectors: it does not fetch sources, run
 transforms, or call the embedding provider. It prints an elapsed-time heartbeat
 every five seconds and can be interrupted and resumed. `--rebuild` is only for
 reconstructing an index that is already present.
+
+`inseam network` and its subcommands are the owner's whole network surface:
+`invite` on the node others should join through, `join` on the newcomer,
+`expel` from any node that is still yours, `sync` to run a round now instead
+of waiting for the timer. Each prints the network as this node sees it
+afterwards — every roster node with `live` (a session is open or the last
+exchange succeeded), the date of its last sync, its last error, and the hosts
+it stewards; every known host with its stewards; and the size of the
+replicated log. `--json` carries the objects. On a node composed without the
+network entries, each says which entry is missing. See
+[network/README.md](network/README.md) and the walkthrough in
+[network/joining.md](network/joining.md).
 
 `inseam serve` requires `INSEAM_OWNER_TOKEN` or `--owner-token` with at least
 32 bytes. It listens on `127.0.0.1:7337` by default. A browser may index only

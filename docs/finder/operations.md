@@ -25,7 +25,6 @@ A query result is a decision point, so each one carries what the follow-up needs
 | `envelope.length` | `{"unit": "lines", "value": n}` for text the index has read — the last line a `scan` can reach — or `{"unit": "bytes", …}` for a binary or a text source too large to have been read |
 | `hints[].extent` | where the matching fragment sits in its source, `{"unit": "lines", "start", "end"}` for text; `scan` accepts the numbers verbatim, and a client widens around them for context |
 | `hints[].score` | the fragment's own score on the query's scale (the top result's source is `1.0`), so the client sees which hint made the hit |
-
 | `envelope.content_digest` | the source's BLAKE3 content digest when its steward has one — the key results collapse by, carried so a merge across nodes collapses the same way one node's results do |
 | `via` | the node whose index produced the result when a fan-out did; absent for the answering node's own results |
 
@@ -35,7 +34,7 @@ A query result is a decision point, so each one carries what the follow-up needs
 
 When the `routing` entry is mounted ([../network/routing.md](../network/routing.md)), the ladder reaches sources other nodes steward:
 
-- `query` runs the local finder and the fan-out concurrently, then merges: reciprocal rank fusion (the finder's own `k = 60`) across the local list and each remote list; one copy per address — the local copy when this node ranked the address, else the best-ranked remote copy, its `via` set; then digest-equal copies collapse into `replicas`; then the list is cut to `limit` with the top result at `1.0`. With no remote results the local list stands untouched. A node that timed out or refused appears in `meta.remote` with its error, and the query still succeeds.
+- `query` runs the local finder and the fan-out concurrently, then merges: reciprocal rank fusion (the finder's own `k = 60`) across the local list and each remote list; one copy per address — the local copy when this node ranked the address, else the best-ranked remote copy, its `via` set; then digest-equal copies collapse into `replicas`; then the list is cut to `limit` with the top result at `1.0`. With no remote results the local list stands untouched. A node that timed out or refused appears in `meta.remote` with its error, and the query still succeeds ([../network/discovery.md](../network/discovery.md)).
 - `expand` is served from this node's own index when it stewards the host or holds the source's subtree, else routed to the steward's index.
 - `scan` of a remote text source reads its lines through routing after the same range check and clamp; a remote source that is not text is served from this node's own text fragments when it deep-indexed the source, and refused with `NothingToScan` otherwise.
 - `fetch` and `fetch_bytes` refuse before dialing — a binary text fetch, a byte fetch the catalog already knows is past 32 MiB — and then read through routing.
@@ -89,7 +88,7 @@ The network operations, owner-only like the rest:
 | `expel { node }` | publishes the expulsion through the roster and returns `network` |
 | `sync_now` | one sync round with every dialable node, then `network` |
 
-Each answers `Unavailable`, naming the entry it lacks (`roster`, `sync`, `node`), on a node composed without the network plugins.
+Each answers `Unavailable`, naming the entry it lacks (`roster`, `sync`, `node`), on a node composed without the network plugins. `inseam network` and its subcommands ([../cli.md](../cli.md)) and the `/api/v1/owner/network` routes ([../architecture/hosted-node.md](../architecture/hosted-node.md#network)) are thin wrappers over these five; [../network/README.md](../network/README.md) covers the plugins behind them.
 
 ## The agent demo
 
