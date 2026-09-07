@@ -3,14 +3,19 @@
 //! loaded) register the hosts they steward into it as effects; the sweep
 //! and operations resolve a connection by host. It is deliberately nothing
 //! but the registry: enumeration, reads, and capabilities belong to the
-//! connections themselves (`design/connections.md`).
+//! connections themselves (`design/connections.md`). Every change to it —
+//! a registration, a disposal — is announced as [`ConnectionsChanged`] on
+//! the kernel bus, which is how the roster learns to publish and withdraw
+//! stewardship records without polling.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use inseam_kernel::address::HostId;
-use inseam_kernel::substrate::{ApplyCx, Facts, Inject, Manifest, Plugin, PluginError};
-use inseam_seams::connection::{Connections, Registration, CONNECTIONS};
+use inseam_kernel::substrate::{
+    ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError,
+};
+use inseam_seams::connection::{Connections, ConnectionsChanged, Registration, CONNECTIONS};
 use inseam_seams::SeamError;
 
 pub struct ConnectionsRegistry;
@@ -41,22 +46,41 @@ impl Plugin for ConnectionsRegistry {
     async fn apply(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
         cx.provide(
             &CONNECTIONS,
-            Arc::new(Registry::default()) as Arc<dyn Connections>,
+            Arc::new(Registry::new(cx.bus().clone())) as Arc<dyn Connections>,
             Facts::new(),
         )?;
         Ok(())
     }
 }
 
-#[derive(Default)]
 struct Registry {
     inner: Arc<RegistryInner>,
 }
 
-#[derive(Default)]
 struct RegistryInner {
     entries: RwLock<Vec<(u64, Arc<Registration>)>>,
     next: AtomicU64,
+    bus: EventBus,
+}
+
+impl Registry {
+    fn new(bus: EventBus) -> Self {
+        Self {
+            inner: Arc::new(RegistryInner {
+                entries: RwLock::new(Vec::new()),
+                next: AtomicU64::new(0),
+                bus,
+            }),
+        }
+    }
+}
+
+impl RegistryInner {
+    /// Announce a change. Called only once the entries lock is released:
+    /// a listener re-reads the snapshot, and the lock is not reentrant.
+    fn announce(&self) {
+        self.bus.emit(&ConnectionsChanged);
+    }
 }
 
 impl Connections for Registry {
@@ -79,6 +103,7 @@ impl Connections for Registry {
         let id = self.inner.next.fetch_add(1, Ordering::Relaxed);
         entries.push((id, Arc::new(registration)));
         drop(entries);
+        self.inner.announce();
         // The disposer holds the registry weakly: a connection being
         // unwound after the whole registry is gone (full teardown, reverse
         // order) must be a no-op, not a resurrection.
@@ -90,6 +115,7 @@ impl Connections for Registry {
                     .write()
                     .unwrap_or_else(|e| e.into_inner())
                     .retain(|(i, _)| *i != id);
+                inner.announce();
             }
         }))
     }
@@ -164,7 +190,7 @@ mod tests {
 
     #[test]
     fn snapshot_orders_by_host_and_resolve_finds_the_steward() {
-        let registry = Registry::default();
+        let registry = Registry::new(EventBus::new());
         let _keep_b = registry.register(registration("b", "host-b")).expect("registers");
         let dispose_a = registry.register(registration("a", "host-a")).expect("registers");
         let ids: Vec<String> = registry
@@ -184,10 +210,53 @@ mod tests {
 
     #[test]
     fn refuses_a_second_connection_to_the_same_host() {
-        let registry = Registry::default();
+        let registry = Registry::new(EventBus::new());
         let _keep = registry.register(registration("fs", "same")).expect("registers");
         let again = registry.register(registration("fs-two", "same"));
         assert!(matches!(again, Err(SeamError::Refused(_))));
         assert_eq!(registry.snapshot().len(), 1, "the refused registration left no trace");
+    }
+
+    #[test]
+    fn a_registration_and_its_disposal_each_announce_a_change() {
+        let bus = EventBus::new();
+        let registry = Registry::new(bus.clone());
+        let changes = Arc::new(AtomicU64::new(0));
+        let counting = Arc::clone(&changes);
+        let _subscription = bus.on::<ConnectionsChanged>(move |_| {
+            counting.fetch_add(1, Ordering::SeqCst);
+        });
+
+        let dispose = registry.register(registration("fs", "host-a")).expect("registers");
+        assert_eq!(changes.load(Ordering::SeqCst), 1, "registering announces once");
+
+        let refused = registry.register(registration("fs-two", "host-a"));
+        assert!(matches!(refused, Err(SeamError::Refused(_))));
+        assert_eq!(changes.load(Ordering::SeqCst), 1, "a refusal changes nothing");
+
+        dispose();
+        assert_eq!(changes.load(Ordering::SeqCst), 2, "disposing announces once");
+        assert!(registry.snapshot().is_empty());
+    }
+
+    #[test]
+    fn a_listener_may_read_the_snapshot_from_inside_the_event() {
+        // The lock is released before the announcement, so a listener that
+        // re-reads the registry — the only sensible reaction — never
+        // deadlocks against the registration that woke it.
+        let bus = EventBus::new();
+        let registry = Arc::new(Registry::new(bus.clone()));
+        let seen = Arc::new(AtomicU64::new(u64::MAX));
+        let reading = Arc::clone(&registry);
+        let recording = Arc::clone(&seen);
+        let _subscription = bus.on::<ConnectionsChanged>(move |_| {
+            let count = u64::try_from(reading.snapshot().len()).expect("fits");
+            recording.store(count, Ordering::SeqCst);
+        });
+
+        let dispose = registry.register(registration("fs", "host-a")).expect("registers");
+        assert_eq!(seen.load(Ordering::SeqCst), 1);
+        dispose();
+        assert_eq!(seen.load(Ordering::SeqCst), 0);
     }
 }

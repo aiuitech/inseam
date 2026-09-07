@@ -408,7 +408,7 @@ pub struct VectorEntry {
 
 impl VersionVector {
     pub fn new(mut entries: Vec<VectorEntry>) -> Self {
-        entries.sort_by(|a, b| a.origin.cmp(&b.origin));
+        entries.sort_by_key(|entry| entry.origin);
         entries.dedup_by(|a, b| a.origin == b.origin);
         Self(entries)
     }

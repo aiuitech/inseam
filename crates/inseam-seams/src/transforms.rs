@@ -309,7 +309,7 @@ mod tests {
         let video = registration("video", &["video/mp4"], "b");
         let inv = inventory(&[("text/markdown", true)]);
 
-        let before = shape_stamp(&participating(&[markdown.clone()], &inv));
+        let before = shape_stamp(&participating(std::slice::from_ref(&markdown), &inv));
         let after = shape_stamp(&participating(
             &[markdown.clone(), video.clone()],
             &inv,

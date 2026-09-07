@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use inseam_kernel::address::{Address, ContentLength, HostId};
 use inseam_kernel::fragment::{Extent, FragmentId, Relation};
+use inseam_kernel::network::{HostRecord, NodeId, NodeRecord};
 use inseam_kernel::store::VectorScope;
 use inseam_kernel::substrate::{FiberState, FiberView, Guard, SecretNeed, ServiceKey};
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,7 @@ use crate::connection::{Capabilities, HostKind};
 use crate::finder::QueryTrace;
 use crate::oauth::{AuthorizationCallback, AuthorizationStarted, GrantId, GrantState, Redirect};
 use crate::llm::LlmLane;
+use crate::roster::Invitation;
 use crate::sweep::{DeepBudget, IndexMonitor, IndexReport};
 use crate::SeamError;
 
@@ -107,6 +109,46 @@ pub trait Operations: Send + Sync {
     /// back rolls the whole write back. The reply is the document as it
     /// stands afterwards.
     async fn configure(&self, settings: Settings) -> Result<Settings, SeamError>;
+
+    // The network operations default to "no network" so a provider built
+    // before the roster and sync seams existed keeps compiling and answers
+    // honestly; a provider on a networked node overrides every one.
+
+    /// Owner operation: the network as this node sees it — every roster
+    /// node with what the last sync learned about it, every host with its
+    /// stewards, and the size of the replicated log.
+    async fn network(&self) -> Result<NetworkView, SeamError> {
+        Err(network_unavailable())
+    }
+    /// Owner operation: mint an invitation for another node to join
+    /// through this one; the owner carries its text form across.
+    async fn invite(&self) -> Result<Invitation, SeamError> {
+        Err(network_unavailable())
+    }
+    /// Owner operation: join the network an invitation names — dial the
+    /// inviter, present the token, sync once — and report the network as
+    /// it looks afterwards.
+    async fn join(&self, request: JoinRequest) -> Result<NetworkView, SeamError> {
+        let _ = request;
+        Err(network_unavailable())
+    }
+    /// Owner operation: expel a node — every node stops admitting it and
+    /// drops its logs; this node disconnects it now.
+    async fn expel(&self, request: ExpelRequest) -> Result<NetworkView, SeamError> {
+        let _ = request;
+        Err(network_unavailable())
+    }
+    /// Owner operation: one sync round with every dialable node now, and
+    /// the network as it looks afterwards.
+    async fn sync_now(&self) -> Result<NetworkView, SeamError> {
+        Err(network_unavailable())
+    }
+}
+
+fn network_unavailable() -> SeamError {
+    SeamError::Unavailable(
+        "this node has no network: the roster and sync seams are not mounted".to_string(),
+    )
 }
 
 /// The first-party settings document on the wire. Its typed shape
@@ -680,6 +722,70 @@ pub struct RepairReport {
     pub vector_index_ready: bool,
 }
 
+// ---------------------------------------------------------------------------
+// Network: the owner's view of the roster and the replicated log
+// ---------------------------------------------------------------------------
+
+/// The network as this node sees it (`design/roster.md`): the roster's
+/// durable facts, and beside each node what the last sync learned by
+/// trying — never a synced "online" bit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkView {
+    /// This node's own record as last published.
+    pub local: NodeRecord,
+    /// Every admitted node, this one included, ordered by id.
+    pub nodes: Vec<NetworkNodeView>,
+    /// Every known host with its stewards, ordered by host id.
+    pub hosts: Vec<NetworkHostView>,
+    pub log: LogSummary,
+}
+
+/// One roster node as owner surfaces show it: the synced record, and the
+/// local session knowledge beside it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkNodeView {
+    pub record: NodeRecord,
+    pub is_local: bool,
+    /// A session with the node is open, or the last exchange succeeded.
+    pub live: bool,
+    /// When the last successful exchange happened, as `YYYY-MM-DD`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_sync: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    /// The hosts this node stewards.
+    #[serde(default)]
+    pub hosts: Vec<HostId>,
+}
+
+/// One known host and the nodes claiming to steward it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkHostView {
+    pub host: HostRecord,
+    pub stewards: Vec<NodeId>,
+}
+
+/// How much replicated knowledge this node holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct LogSummary {
+    /// Log entries held across every origin.
+    pub entries: u64,
+    /// Origins whose logs this node holds.
+    pub origins: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinRequest {
+    /// The invitation's text form (`inseam-invite:…`), as the inviting
+    /// node rendered it; parsed by the provider.
+    pub invitation: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExpelRequest {
+    pub node: NodeId,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -734,5 +840,61 @@ mod tests {
         let json = serde_json::to_value(&view).expect("serializes");
         assert_eq!(json["state"]["state"], "failed");
         assert_eq!(json["state"]["reason"], "admission");
+    }
+
+    #[test]
+    fn network_view_roundtrips_through_serde() {
+        use inseam_kernel::network::NodeCapabilities;
+        let local = NodeRecord {
+            id: NodeId::from_bytes([1; 32]),
+            display_name: "mini".to_string(),
+            endpoints: Vec::new(),
+            capabilities: NodeCapabilities {
+                always_on: true,
+                deep_index: true,
+                relays: true,
+            },
+        };
+        let host = HostId::new("fs-mini").expect("valid");
+        let view = NetworkView {
+            local: local.clone(),
+            nodes: vec![NetworkNodeView {
+                record: local,
+                is_local: true,
+                live: true,
+                last_sync: None,
+                last_error: None,
+                hosts: vec![host.clone()],
+            }],
+            hosts: vec![NetworkHostView {
+                host: HostRecord {
+                    id: host,
+                    kind: "fs".to_string(),
+                    display_name: "Mini".to_string(),
+                },
+                stewards: vec![NodeId::from_bytes([1; 32])],
+            }],
+            log: LogSummary {
+                entries: 12,
+                origins: 1,
+            },
+        };
+        let json = serde_json::to_value(&view).expect("serializes");
+        assert!(json["nodes"][0].get("last_sync").is_none(), "absent dates are not written");
+        assert_eq!(json["log"]["entries"], 12);
+        assert_eq!(json["hosts"][0]["stewards"][0], "01".repeat(32));
+        let back: NetworkView = serde_json::from_value(json).expect("parses");
+        assert_eq!(back, view);
+    }
+
+    #[test]
+    fn network_requests_parse_from_their_wire_form() {
+        let join: JoinRequest =
+            serde_json::from_str(r#"{"invitation":"inseam-invite:abc"}"#).expect("parses");
+        assert_eq!(join.invitation, "inseam-invite:abc");
+        let expel: ExpelRequest =
+            serde_json::from_str(&format!(r#"{{"node":"{}"}}"#, "02".repeat(32))).expect("parses");
+        assert_eq!(expel.node, NodeId::from_bytes([2; 32]));
+        assert!(serde_json::from_str::<ExpelRequest>(r#"{"node":"short"}"#).is_err());
     }
 }

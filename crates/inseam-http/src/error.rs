@@ -131,7 +131,11 @@ impl From<SeamError> for ApiError {
             | SeamError::ScanBeyondEnd { .. } => (StatusCode::BAD_REQUEST, "invalid_request"),
             SeamError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "unauthorized"),
             SeamError::Refused(_) => (StatusCode::FORBIDDEN, "refused"),
+            SeamError::NotAdmitted(_) => (StatusCode::FORBIDDEN, "not_admitted"),
             SeamError::Unavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
+            // This node stood in as a gateway toward a steward and none
+            // answered: the request was sound, the far side was not there.
+            SeamError::Unreachable { .. } => (StatusCode::BAD_GATEWAY, "unreachable"),
             SeamError::NothingToScan(_) | SeamError::BinaryFetch(_, _) => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "unsupported_source")
             }

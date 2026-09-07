@@ -22,10 +22,15 @@ pub mod error;
 pub mod finder;
 pub mod listing;
 pub mod llm;
+pub mod node;
 pub mod oauth;
 pub mod operations;
+pub mod roster;
+pub mod routing;
 pub mod sweep;
+pub mod sync;
 pub mod text;
 pub mod transforms;
+pub mod transport;
 
 pub use error::SeamError;

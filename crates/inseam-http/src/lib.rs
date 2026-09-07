@@ -678,10 +678,11 @@ mod tests {
     use inseam_seams::SeamError;
     use inseam_seams::oauth::{AuthorizationStarted, GrantState};
     use inseam_seams::operations::{
-        AwaitAuthorizationRequest, ExpandResponse, FetchResponse, IndexRequest, PluginState,
-        QueryMeta, QueryResponse, RepairOutcome, RepairReport, RepairRequest, ScanResponse,
-        PLUGIN_UPLOAD_BYTES_MAX,
+        AwaitAuthorizationRequest, ExpandResponse, ExpelRequest, FetchResponse, IndexRequest,
+        JoinRequest, NetworkView, PluginState, QueryMeta, QueryResponse, RepairOutcome,
+        RepairReport, RepairRequest, ScanResponse, PLUGIN_UPLOAD_BYTES_MAX,
     };
+    use inseam_seams::roster::Invitation;
     use inseam_seams::sweep::IndexReport;
     use tower::ServiceExt;
 
@@ -877,6 +878,26 @@ mod tests {
             *self.configured.lock().unwrap_or_else(|error| error.into_inner()) =
                 Some(settings.clone());
             Ok(settings)
+        }
+
+        async fn network(&self) -> Result<NetworkView, SeamError> {
+            Err(unused())
+        }
+
+        async fn invite(&self) -> Result<Invitation, SeamError> {
+            Err(unused())
+        }
+
+        async fn join(&self, _request: JoinRequest) -> Result<NetworkView, SeamError> {
+            Err(unused())
+        }
+
+        async fn expel(&self, _request: ExpelRequest) -> Result<NetworkView, SeamError> {
+            Err(unused())
+        }
+
+        async fn sync_now(&self) -> Result<NetworkView, SeamError> {
+            Err(unused())
         }
     }
 
