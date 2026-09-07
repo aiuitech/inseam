@@ -1,0 +1,183 @@
+{
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "duration_seconds": null,
+      "ending_phase": "querying",
+      "ending_queries_completed": 319,
+      "error": "process ended without recording an outcome",
+      "finished_at": null,
+      "indexing_log": "logs/index.log",
+      "inseam": {
+        "binary_path": "/private/tmp/claude-501/-Users-greg-aiui-projects-inseam/b7cbcd7a-6baa-4afa-92e4-13ad40c50faa/scratchpad/bin9/inseam",
+        "binary_sha256": "fb8f9a6ee64e186aafa1a8d285121c15f36dbcdd91e3665cc478a0d8a9809f64",
+        "cli_version": "inseam 0.1.0",
+        "repository_dirty": true,
+        "repository_revision": "a3b1c8e5ec8007e54a77cd9cdb55d5a8f90adafc"
+      },
+      "log_directory": "logs/attempt-001",
+      "resumed": false,
+      "search_index_preparation": {
+        "duration_seconds": 0.240114,
+        "finished_at": "2026-09-07T00:24:13.681Z",
+        "index_bytes": 4534292480,
+        "log": "logs/attempt-001/search-index.log",
+        "returncode": 0,
+        "started_at": "2026-09-07T00:24:13.440Z"
+      },
+      "started_at": "2026-09-07T00:19:29.903Z",
+      "starting_phase": "indexing",
+      "starting_queries_completed": 0,
+      "status": "interrupted"
+    },
+    {
+      "attempt_number": 2,
+      "duration_seconds": 532.486608,
+      "ending_phase": "completed",
+      "ending_queries_completed": 500,
+      "error": null,
+      "finished_at": "2026-09-07T00:48:08.603Z",
+      "inseam": {
+        "binary_path": "/private/tmp/claude-501/-Users-greg-aiui-projects-inseam/b7cbcd7a-6baa-4afa-92e4-13ad40c50faa/scratchpad/bin9/inseam",
+        "binary_sha256": "fb8f9a6ee64e186aafa1a8d285121c15f36dbcdd91e3665cc478a0d8a9809f64",
+        "cli_version": "inseam 0.1.0",
+        "repository_dirty": true,
+        "repository_revision": "e6ccce78e062729f04d074a19ca790420c428806"
+      },
+      "log_directory": "logs/attempt-002",
+      "resumed": true,
+      "search_index_preparation": {
+        "duration_seconds": 0.198627,
+        "finished_at": "2026-09-07T00:39:16.315Z",
+        "index_bytes": 4534292480,
+        "log": "logs/attempt-002/search-index.log",
+        "returncode": 0,
+        "started_at": "2026-09-07T00:39:16.116Z"
+      },
+      "started_at": "2026-09-07T00:39:16.115Z",
+      "starting_phase": "querying",
+      "starting_queries_completed": 319,
+      "status": "completed"
+    }
+  ],
+  "attempts_unmeasured": 1,
+  "benchmark": {
+    "archive_sha256": "9d1174928696ad08bc15f3f104739519de633c1605a4ec2034e0e3c0087bc5cd",
+    "name": "EnterpriseRAG-Bench",
+    "questions_sha256": "f9524b9157cd43aae36b99333a124738804306ea6d07f332d49faa6d3d147905",
+    "release": "v1.0.0",
+    "upstream_revision": "d36685e273713975ee20299bbf1ab64165575b3c"
+  },
+  "duration_seconds": 532.486608,
+  "finished_at": "2026-09-07T00:48:08.603Z",
+  "fixture_path": "/Users/greg/aiui/projects/inseam/.claude/worktrees/lean-indexing/benchmarks/fixtures/enterprise-rag-bench",
+  "index_data_path": "/Users/greg/aiui/projects/inseam/.claude/worktrees/lean-indexing/benchmarks/fixtures/enterprise-rag-bench/nodes/20260907T001929Z-a3b1c8e5ec80",
+  "index_progress_interval_seconds": 30,
+  "indexing": {
+    "duration_seconds": 262.191159,
+    "finished_at": "2026-09-07T00:23:52.093Z",
+    "footprint": {
+      "index_bytes": 4534292480,
+      "index_files": 1,
+      "index_to_source_ratio": 1.8325,
+      "source_bytes": 2474399575,
+      "source_files": 511963
+    },
+    "log": "logs/index.log",
+    "returncode": 0,
+    "started_at": "2026-09-07T00:19:29.904Z",
+    "summary": {
+      "cost_usd": 0.0,
+      "embeddings": 0,
+      "embeddings_reused": 0,
+      "fragments": 1083809,
+      "keyed_fragments": 0,
+      "relations": 571548,
+      "sources_catalog_only": 0,
+      "sources_ignored": 0,
+      "sources_indexed": 512261,
+      "sources_past_cutoff": 0,
+      "sources_seen": 512261,
+      "sources_unchanged": 0,
+      "summaries_envelope": 1,
+      "summaries_extractive": 374,
+      "summaries_llm": 0,
+      "summaries_verbatim": 511886,
+      "transforms_reused": 0
+    }
+  },
+  "inseam": {
+    "binary_path": "/private/tmp/claude-501/-Users-greg-aiui-projects-inseam/b7cbcd7a-6baa-4afa-92e4-13ad40c50faa/scratchpad/bin9/inseam",
+    "binary_sha256": "fb8f9a6ee64e186aafa1a8d285121c15f36dbcdd91e3665cc478a0d8a9809f64",
+    "cli_version": "inseam 0.1.0",
+    "repository_dirty": true,
+    "repository_revision": "a3b1c8e5ec8007e54a77cd9cdb55d5a8f90adafc"
+  },
+  "models": {
+    "answer_evaluation": "skipped",
+    "answer_generation": "skipped",
+    "corpus": "full",
+    "embedding_dimensions": 0,
+    "embedding_vectors": "none",
+    "embeddings": "disabled",
+    "entity_extraction": "disabled",
+    "finder_max_vector_distance": 0.75,
+    "finder_seeds": "both",
+    "structural": "off",
+    "summarization": "google/gemini-2.5-flash-lite",
+    "summarization_lane": "batch"
+  },
+  "options": {
+    "corpus_slice": 0,
+    "embedding_vectors": "none",
+    "evaluation_parallelism": 4,
+    "finder_max_vector_distance": 0.75,
+    "finder_seeds": "both",
+    "index_concurrency": 8,
+    "keywords_max": 12,
+    "llm_call_budget": 0,
+    "query_limit": 8,
+    "question_limit": 500,
+    "skip_agent": true,
+    "skip_evaluation": true,
+    "structural": "off",
+    "summary_target_chars": 24000,
+    "turns": 12
+  },
+  "phase": "completed",
+  "progress_interval_seconds": 5,
+  "queries_completed": 500,
+  "resume_count": 1,
+  "run_id": "20260907T001929Z-a3b1c8e5ec80",
+  "schema_version": 2,
+  "scores": {
+    "retrieval": {
+      "average_document_recall_pct": 66.81,
+      "document_hit_rate_pct": 73.19,
+      "mean_reciprocal_rank": 0.595408,
+      "questions_with_expected_documents": 470
+    }
+  },
+  "started_at": "2026-09-07T00:19:29.826Z",
+  "status": "completed",
+  "system": {
+    "architecture": "arm64",
+    "cpu_model": "Apple M2 Pro",
+    "disk_free_bytes_at_start": 22514663424,
+    "disk_total_bytes": 494384795648,
+    "hostname": "GregMini.lan",
+    "logical_cpu_count": 10,
+    "memory_bytes": 17179869184,
+    "os": "Darwin",
+    "os_release": "25.5.0",
+    "os_version": "Darwin Kernel Version 25.5.0: Tue Jun  9 22:28:24 PDT 2026; root:xnu-12377.121.10~1/RELEASE_ARM64_T6020",
+    "python_version": "3.14.3"
+  },
+  "timeouts_seconds": {
+    "agent_answer": 1800,
+    "evaluation": 604800,
+    "finder_query": 600,
+    "indexing": 259200,
+    "setup_command": 7200
+  }
+}
