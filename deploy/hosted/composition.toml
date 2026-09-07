@@ -1,14 +1,138 @@
-# The hosted profile stays useful without an external model endpoint. Add an
-# llm entry and switch the embedder to endpoint mode when the node has a key.
 [[entry]]
 id = "llm"
 disabled = true
 
+[entry.config]
+agent_model = "openai/gpt-5-mini"
+api_key_env = "OPENROUTER_API_KEY"
+base_url = "https://openrouter.ai/api/v1"
+batch_requests_max = 5000
+transform_model = "google/gemini-2.5-flash-lite"
+
 [[entry]]
 id = "embedder"
 plugin = "embedder"
+disabled = false
 
 [entry.config]
-provider = "hashed"
-model = "hashed"
 dimensions = 384
+model = "hashed"
+provider = "hashed"
+vectors = "all"
+
+[[entry]]
+id = "connections"
+disabled = false
+
+[[entry]]
+id = "fs"
+disabled = false
+
+[entry.config]
+gitignore = true
+ignore = []
+roots = ["/Users/greg/Data"]
+skip_hidden = true
+
+[[entry]]
+id = "oauth"
+disabled = false
+
+[entry.config]
+authorization_timeout_secs = 300
+callback_port = 47781
+grants = []
+
+[[entry]]
+id = "google"
+disabled = false
+
+[entry.config]
+client_id_env = "GOOGLE_CLIENT_ID"
+client_secret_env = "GOOGLE_CLIENT_SECRET"
+grant = "google"
+services = [
+    "gmail",
+    "drive",
+    "calendar",
+    "contacts",
+    "tasks",
+]
+sources_max = 5000
+
+[[entry]]
+id = "transforms"
+disabled = false
+
+[[entry]]
+id = "markdown"
+disabled = false
+
+[[entry]]
+id = "chunker"
+disabled = false
+
+[entry.config]
+target_chars = 1600
+
+[[entry]]
+id = "summarizer"
+disabled = false
+
+[entry.config]
+llm_call_budget = 500
+llm_lane = "interactive"
+target_chars = 400
+
+[[entry]]
+id = "entities"
+disabled = false
+
+[entry.config]
+llm_call_budget = 500
+llm_lane = "interactive"
+max_per_source = 12
+
+[[entry]]
+id = "finder"
+disabled = false
+
+[entry.config]
+damping = 0.5
+epsilon = 0.000001
+graph_hops = 2
+graph_relation_limit = 20000
+iterations = 12
+max_hints = 3
+max_vector_distance = 0.75
+rrf_k = 60.0
+seed_k = 60
+
+[entry.config.weights]
+default = 0.5
+
+[entry.config.weights.by_kind]
+contains = 1.0
+derives = 0.9
+links-to = 0.4
+mentions = 0.8
+transcribes = 1.0
+
+[[entry]]
+id = "sweep"
+disabled = false
+
+[entry.config]
+batch_concurrency = 4096
+concurrency = 8
+ignore = []
+max_content_bytes = 2000000
+max_depth = 6
+max_fragments_per_source = 400
+max_reference_hops = 1
+max_sources = 0
+source_reads_in_flight_max = 128
+
+[[entry]]
+id = "operations"
+disabled = false
