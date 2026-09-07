@@ -18,3 +18,7 @@
 ## Maybe Later
 
 - explore "dependency graphs" for discovery. We implicitly form dependency graphs in our mind before approaching how to solve a subject. That might be useful.
+
+## Indexing
+
+Think of it like Google search index, but instead a private local data set. "Backlinks" get covered by our graph transforms, keywords extracted automatically by LLM, and a global index of localized terms so that the nomenclature arises and ranks out of the local data only. Pagerank use the graph. LLM extraction gets contextual awareness of the words. Perhaps embed terms and group them by cosine similarity to form clusters of terms that are used to seed the term context to LLM when its extracting. Eg) embed the fragment, match with nearest term group's embedding, then pass that group to LLM during term/entity extraction so it doesn't extract irrelevant terms that never appear outside of the corpus.
