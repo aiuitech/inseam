@@ -78,8 +78,8 @@ class EnterpriseRagBenchTests(unittest.TestCase):
         self.assertNotIn("text-embedding", composition)
         self.assertIn("target_chars = 24000", composition)
         self.assertIn('batch_concurrency = 65536', composition)
-        self.assertEqual(composition.count("disabled = true"), 3)
-        self.assertEqual(composition.count("llm_call_budget = 0"), 1)
+        self.assertEqual(composition.count("disabled = true"), 4)
+        self.assertEqual(composition.count("llm_call_budget = 0"), 2)
 
     def test_composition_mounts_the_embedder_and_sections_on_request(self) -> None:
         options = benchmark.RunOptions(
@@ -95,7 +95,7 @@ class EnterpriseRagBenchTests(unittest.TestCase):
         self.assertIn('dimensions = 384', composition)
         self.assertIn('vectors = "summaries"', composition)
         self.assertIn('target_chars = 200', composition)
-        self.assertEqual(composition.count("disabled = true"), 2)
+        self.assertEqual(composition.count("disabled = true"), 3)
         self.assertEqual(composition.count("llm_call_budget = 500"), 1)
 
     def test_a_retrieval_only_run_cannot_ask_for_evaluation(self) -> None:
@@ -166,6 +166,7 @@ class EnterpriseRagBenchTests(unittest.TestCase):
                     "finder_seeds": "both",
                     "finder_max_vector_distance": 0.75,
                     "entity_extraction": "disabled",
+                    "hints": "disabled",
                     "answer_generation": "z-ai/glm-5.3-flash",
                     "answer_evaluation": "skipped",
                     "embeddings": "disabled",

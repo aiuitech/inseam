@@ -101,6 +101,10 @@ id = "entities"
 plugin = "transform-entities"
 
 [[entry]]
+id = "hints"
+plugin = "transform-hints"
+
+[[entry]]
 id = "finder"
 plugin = "finder"
 

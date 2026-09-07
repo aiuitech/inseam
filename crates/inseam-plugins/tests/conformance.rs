@@ -19,7 +19,7 @@ fn conformance_config(name: &str) -> toml::Table {
     let raw = match name {
         "connections" | "connection-fs" | "connection-google" | "connection-web" | "oauth"
         | "llm-endpoint" | "transforms" | "transform-markdown" | "transform-directory" | "transform-chunker"
-        | "transform-summarizer" | "transform-entities" | "transform-links" | "finder" | "sweep"
+        | "transform-summarizer" | "transform-entities" | "transform-hints" | "transform-links" | "finder" | "sweep"
         | "operations" => "",
         "embedder" => "provider = \"hashed\"\nmodel = \"hashed\"\ndimensions = 8",
         other => panic!(
@@ -42,6 +42,7 @@ fn golden_checks_for(name: &str) -> Option<PathBuf> {
         "chunker" => "transform_chunker/chunker.checks.toml",
         "summarizer" => "transform_summarizer/summarizer.checks.toml",
         "entity-extractor" => "transform_entities/entity-extractor.checks.toml",
+        "hints" => "transform_hints/hints.checks.toml",
         "links" => "transform_links/links.checks.toml",
         _ => return None,
     };

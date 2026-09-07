@@ -24,6 +24,7 @@ pub mod sweep;
 pub mod transform_chunker;
 pub mod transform_directory;
 pub mod transform_entities;
+pub mod transform_hints;
 pub mod transform_links;
 pub mod transform_markdown;
 pub mod transform_summarizer;
@@ -50,6 +51,7 @@ pub fn factories() -> Vec<Arc<dyn PluginFactory>> {
         Arc::new(transform_chunker::ChunkerFactory),
         Arc::new(transform_summarizer::SummarizerFactory),
         Arc::new(transform_entities::EntityExtractorFactory),
+        Arc::new(transform_hints::HintsFactory),
         Arc::new(transform_links::LinksFactory),
         Arc::new(finder::FinderFactory),
         Arc::new(sweep::SweepFactory),

@@ -19,6 +19,7 @@ Every plugin is the same five declarations — name, config, inject, provide, ap
 | `transform-chunker` | — | transforms | fallback chunking for text with no structure |
 | `transform-summarizer` | — | transforms | the mandatory summary (verbatim → LLM → extractive → envelope) and the keywords beside it |
 | `transform-entities` | — | transforms | LLM entity extraction |
+| `transform-hints` | — | transforms | LLM retrieval hints: cues, synopsis, discriminators, glossary terms, identifiers, entities |
 | `transform-links` | — | transforms, connections | the link follower: links to images become typed fragments referencing their web address; not in the base composition ([indexing/transforms.md](../indexing/transforms.md)) |
 | `finder` | `finder` | store, embedder | the ranking algorithm ([finder/algorithm.md](../finder/algorithm.md)) |
 | `sweep` | `sweep` | store, connections, transforms, embedder, llm? | the reconciling sweep ([indexing/maintenance.md](../indexing/maintenance.md)) |

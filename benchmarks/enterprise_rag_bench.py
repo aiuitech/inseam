@@ -167,6 +167,10 @@ class RunOptions:
     # the upstream evaluator judges with.
     answer_model: str = ANSWER_MODEL
     evaluation_model: str = EVALUATION_MODEL
+    # Calls the hints transform may make per run; 0 leaves it unmounted.
+    # One call per document plants its cues, glossary terms, identifiers,
+    # discriminators, and entities (design/indexing.md).
+    hints_llm_call_budget: int = 0
     # Which seed lists the Finder runs before fusion; one alone is a
     # diagnostic for which search the fusion is carrying.
     finder_seeds: str = "both"
@@ -374,6 +378,13 @@ llm_lane = "{SUMMARIZATION_LANE}"
 [[entry]]
 id = "entities"
 disabled = true
+
+[[entry]]
+id = "hints"
+disabled = {"false" if options.hints_llm_call_budget > 0 else "true"}
+[entry.config]
+llm_call_budget = {options.hints_llm_call_budget}
+llm_lane = "{SUMMARIZATION_LANE}"
 
 [[entry]]
 id = "sweep"
@@ -690,6 +701,7 @@ def model_assignments(options: RunOptions) -> dict[str, str | int]:
         "finder_seeds": options.finder_seeds,
         "finder_max_vector_distance": options.finder_max_vector_distance,
         "entity_extraction": "disabled",
+        "hints": SUMMARIZATION_MODEL if options.hints_llm_call_budget > 0 else "disabled",
         "answer_generation": "skipped" if options.skip_agent else options.answer_model,
         "answer_evaluation": "skipped" if options.skip_evaluation else options.evaluation_model,
         "embeddings": "disabled" if options.embedding_vectors == "none" else EMBEDDING_MODEL,
@@ -1080,6 +1092,9 @@ def options_from_manifest(manifest: dict[str, Any]) -> RunOptions:
         finder_max_vector_distance=manifest_option_distance(value, "finder_max_vector_distance"),
         answer_model=manifest_option_model(value, "answer_model"),
         evaluation_model=manifest_option_model(value, "evaluation_model"),
+        hints_llm_call_budget=manifest_option_count(
+            value, "hints_llm_call_budget", MAX_LLM_CALL_BUDGET
+        ),
     )
 
 
@@ -1179,6 +1194,12 @@ def parse_arguments() -> argparse.Namespace:
     )
     run_parser.add_argument("--answer-model", default=ANSWER_MODEL)
     run_parser.add_argument("--evaluation-model", default=EVALUATION_MODEL)
+    run_parser.add_argument(
+        "--hints-llm-call-budget",
+        type=count_argument("hints-llm-call-budget", MAX_LLM_CALL_BUDGET),
+        default=0,
+        help="mount the hints transform with this many calls per run; 0 (the default) leaves it off",
+    )
     resume_parser = subparsers.add_parser(
         "resume",
         help="reuse a completed index and continue a failed or interrupted run",
@@ -1215,6 +1236,7 @@ def main() -> int:
             finder_max_vector_distance=arguments.finder_max_vector_distance,
             answer_model=arguments.answer_model,
             evaluation_model=arguments.evaluation_model,
+            hints_llm_call_budget=arguments.hints_llm_call_budget,
         )
         return run_main(lambda: run_benchmark(options))
     return run_main(lambda: resume_benchmark(arguments.run_id, arguments.after_kill))

@@ -326,7 +326,9 @@ impl KeyedFragment {
 pub enum SearchRole {
     /// Source prose: a section, a chunk, a transcript.
     Content,
-    /// The mandatory summary (`text/x-inseam-summary`).
+    /// The mandatory summary (`text/x-inseam-summary`) and the hints
+    /// plugin's prose written to be found (`text/x-inseam-hint`): the rows
+    /// a vector is worth buying for.
     Summary,
     /// Names and terms, matched by the full-text index alone: keywords,
     /// keyed fragments, and every other derived type.
@@ -337,7 +339,7 @@ impl SearchRole {
     /// The role of a fragment from its mimetype and whether it belongs to
     /// a source at all (keyed fragments belong to none).
     pub fn of(mimetype: &Mimetype, keyed: bool) -> Self {
-        if mimetype.is_summary() {
+        if mimetype.is_summary() || mimetype.is_hint() {
             Self::Summary
         } else if keyed || mimetype.is_inseam_defined() {
             Self::Lexical

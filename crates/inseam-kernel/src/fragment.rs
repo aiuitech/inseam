@@ -149,6 +149,14 @@ impl Mimetype {
         self.essence == "text/x-inseam-keywords"
     }
 
+    /// The hints plugin's per-source fragments (`text/x-inseam-hint`): a
+    /// synopsis, the questions the source answers, the facts that tell it
+    /// apart. Prose written to be found, so the store ranks them with
+    /// summaries rather than with names and terms.
+    pub fn is_hint(&self) -> bool {
+        self.essence == "text/x-inseam-hint"
+    }
+
     /// `text/x-inseam-*` types are derived understanding, not source
     /// content: the sweep never re-decomposes them and loaded transforms may
     /// not emit them. Plugins mint their own under the prefix (the entity

@@ -1,0 +1,32 @@
+# Golden checks for the `hints` linked transform (docs/plugins/validation.md):
+# one LLM call per root, a hint fragment per kind under the source, and
+# keyed glossary, identifier, and entity fragments across the index.
+
+# The claim: the model's JSON becomes a synopsis, a cue, and a discriminator
+# fragment, plus one keyed fragment per term, identifier, and entity.
+[[check]]
+name = "plants hints under the source and terms across the index"
+mimetype = "text/plain"
+text = "EKS bootstrap for eu-central-2: GPU spot nodegroup for batch inference. See SUP-100432."
+llm_returns = '''{"synopsis": "Bringing up the Frankfurt cluster.",
+ "cues": ["How do we bring up a new GPU cluster in Frankfurt?"],
+ "glossary": [{"term": "eu-central-2", "gloss": "the Frankfurt region"}],
+ "identifiers": ["SUP-100432"],
+ "discriminators": ["Frankfurt", "spot GPU nodes"],
+ "entities": [{"name": "Maria", "kind": "person"}]}'''
+
+[check.expect]
+min_fragments = 3
+max_fragments = 3
+keyed_contains = "eu-central-2"
+max_keyed = 3
+
+# The degrade path: no text and no LLM means no hints — never a guess.
+[[check]]
+name = "plants nothing when starved"
+mimetype = "text/plain"
+
+[check.expect]
+min_fragments = 0
+max_fragments = 0
+max_keyed = 0

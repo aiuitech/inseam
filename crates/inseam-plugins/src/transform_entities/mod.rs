@@ -9,7 +9,7 @@
 //! the granted LLM handle, so it emits nothing when the handle is withheld.
 //! Its golden checks live beside it in `entity-extractor.checks.toml`.
 
-mod extract;
+pub(crate) mod extract;
 
 use std::sync::Arc;
 
