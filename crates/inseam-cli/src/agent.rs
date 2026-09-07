@@ -9,12 +9,19 @@ use thiserror::Error;
 use inseam_seams::text::truncate_chars;
 use inseam_seams::llm::{ChatMessage, ChatRequest, Llm, Tool, ToolCall};
 use inseam_seams::operations::{
-    ExpandRequest, FetchRequest, Operations, QueryRequest, ScanRequest,
+    ExpandRequest, FetchRequest, Operations, QueryRequest, QueryResponse, ScanRequest,
 };
 use inseam_seams::SeamError;
 
 /// Characters of tool output returned to the model per call.
-const TOOL_RESULT_CHARS: usize = 9_000;
+const TOOL_RESULT_CHARS: usize = 12_000;
+/// Characters of each result's summary the model sees in a `query` reply.
+/// A summary may be the whole document (a text that fits the summarizer's
+/// target is its own summary), and ten of those ran to 66,000 characters
+/// — the cap above then cut the reply after the second result, so the
+/// model chose among two of ten. Every result now fits; `scan` and `fetch`
+/// are the rungs for reading one.
+const QUERY_SUMMARY_CHARS: usize = 500;
 
 #[derive(Debug, Error)]
 pub enum AgentError {
@@ -115,7 +122,11 @@ async fn execute(operations: &dyn Operations, call: &ToolCall) -> String {
     let args = &call.function.arguments;
     let outcome: Result<String, String> = match call.function.name.as_str() {
         "query" => match parse::<QueryRequest>(args) {
-            Ok(r) => operations.query(r).await.map(|v| to_json(&v)).map_err(stringify),
+            Ok(r) => operations
+                .query(r)
+                .await
+                .map(|v| to_json(&query_for_model(v)))
+                .map_err(stringify),
             Err(e) => Err(e),
         },
         "expand" => match parse::<ExpandRequest>(args) {
@@ -137,6 +148,17 @@ async fn execute(operations: &dyn Operations, call: &ToolCall) -> String {
         Err(e) => json!({ "error": e }).to_string(),
     };
     truncate_chars(&body, TOOL_RESULT_CHARS)
+}
+
+/// The query reply as the model should see it: every result, each summary
+/// cut to an excerpt, so the ranking is what the model chooses from.
+fn query_for_model(mut response: QueryResponse) -> QueryResponse {
+    for result in &mut response.results {
+        if let Some(summary) = result.summary.take() {
+            result.summary = Some(truncate_chars(&summary, QUERY_SUMMARY_CHARS));
+        }
+    }
+    response
 }
 
 fn parse<T: serde::de::DeserializeOwned>(args: &str) -> Result<T, String> {
@@ -237,6 +259,8 @@ fn tool_definitions() -> Vec<Tool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use inseam_kernel::address::ContentLength;
+    use inseam_seams::operations::{EnvelopeView, QueryMeta, QueryResult};
 
     #[test]
     fn tool_definitions_cover_the_ladder() {
@@ -245,6 +269,37 @@ mod tests {
             .map(|t| t.function.name.clone())
             .collect();
         assert_eq!(names, vec!["query", "expand", "scan", "fetch"]);
+    }
+
+    #[test]
+    fn query_for_model_keeps_every_result_and_cuts_each_summary() {
+        let long = "x".repeat(6_000);
+        let results: Vec<QueryResult> = (0..10)
+            .map(|i| QueryResult {
+                address: format!("inseam://h/doc-{i}.txt").parse().expect("valid"),
+                score: 1.0,
+                summary: Some(long.clone()),
+                envelope: EnvelopeView {
+                    source_type: "file".into(),
+                    content_type: "text/plain".into(),
+                    length: ContentLength::Bytes(6_000),
+                    created: None,
+                    modified: None,
+                    title: None,
+                },
+                hints: Vec::new(),
+                replicas: Vec::new(),
+            })
+            .collect();
+        let response = query_for_model(QueryResponse {
+            results,
+            meta: QueryMeta::default(),
+        });
+        assert_eq!(response.results.len(), 10);
+        assert!(response.results.iter().all(|r| {
+            r.summary.as_ref().map_or(false, |s| s.chars().count() <= QUERY_SUMMARY_CHARS)
+        }));
+        assert!(to_json(&response).chars().count() <= TOOL_RESULT_CHARS);
     }
 
     #[test]
