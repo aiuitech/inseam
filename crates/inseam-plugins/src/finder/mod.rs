@@ -316,8 +316,11 @@ impl Finder for FinderService {
 impl FinderService {
     async fn query_seeds(&self, text: &str) -> Result<Seeds, SeamError> {
         let started = Instant::now();
+        // Function words go: a query that ORs "the" matches every row of a
+        // large index and BM25 scores them all, for rows that rank last.
         let fts = if self.config.seeds.runs_full_text() {
-            self.store.search_fts(text, self.config.seed_k).await?
+            let lexical = inseam_seams::extract::strip_stopwords(text);
+            self.store.search_fts(&lexical, self.config.seed_k).await?
         } else {
             Vec::new()
         };
