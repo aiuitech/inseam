@@ -59,6 +59,19 @@ inseam agent "when did I ...?"  # a live LLM searching for you
 
 No API key? The node still starts, tells you which parts are waiting on one, and everything else works. For a fully offline node, switch the embedder to `hashed` in `composition.toml` — [configuration.md](configuration.md) has the exact file — or point the `llm` entry at a local ollama and pick an installed embedding model ([indexing/embeddings.md](indexing/embeddings.md)).
 
+## Connect an agent
+
+Any MCP host — Claude Desktop, Claude Code, an IDE — can climb the same ladder the CLI does. Start the node's owner API, build the MCP server once, and point the host at it ([architecture/mcp-server.md](architecture/mcp-server.md)):
+
+```sh
+export INSEAM_OWNER_TOKEN=$(openssl rand -hex 32)
+inseam serve                                   # 127.0.0.1:7337
+cd apps/mcp && pnpm install && pnpm build      # once
+claude mcp add inseam -e INSEAM_OWNER_TOKEN=$INSEAM_OWNER_TOKEN -- node "$PWD/build/main.js"
+```
+
+The host now has `query`, `expand`, `scan`, `fetch`, `fetch_bytes`, `hosts`, `status`, `catalog`, and `index` as tools. `--transport http` serves the same tools at an HTTP endpoint for hosts that connect instead of launching ([apps/mcp/README.md](../apps/mcp/README.md)).
+
 ## Self-modify
 
 A node's behavior is its **composition**: which plugins run, with what config ([configuration.md](configuration.md)). Changing the node means adding or changing plugins, in this preferred order:

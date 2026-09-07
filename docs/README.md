@@ -17,7 +17,7 @@ Start here:
 
 Then by area:
 
-- [architecture/](architecture/README.md) — how the repo is laid out, the kernel, the macOS app, the hosted node, and doc generation.
+- [architecture/](architecture/README.md) — how the repo is laid out, the kernel, the macOS app, the hosted node, the MCP server, and doc generation.
 - [indexing/](indexing/README.md) — how files become an index: the filesystem host, transforms, storage, and index upkeep.
 - [finder/](finder/README.md) — how queries work: the ranking algorithm and the operations built on it.
 - [plugins/](plugins/README.md) — the two plugin kinds, validation, the registry, and custom builds.

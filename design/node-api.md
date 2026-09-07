@@ -85,6 +85,17 @@ So the example flow: my external service calls `query("some topic", properties: 
   that base64-encodes binaries into `text` (a lie about the content type
   every client would have to detect), and a raw route with its own path
   resolution (a second door with its own rules).
+- **The MCP adapter is a client of the HTTP transport, not a second
+  transport in the binary.** `apps/mcp` is a TypeScript server on the
+  official SDK that signs in to the owner HTTP API and exposes one tool
+  per operation (`docs/architecture/mcp-server.md`). Chosen because the
+  protocol's newest revisions land in that SDK first, agent hosts already
+  run Node, and the HTTP transport already carries every operation as JSON
+  — so the adapter adds no logic and no wire format. It exposes the ladder
+  plus the read-only owner views and `index`; grants, plugins, and settings
+  stay with the console and the CLI, because an agent reconfiguring the
+  node it is searching is a surprise. A Rust transport plugin remains
+  possible if a single-process distribution ever needs it.
 - **Plugins are owner operations too.** `plugins` (every entry as the
   kernel runs it) and `install_plugin` (a plugin directory's files, mounted
   into the running node) ride the seam, so the console, the CLI, and any

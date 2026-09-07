@@ -13,6 +13,7 @@ The repo is a Cargo workspace that mirrors the architecture ([design/kernel.md](
 - `plugins/` — loaded plugin projects (standalone crates, **not** workspace members; they build to `wasm32-wasip2`) **and registry v0** ([plugins/registry.md](../plugins/registry.md)): the `registry.toml` index, `advisories.toml`, and each plugin's golden checks and fixtures (`plugins/README.md`). `plugins/ocr` is the reference example.
 - `apps/macos` — the SwiftUI macOS app (SwiftPM, not a cargo member). See [macos-app.md](macos-app.md).
 - `apps/web` — the shared React, TypeScript, Vite, and shadcn owner console for local and hosted nodes. See [hosted-node.md](hosted-node.md).
+- `apps/mcp` — the `inseam-mcp` server: the node's operations as MCP tools over stdio or streamable HTTP, a TypeScript client of the owner HTTP transport. See [mcp-server.md](mcp-server.md).
 - `packages/brand` — the `@inseam/brand` package: the brand's theme, assets, and components for `apps/web` and for the hosted console in the `inseam-console` repo, which fetches it from git. See [brand/package.md](../brand/package.md).
 - `deploy/hosted` — the container, offline composition, and Compose example that package one node with the web console and a persistent data volume.
 - `apps/docs-website` — the docs.inseam.io site (Astro Starlight on Cloudflare Workers, pnpm, not a cargo member); content synced from `docs/` ([doc-generation.md](doc-generation.md)).
@@ -21,4 +22,4 @@ The repo is a Cargo workspace that mirrors the architecture ([design/kernel.md](
 
 Shared dependency versions live in `[workspace.dependencies]` in the root `Cargo.toml`; member crates reference them with `dep.workspace = true`.
 
-The root is also a pnpm workspace (`pnpm-workspace.yaml`) holding `apps/web` and `packages/brand`, with one lockfile at the root. The Astro sites under `apps/` keep their own `pnpm-workspace.yaml` and lockfile, so pnpm treats each as its own root.
+The root is also a pnpm workspace (`pnpm-workspace.yaml`) holding `apps/web`, `apps/mcp`, and `packages/brand`, with one lockfile at the root. The Astro sites under `apps/` keep their own `pnpm-workspace.yaml` and lockfile, so pnpm treats each as its own root.

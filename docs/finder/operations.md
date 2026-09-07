@@ -1,6 +1,6 @@
 # Finder Operations
 
-The boundary operations from [design/node-api.md](../../design/node-api.md), served by the `operations` plugin on its seam (`inseam-seams::operations`). Messages are plain serde types — JSON-serializable by construction, with no transport assumptions. The CLI and the agent demo are both thin wrappers over these; HTTP and MCP adapters will wrap the same types.
+The boundary operations from [design/node-api.md](../../design/node-api.md), served by the `operations` plugin on its seam (`inseam-seams::operations`). Messages are plain serde types — JSON-serializable by construction, with no transport assumptions. The CLI, the agent demo, the HTTP owner transport ([../architecture/hosted-node.md](../architecture/hosted-node.md)), and the MCP server ([../architecture/mcp-server.md](../architecture/mcp-server.md)) are all thin wrappers over these.
 
 ## The ladder
 

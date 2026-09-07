@@ -5,6 +5,7 @@
 # their own roots.
 packages:
   - apps/web
+  - apps/mcp
   - packages/brand
 
 allowBuilds:

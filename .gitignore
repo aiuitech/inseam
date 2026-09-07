@@ -11,3 +11,6 @@ __pycache__/
 .wrangler/
 
 node_modules
+
+# The MCP server compiles into apps/mcp/build; the sources are the record.
+apps/mcp/build
