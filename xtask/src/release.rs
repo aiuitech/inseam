@@ -17,7 +17,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 /// Where the secret key lives unless `--secret-key` says otherwise.
 const SECRET_KEY_DEFAULT: &str = ".config/inseam/release.key";
@@ -30,7 +30,9 @@ pub fn run(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("keygen") => keygen(&secret_key_path(args)?),
         Some("promote") => {
-            let tag = args.get(1).context("usage: cargo xtask release promote <tag>")?;
+            let tag = args
+                .get(1)
+                .context("usage: cargo xtask release promote <tag>")?;
             let cohort = flag(args, "--cohort").unwrap_or("stable");
             promote(tag, cohort, &secret_key_path(args)?)
         }
@@ -63,7 +65,10 @@ fn secret_key_path(args: &[String]) -> Result<PathBuf> {
 /// read by anything but `promote`.
 fn keygen(secret_key: &Path) -> Result<()> {
     if secret_key.exists() {
-        bail!("{} already exists; refusing to overwrite a signing key", secret_key.display());
+        bail!(
+            "{} already exists; refusing to overwrite a signing key",
+            secret_key.display()
+        );
     }
     if let Some(dir) = secret_key.parent() {
         std::fs::create_dir_all(dir)?;
@@ -98,14 +103,30 @@ fn promote(tag: &str, cohort: &str, secret_key: &Path) -> Result<()> {
     // A draft never becomes `latest`, so undraft the tag first if it is the
     // newest release; a rollback to an older tag leaves drafts alone.
     if gh_release_is_draft(tag)? {
-        gh(&["release", "edit", tag, "--repo", REPOSITORY, "--draft=false"])?;
+        gh(&[
+            "release",
+            "edit",
+            tag,
+            "--repo",
+            REPOSITORY,
+            "--draft=false",
+        ])?;
         println!("published {tag}");
     }
     let latest = gh_latest_tag()?;
     gh(&[
-        "release", "upload", &latest, "--repo", REPOSITORY, "--clobber",
-        manifest_path.to_str().context("staging path is not UTF-8")?,
-        signature_path.to_str().context("staging path is not UTF-8")?,
+        "release",
+        "upload",
+        &latest,
+        "--repo",
+        REPOSITORY,
+        "--clobber",
+        manifest_path
+            .to_str()
+            .context("staging path is not UTF-8")?,
+        signature_path
+            .to_str()
+            .context("staging path is not UTF-8")?,
     ])?;
     println!("promoted {tag} to cohort {cohort}; manifest uploaded to {latest} (latest)");
     Ok(())
@@ -147,11 +168,23 @@ fn manifest_json(tag: &str, cohort: &str, checksums: &str) -> Result<String> {
 
 fn sign(manifest: &str, secret_key: &Path) -> Result<String> {
     let key_box = minisign::SecretKeyBox::from_string(
-        &std::fs::read_to_string(secret_key)
-            .with_context(|| format!("reading {}; run `cargo xtask release keygen`", secret_key.display()))?,
+        &std::fs::read_to_string(secret_key).with_context(|| {
+            format!(
+                "reading {}; run `cargo xtask release keygen`",
+                secret_key.display()
+            )
+        })?,
     )?;
-    let key = key_box.into_secret_key(None).context("unlocking secret key")?;
-    let signature = minisign::sign(None, &key, manifest.as_bytes(), Some("inseam release manifest"), None)?;
+    let key = key_box
+        .into_secret_key(None)
+        .context("unlocking secret key")?;
+    let signature = minisign::sign(
+        None,
+        &key,
+        manifest.as_bytes(),
+        Some("inseam release manifest"),
+        None,
+    )?;
     Ok(signature.into_string())
 }
 
@@ -161,23 +194,44 @@ fn gh(args: &[&str]) -> Result<String> {
         .output()
         .context("running gh; is the GitHub CLI installed and authenticated?")?;
     if !output.status.success() {
-        bail!("gh {} failed: {}", args.join(" "), String::from_utf8_lossy(&output.stderr));
+        bail!(
+            "gh {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     Ok(String::from_utf8(output.stdout)?)
 }
 
 fn gh_release_asset(tag: &str, asset: &str) -> Result<String> {
     let staging = tempfile::tempdir()?;
-    let dir = staging.path().to_str().context("staging path is not UTF-8")?;
-    gh(&["release", "download", tag, "--repo", REPOSITORY, "--pattern", asset, "--dir", dir])?;
+    let dir = staging
+        .path()
+        .to_str()
+        .context("staging path is not UTF-8")?;
+    gh(&[
+        "release",
+        "download",
+        tag,
+        "--repo",
+        REPOSITORY,
+        "--pattern",
+        asset,
+        "--dir",
+        dir,
+    ])?;
     std::fs::read_to_string(staging.path().join(asset))
         .with_context(|| format!("{asset} missing from release {tag}"))
 }
 
 fn gh_release_is_draft(tag: &str) -> Result<bool> {
-    let json = gh(&["release", "view", tag, "--repo", REPOSITORY, "--json", "isDraft"])?;
+    let json = gh(&[
+        "release", "view", tag, "--repo", REPOSITORY, "--json", "isDraft",
+    ])?;
     let value: serde_json::Value = serde_json::from_str(&json)?;
-    value["isDraft"].as_bool().context("gh release view returned no isDraft")
+    value["isDraft"]
+        .as_bool()
+        .context("gh release view returned no isDraft")
 }
 
 fn gh_latest_tag() -> Result<String> {
@@ -195,7 +249,8 @@ mod tests {
 
     #[test]
     fn manifest_names_artifacts_by_per_tag_path() {
-        let checksums = "aa  inseam-x86_64-unknown-linux-gnu.tar.gz\nbb  inseam-aarch64-apple-darwin.tar.gz\n";
+        let checksums =
+            "aa  inseam-x86_64-unknown-linux-gnu.tar.gz\nbb  inseam-aarch64-apple-darwin.tar.gz\n";
         let manifest = manifest_json("v1.2.3", "stable", checksums).unwrap();
         let value: serde_json::Value = serde_json::from_str(&manifest).unwrap();
         assert_eq!(value["cohorts"]["stable"]["version"], "1.2.3");
@@ -203,7 +258,10 @@ mod tests {
             value["cohorts"]["stable"]["artifacts"]["aarch64-apple-darwin"]["path"],
             "../../download/v1.2.3/inseam-aarch64-apple-darwin.tar.gz"
         );
-        assert_eq!(value["cohorts"]["stable"]["artifacts"]["x86_64-unknown-linux-gnu"]["sha256"], "aa");
+        assert_eq!(
+            value["cohorts"]["stable"]["artifacts"]["x86_64-unknown-linux-gnu"]["sha256"],
+            "aa"
+        );
     }
 
     #[test]

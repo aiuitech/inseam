@@ -10,11 +10,11 @@ use axum::response::{IntoResponse, Redirect};
 use axum::routing::get;
 
 use inseam_kernel::address::Address;
-use inseam_seams::operations::{ExpandRequest, FetchBytesRequest, FragmentView, IndexRequest};
 use inseam_seams::SeamError;
+use inseam_seams::operations::{ExpandRequest, FetchBytesRequest, FragmentView, IndexRequest};
 
 use inseam_kernel::fragment::Extent;
-use inseam_plugins::connection_web::{web_address, web_host_id, WebConnectionConfig, WebHost};
+use inseam_plugins::connection_web::{WebConnectionConfig, WebHost, web_address, web_host_id};
 use inseam_seams::connection::Connection;
 
 const PNG: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
@@ -35,7 +35,10 @@ async fn png() -> impl IntoResponse {
 }
 
 async fn page() -> impl IntoResponse {
-    ([(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")], "<h1>guide</h1>")
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        "<h1>guide</h1>",
+    )
 }
 
 async fn redirect() -> Redirect {
@@ -48,7 +51,10 @@ async fn mystery() -> impl IntoResponse {
 }
 
 async fn big() -> impl IntoResponse {
-    ([(axum::http::header::CONTENT_TYPE, "image/png")], vec![0u8; CAP + 1])
+    (
+        [(axum::http::header::CONTENT_TYPE, "image/png")],
+        vec![0u8; CAP + 1],
+    )
 }
 
 /// A text resource past the cap, declared as such: unfetchable whole, yet
@@ -78,7 +84,9 @@ async fn serve_fake_web() -> String {
         .route("/redirect", get(redirect))
         .route("/mystery", get(mystery))
         .route("/big.png", get(big));
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.expect("binds");
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("binds");
     let base = format!("http://{}", listener.local_addr().expect("addr"));
     tokio::spawn(async move {
         axum::serve(listener, router).await.expect("serves");
@@ -169,7 +177,10 @@ async fn links_become_typed_references_fetchable_through_the_web_host() {
     assert!(matches!(refused, Err(SeamError::Refused(_))), "{refused:?}");
 
     let note = common::address_of(&kernel, &corpus.path().join("note.md"));
-    let expansion = ops.expand(ExpandRequest { address: note }).await.expect("expands");
+    let expansion = ops
+        .expand(ExpandRequest { address: note })
+        .await
+        .expect("expands");
     let fragments = &expansion.fragments;
 
     // Typed by extension and confirmed by the server.
@@ -182,10 +193,25 @@ async fn links_become_typed_references_fetchable_through_the_web_host() {
         "the probe learned the length"
     );
     // A redirect and an extension-less URL are typed by the probe alone.
-    assert_eq!(reference(fragments, &format!("{base}/redirect")).expect("followed").mimetype, "image/png");
-    assert_eq!(reference(fragments, &format!("{base}/mystery")).expect("probed").mimetype, "image/png");
+    assert_eq!(
+        reference(fragments, &format!("{base}/redirect"))
+            .expect("followed")
+            .mimetype,
+        "image/png"
+    );
+    assert_eq!(
+        reference(fragments, &format!("{base}/mystery"))
+            .expect("probed")
+            .mimetype,
+        "image/png"
+    );
     // Oversized content is still a reference; only its bytes are refused.
-    assert_eq!(reference(fragments, &format!("{base}/big.png")).expect("referenced").mimetype, "image/png");
+    assert_eq!(
+        reference(fragments, &format!("{base}/big.png"))
+            .expect("referenced")
+            .mimetype,
+        "image/png"
+    );
     // A host the guard refuses keeps the extension's verdict: the link is
     // still a link to an image, the node just may not fetch it.
     let private = reference(fragments, "http://10.0.0.9/private.png").expect("referenced offline");
@@ -193,8 +219,16 @@ async fn links_become_typed_references_fetchable_through_the_web_host() {
     assert_eq!(private.extent, None);
     // Content outside the follow list is not referenced.
     assert!(reference(fragments, &format!("{base}/guide.html")).is_none());
-    let kinds: Vec<&str> = expansion.relations.iter().map(|r| r.kind.as_str()).collect();
-    assert_eq!(kinds.iter().filter(|k| **k == "resolves-to").count(), 5, "{kinds:?}");
+    let kinds: Vec<&str> = expansion
+        .relations
+        .iter()
+        .map(|r| r.kind.as_str())
+        .collect();
+    assert_eq!(
+        kinds.iter().filter(|k| **k == "resolves-to").count(),
+        5,
+        "{kinds:?}"
+    );
 
     // Every reference is fetchable through the web host, under the cap...
     let fetched = ops
@@ -231,7 +265,10 @@ async fn links_become_typed_references_fetchable_through_the_web_host() {
             address: address(&format!("{base}/guide.html")),
         })
         .await;
-    assert!(matches!(unknown, Err(SeamError::UnknownSource(_))), "{unknown:?}");
+    assert!(
+        matches!(unknown, Err(SeamError::UnknownSource(_))),
+        "{unknown:?}"
+    );
 }
 
 #[tokio::test]
@@ -260,8 +297,12 @@ async fn without_the_web_host_links_are_typed_offline_and_not_fetchable() {
     .expect("indexes");
 
     let note = common::address_of(&kernel, &corpus.path().join("note.md"));
-    let expansion = ops.expand(ExpandRequest { address: note }).await.expect("expands");
-    let flyer = reference(&expansion.fragments, "https://example.com/flyer.jpg").expect("referenced");
+    let expansion = ops
+        .expand(ExpandRequest { address: note })
+        .await
+        .expect("expands");
+    let flyer =
+        reference(&expansion.fragments, "https://example.com/flyer.jpg").expect("referenced");
     assert_eq!(flyer.mimetype, "image/jpeg");
 
     let unreachable = ops
@@ -290,7 +331,10 @@ async fn line_reads_stream_the_head_of_a_resource_the_cap_refuses_whole() {
     assert!(matches!(whole, Err(SeamError::Refused(_))), "{whole:?}");
 
     let head = host.read_lines(&log, 1, 2).await.expect("reads the head");
-    assert_eq!(head, "line 1: something happened\nline 2: something happened");
+    assert_eq!(
+        head,
+        "line 1: something happened\nline 2: something happened"
+    );
 
     // Lines past what the cap can hold are still refused: what is read
     // counts, not what is declared.
@@ -298,5 +342,8 @@ async fn line_reads_stream_the_head_of_a_resource_the_cap_refuses_whole() {
     assert!(matches!(deep, Err(SeamError::Refused(_))), "{deep:?}");
 
     let beyond = host.read_lines(&log, 1, 0).await;
-    assert!(matches!(beyond, Err(SeamError::ScanRange { start: 1, end: 0 })));
+    assert!(matches!(
+        beyond,
+        Err(SeamError::ScanRange { start: 1, end: 0 })
+    ));
 }

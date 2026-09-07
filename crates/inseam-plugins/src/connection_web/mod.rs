@@ -19,13 +19,13 @@ use std::time::{Duration, SystemTime};
 use url::Url;
 
 use inseam_kernel::address::{Address, ContentLength, Envelope, HostId, Locator, Timestamp};
-use inseam_kernel::substrate::{parse_config, ApplyCx, Inject, Manifest, Plugin, PluginError};
+use inseam_kernel::substrate::{ApplyCx, Inject, Manifest, Plugin, PluginError, parse_config};
+use inseam_seams::SeamError;
 use inseam_seams::connection::{
-    derive_host_id, register_as_effect, Capabilities, Connection, EnumeratedSource,
-    HostDescription, HostKind, Registration,
+    Capabilities, Connection, EnumeratedSource, HostDescription, HostKind, Registration,
+    derive_host_id, register_as_effect,
 };
 use inseam_seams::text::{check_line_range, slice_lines};
-use inseam_seams::SeamError;
 
 use fetch::{Fetcher, HostPattern};
 
@@ -81,7 +81,9 @@ pub fn web_host_id() -> HostId {
 /// written, so the address round-trips to the exact resource.
 pub fn web_address(url: &Url) -> Result<Address, SeamError> {
     if url.scheme() != "http" && url.scheme() != "https" {
-        return Err(SeamError::Refused(format!("{url}: only http and https are addressable")));
+        return Err(SeamError::Refused(format!(
+            "{url}: only http and https are addressable"
+        )));
     }
     let locator = Locator::new(url.as_str()).map_err(|e| SeamError::failed(e.to_string()))?;
     Ok(Address::new(web_host_id(), locator))
@@ -98,7 +100,9 @@ pub fn url_of(address: &Address) -> Result<Url, SeamError> {
     let url = Url::parse(address.locator.as_str())
         .map_err(|e| SeamError::failed(format!("{address}: locator is not a URL: {e}")))?;
     if url.scheme() != "http" && url.scheme() != "https" {
-        return Err(SeamError::Refused(format!("{url}: only http and https are fetched")));
+        return Err(SeamError::Refused(format!(
+            "{url}: only http and https are fetched"
+        )));
     }
     Ok(url)
 }
@@ -207,7 +211,12 @@ impl Connection for WebHost {
     /// then dropped mid-body: the bytes before a line are the only way to
     /// find it, so a range request could not skip them, but nothing after
     /// it need cross the wire.
-    async fn read_lines(&self, address: &Address, start: u64, end: u64) -> Result<String, SeamError> {
+    async fn read_lines(
+        &self,
+        address: &Address,
+        start: u64,
+        end: u64,
+    ) -> Result<String, SeamError> {
         check_line_range(start, end)?;
         let url = url_of(address)?;
         let fetched = self.fetcher.get_lines(&url, end).await?;
@@ -219,7 +228,10 @@ impl Connection for WebHost {
         let url = url_of(address)?;
         let fetched = self.fetcher.get(&url).await?;
         let size = u64::try_from(fetched.bytes.len()).unwrap_or(u64::MAX);
-        assert!(size <= self.fetcher.content_bytes_max(), "the fetcher enforces its cap");
+        assert!(
+            size <= self.fetcher.content_bytes_max(),
+            "the fetcher enforces its cap"
+        );
         Ok(fetched.bytes)
     }
 
@@ -257,7 +269,10 @@ mod tests {
         let address = web_address(&url).expect("addressable");
         assert_eq!(address.host, web_host_id());
         assert!(address.host.as_str().starts_with("web-"));
-        assert_eq!(address.locator.as_str(), "https://example.com/a/logo.png?v=2");
+        assert_eq!(
+            address.locator.as_str(),
+            "https://example.com/a/logo.png?v=2"
+        );
         let parsed: Address = address.to_string().parse().expect("address parses");
         assert_eq!(parsed, address);
         assert_eq!(url_of(&parsed).expect("url"), url);

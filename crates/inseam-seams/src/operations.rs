@@ -17,12 +17,12 @@ use inseam_kernel::store::VectorScope;
 use inseam_kernel::substrate::{FiberState, FiberView, Guard, SecretNeed, ServiceKey};
 use serde::{Deserialize, Serialize};
 
+use crate::SeamError;
 use crate::connection::{Capabilities, HostKind};
 use crate::finder::QueryTrace;
-use crate::oauth::{AuthorizationCallback, AuthorizationStarted, GrantId, GrantState, Redirect};
 use crate::llm::LlmLane;
+use crate::oauth::{AuthorizationCallback, AuthorizationStarted, GrantId, GrantState, Redirect};
 use crate::sweep::{DeepBudget, IndexMonitor, IndexReport};
-use crate::SeamError;
 
 pub const OPERATIONS: ServiceKey<dyn Operations> = ServiceKey::new("operations");
 
@@ -46,7 +46,10 @@ pub trait Operations: Send + Sync {
     /// The bytes of a source or of a referenced fragment, with their
     /// content type — the rung for content that is not text: an image, a
     /// PDF, a linked file. Bounded at [`FETCH_BYTES_MAX`] per message.
-    async fn fetch_bytes(&self, request: FetchBytesRequest) -> Result<FetchBytesResponse, SeamError>;
+    async fn fetch_bytes(
+        &self,
+        request: FetchBytesRequest,
+    ) -> Result<FetchBytesResponse, SeamError>;
     /// Owner operation: reconcile the index over a scope of one host.
     async fn index(&self, request: IndexRequest) -> Result<IndexReport, SeamError>;
     /// The same operation with a process-local progress and control monitor.
@@ -79,13 +82,22 @@ pub trait Operations: Send + Sync {
     /// asks for the loopback redirect and then waits with
     /// [`Operations::await_authorization`]; a remote one serves the redirect
     /// itself and delivers it with [`Operations::complete_authorization`].
-    async fn authorize_grant(&self, request: AuthorizeGrantRequest) -> Result<AuthorizationStarted, SeamError>;
+    async fn authorize_grant(
+        &self,
+        request: AuthorizeGrantRequest,
+    ) -> Result<AuthorizationStarted, SeamError>;
     /// Owner operation: wait for a started authorization to finish, bounded
     /// by the oauth provider's timeout; the grant as it stands afterwards.
-    async fn await_authorization(&self, request: AwaitAuthorizationRequest) -> Result<GrantView, SeamError>;
+    async fn await_authorization(
+        &self,
+        request: AwaitAuthorizationRequest,
+    ) -> Result<GrantView, SeamError>;
     /// Owner operation: the browser came back to a transport-served
     /// redirect with these parameters; exchange and store.
-    async fn complete_authorization(&self, callback: AuthorizationCallback) -> Result<GrantView, SeamError>;
+    async fn complete_authorization(
+        &self,
+        callback: AuthorizationCallback,
+    ) -> Result<GrantView, SeamError>;
     /// Owner operation: forget a grant's tokens; hosts behind it withdraw.
     async fn revoke_grant(&self, request: RevokeGrantRequest) -> Result<GrantView, SeamError>;
     /// Owner operation: every composition entry as the kernel runs it —
@@ -557,7 +569,9 @@ pub enum PluginState {
     /// Waiting on services nothing provides yet (`PluginView::missing`).
     Pending,
     /// `apply` failed; contained to this entry.
-    Failed { reason: String },
+    Failed {
+        reason: String,
+    },
 }
 
 /// One declared secret a parked plugin waits for, with the owner-facing

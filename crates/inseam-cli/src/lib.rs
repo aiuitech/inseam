@@ -19,25 +19,22 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 
 mod agent;
 mod authoring;
 
+use agent::{AgentEvent, run_agent};
 use inseam_kernel::address::{Address, HostId};
-use inseam_kernel::substrate::{
-    Composition, CompositionEdits, FiberState, Kernel, SubstrateError,
-};
-use agent::{run_agent, AgentEvent};
-use inseam_seams::llm::{self, LlmLane, ModelInfo, LLM};
+use inseam_kernel::substrate::{Composition, CompositionEdits, FiberState, Kernel, SubstrateError};
+use inseam_seams::llm::{self, LLM, LlmLane, ModelInfo};
 use inseam_seams::oauth::{GrantId, GrantState, Redirect};
 use inseam_seams::operations::{
     AuthorizeGrantRequest, AwaitAuthorizationRequest, CatalogFilter, CatalogRequest,
     CatalogResponse, ExpandRequest, FetchBytesRequest, FetchRequest, GrantView, IndexRequest,
-    QueryRequest,
-    Operations, QueryResponse, RepairOutcome, RepairReport, RepairRequest, RevokeGrantRequest,
-    ScanRequest, OPERATIONS,
+    OPERATIONS, Operations, QueryRequest, QueryResponse, RepairOutcome, RepairReport,
+    RepairRequest, RevokeGrantRequest, ScanRequest,
 };
 use inseam_seams::sweep::DeepBudget;
 
@@ -497,7 +494,11 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
     // binary cannot, which is exactly when it is needed.
     if let Command::SelfMaintenance { command } = &cli.command {
         match command {
-            SelfCommand::Update { origin, cohort, check } => {
+            SelfCommand::Update {
+                origin,
+                cohort,
+                check,
+            } => {
                 release::self_update(
                     &distribution.update_channel,
                     origin.as_deref(),
@@ -523,10 +524,14 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
             }
             PluginCommand::Install { name, registry } => {
                 let composition_path = composition_path_of(&cli, &data_dir);
-                registry::install(name, registry.as_deref(), &data_dir, &composition_path)
-                    .await?;
+                registry::install(name, registry.as_deref(), &data_dir, &composition_path).await?;
             }
-            PluginCommand::New { name, claims, seam, dir } => {
+            PluginCommand::New {
+                name,
+                claims,
+                seam,
+                dir,
+            } => {
                 let root = authoring::plugin_new(&authoring::Scaffold {
                     name,
                     seam,
@@ -535,7 +540,14 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 })?;
                 authoring::print_scaffold_next_steps(&root, name);
             }
-            PluginCommand::Try { artifact, file, mimetype, llm_returns, not_root, as_check } => {
+            PluginCommand::Try {
+                artifact,
+                file,
+                mimetype,
+                llm_returns,
+                not_root,
+                as_check,
+            } => {
                 authoring::plugin_try(
                     &authoring::TryRequest {
                         artifact,
@@ -583,7 +595,9 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
     let mut kernel = Kernel::boot(
         &data_dir,
         distribution.factories,
-        vec![Arc::new(inseam_wasm_host::WasmSchemeFactory::new(&data_dir))],
+        vec![Arc::new(inseam_wasm_host::WasmSchemeFactory::new(
+            &data_dir,
+        ))],
     )
     .await?;
     match kernel.reconcile(&composition).await {
@@ -697,10 +711,17 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
             let ops = kernel.service(&OPERATIONS)?;
             let grants = ops.grants().await?;
             if grants.is_empty() {
-                println!("no grants: mount a connection that registers one (the `google` entry) or add `[[entry.config.grants]]` to the oauth entry (docs/plugins/oauth.md)");
+                println!(
+                    "no grants: mount a connection that registers one (the `google` entry) or add `[[entry.config.grants]]` to the oauth entry (docs/plugins/oauth.md)"
+                );
             }
             for grant in &grants {
-                println!("{:20} {:24} {}", grant.id, grant.provider, grant_status(grant));
+                println!(
+                    "{:20} {:24} {}",
+                    grant.id,
+                    grant.provider,
+                    grant_status(grant)
+                );
             }
         }
         Command::Authorize { grant } => {
@@ -712,8 +733,14 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                     redirect: Redirect::Loopback,
                 })
                 .await?;
-            println!("Open this URL in your browser and sign in:\n\n  {}\n", started.url);
-            println!("Waiting for the browser to come back on {}…", started.redirect_uri);
+            println!(
+                "Open this URL in your browser and sign in:\n\n  {}\n",
+                started.url
+            );
+            println!(
+                "Waiting for the browser to come back on {}…",
+                started.redirect_uri
+            );
             let view = ops
                 .await_authorization(AwaitAuthorizationRequest {
                     state: started.state,
@@ -724,7 +751,9 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
         Command::Revoke { grant } => {
             let ops = kernel.service(&OPERATIONS)?;
             let id = GrantId::new(grant.as_str())?;
-            let view = ops.revoke_grant(RevokeGrantRequest { grant: id.clone() }).await?;
+            let view = ops
+                .revoke_grant(RevokeGrantRequest { grant: id.clone() })
+                .await?;
             println!("grant `{id}` {}", grant_status(&view));
         }
         Command::Query { text, limit, json } => {
@@ -819,16 +848,21 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 })
                 .context("no agent model configured")?;
             println!("· model {model}\n");
-            let outcome = run_agent(ops.as_ref(), client.as_ref(), &model, &question, turns, |event| {
-                match event {
+            let outcome = run_agent(
+                ops.as_ref(),
+                client.as_ref(),
+                &model,
+                &question,
+                turns,
+                |event| match event {
                     AgentEvent::ToolCall { name, arguments } => {
                         println!("→ {name} {arguments}");
                     }
                     AgentEvent::ToolResult { name, brief } => {
                         println!("  ← {name}: {brief}");
                     }
-                }
-            })
+                },
+            )
             .await?;
             println!(
                 "\n{}\n\n· {} turns, {} tool calls, ${:.4} spent",
@@ -855,8 +889,15 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 };
                 price(a).total_cmp(&price(b))
             });
-            let role = if embeddings { "embedding" } else { "tool-capable chat" };
-            println!("{} {role} models, cheapest prompt price first:\n", models.len());
+            let role = if embeddings {
+                "embedding"
+            } else {
+                "tool-capable chat"
+            };
+            println!(
+                "{} {role} models, cheapest prompt price first:\n",
+                models.len()
+            );
             for m in models.iter().take(30) {
                 let pricing = m
                     .pricing
@@ -918,10 +959,7 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                     "not present (run `inseam repair`)"
                 }
             );
-            println!(
-                "store size     {} on disk",
-                human_bytes(status.store_bytes)
-            );
+            println!("store size     {} on disk", human_bytes(status.store_bytes));
             println!(
                 "content size   {} across cataloged sources",
                 human_bytes(status.content_bytes)
@@ -940,7 +978,9 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
             for fiber in kernel.fibers() {
                 let state = match &fiber.state {
                     FiberState::Active => "active".to_string(),
-                    FiberState::Pending => format!("pending (missing: {})", fiber.missing.join(", ")),
+                    FiberState::Pending => {
+                        format!("pending (missing: {})", fiber.missing.join(", "))
+                    }
                     FiberState::Failed(e) => format!("failed: {e}"),
                 };
                 println!("{:14} {:24} {}", fiber.id, fiber.plugin, state);
@@ -1029,8 +1069,14 @@ fn grant_status(grant: &GrantView) -> String {
             account,
         } => format!(
             "authorized{} ({}) scopes: {}",
-            account.as_deref().map(|a| format!(" as {a}")).unwrap_or_default(),
-            expires_at.map_or("no expiry".to_string(), |t| format!("token until {}", inseam_seams::dates::ymd(t))),
+            account
+                .as_deref()
+                .map(|a| format!(" as {a}"))
+                .unwrap_or_default(),
+            expires_at.map_or("no expiry".to_string(), |t| format!(
+                "token until {}",
+                inseam_seams::dates::ymd(t)
+            )),
             scopes.join(" ")
         ),
     }
@@ -1046,7 +1092,10 @@ fn grant_status(grant: &GrantView) -> String {
 /// neither flag means "the composition's budget"; clap rejects both at once.
 fn deep_budget_flag(catalog_only: bool, max_sources: Option<NonZeroU32>) -> Option<DeepBudget> {
     if catalog_only {
-        assert!(max_sources.is_none(), "clap declares the flags mutually exclusive");
+        assert!(
+            max_sources.is_none(),
+            "clap declares the flags mutually exclusive"
+        );
         return Some(DeepBudget::CatalogOnly);
     }
     max_sources.map(DeepBudget::Sources)
@@ -1235,10 +1284,7 @@ fn print_results(response: &QueryResponse) {
             println!("    {summary}");
         }
         for hint in &r.hints {
-            let extent = hint
-                .extent
-                .map(|e| format!("[{e}] "))
-                .unwrap_or_default();
+            let extent = hint.extent.map(|e| format!("[{e}] ")).unwrap_or_default();
             println!("    ▸ {extent}{}", hint.text);
         }
         println!();
@@ -1284,10 +1330,7 @@ fn print_expansion(response: &inseam_seams::operations::ExpandResponse) {
     }
     println!("fragments:");
     for f in &response.fragments {
-        let extent = f
-            .extent
-            .map(|e| format!(" [{e}]"))
-            .unwrap_or_default();
+        let extent = f.extent.map(|e| format!(" [{e}]")).unwrap_or_default();
         let text = f.text.as_deref().unwrap_or("");
         let reference = f
             .content_address

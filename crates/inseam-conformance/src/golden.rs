@@ -108,7 +108,10 @@ impl ChecksFile {
     /// The fixture paths the checks reference (relative to the checks
     /// file) — what an installer must fetch alongside it.
     pub fn fixture_files(&self) -> Vec<PathBuf> {
-        self.check.iter().filter_map(|c| c.bytes_file.clone()).collect()
+        self.check
+            .iter()
+            .filter_map(|c| c.bytes_file.clone())
+            .collect()
     }
 
     /// The mandatory coverage every plugin ships, whichever tier: at least
@@ -129,7 +132,11 @@ impl ChecksFile {
                     .to_string(),
             );
         }
-        if !self.check.iter().any(|c| c.is_starved() && c.expect.pins_output()) {
+        if !self
+            .check
+            .iter()
+            .any(|c| c.is_starved() && c.expect.pins_output())
+        {
             unmet.push(
                 "no check pins the degrade path: at least one check must withhold both \
                  `text` and `llm_returns` and set `max_fragments` (0 for \"emits nothing\", \
@@ -137,11 +144,7 @@ impl ChecksFile {
                     .to_string(),
             );
         }
-        if unmet.is_empty() {
-            Ok(())
-        } else {
-            Err(unmet)
-        }
+        if unmet.is_empty() { Ok(()) } else { Err(unmet) }
     }
 }
 
@@ -226,14 +229,18 @@ impl Expect {
             misses.push(format!("no fragment carries relation {relation:?}"));
         }
         if let Some(prefix) = &self.mimetype
-            && !fragments.iter().any(|f| f.mimetype.starts_with(prefix.as_str()))
+            && !fragments
+                .iter()
+                .any(|f| f.mimetype.starts_with(prefix.as_str()))
         {
             misses.push(format!("no fragment mimetype starts with {prefix:?}"));
         }
         if let Some(needle) = &self.keyed_contains
             && !emitted.keyed.iter().any(|k| {
                 k.key.contains(needle.as_str())
-                    || k.text.as_deref().is_some_and(|t| t.contains(needle.as_str()))
+                    || k.text
+                        .as_deref()
+                        .is_some_and(|t| t.contains(needle.as_str()))
             })
         {
             misses.push(format!("no keyed sprout's key or text contains {needle:?}"));
@@ -295,9 +302,15 @@ mod tests {
     #[test]
     fn expect_defaults_require_one_fragment() {
         let expect = Expect::default();
-        assert!(expect
-            .unmet(&emitted(vec![fragment("text/plain", "contains", Some("x"))]))
-            .is_empty());
+        assert!(
+            expect
+                .unmet(&emitted(vec![fragment(
+                    "text/plain",
+                    "contains",
+                    Some("x")
+                )]))
+                .is_empty()
+        );
         assert_eq!(expect.unmet(&emitted(Vec::new())).len(), 1);
     }
 
@@ -311,7 +324,11 @@ mod tests {
             "#,
         )
         .expect("parses");
-        let hit = emitted(vec![fragment("text/plain;via=ocr", "transcribes", Some("GARAGE SALE"))]);
+        let hit = emitted(vec![fragment(
+            "text/plain;via=ocr",
+            "transcribes",
+            Some("GARAGE SALE"),
+        )]);
         assert!(expect.unmet(&hit).is_empty());
         let miss = emitted(vec![fragment("text/html", "contains", Some("nothing"))]);
         assert_eq!(expect.unmet(&miss).len(), 3);
@@ -319,17 +336,21 @@ mod tests {
 
     #[test]
     fn expect_zero_zero_asserts_clean_degradation() {
-        let expect: Expect = toml::from_str("min_fragments = 0\nmax_fragments = 0").expect("parses");
+        let expect: Expect =
+            toml::from_str("min_fragments = 0\nmax_fragments = 0").expect("parses");
         assert!(expect.unmet(&emitted(Vec::new())).is_empty());
-        assert!(!expect
-            .unmet(&emitted(vec![fragment("text/plain", "contains", None)]))
-            .is_empty());
+        assert!(
+            !expect
+                .unmet(&emitted(vec![fragment("text/plain", "contains", None)]))
+                .is_empty()
+        );
     }
 
     #[test]
     fn expect_matches_keyed_sprouts_by_key_or_text_and_caps_them() {
         let expect: Expect =
-            toml::from_str("min_fragments = 0\nkeyed_contains = \"Ada\"\nmax_keyed = 1").expect("parses");
+            toml::from_str("min_fragments = 0\nkeyed_contains = \"Ada\"\nmax_keyed = 1")
+                .expect("parses");
         let keyed = |key: &str, text: &str| EmittedKeyed {
             key: key.into(),
             relation: "mentions".into(),
@@ -342,7 +363,10 @@ mod tests {
         assert!(expect.unmet(&hit).is_empty());
         let miss = Emitted {
             fragments: Vec::new(),
-            keyed: vec![keyed("entity:person:bob", "Bob"), keyed("entity:person:cy", "Cy")],
+            keyed: vec![
+                keyed("entity:person:bob", "Bob"),
+                keyed("entity:person:cy", "Cy"),
+            ],
         };
         assert_eq!(expect.unmet(&miss).len(), 2);
     }
@@ -354,10 +378,20 @@ mod tests {
         )
         .expect("parses");
         let err = check
-            .verdict(&emitted(vec![fragment("text/plain", "contains", Some("hay"))]))
+            .verdict(&emitted(vec![fragment(
+                "text/plain",
+                "contains",
+                Some("hay"),
+            )]))
             .expect_err("misses");
-        assert!(err.contains("no fragment text contains \"needle\""), "{err}");
-        assert!(err.contains("got 1 fragment(s) [text/plain contains \"hay\"]"), "{err}");
+        assert!(
+            err.contains("no fragment text contains \"needle\""),
+            "{err}"
+        );
+        assert!(
+            err.contains("got 1 fragment(s) [text/plain contains \"hay\"]"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -375,24 +409,40 @@ mod tests {
         "#,
         )
         .expect("parses");
-        assert_eq!(file.fixture_files(), vec![PathBuf::from("fixtures/pixel.png")]);
+        assert_eq!(
+            file.fixture_files(),
+            vec![PathBuf::from("fixtures/pixel.png")]
+        );
     }
 
     #[test]
     fn fixture_path_resolves_beside_checks_and_refuses_escapes() {
-        let inside: GoldenCheck =
-            toml::from_str("name = \"a\"\nmimetype = \"image/png\"\nbytes_file = \"fixtures/p.png\"")
-                .expect("parses");
+        let inside: GoldenCheck = toml::from_str(
+            "name = \"a\"\nmimetype = \"image/png\"\nbytes_file = \"fixtures/p.png\"",
+        )
+        .expect("parses");
         assert_eq!(
-            inside.fixture_path(Path::new("/plugins/ocr/ocr.checks.toml")).expect("resolves"),
+            inside
+                .fixture_path(Path::new("/plugins/ocr/ocr.checks.toml"))
+                .expect("resolves"),
             Some(PathBuf::from("/plugins/ocr/fixtures/p.png"))
         );
-        let outside: GoldenCheck =
-            toml::from_str("name = \"a\"\nmimetype = \"image/png\"\nbytes_file = \"../etc/passwd\"")
-                .expect("parses");
-        assert!(outside.fixture_path(Path::new("/plugins/ocr/ocr.checks.toml")).is_err());
-        let none: GoldenCheck = toml::from_str("name = \"a\"\nmimetype = \"text/plain\"").expect("parses");
-        assert_eq!(none.fixture_path(Path::new("x.checks.toml")).expect("resolves"), None);
+        let outside: GoldenCheck = toml::from_str(
+            "name = \"a\"\nmimetype = \"image/png\"\nbytes_file = \"../etc/passwd\"",
+        )
+        .expect("parses");
+        assert!(
+            outside
+                .fixture_path(Path::new("/plugins/ocr/ocr.checks.toml"))
+                .is_err()
+        );
+        let none: GoldenCheck =
+            toml::from_str("name = \"a\"\nmimetype = \"text/plain\"").expect("parses");
+        assert_eq!(
+            none.fixture_path(Path::new("x.checks.toml"))
+                .expect("resolves"),
+            None
+        );
     }
 
     const COVERED: &str = r#"
@@ -413,12 +463,20 @@ mod tests {
 
     #[test]
     fn required_coverage_accepts_a_positive_plus_a_starved_check() {
-        assert!(ChecksFile::parse(COVERED).expect("parses").required_coverage().is_ok());
+        assert!(
+            ChecksFile::parse(COVERED)
+                .expect("parses")
+                .required_coverage()
+                .is_ok()
+        );
     }
 
     #[test]
     fn required_coverage_rejects_an_empty_file_with_every_requirement_named() {
-        let unmet = ChecksFile::parse("").expect("parses").required_coverage().expect_err("empty");
+        let unmet = ChecksFile::parse("")
+            .expect("parses")
+            .required_coverage()
+            .expect_err("empty");
         assert_eq!(unmet.len(), 3, "{unmet:?}");
     }
 
@@ -437,7 +495,10 @@ mod tests {
             [check.expect]
             min_fragments = 0
         "#;
-        let unmet = ChecksFile::parse(vacuous).expect("parses").required_coverage().expect_err("vacuous");
+        let unmet = ChecksFile::parse(vacuous)
+            .expect("parses")
+            .required_coverage()
+            .expect_err("vacuous");
         assert_eq!(unmet.len(), 2, "{unmet:?}");
         assert!(unmet[0].contains("proves the claim"), "{unmet:?}");
         assert!(unmet[1].contains("pins the degrade path"), "{unmet:?}");
@@ -449,7 +510,8 @@ mod tests {
         assert!(!file.check[0].is_starved());
         assert!(file.check[1].is_starved());
         let with_llm: GoldenCheck =
-            toml::from_str("name = \"a\"\nmimetype = \"image/png\"\nllm_returns = \"x\"").expect("parses");
+            toml::from_str("name = \"a\"\nmimetype = \"image/png\"\nllm_returns = \"x\"")
+                .expect("parses");
         assert!(!with_llm.is_starved());
     }
 }

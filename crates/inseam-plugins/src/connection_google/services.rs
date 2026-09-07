@@ -111,7 +111,10 @@ mod tests {
 
     #[test]
     fn every_service_has_a_distinct_kind_scope_and_name() {
-        let mut kinds: Vec<String> = GoogleService::ALL.iter().map(|s| s.kind().to_string()).collect();
+        let mut kinds: Vec<String> = GoogleService::ALL
+            .iter()
+            .map(|s| s.kind().to_string())
+            .collect();
         let mut scopes: Vec<&str> = GoogleService::ALL.iter().map(|s| s.scope()).collect();
         let mut names: Vec<&str> = GoogleService::ALL.iter().map(|s| s.name()).collect();
         kinds.sort();
@@ -127,7 +130,11 @@ mod tests {
 
     #[test]
     fn scopes_are_identity_then_services_in_catalog_order() {
-        let scopes = scopes_for(&[GoogleService::Tasks, GoogleService::Gmail, GoogleService::Gmail]);
+        let scopes = scopes_for(&[
+            GoogleService::Tasks,
+            GoogleService::Gmail,
+            GoogleService::Gmail,
+        ]);
         assert_eq!(
             scopes,
             vec![

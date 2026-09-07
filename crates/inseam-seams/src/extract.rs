@@ -675,11 +675,7 @@ fn term_weights(counts: &[u32], spread: &[u32], is_phrase: &[bool], sentences: u
             }
             let spread = f64::from(*spread).max(1.0);
             let base = f64::from(*count) * (1.0 + n / spread).ln();
-            if *phrase {
-                base * PHRASE_WEIGHT
-            } else {
-                base
-            }
+            if *phrase { base * PHRASE_WEIGHT } else { base }
         })
         .collect()
 }

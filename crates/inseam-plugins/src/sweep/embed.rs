@@ -14,8 +14,8 @@ use tokio::task::JoinHandle;
 use inseam_kernel::address::ContentDigest;
 use inseam_kernel::fragment::FragmentId;
 use inseam_kernel::store::{IndexStore, SearchRole, SearchRow, SourceCompletion, SourceId};
-use inseam_seams::embedder::Embedder;
 use inseam_seams::SeamError;
+use inseam_seams::embedder::Embedder;
 
 /// Search rows per embed+land batch. The lean source+summary shape yields
 /// one vector per two rows, filling a 128-input endpoint request.
@@ -298,7 +298,11 @@ async fn embed_texts(embedder: &dyn Embedder, store: &IndexStore, texts: &[&str]
         let missing_texts: Vec<&str> = misses.iter().map(|&i| texts[i]).collect();
         match embedder.embed(&missing_texts).await {
             Ok(embedded) => {
-                assert_eq!(embedded.len(), misses.len(), "embedder returns one vector per text");
+                assert_eq!(
+                    embedded.len(),
+                    misses.len(),
+                    "embedder returns one vector per text"
+                );
                 for (position, vector) in misses.iter().zip(embedded) {
                     vectors[*position] = Some(vector);
                 }

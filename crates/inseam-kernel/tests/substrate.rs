@@ -276,15 +276,15 @@ fn factories(journal: &Journal) -> Vec<Arc<dyn PluginFactory>> {
         "cyclic-greeter",
         "echo-provider",
     ]
-        .into_iter()
-        .map(|name| {
-            Arc::new(TestFactory {
-                name,
-                journal: Arc::clone(journal),
-                applies: Arc::new(AtomicUsize::new(0)),
-            }) as Arc<dyn PluginFactory>
-        })
-        .collect()
+    .into_iter()
+    .map(|name| {
+        Arc::new(TestFactory {
+            name,
+            journal: Arc::clone(journal),
+            applies: Arc::new(AtomicUsize::new(0)),
+        }) as Arc<dyn PluginFactory>
+    })
+    .collect()
 }
 
 async fn kernel(journal: &Journal, dir: &std::path::Path) -> Kernel {
@@ -322,10 +322,12 @@ async fn activation_is_reactive_not_ordered() {
         .expect("settles");
     let log = journal.lock().unwrap().clone();
     assert!(log.contains(&"consumer heard: hi".to_string()), "{log:?}");
-    assert!(kernel
-        .fibers()
-        .iter()
-        .all(|f| f.state == FiberState::Active));
+    assert!(
+        kernel
+            .fibers()
+            .iter()
+            .all(|f| f.state == FiberState::Active)
+    );
 }
 
 #[tokio::test]
@@ -353,11 +355,22 @@ async fn optional_dependency_appearing_restarts_its_consumer() {
         .expect("settles");
     let log = journal.lock().unwrap().clone();
     assert_eq!(
-        log.iter().filter(|l| l.starts_with("optional heard")).cloned().collect::<Vec<_>>(),
-        vec!["optional heard: nothing".to_string(), "optional heard: late".to_string()],
+        log.iter()
+            .filter(|l| l.starts_with("optional heard"))
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec![
+            "optional heard: nothing".to_string(),
+            "optional heard: late".to_string()
+        ],
         "{log:?}"
     );
-    assert!(kernel.fibers().iter().all(|f| f.state == FiberState::Active));
+    assert!(
+        kernel
+            .fibers()
+            .iter()
+            .all(|f| f.state == FiberState::Active)
+    );
 }
 
 #[tokio::test]
@@ -590,7 +603,10 @@ async fn undeclared_access_is_refused() {
     let fibers = kernel.fibers();
     let sneaky = fibers.iter().find(|f| f.id == "s").expect("present");
     let FiberState::Failed(reason) = &sneaky.state else {
-        panic!("undeclared access must fail the fiber, got {:?}", sneaky.state);
+        panic!(
+            "undeclared access must fail the fiber, got {:?}",
+            sneaky.state
+        );
     };
     assert!(reason.contains("without declaring"), "{reason}");
 }
@@ -649,12 +665,18 @@ async fn confluence_dynamic_history_leaves_no_trace() {
         ))
         .await
         .expect("settles");
-    kernel_a.reconcile(&final_composition).await.expect("settles");
+    kernel_a
+        .reconcile(&final_composition)
+        .await
+        .expect("settles");
 
     // Kernel B: a fresh boot of the final composition.
     let journal_b: Journal = Default::default();
     let mut kernel_b = kernel(&journal_b, dir_b.path()).await;
-    kernel_b.reconcile(&final_composition).await.expect("settles");
+    kernel_b
+        .reconcile(&final_composition)
+        .await
+        .expect("settles");
 
     // Quiescent states match: same fibers, same states, same providers,
     // same live effects.

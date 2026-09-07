@@ -17,35 +17,33 @@ use std::sync::Arc;
 
 use inseam_kernel::address::{Address, ContentLength, HostId};
 use inseam_kernel::store::{
-    CatalogRow, CatalogSelection, IndexStore, SearchIndexRepair,
-    SearchIndexRepairOutcome, StoredFragment, StoredSource, VectorScope,
+    CatalogRow, CatalogSelection, IndexStore, SearchIndexRepair, SearchIndexRepairOutcome,
+    StoredFragment, StoredSource, VectorScope,
 };
 use inseam_kernel::substrate::{
-    ApplyCx, CompositionEdit, CompositionEditor, Entry, EventBus, Facts, Inject, Manifest,
-    Plugin, PluginError, SubstrateError, Verdict, COMPOSITION, STORE,
+    ApplyCx, COMPOSITION, CompositionEdit, CompositionEditor, Entry, EventBus, Facts, Inject,
+    Manifest, Plugin, PluginError, STORE, SubstrateError, Verdict,
 };
+use inseam_seams::SeamError;
 use inseam_seams::connection::{
-    resolve_default, Connection, Connections, Registration as ConnectionRegistration,
-    CONNECTIONS,
+    CONNECTIONS, Connection, Connections, Registration as ConnectionRegistration, resolve_default,
 };
-use inseam_seams::finder::{Finder, RankedFragment, FINDER};
+use inseam_seams::dates::ymd;
+use inseam_seams::finder::{FINDER, Finder, RankedFragment};
 use inseam_seams::oauth::{
-    AuthorizationCallback, AuthorizationStarted, Grant, GrantId, OAuth, OAUTH,
+    AuthorizationCallback, AuthorizationStarted, Grant, GrantId, OAUTH, OAuth,
 };
 use inseam_seams::operations::{
     AuthorizeGrantRequest, AwaitAuthorizationRequest, CatalogFilter, CatalogRequest,
-    CatalogResponse, CatalogSourceView, EnvelopeView, ExpandRequest,
-    ExpandResponse, FetchBytesRequest, FetchBytesResponse, FetchRequest, FetchResponse,
-    FileBytes, FragmentHint, FragmentView, GrantView, FETCH_BYTES_MAX,
-    HostView, IndexRequest, InstallPluginRequest, OperationRequest, Operations, PluginView,
-    QueryMeta, QueryRequest, QueryResponse, QueryResult, RelationView, RepairOutcome, RepairReport,
-    RepairRequest, RevokeGrantRequest, ScanRequest, ScanResponse, StatusReport, OPERATIONS,
-    SCAN_LINES_MAX,
+    CatalogResponse, CatalogSourceView, EnvelopeView, ExpandRequest, ExpandResponse,
+    FETCH_BYTES_MAX, FetchBytesRequest, FetchBytesResponse, FetchRequest, FetchResponse, FileBytes,
+    FragmentHint, FragmentView, GrantView, HostView, IndexRequest, InstallPluginRequest,
+    OPERATIONS, OperationRequest, Operations, PluginView, QueryMeta, QueryRequest, QueryResponse,
+    QueryResult, RelationView, RepairOutcome, RepairReport, RepairRequest, RevokeGrantRequest,
+    SCAN_LINES_MAX, ScanRequest, ScanResponse, StatusReport,
 };
-use inseam_seams::sweep::{IndexMonitor, IndexReport, Sweep, SweepRequest, SWEEP};
-use inseam_seams::dates::ymd;
+use inseam_seams::sweep::{IndexMonitor, IndexReport, SWEEP, Sweep, SweepRequest};
 use inseam_seams::text::{check_line_range, count_lines, is_indexable_text, preview, slice_lines};
-use inseam_seams::SeamError;
 
 /// Characters of fragment text shown in hints and expand views.
 const PREVIEW_CHARS: usize = 280;
@@ -135,7 +133,8 @@ impl OperationsService {
 
     async fn source_at(&self, address: &Address) -> Result<StoredSource, SeamError> {
         self.store
-            .source_by_address(address).await?
+            .source_by_address(address)
+            .await?
             .ok_or_else(|| SeamError::UnknownSource(address.clone()))
     }
 
@@ -169,7 +168,10 @@ impl OperationsService {
 
     /// The host an index request means: the one it names, else the only
     /// one mounted.
-    fn host_for_index(&self, request: &IndexRequest) -> Result<Arc<ConnectionRegistration>, SeamError> {
+    fn host_for_index(
+        &self,
+        request: &IndexRequest,
+    ) -> Result<Arc<ConnectionRegistration>, SeamError> {
         let steward = match &request.host {
             Some(host) => self
                 .connections
@@ -262,7 +264,13 @@ impl Operations for OperationsService {
                 match sources_cache.get(&sid) {
                     Some(a) => address = Some(a.clone()),
                     None => {
-                        address = self.store.source(sid).await.ok().flatten().map(|s| s.address);
+                        address = self
+                            .store
+                            .source(sid)
+                            .await
+                            .ok()
+                            .flatten()
+                            .map(|s| s.address);
                         if let Some(a) = &address {
                             sources_cache.insert(sid, a.clone());
                         }
@@ -356,7 +364,10 @@ impl Operations for OperationsService {
         })
     }
 
-    async fn fetch_bytes(&self, request: FetchBytesRequest) -> Result<FetchBytesResponse, SeamError> {
+    async fn fetch_bytes(
+        &self,
+        request: FetchBytesRequest,
+    ) -> Result<FetchBytesResponse, SeamError> {
         self.guard("fetch")?;
         let (content_type, known_bytes) = self.content_at(&request.address).await?;
         // Refuse before reading when the catalog already knows the size;
@@ -441,16 +452,27 @@ impl Operations for OperationsService {
         Ok(views)
     }
 
-    async fn authorize_grant(&self, request: AuthorizeGrantRequest) -> Result<AuthorizationStarted, SeamError> {
-        self.oauth()?.authorize(&request.grant, request.redirect).await
+    async fn authorize_grant(
+        &self,
+        request: AuthorizeGrantRequest,
+    ) -> Result<AuthorizationStarted, SeamError> {
+        self.oauth()?
+            .authorize(&request.grant, request.redirect)
+            .await
     }
 
-    async fn await_authorization(&self, request: AwaitAuthorizationRequest) -> Result<GrantView, SeamError> {
+    async fn await_authorization(
+        &self,
+        request: AwaitAuthorizationRequest,
+    ) -> Result<GrantView, SeamError> {
         let id = self.oauth()?.await_authorization(&request.state).await?;
         Ok(grant_view(self.grant(&id)?.as_ref()).await)
     }
 
-    async fn complete_authorization(&self, callback: AuthorizationCallback) -> Result<GrantView, SeamError> {
+    async fn complete_authorization(
+        &self,
+        callback: AuthorizationCallback,
+    ) -> Result<GrantView, SeamError> {
         let id = self.oauth()?.complete_authorization(callback).await?;
         Ok(grant_view(self.grant(&id)?.as_ref()).await)
     }
@@ -493,16 +515,22 @@ impl Operations for OperationsService {
             )));
         }
         let artifact = install::write(&directory, &plan).map_err(|error| {
-            SeamError::failed(format!("writing plugin files under {}: {error}", directory.display()))
+            SeamError::failed(format!(
+                "writing plugin files under {}: {error}",
+                directory.display()
+            ))
         })?;
-        let entry = Entry::new(id.as_str(), &format!("wasm:{}", artifact.display())).with_config(config);
+        let entry =
+            Entry::new(id.as_str(), &format!("wasm:{}", artifact.display())).with_config(config);
         match self.composition.submit(CompositionEdit::Mount(entry)).await {
             Ok(fibers) => fibers
                 .into_iter()
                 .find(|fiber| fiber.id == id.as_str())
                 .map(PluginView::from)
                 .ok_or_else(|| {
-                    SeamError::failed(format!("entry `{id}` was mounted but is missing from the snapshot"))
+                    SeamError::failed(format!(
+                        "entry `{id}` was mounted but is missing from the snapshot"
+                    ))
                 }),
             Err(error) => {
                 // The entry never took: the files we wrote are ours to remove.
@@ -520,7 +548,11 @@ impl Operations for OperationsService {
     async fn status(&self) -> Result<StatusReport, SeamError> {
         let stats = self.store.stats().await?;
         let search_rows = self.store.search_rows_count().await.unwrap_or(0);
-        let vector_index_ready = self.store.search_vector_index_ready().await.unwrap_or(false);
+        let vector_index_ready = self
+            .store
+            .search_vector_index_ready()
+            .await
+            .unwrap_or(false);
         let identity = self.store.embedding_identity();
         let caches = self.store.cache_counts().await?;
         Ok(StatusReport {
@@ -709,15 +741,30 @@ mod tests {
             content_address: None,
         };
         let fragments = vec![
-            fragment(1, "text/x-inseam-summary", "a very long summary of the video"),
+            fragment(
+                1,
+                "text/x-inseam-summary",
+                "a very long summary of the video",
+            ),
             fragment(2, "text/plain", "short"),
             fragment(3, "text/plain", "the transcript, longest"),
-            fragment(4, "application/json", "{\"structured\": \"text counts too\"}"),
-            fragment(5, "image/png", "not text however long this reference text is"),
+            fragment(
+                4,
+                "application/json",
+                "{\"structured\": \"text counts too\"}",
+            ),
+            fragment(
+                5,
+                "image/png",
+                "not text however long this reference text is",
+            ),
         ];
         let (chosen, text) = scan_stand_in(&fragments).expect("a stand-in");
         assert_eq!(chosen.id, FragmentId(4));
         assert_eq!(text, "{\"structured\": \"text counts too\"}");
-        assert!(scan_stand_in(&fragments[..1]).is_none(), "summaries never stand in");
+        assert!(
+            scan_stand_in(&fragments[..1]).is_none(),
+            "summaries never stand in"
+        );
     }
 }

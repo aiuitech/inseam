@@ -14,19 +14,19 @@ use std::sync::Arc;
 use inseam_kernel::substrate::{
     ApplyCx, Composition, Facts, Kernel, Manifest, Plugin, PluginError, PluginFactory,
 };
-use inseam_seams::llm::{
-    ChatMessage, ChatRequest, EmbedRequest, Llm, ModelInfo, Role, VisionRequest, LLM,
-};
-use inseam_seams::operations::{ExpandRequest, IndexRequest, QueryRequest, OPERATIONS};
 use inseam_seams::SeamError;
+use inseam_seams::llm::{
+    ChatMessage, ChatRequest, EmbedRequest, LLM, Llm, ModelInfo, Role, VisionRequest,
+};
+use inseam_seams::operations::{ExpandRequest, IndexRequest, OPERATIONS, QueryRequest};
 use inseam_wasm_host::WasmSchemeFactory;
 
 const CANNED_OCR: &str = "GARAGE SALE SATURDAY 9AM — 12 ELM STREET";
 
 fn ocr_artifact() -> Option<PathBuf> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../plugins/ocr/ocr.wasm");
-    path.exists().then(|| path.canonicalize().expect("canonicalizes"))
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/ocr/ocr.wasm");
+    path.exists()
+        .then(|| path.canonicalize().expect("canonicalizes"))
 }
 
 /// A fake `llm` provider: canned vision output, refusing everything else.
@@ -174,11 +174,11 @@ async fn kernel(data_dir: &Path) -> Kernel {
 
 // A tiny valid PNG (1x1 transparent pixel) so enumeration sees an image.
 const PNG: &[u8] = &[
-    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
-    0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
-    0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x62, 0x00,
-    0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
-    0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x62, 0x00, 0x01, 0x00, 0x00,
+    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+    0x42, 0x60, 0x82,
 ];
 
 #[tokio::test]
@@ -209,7 +209,10 @@ async fn loaded_ocr_transcribes_images_through_the_seam() {
         })
         .await
         .expect("indexes");
-    assert_eq!(report.indexed, 3, "two sources and their folder: {report:?}");
+    assert_eq!(
+        report.indexed, 3,
+        "two sources and their folder: {report:?}"
+    );
     assert_eq!(
         report.llm_calls.get("ocr"),
         Some(&1),
@@ -300,10 +303,16 @@ async fn release_cooldown_holds_new_artifacts_until_consent() {
     let fibers = kernel.fibers();
     let ocr = fibers.iter().find(|f| f.id == "ocr").expect("present");
     let inseam_kernel::substrate::FiberState::Failed(reason) = &ocr.state else {
-        panic!("expected the cooldown to hold the fiber, got {:?}", ocr.state);
+        panic!(
+            "expected the cooldown to hold the fiber, got {:?}",
+            ocr.state
+        );
     };
     assert!(reason.contains("cooldown"), "{reason}");
-    assert!(reason.contains("allow_new"), "the error names the consent path: {reason}");
+    assert!(
+        reason.contains("allow_new"),
+        "the error names the consent path: {reason}"
+    );
 
     // ...and the explicit per-entry override is the consent moment.
     let allowed = composition(

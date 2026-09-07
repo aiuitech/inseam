@@ -348,7 +348,11 @@ mod tests {
         )
         .expect("overlay parses");
         let layered = base().layered(over).expect("layers");
-        let extras = layered.entries.iter().find(|e| e.id == "extras").expect("group kept");
+        let extras = layered
+            .entries
+            .iter()
+            .find(|e| e.id == "extras")
+            .expect("group kept");
         let ids: Vec<&str> = extras.entries.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(ids, vec!["entities", "links"]);
     }

@@ -202,8 +202,12 @@ pub trait Connection: Send + Sync {
     async fn read_text(&self, address: &Address) -> Result<String, SeamError>;
 
     /// Lines `start..=end` (1-based, inclusive) of a text source.
-    async fn read_lines(&self, address: &Address, start: u64, end: u64)
-    -> Result<String, SeamError>;
+    async fn read_lines(
+        &self,
+        address: &Address,
+        start: u64,
+        end: u64,
+    ) -> Result<String, SeamError>;
 
     /// Raw bytes of a source, for byte-wanting transforms and binary fetches.
     async fn read_bytes(&self, address: &Address) -> Result<Vec<u8>, SeamError>;
@@ -291,7 +295,11 @@ mod tests {
         assert_eq!(a, b, "the same account mints the same id on any steward");
         assert!(a.as_str().starts_with("gmail-"));
         assert_eq!(a.as_str().len(), "gmail-".len() + DERIVED_HOST_ID_HEX_CHARS);
-        assert_ne!(a, derive_host_id(&drive, "greg@example.com"), "kind separates");
+        assert_ne!(
+            a,
+            derive_host_id(&drive, "greg@example.com"),
+            "kind separates"
+        );
         assert_ne!(a, derive_host_id(&gmail, "other@example.com"));
     }
 
@@ -307,6 +315,9 @@ mod tests {
             Err(HostKindError::InvalidCharacters(_))
         ));
         let long = "k".repeat(HOST_KIND_CHARS_MAX + 1);
-        assert!(matches!(HostKind::new(long), Err(HostKindError::TooLong(_))));
+        assert!(matches!(
+            HostKind::new(long),
+            Err(HostKindError::TooLong(_))
+        ));
     }
 }

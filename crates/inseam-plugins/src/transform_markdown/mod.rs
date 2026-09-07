@@ -13,11 +13,11 @@ use std::sync::Arc;
 
 use inseam_kernel::fragment::Mimetype;
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory,
+    ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory, parse_config,
 };
 use inseam_seams::llm::LlmLane;
 use inseam_seams::transforms::{
-    register_as_effect, Registration, Transform, TransformCtx, TransformKind, TransformOutput,
+    Registration, Transform, TransformCtx, TransformKind, TransformOutput, register_as_effect,
 };
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]

@@ -5,10 +5,10 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use inseam_seams::operations::{
-    FileBytes, InstallPluginRequest, PluginFile, PLUGIN_FILES_MAX, PLUGIN_UPLOAD_BYTES_MAX,
-};
 use inseam_seams::SeamError;
+use inseam_seams::operations::{
+    FileBytes, InstallPluginRequest, PLUGIN_FILES_MAX, PLUGIN_UPLOAD_BYTES_MAX, PluginFile,
+};
 
 /// One file to write, its path relative to the install directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,7 +28,9 @@ pub(crate) struct InstallPlan {
 
 pub(crate) fn plan(request: InstallPluginRequest) -> Result<InstallPlan, SeamError> {
     if request.files.is_empty() {
-        return Err(SeamError::Refused("a plugin upload carries no files".to_string()));
+        return Err(SeamError::Refused(
+            "a plugin upload carries no files".to_string(),
+        ));
     }
     if request.files.len() > PLUGIN_FILES_MAX {
         return Err(SeamError::Refused(format!(
@@ -77,7 +79,9 @@ pub(crate) fn plan(request: InstallPluginRequest) -> Result<InstallPlan, SeamErr
 fn confined_path(file: &PluginFile) -> Result<PathBuf, SeamError> {
     let path = Path::new(&file.path);
     if file.path.is_empty() {
-        return Err(SeamError::Refused("a plugin file has an empty path".to_string()));
+        return Err(SeamError::Refused(
+            "a plugin file has an empty path".to_string(),
+        ));
     }
     let confined = path
         .components()
@@ -97,7 +101,11 @@ fn the_one_artifact(files: &[PlannedFile]) -> Result<PathBuf, SeamError> {
     let artifacts: Vec<&PathBuf> = files
         .iter()
         .map(|planned| &planned.relative)
-        .filter(|relative| relative.extension().is_some_and(|extension| extension == "wasm"))
+        .filter(|relative| {
+            relative
+                .extension()
+                .is_some_and(|extension| extension == "wasm")
+        })
         .collect();
     match artifacts.as_slice() {
         [one] => Ok((*one).clone()),
@@ -182,7 +190,10 @@ mod tests {
             ("no manifest", vec![file("demo.wasm", b"")]),
             (
                 "absolute path",
-                vec![file("/etc/demo.wasm", b""), file("/etc/demo.manifest.toml", b"")],
+                vec![
+                    file("/etc/demo.wasm", b""),
+                    file("/etc/demo.manifest.toml", b""),
+                ],
             ),
             (
                 "parent escape",
@@ -202,7 +213,11 @@ mod tests {
             ),
             (
                 "empty path",
-                vec![file("demo.wasm", b""), file("demo.manifest.toml", b""), file("", b"")],
+                vec![
+                    file("demo.wasm", b""),
+                    file("demo.manifest.toml", b""),
+                    file("", b""),
+                ],
             ),
         ];
         for (name, files) in cases {
@@ -224,7 +239,10 @@ mod tests {
 
         let big = vec![0u8; usize::try_from(PLUGIN_UPLOAD_BYTES_MAX + 1).expect("fits")];
         let oversized = vec![file("demo.wasm", &big), file("demo.manifest.toml", b"")];
-        assert!(matches!(plan(request(oversized)), Err(SeamError::Refused(_))));
+        assert!(matches!(
+            plan(request(oversized)),
+            Err(SeamError::Refused(_))
+        ));
     }
 
     #[test]
@@ -239,7 +257,10 @@ mod tests {
         let target = directory.path().join("plugins").join("demo");
         let artifact = write(&target, &plan).expect("writes");
         assert_eq!(artifact, target.join("demo.wasm"));
-        assert_eq!(std::fs::read(target.join("fixtures/pixel.png")).expect("fixture"), b"png");
+        assert_eq!(
+            std::fs::read(target.join("fixtures/pixel.png")).expect("fixture"),
+            b"png"
+        );
         assert_eq!(
             std::fs::read_to_string(target.join("demo.manifest.toml")).expect("manifest"),
             "name = \"demo\""

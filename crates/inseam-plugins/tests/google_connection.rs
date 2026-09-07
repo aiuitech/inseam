@@ -14,7 +14,7 @@ mod common;
 use std::sync::Once;
 
 use inseam_kernel::substrate::FiberState;
-use inseam_seams::connection::{derive_host_id, HostKind};
+use inseam_seams::connection::{HostKind, derive_host_id};
 use inseam_seams::oauth::{GrantChanged, GrantId, GrantState};
 use inseam_seams::operations::RevokeGrantRequest;
 
@@ -94,7 +94,10 @@ async fn the_google_entry_waits_for_its_client_without_parking_anything() {
         .into_iter()
         .find(|f| f.id == "google")
         .expect("google fiber");
-    assert!(matches!(google.state, FiberState::Active), "a missing client parks nothing");
+    assert!(
+        matches!(google.state, FiberState::Active),
+        "a missing client parks nothing"
+    );
     let ops = common::ops(&kernel);
     let grants = ops.grants().await.expect("lists");
     assert_eq!(grants.len(), 1);
@@ -102,9 +105,16 @@ async fn the_google_entry_waits_for_its_client_without_parking_anything() {
     assert_eq!(grants[0].provider, "accounts.google.com");
     assert_eq!(
         grants[0].state,
-        GrantState::MissingSecret { env: "INSEAM_TEST_GOOGLE_NEVER_SET".to_string() }
+        GrantState::MissingSecret {
+            env: "INSEAM_TEST_GOOGLE_NEVER_SET".to_string()
+        }
     );
-    assert!(grants[0].scopes.iter().any(|s| s.ends_with("gmail.readonly")));
+    assert!(
+        grants[0]
+            .scopes
+            .iter()
+            .any(|s| s.ends_with("gmail.readonly"))
+    );
     assert!(google_host_ids(&ops.hosts().await.expect("lists")).is_empty());
 }
 
@@ -132,7 +142,13 @@ async fn an_authorized_grant_stewards_a_host_per_service_until_revoked() {
     assert!(gmail_host.capabilities.enumerates);
     assert!(!gmail_host.capabilities.writable);
     let kinds: Vec<&str> = google_hosts.iter().map(|h| h.kind.as_str()).collect();
-    for kind in ["gmail", "google-drive", "google-calendar", "google-contacts", "google-tasks"] {
+    for kind in [
+        "gmail",
+        "google-drive",
+        "google-calendar",
+        "google-contacts",
+        "google-tasks",
+    ] {
         assert!(kinds.contains(&kind), "{kind} is stewarded");
     }
 
@@ -178,9 +194,19 @@ async fn a_second_entry_for_the_same_account_fails_alone() {
         .filter(|f| f.id.starts_with("google"))
         .map(|f| (f.id.clone(), matches!(f.state, FiberState::Failed(_))))
         .collect();
-    assert!(states.contains(&("google".to_string(), false)), "{states:?}");
-    assert!(states.contains(&("google-two".to_string(), true)), "{states:?}");
+    assert!(
+        states.contains(&("google".to_string(), false)),
+        "{states:?}"
+    );
+    assert!(
+        states.contains(&("google-two".to_string(), true)),
+        "{states:?}"
+    );
     let ops = common::ops(&kernel);
-    assert_eq!(google_host_ids(&ops.hosts().await.expect("lists")).len(), 5, "registered once");
+    assert_eq!(
+        google_host_ids(&ops.hosts().await.expect("lists")).len(),
+        5,
+        "registered once"
+    );
     kernel.shutdown().await;
 }

@@ -32,7 +32,9 @@ pub enum ConfigError {
     IndexRootNotDirectory { id: String, path: PathBuf },
     #[error("web build is missing `{}`", .0.display())]
     WebIndexMissing(PathBuf),
-    #[error("INSEAM_PUBLIC_URL `{0}` must be an absolute http(s) origin such as https://node.example")]
+    #[error(
+        "INSEAM_PUBLIC_URL `{0}` must be an absolute http(s) origin such as https://node.example"
+    )]
     PublicUrlInvalid(String),
     #[error("cannot listen on {bind}: {source}")]
     Bind {

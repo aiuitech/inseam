@@ -10,10 +10,10 @@
 use serde::Deserialize;
 
 use inseam_kernel::fragment::{FragmentKey, Mimetype, RelationKind};
+use inseam_seams::SeamError;
 use inseam_seams::extract::select;
 use inseam_seams::text::collapse_ws;
 use inseam_seams::transforms::GrantedLlm;
-use inseam_seams::SeamError;
 
 use crate::transform_entities::extract::{EntityKind, ExtractedEntity};
 
@@ -348,7 +348,11 @@ mod tests {
         let hints = parse_hints(raw, LIMITS);
         assert_eq!(hints.synopsis, "Bootstrap of the Frankfurt cluster.");
         assert_eq!(hints.cues.len(), 1, "blank and duplicate cues go");
-        assert_eq!(hints.glossary.len(), 1, "case-insensitive dedup, short terms go");
+        assert_eq!(
+            hints.glossary.len(),
+            1,
+            "case-insensitive dedup, short terms go"
+        );
         assert_eq!(hints.glossary[0].key().as_str(), "term:eu-central-2");
         assert_eq!(hints.identifiers, vec!["SUP-100432", "p4d.24xlarge"]);
         assert_eq!(hints.discriminators.len(), 2);
@@ -383,6 +387,9 @@ mod tests {
 
     #[test]
     fn identifier_keys_normalize_case_and_edges() {
-        assert_eq!(identifier_key(" SUP-100432. ").as_str(), "identifier:sup-100432");
+        assert_eq!(
+            identifier_key(" SUP-100432. ").as_str(),
+            "identifier:sup-100432"
+        );
     }
 }

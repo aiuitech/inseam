@@ -153,7 +153,10 @@ mod tests {
 
     #[test]
     fn parent_before_child_is_well_ordered() {
-        let p = plan(vec![fragment(PlanNode::Root), fragment(PlanNode::Fragment(0))], vec![]);
+        let p = plan(
+            vec![fragment(PlanNode::Root), fragment(PlanNode::Fragment(0))],
+            vec![],
+        );
         assert!(p.is_well_ordered());
         assert_eq!(p.fragment_count(), 3);
     }
@@ -161,7 +164,13 @@ mod tests {
     #[test]
     fn forward_or_self_parent_is_rejected() {
         assert!(!plan(vec![fragment(PlanNode::Fragment(0))], vec![]).is_well_ordered());
-        assert!(!plan(vec![fragment(PlanNode::Root), fragment(PlanNode::Fragment(5))], vec![]).is_well_ordered());
+        assert!(
+            !plan(
+                vec![fragment(PlanNode::Root), fragment(PlanNode::Fragment(5))],
+                vec![]
+            )
+            .is_well_ordered()
+        );
     }
 
     #[test]
@@ -177,8 +186,20 @@ mod tests {
             relation: RelationKind::new("mentions").expect("valid"),
             anchors,
         };
-        assert!(plan(vec![fragment(PlanNode::Root)], vec![keyed(vec![PlanNode::Fragment(0)])]).is_well_ordered());
+        assert!(
+            plan(
+                vec![fragment(PlanNode::Root)],
+                vec![keyed(vec![PlanNode::Fragment(0)])]
+            )
+            .is_well_ordered()
+        );
         assert!(!plan(vec![fragment(PlanNode::Root)], vec![keyed(vec![])]).is_well_ordered());
-        assert!(!plan(vec![fragment(PlanNode::Root)], vec![keyed(vec![PlanNode::Fragment(1)])]).is_well_ordered());
+        assert!(
+            !plan(
+                vec![fragment(PlanNode::Root)],
+                vec![keyed(vec![PlanNode::Fragment(1)])]
+            )
+            .is_well_ordered()
+        );
     }
 }

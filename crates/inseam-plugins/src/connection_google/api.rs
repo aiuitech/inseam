@@ -9,10 +9,10 @@ use std::sync::Arc;
 
 use inseam_kernel::address::{ContentLength, Envelope, Timestamp};
 use inseam_kernel::fragment::Mimetype;
+use inseam_seams::SeamError;
 use inseam_seams::dates::parse_rfc3339_epoch;
 use inseam_seams::oauth::Grant;
 use inseam_seams::text::count_lines;
-use inseam_seams::SeamError;
 use url::Url;
 
 /// Pages one enumeration will walk before stopping: 200 pages of the
@@ -86,14 +86,18 @@ impl GoogleApi {
             .await
             .map_err(|e| SeamError::failed(format!("{}: {e}", redact(&url))))?;
         let status = response.status();
-        let body = response
-            .bytes()
-            .await
-            .map_err(|e| SeamError::failed(format!("{}: reading the response: {e}", redact(&url))))?;
+        let body = response.bytes().await.map_err(|e| {
+            SeamError::failed(format!("{}: reading the response: {e}", redact(&url)))
+        })?;
         if status.is_success() {
             return Ok(body.to_vec());
         }
-        Err(api_error(status.as_u16(), &body, &url, self.grant.id().as_str()))
+        Err(api_error(
+            status.as_u16(),
+            &body,
+            &url,
+            self.grant.id().as_str(),
+        ))
     }
 
     /// Walk a list endpoint: `url` names the first page; every page's
@@ -115,7 +119,9 @@ impl GoogleApi {
                 page_url.query_pairs_mut().append_pair("pageToken", token);
             }
             let mut page = self.get_json(page_url).await?;
-            if let Some(serde_json::Value::Array(found)) = page.get_mut(items_key).map(serde_json::Value::take) {
+            if let Some(serde_json::Value::Array(found)) =
+                page.get_mut(items_key).map(serde_json::Value::take)
+            {
                 items.extend(found);
             }
             if items.len() >= items_max {
@@ -295,8 +301,11 @@ pub(crate) mod tests {
     /// A fake Google: an axum router served on a loopback port, with both
     /// bases pointed at it.
     pub async fn fake_google(router: axum::Router) -> (GoogleApi, tokio::task::JoinHandle<()>) {
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.expect("binds");
-        let base = Url::parse(&format!("http://{}", listener.local_addr().expect("addr"))).expect("url");
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("binds");
+        let base =
+            Url::parse(&format!("http://{}", listener.local_addr().expect("addr"))).expect("url");
         let server = tokio::spawn(async move {
             axum::serve(listener, router).await.expect("serves");
         });
@@ -315,7 +324,13 @@ pub(crate) mod tests {
     fn urls_encode_segments_and_queries() {
         let api = GoogleApi::new(reqwest::Client::new(), FakeGrant::arc(), Bases::google());
         let url = api.api_url(
-            &["calendar", "v3", "calendars", "en.usa#holiday@group.v.calendar.google.com", "events"],
+            &[
+                "calendar",
+                "v3",
+                "calendars",
+                "en.usa#holiday@group.v.calendar.google.com",
+                "events",
+            ],
             &[("singleEvents", "true"), ("q", "a b")],
         );
         assert_eq!(
@@ -323,7 +338,8 @@ pub(crate) mod tests {
             "https://www.googleapis.com/calendar/v3/calendars/en.usa%23holiday@group.v.calendar.google.com/events?singleEvents=true&q=a+b"
         );
         assert_eq!(
-            api.people_url(&["v1", "people", "me", "connections"], &[]).as_str(),
+            api.people_url(&["v1", "people", "me", "connections"], &[])
+                .as_str(),
             "https://people.googleapis.com/v1/people/me/connections"
         );
     }
@@ -333,10 +349,20 @@ pub(crate) mod tests {
         let url = Url::parse("https://www.googleapis.com/drive/v3/files?q=secret").expect("url");
         let body = br#"{"error":{"code":403,"message":"Insufficient Permission","status":"PERMISSION_DENIED"}}"#;
         let refused = api_error(403, body, &url, "google");
-        assert!(matches!(refused, SeamError::Refused(ref m) if m.contains("Insufficient Permission") && !m.contains("secret")));
-        assert!(matches!(api_error(401, b"", &url, "google"), SeamError::Unauthorized(_)));
-        assert!(matches!(api_error(429, b"", &url, "google"), SeamError::Unavailable(_)));
-        assert!(matches!(api_error(500, b"boom", &url, "google"), SeamError::Failed(ref m) if m.contains("boom")));
+        assert!(
+            matches!(refused, SeamError::Refused(ref m) if m.contains("Insufficient Permission") && !m.contains("secret"))
+        );
+        assert!(matches!(
+            api_error(401, b"", &url, "google"),
+            SeamError::Unauthorized(_)
+        ));
+        assert!(matches!(
+            api_error(429, b"", &url, "google"),
+            SeamError::Unavailable(_)
+        ));
+        assert!(
+            matches!(api_error(500, b"boom", &url, "google"), SeamError::Failed(ref m) if m.contains("boom"))
+        );
     }
 
     #[tokio::test]
@@ -357,9 +383,15 @@ pub(crate) mod tests {
             }),
         );
         let (api, _server) = fake_google(router).await;
-        let all = api.list_pages(api.api_url(&["things"], &[]), "items", 100).await.expect("lists");
+        let all = api
+            .list_pages(api.api_url(&["things"], &[]), "items", 100)
+            .await
+            .expect("lists");
         assert_eq!(all.len(), 5);
-        let capped = api.list_pages(api.api_url(&["things"], &[]), "items", 3).await.expect("lists");
+        let capped = api
+            .list_pages(api.api_url(&["things"], &[]), "items", 3)
+            .await
+            .expect("lists");
         assert_eq!(capped.len(), 3);
     }
 
@@ -371,7 +403,11 @@ pub(crate) mod tests {
             .route(
                 "/echo",
                 get(|headers: HeaderMap| async move {
-                    let auth = headers.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                    let auth = headers
+                        .get("authorization")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("")
+                        .to_string();
                     axum::Json(serde_json::json!({"auth": auth}))
                 }),
             )
@@ -387,12 +423,22 @@ pub(crate) mod tests {
         let (api, _server) = fake_google(router).await;
         let echoed = api.get_json(api.api_url(&["echo"], &[])).await.expect("ok");
         assert_eq!(echoed["auth"], "Bearer fake-token");
-        assert!(matches!(api.get_json(api.api_url(&["denied"], &[])).await, Err(SeamError::Refused(_))));
+        assert!(matches!(
+            api.get_json(api.api_url(&["denied"], &[])).await,
+            Err(SeamError::Refused(_))
+        ));
     }
 
     #[test]
     fn rendered_envelopes_count_lines_and_bytes() {
-        let r = rendered("event", "a\nb\nc", None, Some(Timestamp(5)), Timestamp(9), Some("t".into()));
+        let r = rendered(
+            "event",
+            "a\nb\nc",
+            None,
+            Some(Timestamp(5)),
+            Timestamp(9),
+            Some("t".into()),
+        );
         assert_eq!(r.envelope.length, ContentLength::Lines(3));
         assert_eq!(r.raw_bytes, 5);
         assert_eq!(r.envelope.content_type.essence(), "text/plain");

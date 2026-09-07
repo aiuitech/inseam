@@ -29,13 +29,13 @@ use wasmtime::{Engine, Store};
 
 use inseam_conformance::{ChecksFile, Emitted, EmittedFragment, GoldenCheck};
 use inseam_kernel::fragment::{Mimetype, RelationKind};
-use inseam_seams::transforms::GrantedLlm;
 use inseam_seams::SeamError;
+use inseam_seams::transforms::GrantedLlm;
 
 use crate::exports::inseam::plugin::transform::{ClaimSpec, Envelope, Fragment};
 use crate::{
-    build_linker, new_engine, pattern_matches, patterns_overlap, ArtifactManifest, Invocation,
-    TransformPlugin, WasmEntryConfig,
+    ArtifactManifest, Invocation, TransformPlugin, WasmEntryConfig, build_linker, new_engine,
+    pattern_matches, patterns_overlap,
 };
 
 // ---------------------------------------------------------------------------
@@ -134,7 +134,11 @@ impl CheckReport {
                 Outcome::Warn(_) => "warn",
                 Outcome::Fail(_) => "FAIL",
             };
-            out.push_str(&format!("  {:<9} {:<48} {mark}\n", item.phase.to_string(), item.name));
+            out.push_str(&format!(
+                "  {:<9} {:<48} {mark}\n",
+                item.phase.to_string(),
+                item.name
+            ));
             match &item.outcome {
                 Outcome::Warn(detail) | Outcome::Fail(detail) => {
                     out.push_str(&format!("            {detail}\n"));
@@ -231,11 +235,11 @@ impl GrantedLlm for CannedLlm {
 
 /// A tiny valid PNG (1x1 pixel), for byte-wanting image plugins.
 const PIXEL_PNG: &[u8] = &[
-    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
-    0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
-    0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x62, 0x00,
-    0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
-    0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x62, 0x00, 0x01, 0x00, 0x00,
+    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+    0x42, 0x60, 0x82,
 ];
 
 const SENTINEL: &str = "INSEAM CONFORMANCE SENTINEL";
@@ -281,7 +285,9 @@ pub async fn check_artifact(artifact: &Path) -> CheckReport {
         if manifest.claims.is_empty() {
             Outcome::Fail("manifest declares no claims; the plugin would never run".into())
         } else if let Some(bad) = manifest.claims.iter().find(|c| !claim_pattern_valid(c)) {
-            Outcome::Fail(format!("`{bad}` is neither a mimetype essence nor a `type/*` pattern"))
+            Outcome::Fail(format!(
+                "`{bad}` is neither a mimetype essence nor a `type/*` pattern"
+            ))
         } else {
             Outcome::Pass
         },
@@ -350,7 +356,9 @@ pub async fn check_artifact(artifact: &Path) -> CheckReport {
         }
     };
     match call_claims(&engine, &component, &linker, &manifest.name, fuel).await {
-        Ok(again) if again.mimetypes == exported.mimetypes && again.roots_only == exported.roots_only => {
+        Ok(again)
+            if again.mimetypes == exported.mimetypes && again.roots_only == exported.roots_only =>
+        {
             report.push(Phase::Mount, "claims are deterministic", Outcome::Pass);
         }
         Ok(_) => report.push(
@@ -367,7 +375,12 @@ pub async fn check_artifact(artifact: &Path) -> CheckReport {
     report.effective_claims = manifest
         .claims
         .iter()
-        .filter(|declared| exported.mimetypes.iter().any(|e| patterns_overlap(declared, e)))
+        .filter(|declared| {
+            exported
+                .mimetypes
+                .iter()
+                .any(|e| patterns_overlap(declared, e))
+        })
         .cloned()
         .collect();
     report.push(
@@ -392,7 +405,11 @@ pub async fn check_artifact(artifact: &Path) -> CheckReport {
         Invocation::new(
             manifest.name.clone(),
             if manifest.capabilities.llm { llm } else { None },
-            if manifest.capabilities.source_bytes { bytes } else { None },
+            if manifest.capabilities.source_bytes {
+                bytes
+            } else {
+                None
+            },
         )
     };
     let battery_bytes: Vec<u8> = if battery_mimetype.starts_with("image/") {
@@ -405,45 +422,92 @@ pub async fn check_artifact(artifact: &Path) -> CheckReport {
     // Bare input: no text, no capabilities. The degrade path in its purest
     // form — a plugin that traps here would trap on every offline node.
     let bare = raw_apply(
-        &engine, &component, &linker, grant(None, None), fuel,
-        &envelope, &battery_mimetype, true, None,
+        &engine,
+        &component,
+        &linker,
+        grant(None, None),
+        fuel,
+        &envelope,
+        &battery_mimetype,
+        true,
+        None,
     )
     .await;
-    report.push(Phase::Contract, "degrades without text or capabilities", verdict_item(&bare));
+    report.push(
+        Phase::Contract,
+        "degrades without text or capabilities",
+        verdict_item(&bare),
+    );
 
     // Capabilities present but refusing — the shape of a spent budget or a
     // guard denial mid-run.
     let refused = raw_apply(
-        &engine, &component, &linker,
-        grant(Some(Arc::new(CannedLlm(None))), Some(battery_bytes.clone())), fuel,
-        &envelope, &battery_mimetype, true, Some("conformance sample text"),
+        &engine,
+        &component,
+        &linker,
+        grant(Some(Arc::new(CannedLlm(None))), Some(battery_bytes.clone())),
+        fuel,
+        &envelope,
+        &battery_mimetype,
+        true,
+        Some("conformance sample text"),
     )
     .await;
-    report.push(Phase::Contract, "degrades when the llm refuses", verdict_item(&refused));
+    report.push(
+        Phase::Contract,
+        "degrades when the llm refuses",
+        verdict_item(&refused),
+    );
 
     // Garbage bytes: enumeration lies sometimes; a mislabeled or truncated
     // file must not take the plugin down.
     if manifest.capabilities.source_bytes {
         let garbage = raw_apply(
-            &engine, &component, &linker,
-            grant(Some(Arc::new(CannedLlm(Some(SENTINEL.into())))), Some(vec![0x00, 0xFF, 0x13, 0x37])),
-            fuel, &envelope, &battery_mimetype, true, None,
+            &engine,
+            &component,
+            &linker,
+            grant(
+                Some(Arc::new(CannedLlm(Some(SENTINEL.into())))),
+                Some(vec![0x00, 0xFF, 0x13, 0x37]),
+            ),
+            fuel,
+            &envelope,
+            &battery_mimetype,
+            true,
+            None,
         )
         .await;
-        report.push(Phase::Contract, "survives garbage bytes", verdict_item(&garbage));
+        report.push(
+            Phase::Contract,
+            "survives garbage bytes",
+            verdict_item(&garbage),
+        );
     }
 
     // The granted run: everything a well-behaved application gets. Its
     // output feeds the hygiene and determinism checks.
     let granted = |text: Option<&'static str>| {
         raw_apply(
-            &engine, &component, &linker,
-            grant(Some(Arc::new(CannedLlm(Some(SENTINEL.into())))), Some(battery_bytes.clone())),
-            fuel, &envelope, &battery_mimetype, true, text,
+            &engine,
+            &component,
+            &linker,
+            grant(
+                Some(Arc::new(CannedLlm(Some(SENTINEL.into())))),
+                Some(battery_bytes.clone()),
+            ),
+            fuel,
+            &envelope,
+            &battery_mimetype,
+            true,
+            text,
         )
     };
     let first = granted(Some("inseam conformance sample text")).await;
-    report.push(Phase::Contract, "applies with full capabilities", verdict_item(&first));
+    report.push(
+        Phase::Contract,
+        "applies with full capabilities",
+        verdict_item(&first),
+    );
     if let ApplyVerdict::Output(fragments) = &first {
         report.push(Phase::Contract, "output is hygienic", hygiene(fragments));
         let second = granted(Some("inseam conformance sample text")).await;
@@ -453,9 +517,13 @@ pub async fn check_artifact(artifact: &Path) -> CheckReport {
             match &second {
                 ApplyVerdict::Output(again) if fragments_equal(fragments, again) => Outcome::Pass,
                 ApplyVerdict::Output(_) => Outcome::Warn(
-                    "identical input produced different output; sources will churn on re-index".into(),
+                    "identical input produced different output; sources will churn on re-index"
+                        .into(),
                 ),
-                other => Outcome::Fail(format!("second identical application failed: {}", verdict_text(other))),
+                other => Outcome::Fail(format!(
+                    "second identical application failed: {}",
+                    verdict_text(other)
+                )),
             },
         );
     }
@@ -497,7 +565,13 @@ pub async fn check_artifact(artifact: &Path) -> CheckReport {
     }
     for check in &checks.check {
         let outcome = run_golden(
-            &engine, &component, &linker, &manifest, fuel, &checks_path, check,
+            &engine,
+            &component,
+            &linker,
+            &manifest,
+            fuel,
+            &checks_path,
+            check,
             &report.effective_claims,
         )
         .await;
@@ -575,7 +649,12 @@ pub async fn try_artifact(artifact: &Path, input: TryInput) -> Result<TryOutcome
         }
         None
     };
-    let essence = input.mimetype.split(';').next().unwrap_or_default().to_string();
+    let essence = input
+        .mimetype
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .to_string();
     if !manifest.claims.iter().any(|p| pattern_matches(p, &essence)) {
         notes.push(format!(
             "`{essence}` is outside the manifest claims {:?}: in production this plugin would \
@@ -584,7 +663,9 @@ pub async fn try_artifact(artifact: &Path, input: TryInput) -> Result<TryOutcome
         ));
     }
     let verdict = raw_apply(
-        &engine, &component, &linker,
+        &engine,
+        &component,
+        &linker,
         Invocation::new(manifest.name.clone(), llm, bytes),
         fuel,
         &synthetic_envelope(&input.mimetype),
@@ -651,7 +732,7 @@ async fn run_golden(
             Ok(_) => {
                 return Outcome::Warn(
                     "bytes_file is inert: the manifest does not request `source_bytes`".into(),
-                )
+                );
             }
             Err(e) => return Outcome::Fail(format!("fixture {}: {e}", path.display())),
         },
@@ -661,7 +742,9 @@ async fn run_golden(
         .llm
         .then(|| Arc::new(CannedLlm(check.llm_returns.clone())) as Arc<dyn GrantedLlm>);
     let verdict = raw_apply(
-        engine, component, linker,
+        engine,
+        component,
+        linker,
         Invocation::new(manifest.name.clone(), llm, bytes),
         fuel,
         &synthetic_envelope(&check.mimetype),
@@ -752,7 +835,10 @@ async fn call_claims(
     let mut store = Store::new(engine, Invocation::new(name.to_string(), None, None));
     store.set_fuel(fuel)?;
     let plugin = TransformPlugin::instantiate_async(&mut store, component, linker).await?;
-    plugin.inseam_plugin_transform().call_claims(&mut store).await
+    plugin
+        .inseam_plugin_transform()
+        .call_claims(&mut store)
+        .await
 }
 
 // ---------------------------------------------------------------------------
@@ -791,7 +877,7 @@ fn hygiene(fragments: &[Fragment]) -> Outcome {
                 return Outcome::Fail(format!(
                     "fragment {i} emits inseam-defined mimetype `{}`; the bridge drops these",
                     f.mimetype
-                ))
+                ));
             }
             Ok(_) => {}
             Err(e) => return Outcome::Fail(format!("fragment {i} mimetype: {e}")),
@@ -827,7 +913,12 @@ fn fragments_equal(a: &[Fragment], b: &[Fragment]) -> bool {
 mod tests {
     use super::*;
 
-    fn fragment(mimetype: &str, relation: &str, text: Option<&str>, parent: Option<u32>) -> Fragment {
+    fn fragment(
+        mimetype: &str,
+        relation: &str,
+        text: Option<&str>,
+        parent: Option<u32>,
+    ) -> Fragment {
         Fragment {
             parent,
             mimetype: mimetype.into(),
@@ -838,7 +929,12 @@ mod tests {
 
     #[test]
     fn hygiene_rejects_forged_summaries_and_forward_parents() {
-        let forged = [fragment("text/x-inseam-summary", "derived-from", Some("x"), None)];
+        let forged = [fragment(
+            "text/x-inseam-summary",
+            "derived-from",
+            Some("x"),
+            None,
+        )];
         assert!(matches!(hygiene(&forged), Outcome::Fail(_)));
         let forward = [
             fragment("text/plain", "contains", Some("a"), Some(1)),

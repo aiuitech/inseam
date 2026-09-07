@@ -18,12 +18,12 @@ use std::sync::Arc;
 
 use inseam_kernel::fragment::{Mimetype, NewFragment, RelationKind, Sprout};
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory,
+    ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory, parse_config,
 };
 use inseam_seams::llm::LlmLane;
 use inseam_seams::transforms::{
-    register_as_effect, Anchor, KeyedSprout, Registration, Transform, TransformCtx,
-    TransformKind, TransformOutput,
+    Anchor, KeyedSprout, Registration, Transform, TransformCtx, TransformKind, TransformOutput,
+    register_as_effect,
 };
 
 use crate::transform_entities::extract::entity_mimetype;
@@ -143,8 +143,10 @@ impl Transform for HintsTransform {
     }
 
     async fn apply(&self, ctx: TransformCtx<'_>) -> TransformOutput {
-        let (Some(llm), Some(text)) = (ctx.llm.as_deref(), ctx.text.filter(|t| !t.trim().is_empty()))
-        else {
+        let (Some(llm), Some(text)) = (
+            ctx.llm.as_deref(),
+            ctx.text.filter(|t| !t.trim().is_empty()),
+        ) else {
             return TransformOutput::default();
         };
         let hint = ctx.envelope.hint.as_deref();
@@ -245,7 +247,9 @@ mod tests {
     use inseam_kernel::address::{Address, ContentLength, Envelope, Timestamp};
 
     fn address() -> Address {
-        "inseam://fs-test/tmp/note.md".parse().expect("valid address")
+        "inseam://fs-test/tmp/note.md"
+            .parse()
+            .expect("valid address")
     }
 
     fn envelope() -> Envelope {
@@ -288,7 +292,10 @@ mod tests {
     fn hints_become_one_fragment_per_kind_and_one_keyed_per_term() {
         let hints = Hints {
             synopsis: "Cluster bootstrap.".into(),
-            cues: vec!["How do we bring up Frankfurt?".into(), "What quotas?".into()],
+            cues: vec![
+                "How do we bring up Frankfurt?".into(),
+                "What quotas?".into(),
+            ],
             glossary: vec![extract::GlossaryTerm {
                 term: "eu-central-2".into(),
                 gloss: "the Frankfurt region".into(),
@@ -299,7 +306,14 @@ mod tests {
         };
         let sprouts = hint_sprouts(&hints);
         assert_eq!(sprouts.len(), 2, "no discriminators, no discriminator row");
-        assert!(sprouts[1].fragment.text.as_deref().expect("text").contains('\n'));
+        assert!(
+            sprouts[1]
+                .fragment
+                .text
+                .as_deref()
+                .expect("text")
+                .contains('\n')
+        );
         let keyed = keyed_sprouts(hints);
         assert_eq!(keyed.len(), 2);
         assert_eq!(keyed[0].key.as_str(), "term:eu-central-2");

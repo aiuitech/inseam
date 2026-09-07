@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::composition::{Composition, Entry};
-use super::edits::{CompositionEditor, CompositionEdits, COMPOSITION};
+use super::edits::{COMPOSITION, CompositionEditor, CompositionEdits};
 use super::error::SubstrateError;
 use super::events::EventBus;
 use super::fiber::{EntryId, Fiber, FiberState, FiberView};
@@ -200,11 +200,11 @@ impl Kernel {
     ) -> Result<Fiber, SubstrateError> {
         let built = if let Some(factory) = self.factories.get(plugin_ref) {
             factory.build(&entry.config)
-        } else if let Some((factory, artifact)) = self
-            .scheme_factories
-            .iter()
-            .find_map(|f| plugin_ref.strip_prefix(f.scheme()).map(|artifact| (f, artifact)))
-        {
+        } else if let Some((factory, artifact)) = self.scheme_factories.iter().find_map(|f| {
+            plugin_ref
+                .strip_prefix(f.scheme())
+                .map(|artifact| (f, artifact))
+        }) {
             factory.build(artifact, &entry.config)
         } else {
             return Err(SubstrateError::UnknownPlugin {
@@ -241,7 +241,10 @@ impl Kernel {
         let mut rounds: u32 = 0;
         while let Some(id) = self.next_activatable() {
             rounds += 1;
-            assert!(rounds <= rounds_max, "settle rounds stay within the activation allowance");
+            assert!(
+                rounds <= rounds_max,
+                "settle rounds stay within the activation allowance"
+            );
             let count = activations.entry(id.clone()).or_insert(0);
             *count += 1;
             if *count > ACTIVATIONS_PER_RECONCILE_MAX {
@@ -297,7 +300,10 @@ impl Kernel {
             .position(|f| f.id == *id)
             .expect("activation candidates are mounted fibers");
         let fiber = &mut self.fibers[index];
-        assert!(fiber.state == FiberState::Pending, "only pending fibers activate");
+        assert!(
+            fiber.state == FiberState::Pending,
+            "only pending fibers activate"
+        );
         assert!(fiber.effects.is_empty(), "a pending fiber owns no effects");
         let result = {
             let mut cx = ApplyCx {
@@ -373,13 +379,19 @@ impl Kernel {
     /// member provides, in discovery order. Empty when `root` is not active.
     fn dependent_closure(&self, root: &EntryId) -> Vec<EntryId> {
         let mut closure: Vec<EntryId> = Vec::new();
-        if !self.fiber(root).is_some_and(|f| f.state == FiberState::Active) {
+        if !self
+            .fiber(root)
+            .is_some_and(|f| f.state == FiberState::Active)
+        {
             return closure;
         }
         closure.push(root.clone());
         let mut cursor: usize = 0;
         while cursor < closure.len() {
-            assert!(closure.len() <= self.fibers.len(), "closure members are distinct fibers");
+            assert!(
+                closure.len() <= self.fibers.len(),
+                "closure members are distinct fibers"
+            );
             let provided = self.keys_provided_by(&closure[cursor]);
             let newly: Vec<EntryId> = self
                 .fibers

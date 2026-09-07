@@ -14,11 +14,11 @@ use std::sync::Arc;
 
 use inseam_kernel::fragment::{Mimetype, NewFragment, RelationKind, Sprout};
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory,
+    ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory, parse_config,
 };
 use inseam_seams::llm::LlmLane;
 use inseam_seams::transforms::{
-    register_as_effect, Registration, Transform, TransformCtx, TransformKind, TransformOutput,
+    Registration, Transform, TransformCtx, TransformKind, TransformOutput, register_as_effect,
 };
 
 use summarize::{SummaryKind, SummaryShape};
@@ -236,12 +236,14 @@ mod tests {
         let sprout = &out.sprouts[0];
         assert_eq!(sprout.relation, RelationKind::derives());
         assert_eq!(sprout.fragment.mimetype.param("via"), Some("envelope"));
-        assert!(sprout
-            .fragment
-            .text
-            .as_deref()
-            .expect("has text")
-            .contains("IMG_2019.jpeg"));
+        assert!(
+            sprout
+                .fragment
+                .text
+                .as_deref()
+                .expect("has text")
+                .contains("IMG_2019.jpeg")
+        );
     }
 
     fn shape(target_chars: usize) -> SummaryShape {
@@ -272,11 +274,13 @@ mod tests {
         assert!(keywords.mimetype.is_keywords());
         assert_eq!(keywords.mimetype.param("via"), Some("extractive"));
         assert_eq!(out.sprouts[1].relation, RelationKind::derives());
-        assert!(keywords
-            .text
-            .as_deref()
-            .expect("has text")
-            .contains("kitchen"));
+        assert!(
+            keywords
+                .text
+                .as_deref()
+                .expect("has text")
+                .contains("kitchen")
+        );
     }
 
     #[tokio::test]

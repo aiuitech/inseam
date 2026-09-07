@@ -35,8 +35,11 @@ async fn vanished_sources_are_removed_and_their_entities_collected() {
     let data = tempfile::tempdir().expect("tempdir");
     let doomed = corpus.path().join("doomed.md");
     std::fs::write(&doomed, "# Doomed\n\nnotes about xylophones\n").expect("writes");
-    std::fs::write(corpus.path().join("keeper.md"), "# Keeper\n\nnotes about kazoos\n")
-        .expect("writes");
+    std::fs::write(
+        corpus.path().join("keeper.md"),
+        "# Keeper\n\nnotes about kazoos\n",
+    )
+    .expect("writes");
 
     let kernel = common::boot(data.path(), "").await;
     let ops = common::ops(&kernel);
@@ -63,7 +66,8 @@ async fn vanished_sources_are_removed_and_their_entities_collected() {
         .cloned()
         .expect("doomed source cataloged");
     let root = store
-        .source(doomed_sid).await
+        .source(doomed_sid)
+        .await
         .expect("ok")
         .expect("present")
         .root_fragment
@@ -77,22 +81,34 @@ async fn vanished_sources_are_removed_and_their_entities_collected() {
                 extent: None,
                 content_address: None,
             },
-        ).await
+        )
+        .await
         .expect("creates")
         .id();
     let mentions = RelationKind::new("mentions").expect("valid kind");
     store
-        .insert_relation(&Relation::new(root, mentions, entity)).await
+        .insert_relation(&Relation::new(root, mentions, entity))
+        .await
         .expect("relates");
 
     std::fs::remove_file(&doomed).expect("removes");
     let report = index(ops.as_ref(), corpus.path()).await;
     assert_eq!(report.removed, 1, "vanished source reconciled: {report}");
-    assert_eq!(report.keyed_removed, 1, "unanchored keyed fragment collected");
+    assert_eq!(
+        report.keyed_removed, 1,
+        "unanchored keyed fragment collected"
+    );
     assert_eq!(report.unchanged, 1, "the keeper was untouched");
-    assert_eq!(report.indexed, 1, "the folder's listing lost an entry: {report}");
+    assert_eq!(
+        report.indexed, 1,
+        "the folder's listing lost an entry: {report}"
+    );
 
-    assert_eq!(common::hits(ops.as_ref(), "xylophones").await, 0, "no stale results");
+    assert_eq!(
+        common::hits(ops.as_ref(), "xylophones").await,
+        0,
+        "no stale results"
+    );
     assert_eq!(common::hits(ops.as_ref(), "kazoos").await, 1);
 
     // A file that reappears is simply new — no tombstone in the way.
@@ -107,15 +123,28 @@ async fn ignore_rules_evict_covered_sources_and_readmit_them_when_lifted() {
     let corpus = tempfile::tempdir().expect("tempdir");
     let data = tempfile::tempdir().expect("tempdir");
     std::fs::create_dir(corpus.path().join("Archive")).expect("mkdir");
-    std::fs::write(corpus.path().join("Archive/old.md"), "# Old\n\nnotes about ocarinas\n")
-        .expect("writes");
-    std::fs::write(corpus.path().join("now.md"), "# Now\n\nnotes about banjos\n").expect("writes");
+    std::fs::write(
+        corpus.path().join("Archive/old.md"),
+        "# Old\n\nnotes about ocarinas\n",
+    )
+    .expect("writes");
+    std::fs::write(
+        corpus.path().join("now.md"),
+        "# Now\n\nnotes about banjos\n",
+    )
+    .expect("writes");
 
     let mut kernel = common::boot(data.path(), "").await;
     let report = index(common::ops(&kernel).as_ref(), corpus.path()).await;
-    assert_eq!(report.indexed, 4, "two notes, `Archive`, and the root: {report}");
+    assert_eq!(
+        report.indexed, 4,
+        "two notes, `Archive`, and the root: {report}"
+    );
     assert_eq!(report.ignored, 0);
-    assert_eq!(common::hits(common::ops(&kernel).as_ref(), "ocarinas").await, 1);
+    assert_eq!(
+        common::hits(common::ops(&kernel).as_ref(), "ocarinas").await,
+        1
+    );
 
     // Ignoring is membership: a rule that now covers an indexed source
     // removes it on the next sweep — the catalog must not keep (or sync)
@@ -133,20 +162,35 @@ async fn ignore_rules_evict_covered_sources_and_readmit_them_when_lifted() {
     let report = index(common::ops(&kernel).as_ref(), corpus.path()).await;
     // The note leaves, and so does `Archive`: a folder none of whose files
     // are admitted is no source. The root re-indexes without the entry.
-    assert_eq!(report.ignored, 2, "the archived note and its folder are kept out: {report}");
+    assert_eq!(
+        report.ignored, 2,
+        "the archived note and its folder are kept out: {report}"
+    );
     assert_eq!(report.removed, 2, "and their index subtrees are gone");
     assert_eq!(report.unchanged, 1);
     assert_eq!(report.indexed, 1);
-    assert_eq!(common::hits(common::ops(&kernel).as_ref(), "ocarinas").await, 0);
-    assert_eq!(common::hits(common::ops(&kernel).as_ref(), "banjos").await, 1);
+    assert_eq!(
+        common::hits(common::ops(&kernel).as_ref(), "ocarinas").await,
+        0
+    );
+    assert_eq!(
+        common::hits(common::ops(&kernel).as_ref(), "banjos").await,
+        1
+    );
 
     // Lifting the rule readmits it as a new source — no tombstone, no
     // special case.
     common::reconcile(&mut kernel, "").await;
     let report = index(common::ops(&kernel).as_ref(), corpus.path()).await;
     assert_eq!(report.ignored, 0);
-    assert_eq!(report.indexed, 3, "the note, `Archive`, and the root again: {report}");
-    assert_eq!(common::hits(common::ops(&kernel).as_ref(), "ocarinas").await, 1);
+    assert_eq!(
+        report.indexed, 3,
+        "the note, `Archive`, and the root again: {report}"
+    );
+    assert_eq!(
+        common::hits(common::ops(&kernel).as_ref(), "ocarinas").await,
+        1
+    );
 }
 
 #[tokio::test]
@@ -172,11 +216,17 @@ async fn a_malformed_ignore_rule_parks_the_sweep_entry() {
         .reconcile(&base.layered(overlay).expect("layers"))
         .await;
     assert!(
-        matches!(outcome, Err(inseam_kernel::substrate::SubstrateError::Unsettled { .. })),
+        matches!(
+            outcome,
+            Err(inseam_kernel::substrate::SubstrateError::Unsettled { .. })
+        ),
         "{outcome:?}"
     );
     let fibers = kernel.fibers();
-    let sweep = fibers.iter().find(|f| f.id == "sweep").expect("sweep entry exists");
+    let sweep = fibers
+        .iter()
+        .find(|f| f.id == "sweep")
+        .expect("sweep entry exists");
     match &sweep.state {
         inseam_kernel::substrate::FiberState::Failed(reason) => {
             assert!(reason.contains("ignore rule 0"), "names the rule: {reason}");
@@ -184,7 +234,10 @@ async fn a_malformed_ignore_rule_parks_the_sweep_entry() {
         }
         other => panic!("sweep should be parked, was {other:?}"),
     }
-    let fs = fibers.iter().find(|f| f.id == "fs").expect("fs entry exists");
+    let fs = fibers
+        .iter()
+        .find(|f| f.id == "fs")
+        .expect("fs entry exists");
     assert_eq!(fs.state, inseam_kernel::substrate::FiberState::Active);
 }
 
@@ -252,8 +305,11 @@ async fn plugin_churn_dirties_only_sources_the_plugins_claims_touch() {
     let corpus = tempfile::tempdir().expect("tempdir");
     let data = tempfile::tempdir().expect("tempdir");
     std::fs::write(corpus.path().join("note.md"), "# Note\n\nmarkdown words\n").expect("writes");
-    std::fs::write(corpus.path().join("data.json"), "{\"words\": \"plain words here\"}\n")
-        .expect("writes");
+    std::fs::write(
+        corpus.path().join("data.json"),
+        "{\"words\": \"plain words here\"}\n",
+    )
+    .expect("writes");
 
     let mut kernel = common::boot(data.path(), "").await;
     index(common::ops(&kernel).as_ref(), corpus.path()).await;
@@ -310,7 +366,10 @@ async fn catalog_only_sources_converge_to_deep_indexed_across_runs() {
     let second = index(ops.as_ref(), corpus.path()).await;
     assert_eq!(second.indexed, 1, "the deferred note converges: {second}");
     assert_eq!(second.unchanged, 1);
-    assert_eq!(second.catalog_only, 1, "the folder waits one more run: {second}");
+    assert_eq!(
+        second.catalog_only, 1,
+        "the folder waits one more run: {second}"
+    );
 
     let third = index(ops.as_ref(), corpus.path()).await;
     assert_eq!(third.indexed, 1, "the folder converges: {third}");
@@ -339,7 +398,10 @@ async fn catalog_only_run_catalogs_everything_and_deep_indexes_nothing() {
         })
         .await
         .expect("sweeps");
-    assert_eq!(ingest.catalog_only, 3, "two notes and their folder: {ingest}");
+    assert_eq!(
+        ingest.catalog_only, 3,
+        "two notes and their folder: {ingest}"
+    );
     assert_eq!(ingest.indexed, 0);
     assert_eq!(ingest.fragments, 0);
 
@@ -360,12 +422,18 @@ async fn catalog_only_run_catalogs_everything_and_deep_indexes_nothing() {
     assert!(listing.entries.iter().all(|e| !e.indexed));
     // Files carry their byte size; the folder has no bytes of its own.
     let is_folder = |content_type: &str| content_type == "inode/directory";
-    let files = listing.entries.iter().filter(|e| !is_folder(&e.content_type)).count();
-    assert_eq!(files, 2);
-    assert!(listing
+    let files = listing
         .entries
         .iter()
-        .all(|e| (e.raw_bytes > 0) == !is_folder(&e.content_type)));
+        .filter(|e| !is_folder(&e.content_type))
+        .count();
+    assert_eq!(files, 2);
+    assert!(
+        listing
+            .entries
+            .iter()
+            .all(|e| (e.raw_bytes > 0) == !is_folder(&e.content_type))
+    );
     assert_eq!(common::hits(ops.as_ref(), "alpha").await, 0);
 
     // The request's budget never outlives its run: an unqualified run picks
@@ -400,13 +468,18 @@ async fn request_budget_overrides_the_composition_for_one_run() {
             host: None,
             root: corpus.path().display().to_string(),
             rebuild: false,
-            deep_budget: Some(DeepBudget::Sources(std::num::NonZeroU32::new(2).expect("non-zero"))),
+            deep_budget: Some(DeepBudget::Sources(
+                std::num::NonZeroU32::new(2).expect("non-zero"),
+            )),
             llm_lane: None,
         })
         .await
         .expect("sweeps");
     assert_eq!(report.indexed, 2, "{report}");
-    assert_eq!(report.catalog_only, 2, "the third note and the folder: {report}");
+    assert_eq!(
+        report.catalog_only, 2,
+        "the third note and the folder: {report}"
+    );
 }
 
 #[tokio::test]
@@ -422,7 +495,10 @@ async fn status_reports_store_and_content_sizes() {
     assert_eq!(before.content_bytes, 0);
     index(ops.as_ref(), corpus.path()).await;
     let after = ops.status().await.expect("status");
-    assert_eq!(after.content_bytes, u64::try_from(body.len()).expect("fits"));
+    assert_eq!(
+        after.content_bytes,
+        u64::try_from(body.len()).expect("fits")
+    );
     assert!(after.store_bytes > 0, "the database file exists on disk");
     let repaired = ops
         .repair(RepairRequest { rebuild: false })
@@ -468,11 +544,17 @@ async fn embedding_change_reembeds_in_place_without_reindexing() {
         })
         .await
         .expect_err("search refuses until the migration runs");
-    assert!(err.to_string().contains("re-embed"), "instructive error: {err}");
+    assert!(
+        err.to_string().contains("re-embed"),
+        "instructive error: {err}"
+    );
 
     let report = index(ops.as_ref(), corpus.path()).await;
     assert!(report.reembedded > 0, "vectors rebuilt: {report}");
-    assert_eq!(report.indexed, 0, "the graph was untouched — no transforms re-ran");
+    assert_eq!(
+        report.indexed, 0,
+        "the graph was untouched — no transforms re-ran"
+    );
     assert_eq!(report.unchanged, 2, "the note and its folder: {report}");
     assert!(!kernel.store().reembed_pending());
     assert_eq!(common::hits(ops.as_ref(), "kitchen renovation").await, 1);
@@ -515,7 +597,10 @@ async fn cutoff_catalogs_without_indexing_and_never_evicts() {
     // Loosening the horizon picks it up: it was never marked indexed.
     common::reconcile(&mut kernel, "").await;
     let report = index(common::ops(&kernel).as_ref(), corpus.path()).await;
-    assert_eq!(report.indexed, 2, "horizon loosened, folder follows: {report}");
+    assert_eq!(
+        report.indexed, 2,
+        "horizon loosened, folder follows: {report}"
+    );
     assert_eq!(
         common::hits(common::ops(&kernel).as_ref(), "trilobites").await,
         1

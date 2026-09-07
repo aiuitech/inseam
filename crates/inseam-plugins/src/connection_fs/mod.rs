@@ -9,19 +9,19 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use ignore::WalkBuilder;
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use tokio::sync::Semaphore;
 
 use inseam_kernel::address::{Address, ContentLength, Envelope, HostId, Locator, Timestamp};
 use inseam_kernel::fragment::Mimetype;
-use inseam_kernel::substrate::{parse_config, ApplyCx, Inject, Manifest, Plugin, PluginError};
+use inseam_kernel::substrate::{ApplyCx, Inject, Manifest, Plugin, PluginError, parse_config};
+use inseam_seams::SeamError;
 use inseam_seams::connection::{
-    register_as_effect, Capabilities, Connection, EnumeratedSource, HostDescription, HostKind,
-    Registration,
+    Capabilities, Connection, EnumeratedSource, HostDescription, HostKind, Registration,
+    register_as_effect,
 };
 use inseam_seams::text::{slice_lines, slice_lines_from_reader};
-use inseam_seams::SeamError;
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -184,7 +184,10 @@ impl WalkConfig {
 /// past the gate wait rather than fail.
 const READS_IN_FLIGHT_MAX: usize = 64;
 const _: () = assert!(READS_IN_FLIGHT_MAX >= 1);
-const _: () = assert!(READS_IN_FLIGHT_MAX <= 256, "the gate must fit a default descriptor table");
+const _: () = assert!(
+    READS_IN_FLIGHT_MAX <= 256,
+    "the gate must fit a default descriptor table"
+);
 
 /// The connection to the machine's filesystem host. Locators are absolute
 /// paths with the leading `/` stripped, so any file the node can read is
@@ -406,7 +409,11 @@ impl FsHost {
 
     /// A directory as a source: no bytes of its own (the sweep composes its
     /// content from its children), its name as the hint, its own timestamps.
-    fn folder_source(&self, path: &Path, observed: Timestamp) -> Result<EnumeratedSource, SeamError> {
+    fn folder_source(
+        &self,
+        path: &Path,
+        observed: Timestamp,
+    ) -> Result<EnumeratedSource, SeamError> {
         let meta = std::fs::metadata(path)
             .map_err(|e| SeamError::failed(format!("metadata of {}: {e}", path.display())))?;
         assert!(meta.is_dir());
@@ -420,7 +427,10 @@ impl FsHost {
                 modified: meta.modified().ok().map(Timestamp::from),
                 observed,
                 properties: Vec::new(),
-                hint: path.file_name().and_then(|n| n.to_str()).map(str::to_string),
+                hint: path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(str::to_string),
                 content_digest: None,
             },
             raw_bytes: 0,
@@ -441,7 +451,10 @@ fn collect_folders_above(file: &Path, root: &Path, folders: &mut BTreeSet<PathBu
     let mut climbed: u32 = 0;
     while let Some(dir) = ancestor {
         climbed += 1;
-        assert!(climbed <= FOLDER_DEPTH_MAX, "the ancestor climb is bounded by the path depth");
+        assert!(
+            climbed <= FOLDER_DEPTH_MAX,
+            "the ancestor climb is bounded by the path depth"
+        );
         if !dir.starts_with(root) || dir.parent().is_none() {
             break;
         }
@@ -462,7 +475,8 @@ fn directory_text(path: &Path, skip_hidden: bool) -> Result<String, SeamError> {
         .map_err(|e| SeamError::failed(format!("read {}: {e}", path.display())))?;
     let mut names: Vec<String> = Vec::new();
     for entry in entries {
-        let entry = entry.map_err(|e| SeamError::failed(format!("read {}: {e}", path.display())))?;
+        let entry =
+            entry.map_err(|e| SeamError::failed(format!("read {}: {e}", path.display())))?;
         let Some(name) = entry.file_name().to_str().map(str::to_string) else {
             continue;
         };
@@ -501,7 +515,13 @@ impl Connection for FsHost {
 
     fn locator_prefix(&self, root: &str) -> Option<String> {
         let canonical = Self::scope_path(root).canonicalize().ok()?;
-        Some(self.address_for(&canonical).ok()?.locator.as_str().to_string())
+        Some(
+            self.address_for(&canonical)
+                .ok()?
+                .locator
+                .as_str()
+                .to_string(),
+        )
     }
 
     async fn read_text(&self, address: &Address) -> Result<String, SeamError> {
@@ -554,7 +574,10 @@ mod tests {
     use super::*;
 
     fn host() -> FsHost {
-        FsHost::new(HostId::new("fs-test").expect("valid host id"), WalkConfig::standard())
+        FsHost::new(
+            HostId::new("fs-test").expect("valid host id"),
+            WalkConfig::standard(),
+        )
     }
 
     fn host_with(config: FsConnectionConfig) -> FsHost {
@@ -606,7 +629,10 @@ mod tests {
         let a = h
             .address_for(Path::new("/Users/greg/Data/notes/reno.md"))
             .expect("addressable");
-        assert_eq!(a.to_string(), "inseam://fs-test/Users/greg/Data/notes/reno.md");
+        assert_eq!(
+            a.to_string(),
+            "inseam://fs-test/Users/greg/Data/notes/reno.md"
+        );
         let p = h.resolve(&a).expect("resolves");
         assert_eq!(p, Path::new("/Users/greg/Data/notes/reno.md"));
     }
@@ -619,7 +645,9 @@ mod tests {
 
     #[test]
     fn resolve_rejects_traversal() {
-        let a: Address = "inseam://fs-test/tmp/../etc/passwd".parse().expect("parses");
+        let a: Address = "inseam://fs-test/tmp/../etc/passwd"
+            .parse()
+            .expect("parses");
         assert!(matches!(host().resolve(&a), Err(SeamError::Refused(_))));
     }
 
@@ -661,10 +689,19 @@ mod tests {
             .await
             .expect("enumerates");
         let root = dir.path().canonicalize().expect("canonical");
-        let root_name = root.file_name().and_then(|n| n.to_str()).expect("utf8").to_string();
+        let root_name = root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("utf8")
+            .to_string();
         let listed: Vec<(String, &str)> = sources
             .iter()
-            .map(|s| (s.envelope.hint.clone().expect("hint"), s.envelope.source_type.as_str()))
+            .map(|s| {
+                (
+                    s.envelope.hint.clone().expect("hint"),
+                    s.envelope.source_type.as_str(),
+                )
+            })
             .collect();
         let files = listed.iter().filter(|(_, t)| *t == "file").count();
         assert_eq!(files, 2);
@@ -679,7 +716,10 @@ mod tests {
         // The scope root, `a`, and `a/deep`; never the empty directory nor
         // the ignored one, and folders come after every file.
         assert_eq!(folders, vec![root_name.as_str(), "a", "deep"]);
-        let folder = sources.iter().find(|s| s.envelope.hint.as_deref() == Some("deep")).expect("deep");
+        let folder = sources
+            .iter()
+            .find(|s| s.envelope.hint.as_deref() == Some("deep"))
+            .expect("deep");
         assert!(folder.envelope.content_type.is_directory());
         assert_eq!(folder.raw_bytes, 0);
         assert!(folder.address.locator.as_str().ends_with("/a/deep"));
@@ -693,11 +733,19 @@ mod tests {
         std::fs::write(dir.path().join("a.md"), "a\n").expect("write");
         std::fs::write(dir.path().join(".hidden"), "h\n").expect("write");
         let h = host();
-        let address = h.address_for(&dir.path().canonicalize().expect("canonical")).expect("addr");
+        let address = h
+            .address_for(&dir.path().canonicalize().expect("canonical"))
+            .expect("addr");
         let text = h.read_text(&address).await.expect("reads");
         assert_eq!(text, "a.md\nb.md\nsub/\n");
-        assert_eq!(h.read_lines(&address, 2, 3).await.expect("reads"), "b.md\nsub/");
-        assert!(h.read_bytes(&address).await.is_err(), "a folder has no bytes");
+        assert_eq!(
+            h.read_lines(&address, 2, 3).await.expect("reads"),
+            "b.md\nsub/"
+        );
+        assert!(
+            h.read_bytes(&address).await.is_err(),
+            "a folder has no bytes"
+        );
     }
 
     #[tokio::test]
@@ -721,7 +769,13 @@ mod tests {
         };
         assert_eq!(
             names(&host_with(config), dir.path()).await,
-            vec!["build.log", "src/main.rs", "sub/open.md", "sub/secret.md", "target/debug/app"]
+            vec![
+                "build.log",
+                "src/main.rs",
+                "sub/open.md",
+                "sub/secret.md",
+                "target/debug/app"
+            ]
         );
     }
 
@@ -735,7 +789,10 @@ mod tests {
             gitignore: false,
             ..FsConnectionConfig::default()
         };
-        assert_eq!(names(&host_with(config), dir.path()).await, vec!["final.md"]);
+        assert_eq!(
+            names(&host_with(config), dir.path()).await,
+            vec!["final.md"]
+        );
     }
 
     #[tokio::test]
@@ -766,7 +823,11 @@ mod tests {
         // files together. Every clone shares the gate.
         let dir = tempfile::tempdir().expect("tempdir");
         for index in 0..64 {
-            write(dir.path(), &format!("doc-{index}.txt"), &format!("body {index}\n"));
+            write(
+                dir.path(),
+                &format!("doc-{index}.txt"),
+                &format!("body {index}\n"),
+            );
         }
         let host = host();
         let sources = host
@@ -774,8 +835,10 @@ mod tests {
             .await
             .expect("enumerate");
         assert_eq!(sources.len(), 65, "64 files and the folder holding them");
-        let files: Vec<&EnumeratedSource> =
-            sources.iter().filter(|s| s.envelope.source_type == "file").collect();
+        let files: Vec<&EnumeratedSource> = sources
+            .iter()
+            .filter(|s| s.envelope.source_type == "file")
+            .collect();
         assert_eq!(files.len(), 64);
         let reads_total: usize = 2_048;
         let mut tasks = Vec::with_capacity(reads_total);
@@ -802,7 +865,10 @@ mod tests {
             ignore: vec!["*.log".into(), "!important.log".into()],
             ..FsConnectionConfig::default()
         };
-        assert_eq!(names(&host_with(config), dir.path()).await, vec!["important.log"]);
+        assert_eq!(
+            names(&host_with(config), dir.path()).await,
+            vec!["important.log"]
+        );
     }
 
     #[tokio::test]
@@ -814,7 +880,10 @@ mod tests {
             skip_hidden: false,
             ..FsConnectionConfig::default()
         };
-        assert_eq!(names(&host_with(config), dir.path()).await, vec![".env", "a.md"]);
+        assert_eq!(
+            names(&host_with(config), dir.path()).await,
+            vec![".env", "a.md"]
+        );
     }
 
     #[tokio::test]
@@ -837,15 +906,25 @@ mod tests {
                 ignore: vec![bad.into()],
                 ..FsConnectionConfig::default()
             };
-            assert!(WalkConfig::compile(&config).is_err(), "`{bad}` must be refused");
+            assert!(
+                WalkConfig::compile(&config).is_err(),
+                "`{bad}` must be refused"
+            );
         }
     }
 
     #[test]
     fn detects_code_files_as_text() {
-        assert_eq!(detect_mimetype(Path::new("main.zsh")).essence(), "text/plain");
+        assert_eq!(
+            detect_mimetype(Path::new("main.zsh")).essence(),
+            "text/plain"
+        );
         use inseam_seams::text::is_indexable_text;
-        assert!(is_indexable_text(&detect_mimetype(Path::new("config.json"))));
-        assert!(!is_indexable_text(&detect_mimetype(Path::new("photo.jpeg"))));
+        assert!(is_indexable_text(&detect_mimetype(Path::new(
+            "config.json"
+        ))));
+        assert!(!is_indexable_text(&detect_mimetype(Path::new(
+            "photo.jpeg"
+        ))));
     }
 }

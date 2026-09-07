@@ -77,7 +77,10 @@ mod tests {
         let (_dir, state) = state().await;
         let v1 = state.namespace("plugin-a", "1").await.expect("opens");
         v1.put("k", "old").await.expect("puts");
-        let v2 = state.namespace("plugin-a", "2").await.expect("reopens at v2");
+        let v2 = state
+            .namespace("plugin-a", "2")
+            .await
+            .expect("reopens at v2");
         assert_eq!(v2.get("k").await.expect("gets"), None, "v2 starts empty");
         v2.put("k", "new").await.expect("puts");
         // Same version keeps state.

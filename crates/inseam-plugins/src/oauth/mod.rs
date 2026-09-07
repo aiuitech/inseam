@@ -34,15 +34,15 @@ use tokio::net::TcpListener;
 
 use inseam_kernel::address::Timestamp;
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, SecretNeed,
-};
-use inseam_seams::oauth::{
-    AuthorizationCallback, AuthorizationStarted, Grant, GrantDisposer, GrantId, GrantSpec,
-    OAuth, Redirect, OAUTH,
+    ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, SecretNeed, parse_config,
 };
 use inseam_seams::SeamError;
+use inseam_seams::oauth::{
+    AuthorizationCallback, AuthorizationStarted, Grant, GrantDisposer, GrantId, GrantSpec, OAUTH,
+    OAuth, Redirect,
+};
 
-use attempt::{Attempt, ATTEMPTS_MAX};
+use attempt::{ATTEMPTS_MAX, Attempt};
 use grant::{ClientCredentials, GrantHandle, Settings};
 
 pub use grant::{Clock, SystemClock};
@@ -115,7 +115,10 @@ fn validate(config: &OAuthConfig) -> Result<(), PluginError> {
     let mut seen: BTreeSet<&str> = BTreeSet::new();
     for grant in &config.grants {
         if !seen.insert(grant.id.as_str()) {
-            return Err(PluginError(format!("config: grant `{}` is configured twice", grant.id)));
+            return Err(PluginError(format!(
+                "config: grant `{}` is configured twice",
+                grant.id
+            )));
         }
         validate_spec(grant).map_err(|e| PluginError(format!("config: {e}")))?;
     }
@@ -263,13 +266,21 @@ impl Service {
             let known: Vec<String> = grants.keys().map(ToString::to_string).collect();
             SeamError::Unavailable(format!(
                 "no grant `{id}` is configured; known grants: {}",
-                if known.is_empty() { "none".to_string() } else { known.join(", ") }
+                if known.is_empty() {
+                    "none".to_string()
+                } else {
+                    known.join(", ")
+                }
             ))
         })
     }
 
     fn attempt(&self, state: &str) -> Result<Arc<Attempt>, SeamError> {
-        let attempts = self.inner.attempts.lock().unwrap_or_else(|e| e.into_inner());
+        let attempts = self
+            .inner
+            .attempts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         attempts
             .iter()
             .find(|a| a.state == state)
@@ -285,7 +296,11 @@ impl Service {
     /// ceiling is still reached.
     fn admit(&self, attempt: Arc<Attempt>) -> Result<(), SeamError> {
         let now = self.inner.settings.clock.now();
-        let mut attempts = self.inner.attempts.lock().unwrap_or_else(|e| e.into_inner());
+        let mut attempts = self
+            .inner
+            .attempts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         attempts.retain(|a| !a.is_expired(now));
         if attempts.len() >= ATTEMPTS_MAX {
             return Err(SeamError::Refused(format!(
@@ -315,7 +330,10 @@ impl OAuth for Service {
             .collect()
     }
 
-    async fn register(&self, spec: GrantSpec) -> Result<(Arc<dyn Grant>, GrantDisposer), SeamError> {
+    async fn register(
+        &self,
+        spec: GrantSpec,
+    ) -> Result<(Arc<dyn Grant>, GrantDisposer), SeamError> {
         validate_spec(&spec)?;
         let handle = load_handle(&spec, &self.inner.credentials_dir, &self.inner.settings).await;
         let id = spec.id.clone();
@@ -359,7 +377,9 @@ impl OAuth for Service {
                 let listener = bind_loopback(self.inner.settings.callback_port).await?;
                 let port = listener
                     .local_addr()
-                    .map_err(|e| SeamError::failed(format!("loopback listener has no address: {e}")))?
+                    .map_err(|e| {
+                        SeamError::failed(format!("loopback listener has no address: {e}"))
+                    })?
                     .port();
                 (Some(listener), format!("http://127.0.0.1:{port}/callback"))
             }
@@ -449,7 +469,9 @@ fn validate_redirect_uri(uri: &str) -> Result<(), SeamError> {
         )));
     }
     if parsed.host_str().is_none() {
-        return Err(SeamError::failed(format!("redirect_uri `{uri}` has no host")));
+        return Err(SeamError::failed(format!(
+            "redirect_uri `{uri}` has no host"
+        )));
     }
     Ok(())
 }
@@ -495,7 +517,11 @@ mod tests {
                     if let Some((head, body)) = text.split_once("\r\n\r\n") {
                         let length: usize = head
                             .lines()
-                            .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().expect("length")))
+                            .find_map(|l| {
+                                l.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .map(|v| v.trim().parse().expect("length"))
+                            })
                             .unwrap_or(0);
                         if body.len() >= length || n == 0 {
                             recorded.lock().expect("lock").push(body.to_string());
@@ -541,7 +567,12 @@ mod tests {
     }
 
     /// A service holding one ready grant `test` over `dir`.
-    async fn ready_service(dir: &Path, token_url: &str, clock: Arc<dyn Clock>, bus: EventBus) -> Service {
+    async fn ready_service(
+        dir: &Path,
+        token_url: &str,
+        clock: Arc<dyn Clock>,
+        bus: EventBus,
+    ) -> Service {
         let settings = settings(clock, bus);
         let spec = spec(token_url);
         let handle = GrantHandle::load(
@@ -588,8 +619,8 @@ mod tests {
     }
 
     fn fake_id_token(email: &str) -> String {
-        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         use base64::Engine;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256"}"#);
         let payload = URL_SAFE_NO_PAD.encode(serde_json::json!({"email": email}).to_string());
         format!("{header}.{payload}.sig")
@@ -611,14 +642,23 @@ mod tests {
         let service = ready_service(dir.path(), &server.url, clock, bus).await;
         let grant = service.grant(&test_grant()).expect("held");
         assert_eq!(grant.state().await, GrantState::Unauthorized);
-        assert!(matches!(grant.access_token().await, Err(SeamError::Unauthorized(_))));
+        assert!(matches!(
+            grant.access_token().await,
+            Err(SeamError::Unauthorized(_))
+        ));
 
-        let started = service.authorize(&test_grant(), Redirect::Loopback).await.expect("begins");
+        let started = service
+            .authorize(&test_grant(), Redirect::Loopback)
+            .await
+            .expect("begins");
         assert!(started.redirect_uri.starts_with("http://127.0.0.1:"));
         assert_eq!(query_pairs(&started.url)["state"], started.state);
         let url = started.url.clone();
         tokio::spawn(async move { browser_returns(&url, "code-xyz", None).await });
-        let done = service.await_authorization(&started.state).await.expect("completes");
+        let done = service
+            .await_authorization(&started.state)
+            .await
+            .expect("completes");
         assert_eq!(done, test_grant());
 
         let sent = server.bodies.lock().expect("lock").clone();
@@ -653,7 +693,13 @@ mod tests {
         }
 
         // A fresh service over the same file is authorized without a flow.
-        let reloaded = ready_service(dir.path(), &server.url, Arc::new(FixedClock(AtomicI64::new(1_000))), EventBus::new()).await;
+        let reloaded = ready_service(
+            dir.path(),
+            &server.url,
+            Arc::new(FixedClock(AtomicI64::new(1_000))),
+            EventBus::new(),
+        )
+        .await;
         let grant = reloaded.grant(&test_grant()).expect("held");
         assert_eq!(grant.access_token().await.expect("token").secret(), "at-1");
         assert_eq!(grant.state().await.account(), Some("greg@example.com"));
@@ -666,7 +712,13 @@ mod tests {
             "access_token": "at-ext", "refresh_token": "rt", "expires_in": 100
         })])
         .await;
-        let service = ready_service(dir.path(), &server.url, Arc::new(FixedClock(AtomicI64::new(0))), EventBus::new()).await;
+        let service = ready_service(
+            dir.path(),
+            &server.url,
+            Arc::new(FixedClock(AtomicI64::new(0))),
+            EventBus::new(),
+        )
+        .await;
         let started = service
             .authorize(
                 &test_grant(),
@@ -677,7 +729,10 @@ mod tests {
             .await
             .expect("begins");
         let pairs = query_pairs(&started.url);
-        assert_eq!(pairs["redirect_uri"], "https://node.example/api/v1/oauth/callback");
+        assert_eq!(
+            pairs["redirect_uri"],
+            "https://node.example/api/v1/oauth/callback"
+        );
 
         // Nobody listens locally: the transport brings the parameters back.
         let callback = AuthorizationCallback {
@@ -685,18 +740,42 @@ mod tests {
             code: Some("code-1".to_string()),
             ..AuthorizationCallback::default()
         };
-        let done = service.complete_authorization(callback.clone()).await.expect("completes");
+        let done = service
+            .complete_authorization(callback.clone())
+            .await
+            .expect("completes");
         assert_eq!(done, test_grant());
         let sent = server.bodies.lock().expect("lock").clone();
-        assert!(sent[0].contains("redirect_uri=https%3A%2F%2Fnode.example%2Fapi%2Fv1%2Foauth%2Fcallback"));
+        assert!(
+            sent[0]
+                .contains("redirect_uri=https%3A%2F%2Fnode.example%2Fapi%2Fv1%2Foauth%2Fcallback")
+        );
         assert_eq!(
-            service.grant(&test_grant()).expect("held").access_token().await.expect("token").secret(),
+            service
+                .grant(&test_grant())
+                .expect("held")
+                .access_token()
+                .await
+                .expect("token")
+                .secret(),
             "at-ext"
         );
         // A waiter sees the same outcome, and a replayed callback is the
         // recorded outcome, not a second exchange.
-        assert_eq!(service.await_authorization(&started.state).await.expect("settled"), test_grant());
-        assert_eq!(service.complete_authorization(callback).await.expect("idempotent"), test_grant());
+        assert_eq!(
+            service
+                .await_authorization(&started.state)
+                .await
+                .expect("settled"),
+            test_grant()
+        );
+        assert_eq!(
+            service
+                .complete_authorization(callback)
+                .await
+                .expect("idempotent"),
+            test_grant()
+        );
         assert_eq!(server.bodies.lock().expect("lock").len(), 1);
     }
 
@@ -704,25 +783,47 @@ mod tests {
     async fn a_redirect_with_the_wrong_state_is_refused() {
         let dir = tempfile::tempdir().expect("tempdir");
         let server = fake_token_server(Vec::new()).await;
-        let service = ready_service(dir.path(), &server.url, Arc::new(FixedClock(AtomicI64::new(0))), EventBus::new()).await;
-        let started = service.authorize(&test_grant(), Redirect::Loopback).await.expect("begins");
+        let service = ready_service(
+            dir.path(),
+            &server.url,
+            Arc::new(FixedClock(AtomicI64::new(0))),
+            EventBus::new(),
+        )
+        .await;
+        let started = service
+            .authorize(&test_grant(), Redirect::Loopback)
+            .await
+            .expect("begins");
         let url = started.url.clone();
         tokio::spawn(async move { browser_returns(&url, "code", Some("forged")).await });
         assert!(matches!(
             service.await_authorization(&started.state).await,
             Err(SeamError::Refused(_))
         ));
-        assert_eq!(service.grant(&test_grant()).expect("held").state().await, GrantState::Unauthorized);
+        assert_eq!(
+            service.grant(&test_grant()).expect("held").state().await,
+            GrantState::Unauthorized
+        );
         assert!(!dir.path().join("test.json").exists());
 
         // Unknown states and provider errors are refusals on the external
         // path too.
         assert!(matches!(
-            service.complete_authorization(AuthorizationCallback { state: Some("nope".into()), ..Default::default() }).await,
+            service
+                .complete_authorization(AuthorizationCallback {
+                    state: Some("nope".into()),
+                    ..Default::default()
+                })
+                .await,
             Err(SeamError::Refused(_))
         ));
         let started = service
-            .authorize(&test_grant(), Redirect::External { redirect_uri: "http://127.0.0.1:9/cb".into() })
+            .authorize(
+                &test_grant(),
+                Redirect::External {
+                    redirect_uri: "http://127.0.0.1:9/cb".into(),
+                },
+            )
             .await
             .expect("begins");
         let denied = service
@@ -733,23 +834,48 @@ mod tests {
             })
             .await;
         assert!(matches!(denied, Err(SeamError::Refused(_))));
-        assert!(matches!(service.await_authorization(&started.state).await, Err(SeamError::Refused(_))));
+        assert!(matches!(
+            service.await_authorization(&started.state).await,
+            Err(SeamError::Refused(_))
+        ));
     }
 
     #[tokio::test]
     async fn authorization_refuses_bad_redirect_uris_and_unknown_grants() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let service = ready_service(dir.path(), "http://127.0.0.1:1/token", Arc::new(FixedClock(AtomicI64::new(0))), EventBus::new()).await;
-        assert!(service
-            .authorize(&test_grant(), Redirect::External { redirect_uri: "ftp://x/cb".into() })
-            .await
-            .is_err());
-        assert!(service
-            .authorize(&test_grant(), Redirect::External { redirect_uri: "/relative".into() })
-            .await
-            .is_err());
+        let service = ready_service(
+            dir.path(),
+            "http://127.0.0.1:1/token",
+            Arc::new(FixedClock(AtomicI64::new(0))),
+            EventBus::new(),
+        )
+        .await;
+        assert!(
+            service
+                .authorize(
+                    &test_grant(),
+                    Redirect::External {
+                        redirect_uri: "ftp://x/cb".into()
+                    }
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            service
+                .authorize(
+                    &test_grant(),
+                    Redirect::External {
+                        redirect_uri: "/relative".into()
+                    }
+                )
+                .await
+                .is_err()
+        );
         assert!(matches!(
-            service.authorize(&GrantId::new("nope").expect("valid"), Redirect::Loopback).await,
+            service
+                .authorize(&GrantId::new("nope").expect("valid"), Redirect::Loopback)
+                .await,
             Err(SeamError::Unavailable(_))
         ));
     }
@@ -770,7 +896,11 @@ mod tests {
             token_type: "Bearer".to_string(),
             account: Some("greg@example.com".to_string()),
         };
-        std::fs::write(dir.path().join("test.json"), serde_json::to_vec(&stale).expect("json")).expect("write");
+        std::fs::write(
+            dir.path().join("test.json"),
+            serde_json::to_vec(&stale).expect("json"),
+        )
+        .expect("write");
         let clock = Arc::new(FixedClock(AtomicI64::new(1_000)));
         let service = ready_service(dir.path(), &server.url, clock, EventBus::new()).await;
         let grant = service.grant(&test_grant()).expect("held");
@@ -786,10 +916,19 @@ mod tests {
         assert_eq!(server.bodies.lock().expect("lock").len(), 1);
 
         let on_disk: flow::StoredTokens =
-            serde_json::from_slice(&std::fs::read(dir.path().join("test.json")).expect("read")).expect("parses");
+            serde_json::from_slice(&std::fs::read(dir.path().join("test.json")).expect("read"))
+                .expect("parses");
         assert_eq!(on_disk.access_token, "at-2");
-        assert_eq!(on_disk.refresh_token.as_deref(), Some("rt-1"), "old refresh token kept");
-        assert_eq!(on_disk.account.as_deref(), Some("greg@example.com"), "account kept");
+        assert_eq!(
+            on_disk.refresh_token.as_deref(),
+            Some("rt-1"),
+            "old refresh token kept"
+        );
+        assert_eq!(
+            on_disk.account.as_deref(),
+            Some("greg@example.com"),
+            "account kept"
+        );
         assert_eq!(on_disk.expires_at, Some(1_100));
     }
 
@@ -805,12 +944,22 @@ mod tests {
             token_type: "Bearer".to_string(),
             account: None,
         };
-        std::fs::write(dir.path().join("test.json"), serde_json::to_vec(&good).expect("json")).expect("write");
+        std::fs::write(
+            dir.path().join("test.json"),
+            serde_json::to_vec(&good).expect("json"),
+        )
+        .expect("write");
         let bus = EventBus::new();
         let seen: Arc<Mutex<Vec<GrantChanged>>> = Arc::default();
         let record = Arc::clone(&seen);
         let _sub = bus.on::<GrantChanged>(move |e| record.lock().expect("lock").push(e.clone()));
-        let service = ready_service(dir.path(), "http://127.0.0.1:1/token", Arc::new(FixedClock(AtomicI64::new(0))), bus).await;
+        let service = ready_service(
+            dir.path(),
+            "http://127.0.0.1:1/token",
+            Arc::new(FixedClock(AtomicI64::new(0))),
+            bus,
+        )
+        .await;
         let grant = service.grant(&test_grant()).expect("held");
         assert!(matches!(grant.state().await, GrantState::Authorized { .. }));
         grant.revoke().await.expect("revokes");
@@ -834,9 +983,14 @@ mod tests {
         let grant = service.grant(&test_grant()).expect("held");
         assert_eq!(
             grant.state().await,
-            GrantState::MissingSecret { env: "INSEAM_TEST_OAUTH_CLIENT_ID_NEVER_SET".to_string() }
+            GrantState::MissingSecret {
+                env: "INSEAM_TEST_OAUTH_CLIENT_ID_NEVER_SET".to_string()
+            }
         );
-        assert!(matches!(grant.access_token().await, Err(SeamError::Unavailable(_))));
+        assert!(matches!(
+            grant.access_token().await,
+            Err(SeamError::Unavailable(_))
+        ));
         assert!(matches!(
             service.authorize(&test_grant(), Redirect::Loopback).await,
             Err(SeamError::Unavailable(_))
@@ -856,19 +1010,33 @@ mod tests {
         google.id = GrantId::new("google").expect("valid");
         let (grant, dispose) = service.register(google.clone()).await.expect("registers");
         assert_eq!(grant.id().as_str(), "google");
-        let ids: Vec<String> = service.grants().iter().map(|g| g.id().to_string()).collect();
+        let ids: Vec<String> = service
+            .grants()
+            .iter()
+            .map(|g| g.id().to_string())
+            .collect();
         assert_eq!(ids, vec!["google", "test"], "ordered by id");
 
         // One grant per id, whichever door it came through.
-        assert!(matches!(service.register(google).await, Err(SeamError::Refused(_))));
-        assert!(matches!(service.register(spec("http://127.0.0.1:1/token")).await, Err(SeamError::Refused(_))));
+        assert!(matches!(
+            service.register(google).await,
+            Err(SeamError::Refused(_))
+        ));
+        assert!(matches!(
+            service.register(spec("http://127.0.0.1:1/token")).await,
+            Err(SeamError::Refused(_))
+        ));
         let mut bad = spec("http://127.0.0.1:1/token");
         bad.id = GrantId::new("bad").expect("valid");
         bad.token_url = "ftp://nope".to_string();
         assert!(service.register(bad).await.is_err());
 
         dispose();
-        let ids: Vec<String> = service.grants().iter().map(|g| g.id().to_string()).collect();
+        let ids: Vec<String> = service
+            .grants()
+            .iter()
+            .map(|g| g.id().to_string())
+            .collect();
         assert_eq!(ids, vec!["test"]);
     }
 
@@ -904,7 +1072,10 @@ client_id_env = "E"
         assert!(OAuthPlugin::from_config(&bad_url).is_err());
 
         let empty: toml::Table = toml::from_str("").expect("toml");
-        assert!(OAuthPlugin::from_config(&empty).is_ok(), "no grants is a valid, idle provider");
+        assert!(
+            OAuthPlugin::from_config(&empty).is_ok(),
+            "no grants is a valid, idle provider"
+        );
     }
 
     #[test]

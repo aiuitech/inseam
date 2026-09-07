@@ -98,8 +98,11 @@ pub trait PluginFactory: Send + Sync {
 pub trait SchemeFactory: Send + Sync {
     /// The scheme prefix, including the colon (e.g. `"wasm:"`).
     fn scheme(&self) -> &str;
-    fn build(&self, artifact_ref: &str, config: &toml::Table)
-    -> Result<Box<dyn Plugin>, PluginError>;
+    fn build(
+        &self,
+        artifact_ref: &str,
+        config: &toml::Table,
+    ) -> Result<Box<dyn Plugin>, PluginError>;
 }
 
 /// Parse an entry's config table into the plugin's typed config. Unknown
@@ -182,7 +185,9 @@ impl ApplyCx<'_> {
             ));
         }
         match self.bindings.get(key.name()) {
-            Some(binding) => Ok(Some(binding.typed(key).map_err(|e| PluginError(e.to_string()))?)),
+            Some(binding) => Ok(Some(
+                binding.typed(key).map_err(|e| PluginError(e.to_string()))?,
+            )),
             None => Ok(None),
         }
     }

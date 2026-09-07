@@ -27,7 +27,9 @@ pub enum FragmentError {
          starting with a letter, at most {RELATION_KIND_LEN_MAX} long"
     )]
     BadRelationKind(String),
-    #[error("`{0}` is not a fragment key: non-empty, no control characters, at most {FRAGMENT_KEY_LEN_MAX} long")]
+    #[error(
+        "`{0}` is not a fragment key: non-empty, no control characters, at most {FRAGMENT_KEY_LEN_MAX} long"
+    )]
     BadFragmentKey(String),
 }
 
@@ -425,10 +427,20 @@ mod tests {
 
     #[test]
     fn relation_kinds_roundtrip_their_names() {
-        for name in ["contains", "derives", "links-to", "mentions", "transcribes", "x9-y"] {
+        for name in [
+            "contains",
+            "derives",
+            "links-to",
+            "mentions",
+            "transcribes",
+            "x9-y",
+        ] {
             let kind = name.parse::<RelationKind>().expect("valid kind");
             assert_eq!(kind.as_str(), name);
-            assert_eq!(serde_json::to_string(&kind).expect("serializes"), format!("{name:?}"));
+            assert_eq!(
+                serde_json::to_string(&kind).expect("serializes"),
+                format!("{name:?}")
+            );
         }
         assert_eq!(RelationKind::contains().as_str(), "contains");
         assert_eq!(RelationKind::derives().as_str(), "derives");
@@ -436,9 +448,19 @@ mod tests {
 
     #[test]
     fn relation_kinds_reject_shapeless_names() {
-        for bad in ["", "Contains", "derived_from", "9lives", "a b", &"x".repeat(65)] {
+        for bad in [
+            "",
+            "Contains",
+            "derived_from",
+            "9lives",
+            "a b",
+            &"x".repeat(65),
+        ] {
             assert!(
-                matches!(RelationKind::new(bad), Err(FragmentError::BadRelationKind(_))),
+                matches!(
+                    RelationKind::new(bad),
+                    Err(FragmentError::BadRelationKind(_))
+                ),
                 "{bad:?} must be rejected"
             );
         }
@@ -447,9 +469,18 @@ mod tests {
     #[test]
     fn fragment_keys_are_bounded_and_printable() {
         assert!(FragmentKey::new("entity:person:greg hunt").is_ok());
-        assert!(matches!(FragmentKey::new(""), Err(FragmentError::BadFragmentKey(_))));
-        assert!(matches!(FragmentKey::new("a\nb"), Err(FragmentError::BadFragmentKey(_))));
-        assert!(matches!(FragmentKey::new("k".repeat(257)), Err(FragmentError::BadFragmentKey(_))));
+        assert!(matches!(
+            FragmentKey::new(""),
+            Err(FragmentError::BadFragmentKey(_))
+        ));
+        assert!(matches!(
+            FragmentKey::new("a\nb"),
+            Err(FragmentError::BadFragmentKey(_))
+        ));
+        assert!(matches!(
+            FragmentKey::new("k".repeat(257)),
+            Err(FragmentError::BadFragmentKey(_))
+        ));
     }
 
     #[test]

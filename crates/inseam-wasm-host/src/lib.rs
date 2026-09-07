@@ -34,13 +34,13 @@ use wasmtime::{Engine, Store};
 
 use inseam_kernel::fragment::{Mimetype, NewFragment, RelationKind, Sprout};
 use inseam_kernel::substrate::{
-    fnv1a, parse_config, ApplyCx, Inject, Manifest as PluginManifest, Plugin, PluginError,
-    SchemeFactory, STATE,
+    ApplyCx, Inject, Manifest as PluginManifest, Plugin, PluginError, STATE, SchemeFactory, fnv1a,
+    parse_config,
 };
 use inseam_seams::llm::LlmLane;
 use inseam_seams::transforms::{
-    register_as_effect, GrantedLlm, Registration, Transform, TransformCtx, TransformKind,
-    TransformOutput,
+    GrantedLlm, Registration, Transform, TransformCtx, TransformKind, TransformOutput,
+    register_as_effect,
 };
 
 wasmtime::component::bindgen!({
@@ -52,8 +52,8 @@ wasmtime::component::bindgen!({
 mod check;
 
 pub use check::{
-    check_artifact, fixture_files, try_artifact, CheckItem, CheckReport, Outcome, Phase,
-    TriedFragment, TryInput, TryOutcome,
+    CheckItem, CheckReport, Outcome, Phase, TriedFragment, TryInput, TryOutcome, check_artifact,
+    fixture_files, try_artifact,
 };
 
 /// The transform seam's WIT world, embedded so the CLI can hand it to an
@@ -347,16 +347,19 @@ impl Plugin for WasmTransformPlugin {
         self.enforce_cooldown(cx).await?;
         self.admit(cx).await?;
 
-        let component = Component::new(&self.engine, &self.artifact_bytes)
-            .map_err(|e| PluginError(format!("{}: not a valid component: {e}", self.artifact.display())))?;
+        let component = Component::new(&self.engine, &self.artifact_bytes).map_err(|e| {
+            PluginError(format!(
+                "{}: not a valid component: {e}",
+                self.artifact.display()
+            ))
+        })?;
         let linker = build_linker(&self.engine).map_err(|e| PluginError(format!("linker: {e}")))?;
 
         // Ask the component for its claims once, at mount: the effective
         // claim set is declared ∩ exported.
-        let exported = self
-            .call_claims(&component, &linker)
-            .await
-            .map_err(|e| PluginError(format!("{}: claims() failed: {e}", self.artifact.display())))?;
+        let exported = self.call_claims(&component, &linker).await.map_err(|e| {
+            PluginError(format!("{}: claims() failed: {e}", self.artifact.display()))
+        })?;
         let effective: Vec<String> = self
             .manifest
             .claims
@@ -428,7 +431,8 @@ impl WasmTransformPlugin {
     async fn enforce_cooldown(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
         let state = cx.get(&STATE)?;
         let ns = state
-            .namespace("wasm-host", "1").await
+            .namespace("wasm-host", "1")
+            .await
             .map_err(|e| PluginError(e.to_string()))?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -436,10 +440,15 @@ impl WasmTransformPlugin {
             .unwrap_or(0);
 
         let seen_key = format!("first-seen:{}", self.artifact_hash);
-        let first_seen: u64 = match ns.get(&seen_key).await.map_err(|e| PluginError(e.to_string()))? {
+        let first_seen: u64 = match ns
+            .get(&seen_key)
+            .await
+            .map_err(|e| PluginError(e.to_string()))?
+        {
             Some(ts) => ts.parse().unwrap_or(now),
             None => {
-                ns.put(&seen_key, &now.to_string()).await
+                ns.put(&seen_key, &now.to_string())
+                    .await
                     .map_err(|e| PluginError(e.to_string()))?;
                 now
             }
@@ -448,7 +457,10 @@ impl WasmTransformPlugin {
         // Capability widening is its own gate: the diff, not the clock, is
         // the question.
         let caps_key = format!("capabilities:{}", self.manifest.name);
-        let approved = ns.get(&caps_key).await.map_err(|e| PluginError(e.to_string()))?;
+        let approved = ns
+            .get(&caps_key)
+            .await
+            .map_err(|e| PluginError(e.to_string()))?;
         let requested = self.manifest.capabilities.summary();
         match approved {
             Some(prior) if prior != requested && !self.config.allow_new => {
@@ -460,7 +472,8 @@ impl WasmTransformPlugin {
                 )));
             }
             _ => {
-                ns.put(&caps_key, &requested).await
+                ns.put(&caps_key, &requested)
+                    .await
                     .map_err(|e| PluginError(e.to_string()))?;
             }
         }
@@ -494,7 +507,8 @@ impl WasmTransformPlugin {
         }
         let state = cx.get(&STATE)?;
         let ns = state
-            .namespace("wasm-host", "1").await
+            .namespace("wasm-host", "1")
+            .await
             .map_err(|e| PluginError(e.to_string()))?;
         let key = format!("admission:{}", self.admission_hash);
         let verdict = match ns.get(&key).await.map_err(|e| PluginError(e.to_string()))? {
@@ -509,7 +523,8 @@ impl WasmTransformPlugin {
                     None => "pass".to_string(),
                     Some(failure) => format!("fail:{failure}"),
                 };
-                ns.put(&key, &verdict).await
+                ns.put(&key, &verdict)
+                    .await
                     .map_err(|e| PluginError(e.to_string()))?;
                 verdict
             }
@@ -594,7 +609,11 @@ impl Transform for WasmTransform {
             &self.engine,
             Invocation::new(
                 self.plugin_name.clone(),
-                if self.grant_llm { ctx.llm.clone() } else { None },
+                if self.grant_llm {
+                    ctx.llm.clone()
+                } else {
+                    None
+                },
                 ctx.bytes.map(<[u8]>::to_vec),
             ),
         );
@@ -685,7 +704,10 @@ fn sprout_forest(
         match f.parent {
             Some(p) if (p as usize) < i => children_of[p as usize].push(i),
             Some(_) => {
-                tracing::warn!(plugin, "fragment parent must index an earlier fragment; treating as root");
+                tracing::warn!(
+                    plugin,
+                    "fragment parent must index an earlier fragment; treating as root"
+                );
                 roots.push(i);
             }
             None => roots.push(i),
@@ -783,7 +805,11 @@ mod tests {
                 },
             ],
         );
-        assert_eq!(out.sprouts.len(), 2, "root + orphan-as-root; forged summary dropped");
+        assert_eq!(
+            out.sprouts.len(),
+            2,
+            "root + orphan-as-root; forged summary dropped"
+        );
         assert_eq!(out.sprouts[0].relation.as_str(), "transcribes");
         assert_eq!(out.sprouts[0].children.len(), 1);
         assert_eq!(

@@ -24,11 +24,11 @@ use serde::{Deserialize, Serialize};
 
 use inseam_kernel::store::{EmbeddingIdentity, VectorScope};
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, STORE,
+    ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, STORE, parse_config,
 };
-use inseam_seams::embedder::{self, Embedder, EMBEDDER};
-use inseam_seams::llm::{EmbedRequest, EmbeddingModel, Llm, LLM};
 use inseam_seams::SeamError;
+use inseam_seams::embedder::{self, EMBEDDER, Embedder};
+use inseam_seams::llm::{EmbedRequest, EmbeddingModel, LLM, Llm};
 
 /// Characters of input text an embedding sees; more adds cost, not recall.
 const EMBED_INPUT_CHARS: usize = 6_000;

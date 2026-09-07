@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use inseam_kernel::substrate::{ApplyCx, Facts, Inject, Manifest, Plugin, PluginError};
-use inseam_seams::transforms::{Registration, Transforms, TRANSFORMS};
+use inseam_seams::transforms::{Registration, TRANSFORMS, Transforms};
 
 pub struct TransformsRegistry;
 
@@ -139,12 +139,20 @@ mod tests {
         let dispose_md = registry.register(reg("markdown", TransformKind::Structural));
         let _keep_chunker = registry.register(reg("chunker", TransformKind::Structural));
 
-        let order: Vec<String> = registry.snapshot().iter().map(|r| r.entry_id.clone()).collect();
+        let order: Vec<String> = registry
+            .snapshot()
+            .iter()
+            .map(|r| r.entry_id.clone())
+            .collect();
         assert_eq!(order, vec!["chunker", "markdown", "summarizer"]);
 
         // The disposer is the whole uninstall path.
         dispose_md();
-        let order: Vec<String> = registry.snapshot().iter().map(|r| r.entry_id.clone()).collect();
+        let order: Vec<String> = registry
+            .snapshot()
+            .iter()
+            .map(|r| r.entry_id.clone())
+            .collect();
         assert_eq!(order, vec!["chunker", "summarizer"]);
     }
 }

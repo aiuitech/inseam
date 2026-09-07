@@ -6,12 +6,12 @@
 use serde_json::json;
 use thiserror::Error;
 
-use inseam_seams::text::truncate_chars;
+use inseam_seams::SeamError;
 use inseam_seams::llm::{ChatMessage, ChatRequest, Llm, Tool, ToolCall};
 use inseam_seams::operations::{
     ExpandRequest, FetchRequest, Operations, QueryRequest, QueryResponse, ScanRequest,
 };
-use inseam_seams::SeamError;
+use inseam_seams::text::truncate_chars;
 
 /// Characters of tool output returned to the model per call.
 const TOOL_RESULT_CHARS: usize = 12_000;
@@ -27,7 +27,9 @@ const QUERY_SUMMARY_CHARS: usize = 500;
 pub enum AgentError {
     #[error(transparent)]
     Llm(#[from] SeamError),
-    #[error("model kept calling tools after {0} turns and had nothing to say when asked to close; raise --turns")]
+    #[error(
+        "model kept calling tools after {0} turns and had nothing to say when asked to close; raise --turns"
+    )]
     OutOfTurns(usize),
 }
 
@@ -130,15 +132,27 @@ async fn execute(operations: &dyn Operations, call: &ToolCall) -> String {
             Err(e) => Err(e),
         },
         "expand" => match parse::<ExpandRequest>(args) {
-            Ok(r) => operations.expand(r).await.map(|v| to_json(&v)).map_err(stringify),
+            Ok(r) => operations
+                .expand(r)
+                .await
+                .map(|v| to_json(&v))
+                .map_err(stringify),
             Err(e) => Err(e),
         },
         "scan" => match parse::<ScanRequest>(args) {
-            Ok(r) => operations.scan(r).await.map(|v| to_json(&v)).map_err(stringify),
+            Ok(r) => operations
+                .scan(r)
+                .await
+                .map(|v| to_json(&v))
+                .map_err(stringify),
             Err(e) => Err(e),
         },
         "fetch" => match parse::<FetchRequest>(args) {
-            Ok(r) => operations.fetch(r).await.map(|v| to_json(&v)).map_err(stringify),
+            Ok(r) => operations
+                .fetch(r)
+                .await
+                .map(|v| to_json(&v))
+                .map_err(stringify),
             Err(e) => Err(e),
         },
         other => Err(format!("unknown tool `{other}`")),
@@ -297,7 +311,9 @@ mod tests {
         });
         assert_eq!(response.results.len(), 10);
         assert!(response.results.iter().all(|r| {
-            r.summary.as_ref().map_or(false, |s| s.chars().count() <= QUERY_SUMMARY_CHARS)
+            r.summary
+                .as_ref()
+                .map_or(false, |s| s.chars().count() <= QUERY_SUMMARY_CHARS)
         }));
         assert!(to_json(&response).chars().count() <= TOOL_RESULT_CHARS);
     }

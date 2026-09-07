@@ -123,9 +123,7 @@ impl EventBus {
             .listeners
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        map.entry(event)
-            .or_default()
-            .push((id, Box::new(listener)));
+        map.entry(event).or_default().push((id, Box::new(listener)));
         Subscription {
             bus: Arc::clone(&self.inner),
             event,

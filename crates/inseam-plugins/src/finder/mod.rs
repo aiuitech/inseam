@@ -14,11 +14,13 @@ use inseam_kernel::address::ContentDigest;
 use inseam_kernel::fragment::{FragmentId, Relation, RelationKind};
 use inseam_kernel::store::{IndexStore, SourceId, StoredSource};
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, STORE,
+    ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, STORE, parse_config,
 };
-use inseam_seams::embedder::{Embedder, EMBEDDER};
-use inseam_seams::finder::{Discovery, Expansion, Finder, QueryTrace, RankedFragment, RankedSource, FINDER};
 use inseam_seams::SeamError;
+use inseam_seams::embedder::{EMBEDDER, Embedder};
+use inseam_seams::finder::{
+    Discovery, Expansion, FINDER, Finder, QueryTrace, RankedFragment, RankedSource,
+};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -326,7 +328,9 @@ impl FinderService {
             let query = inseam_seams::extract::strip_stopwords(text);
             (
                 self.store.search_fts(&query, self.config.seed_k).await?,
-                self.store.search_fts_lexical(&query, self.config.seed_k).await?,
+                self.store
+                    .search_fts_lexical(&query, self.config.seed_k)
+                    .await?,
             )
         } else {
             (Vec::new(), Vec::new())
@@ -706,17 +710,35 @@ mod tests {
     #[test]
     fn unknown_relation_kinds_get_the_default_weight_and_config_layers_over_it() {
         let weights = weights();
-        assert_eq!(weights.weight(&RelationKind::new("cites").expect("valid")), 0.5);
-        let configured: RelationWeights =
-            toml::from_str("default = 0.1
+        assert_eq!(
+            weights.weight(&RelationKind::new("cites").expect("valid")),
+            0.5
+        );
+        let configured: RelationWeights = toml::from_str(
+            "default = 0.1
 [by_kind]
 \"links-to\" = 0.2
-cites = 0.7").expect("parses");
+cites = 0.7",
+        )
+        .expect("parses");
         let merged = configured.over_defaults();
-        assert_eq!(merged.weight(&RelationKind::new("links-to").expect("valid")), 0.2);
-        assert_eq!(merged.weight(&RelationKind::new("cites").expect("valid")), 0.7);
-        assert_eq!(merged.weight(&RelationKind::contains()), 1.0, "unnamed kinds keep the table");
-        assert_eq!(merged.weight(&RelationKind::new("other").expect("valid")), 0.1);
+        assert_eq!(
+            merged.weight(&RelationKind::new("links-to").expect("valid")),
+            0.2
+        );
+        assert_eq!(
+            merged.weight(&RelationKind::new("cites").expect("valid")),
+            0.7
+        );
+        assert_eq!(
+            merged.weight(&RelationKind::contains()),
+            1.0,
+            "unnamed kinds keep the table"
+        );
+        assert_eq!(
+            merged.weight(&RelationKind::new("other").expect("valid")),
+            0.1
+        );
     }
 
     #[test]

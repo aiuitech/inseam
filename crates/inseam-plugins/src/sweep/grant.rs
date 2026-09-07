@@ -5,13 +5,13 @@
 //! for the last call cannot overspend the budget between them.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use inseam_kernel::substrate::{EventBus, Verdict};
+use inseam_seams::SeamError;
 use inseam_seams::llm::{ChatMessage, ChatRequest, Llm, LlmCall, LlmLane, VisionRequest};
 use inseam_seams::transforms::{GrantedLlm, Registration};
-use inseam_seams::SeamError;
 
 /// Per-transform, per-run LLM metering shared with the granted handles.
 pub(super) struct RunMeter {
@@ -103,7 +103,10 @@ impl Grantor {
     /// transform's per-run budget lasts; withheld, the transform falls back
     /// or emits nothing. Every call also passes the seam-level `LlmCall`
     /// guard. The grant is advisory — the handle's charge is what is exact.
-    pub(super) fn grant(self: &Arc<Self>, registration: &Registration) -> Option<Arc<dyn GrantedLlm>> {
+    pub(super) fn grant(
+        self: &Arc<Self>,
+        registration: &Registration,
+    ) -> Option<Arc<dyn GrantedLlm>> {
         let llm = self.llm.as_ref()?;
         let meter = self.meters.meters.get(&registration.entry_id)?;
         if !meter.has_budget() {
@@ -246,10 +249,19 @@ mod tests {
     #[test]
     fn the_batch_lane_names_the_batch_model_and_falls_back_without_one() {
         let with = grantor(Some("google/gemini-2.5-flash-lite:batch"), None);
-        assert_eq!(with.model_for(LlmLane::Interactive), "google/gemini-2.5-flash-lite");
-        assert_eq!(with.model_for(LlmLane::Batch), "google/gemini-2.5-flash-lite:batch");
+        assert_eq!(
+            with.model_for(LlmLane::Interactive),
+            "google/gemini-2.5-flash-lite"
+        );
+        assert_eq!(
+            with.model_for(LlmLane::Batch),
+            "google/gemini-2.5-flash-lite:batch"
+        );
         let without = grantor(None, None);
-        assert_eq!(without.model_for(LlmLane::Batch), "google/gemini-2.5-flash-lite");
+        assert_eq!(
+            without.model_for(LlmLane::Batch),
+            "google/gemini-2.5-flash-lite"
+        );
     }
 
     #[test]
@@ -262,7 +274,10 @@ mod tests {
             llm_lane: LlmLane::Interactive,
             shape_fingerprint: "x".to_string(),
         };
-        assert_eq!(grantor(None, None).lane_of(&registration), LlmLane::Interactive);
+        assert_eq!(
+            grantor(None, None).lane_of(&registration),
+            LlmLane::Interactive
+        );
         assert_eq!(
             grantor(None, Some(LlmLane::Batch)).lane_of(&registration),
             LlmLane::Batch

@@ -15,8 +15,8 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
-use reqwest::redirect::Policy;
 use reqwest::Method;
+use reqwest::redirect::Policy;
 use url::Url;
 
 use inseam_kernel::fragment::Mimetype;
@@ -113,7 +113,12 @@ fn is_public_v6(ip: Ipv6Addr) -> bool {
     let unique_local = (segments[0] & 0xfe00) == 0xfc00;
     let link_local = (segments[0] & 0xffc0) == 0xfe80;
     let documentation = segments[0] == 0x2001 && segments[1] == 0x0db8;
-    !(ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() || unique_local || link_local || documentation)
+    !(ip.is_loopback()
+        || ip.is_unspecified()
+        || ip.is_multicast()
+        || unique_local
+        || link_local
+        || documentation)
 }
 
 /// What one request answered: the content type and length the headers
@@ -179,7 +184,12 @@ impl Fetcher {
 
     /// Follow at most `redirects_max` hops, guarding every one, and read
     /// the final answer.
-    async fn request(&self, url: &Url, method: Method, want: BodyWant) -> Result<Fetched, SeamError> {
+    async fn request(
+        &self,
+        url: &Url,
+        method: Method,
+        want: BodyWant,
+    ) -> Result<Fetched, SeamError> {
         let hops_max = self.redirects_max + 1;
         let mut current = url.clone();
         for hop in 0..hops_max {
@@ -246,7 +256,12 @@ impl Fetcher {
     }
 
     /// Read the headers, and the body under the cap when asked.
-    async fn finish(&self, url: Url, response: reqwest::Response, want: BodyWant) -> Result<Fetched, SeamError> {
+    async fn finish(
+        &self,
+        url: Url,
+        response: reqwest::Response,
+        want: BodyWant,
+    ) -> Result<Fetched, SeamError> {
         let content_type = content_type_of(&response);
         // The declared header, not reqwest's body size hint: a `HEAD`
         // answer has no body, and its hint says zero.
@@ -315,7 +330,9 @@ fn content_type_of(response: &reqwest::Response) -> Mimetype {
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.split(';').next())
         .and_then(|essence| Mimetype::parse(essence.trim()).ok())
-        .unwrap_or_else(|| Mimetype::parse("application/octet-stream").expect("literal mimetype is valid"))
+        .unwrap_or_else(|| {
+            Mimetype::parse("application/octet-stream").expect("literal mimetype is valid")
+        })
 }
 
 /// The `Content-Length` the server declared, when it declared one that
@@ -359,14 +376,18 @@ async fn read_body(
         .map_err(|e| SeamError::failed(format!("reading {url}: {e}")))?
     {
         chunks += 1;
-        assert!(chunks <= cap.saturating_add(1), "each chunk carries at least one byte");
+        assert!(
+            chunks <= cap.saturating_add(1),
+            "each chunk carries at least one byte"
+        );
         bytes.extend_from_slice(&chunk);
         if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > cap {
             return Err(SeamError::Refused(format!(
                 "{url} exceeds the web connection's {cap} byte cap"
             )));
         }
-        newlines += u64::try_from(chunk.iter().filter(|b| **b == b'\n').count()).unwrap_or(u64::MAX);
+        newlines +=
+            u64::try_from(chunk.iter().filter(|b| **b == b'\n').count()).unwrap_or(u64::MAX);
         if lines_wanted.is_some_and(|wanted| newlines >= wanted) {
             break;
         }
@@ -403,17 +424,41 @@ mod tests {
     #[test]
     fn public_addresses_exclude_every_local_range() {
         let private = [
-            "127.0.0.1", "10.1.2.3", "172.16.0.9", "192.168.1.1", "169.254.169.254",
-            "0.0.0.0", "255.255.255.255", "224.0.0.1", "100.64.0.1", "100.127.255.254",
-            "192.0.0.8", "192.0.2.1", "198.18.0.1", "240.0.0.1", "::1", "::", "fc00::1",
-            "fd12::1", "fe80::1", "ff02::1", "2001:db8::1", "::ffff:10.0.0.1",
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.9",
+            "192.168.1.1",
+            "169.254.169.254",
+            "0.0.0.0",
+            "255.255.255.255",
+            "224.0.0.1",
+            "100.64.0.1",
+            "100.127.255.254",
+            "192.0.0.8",
+            "192.0.2.1",
+            "198.18.0.1",
+            "240.0.0.1",
+            "::1",
+            "::",
+            "fc00::1",
+            "fd12::1",
+            "fe80::1",
+            "ff02::1",
+            "2001:db8::1",
+            "::ffff:10.0.0.1",
             "::ffff:127.0.0.1",
         ];
         for ip in private {
             let ip: IpAddr = ip.parse().expect("valid ip");
             assert!(!is_public_ip(ip), "{ip} is not public");
         }
-        let public = ["93.184.216.34", "8.8.8.8", "100.128.0.1", "2606:4700::1111", "::ffff:8.8.8.8"];
+        let public = [
+            "93.184.216.34",
+            "8.8.8.8",
+            "100.128.0.1",
+            "2606:4700::1111",
+            "::ffff:8.8.8.8",
+        ];
         for ip in public {
             let ip: IpAddr = ip.parse().expect("valid ip");
             assert!(is_public_ip(ip), "{ip} is public");
@@ -422,7 +467,10 @@ mod tests {
 
     #[test]
     fn only_http_schemes_pass_the_url_guard() {
-        assert_eq!(guard_url(&Url::parse("https://example.com/a.png").expect("url")).expect("host"), "example.com");
+        assert_eq!(
+            guard_url(&Url::parse("https://example.com/a.png").expect("url")).expect("host"),
+            "example.com"
+        );
         assert!(guard_url(&Url::parse("ftp://example.com/a").expect("url")).is_err());
         assert!(guard_url(&Url::parse("file:///etc/passwd").expect("url")).is_err());
         assert!(guard_url(&Url::parse("data:image/png;base64,AAAA").expect("url")).is_err());

@@ -361,8 +361,14 @@ mod tests {
 
     #[test]
     fn equal_bytes_digest_equal_and_different_bytes_differ() {
-        assert_eq!(ContentDigest::of_bytes(b"same"), ContentDigest::of_bytes(b"same"));
-        assert_ne!(ContentDigest::of_bytes(b"same"), ContentDigest::of_bytes(b"other"));
+        assert_eq!(
+            ContentDigest::of_bytes(b"same"),
+            ContentDigest::of_bytes(b"same")
+        );
+        assert_ne!(
+            ContentDigest::of_bytes(b"same"),
+            ContentDigest::of_bytes(b"other")
+        );
     }
 
     #[test]

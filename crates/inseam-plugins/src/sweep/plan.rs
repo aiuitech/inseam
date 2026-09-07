@@ -22,15 +22,15 @@ use inseam_kernel::address::{Address, ContentDigest, ContentLength, Envelope};
 use inseam_kernel::fragment::{Extent, Mimetype, NewFragment, Sprout};
 use inseam_kernel::store::{IndexStore, InventoryEntry};
 use inseam_kernel::subtree::{PlanNode, PlannedFragment, PlannedKeyed, Shape, SubtreePlan};
+use inseam_seams::SeamError;
 use inseam_seams::connection::{Connection, Connections, EnumeratedSource};
 use inseam_seams::text::{count_lines, is_indexable_text};
 use inseam_seams::transforms::{
-    participating, prune, shape_stamp, Anchor, DecomposeBudget, GrantedLlm, KeyedSprout,
-    Registration, TransformCtx, TransformOutput,
+    Anchor, DecomposeBudget, GrantedLlm, KeyedSprout, Registration, TransformCtx, TransformOutput,
+    participating, prune, shape_stamp,
 };
-use inseam_seams::SeamError;
 
-use super::cache::{cache_key, caches_output, decode_output, encode_output, ObservedLlm};
+use super::cache::{ObservedLlm, cache_key, caches_output, decode_output, encode_output};
 use super::grant::Grantor;
 
 /// The sweep's decomposition dials (shape tier), as the planner enforces
@@ -145,7 +145,10 @@ impl Planner {
         let mut iterations: usize = 0;
         while let Some(item) = build.queue.pop_front() {
             iterations += 1;
-            assert!(iterations <= iterations_max, "work queue is bounded by the fragment cap");
+            assert!(
+                iterations <= iterations_max,
+                "work queue is bounded by the fragment cap"
+            );
             // Derived understanding is never source content: transforms must
             // not re-decompose `text/x-inseam-*` fragments, whatever they claim.
             if item.mimetype.is_inseam_defined() {
@@ -158,7 +161,10 @@ impl Planner {
         }
         let stamp = expected_stamp(&self.registrations, &build.inventory, &self.sweep_shape);
         let planned = build.finish(read, stamp);
-        assert!(planned.plan.is_well_ordered(), "planner emits parents before children");
+        assert!(
+            planned.plan.is_well_ordered(),
+            "planner emits parents before children"
+        );
         Ok(planned)
     }
 
@@ -242,32 +248,35 @@ impl Planner {
             .saturating_sub(item.reference_hops);
         let lookups = self.lookup_cached(&claimants, item, item_bytes).await;
         assert_eq!(lookups.len(), claimants.len());
-        let applications = claimants.iter().zip(lookups).map(|(registration, lookup)| async move {
-            match lookup {
-                CacheLookup::Hit(output) => Applied {
-                    registration,
-                    output,
-                    provenance: Provenance::Reused,
-                },
-                CacheLookup::Miss(key) => {
-                    let ctx = TransformCtx {
-                        address: &read.source.address,
-                        envelope: &read.envelope,
-                        mimetype: &item.mimetype,
-                        is_root: item.is_root,
-                        text: item.text.as_deref(),
-                        bytes: if registration.transform.wants_bytes() {
-                            item_bytes
-                        } else {
-                            None
-                        },
-                        reference_hops_left,
-                        llm: None,
-                    };
-                    self.apply_one(registration, ctx, key).await
+        let applications = claimants
+            .iter()
+            .zip(lookups)
+            .map(|(registration, lookup)| async move {
+                match lookup {
+                    CacheLookup::Hit(output) => Applied {
+                        registration,
+                        output,
+                        provenance: Provenance::Reused,
+                    },
+                    CacheLookup::Miss(key) => {
+                        let ctx = TransformCtx {
+                            address: &read.source.address,
+                            envelope: &read.envelope,
+                            mimetype: &item.mimetype,
+                            is_root: item.is_root,
+                            text: item.text.as_deref(),
+                            bytes: if registration.transform.wants_bytes() {
+                                item_bytes
+                            } else {
+                                None
+                            },
+                            reference_hops_left,
+                            llm: None,
+                        };
+                        self.apply_one(registration, ctx, key).await
+                    }
                 }
-            }
-        });
+            });
         let outputs = join_all(applications).await;
         assert_eq!(outputs.len(), claimants.len());
         outputs
@@ -282,7 +291,8 @@ impl Planner {
         mut ctx: TransformCtx<'_>,
         key: Option<String>,
     ) -> Applied<'a> {
-        let observed: Option<Arc<ObservedLlm>> = self.grantor.grant(registration).map(ObservedLlm::new);
+        let observed: Option<Arc<ObservedLlm>> =
+            self.grantor.grant(registration).map(ObservedLlm::new);
         ctx.llm = observed
             .as_ref()
             .map(|llm| Arc::clone(llm) as Arc<dyn GrantedLlm>);
@@ -333,7 +343,10 @@ impl Planner {
         };
         keys.into_iter()
             .map(|key| match key {
-                Some(key) => match hits.remove(&key).and_then(|encoded| decode_output(&encoded)) {
+                Some(key) => match hits
+                    .remove(&key)
+                    .and_then(|encoded| decode_output(&encoded))
+                {
                     Some(output) => CacheLookup::Hit(output),
                     None => CacheLookup::Miss(Some(key)),
                 },
@@ -390,7 +403,10 @@ struct SourceRead {
 /// not change carries the same digest the sweep's change detection
 /// compares against, and hits the digest-keyed caches like any file.
 fn composed_read(source: &EnumeratedSource, text: &str) -> SourceRead {
-    assert!(source.envelope.content_type.is_directory(), "only folders are composed today");
+    assert!(
+        source.envelope.content_type.is_directory(),
+        "only folders are composed today"
+    );
     let mut envelope = source.envelope.clone();
     envelope.content_digest = Some(ContentDigest::of_bytes(text.as_bytes()));
     envelope.length = ContentLength::Lines(count_lines(text));
@@ -511,7 +527,10 @@ impl SubtreeBuild {
             },
         );
         let planted: usize = sprouts.iter().map(Sprout::count).sum();
-        assert!(planted <= self.fragment_budget, "prune respects the fragment budget");
+        assert!(
+            planted <= self.fragment_budget,
+            "prune respects the fragment budget"
+        );
         self.fragment_budget -= planted;
         self.plant(item.node, item.depth, item.reference_hops, sprouts, planted);
         self.keyed
@@ -534,7 +553,12 @@ impl SubtreeBuild {
         // Explicit stack, children pushed in reverse so they pop in order;
         // bounded by the forest size `prune` already enforced.
         let mut stack: Vec<(PlanNode, usize, u32, Sprout)> = Vec::with_capacity(planted);
-        stack.extend(sprouts.into_iter().rev().map(|s| (parent, parent_depth, parent_hops, s)));
+        stack.extend(
+            sprouts
+                .into_iter()
+                .rev()
+                .map(|s| (parent, parent_depth, parent_hops, s)),
+        );
         let mut popped: usize = 0;
         while let Some((parent, parent_depth, parent_hops, sprout)) = stack.pop() {
             popped += 1;
@@ -548,7 +572,12 @@ impl SubtreeBuild {
             // the source than its parent.
             let hops = parent_hops + u32::from(fragment.content_address.is_some());
             let node = self.push_fragment(parent, relation, fragment, parent_depth + 1, hops);
-            stack.extend(children.into_iter().rev().map(|c| (node, parent_depth + 1, hops, c)));
+            stack.extend(
+                children
+                    .into_iter()
+                    .rev()
+                    .map(|c| (node, parent_depth + 1, hops, c)),
+            );
         }
         assert_eq!(popped, planted);
     }
@@ -688,10 +717,21 @@ mod tests {
             (PlanNode::Fragment(0), "Greg went home".to_string()),
             (PlanNode::Fragment(1), "nothing here".to_string()),
         ];
-        let hits = anchors_for(&Anchor::TextContaining("greg".into()), PlanNode::Root, &texted);
+        let hits = anchors_for(
+            &Anchor::TextContaining("greg".into()),
+            PlanNode::Root,
+            &texted,
+        );
         assert_eq!(hits, vec![PlanNode::Fragment(0)]);
-        let none = anchors_for(&Anchor::TextContaining("zed".into()), PlanNode::Root, &texted);
+        let none = anchors_for(
+            &Anchor::TextContaining("zed".into()),
+            PlanNode::Root,
+            &texted,
+        );
         assert_eq!(none, vec![PlanNode::Root]);
-        assert_eq!(anchors_for(&Anchor::Input, PlanNode::Fragment(1), &texted), vec![PlanNode::Fragment(1)]);
+        assert_eq!(
+            anchors_for(&Anchor::Input, PlanNode::Fragment(1), &texted),
+            vec![PlanNode::Fragment(1)]
+        );
     }
 }

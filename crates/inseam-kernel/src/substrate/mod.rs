@@ -9,16 +9,16 @@ mod kernel;
 mod plugin;
 mod service;
 
-pub use composition::{Composition, CompositionError, Entry, ENTRY_COUNT_MAX};
+pub use composition::{Composition, CompositionError, ENTRY_COUNT_MAX, Entry};
 pub use edits::{
-    CompositionEdit, CompositionEditor, CompositionEdits, EditOutcome, PendingEdit, COMPOSITION,
-    EDIT_TIMEOUT,
+    COMPOSITION, CompositionEdit, CompositionEditor, CompositionEdits, EDIT_TIMEOUT, EditOutcome,
+    PendingEdit,
 };
 pub use error::{PluginError, SubstrateError};
 pub use events::{EventBus, Guard, Next, Notify, Subscription, Verdict, Waterfall};
 pub use fiber::{EntryId, FiberState, FiberView};
-pub use kernel::{config_digest, fnv1a, Kernel, STATE, STORE};
+pub use kernel::{Kernel, STATE, STORE, config_digest, fnv1a};
 pub use plugin::{
-    parse_config, ApplyCx, Inject, Manifest, Plugin, PluginFactory, SchemeFactory, SecretNeed,
+    ApplyCx, Inject, Manifest, Plugin, PluginFactory, SchemeFactory, SecretNeed, parse_config,
 };
 pub use service::{Facts, ServiceKey};

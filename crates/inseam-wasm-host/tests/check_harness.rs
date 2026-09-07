@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use inseam_kernel::substrate::{Composition, FiberState, Kernel};
-use inseam_wasm_host::{check_artifact, Outcome, Phase, WasmSchemeFactory};
+use inseam_wasm_host::{Outcome, Phase, WasmSchemeFactory, check_artifact};
 
 fn ocr_dir() -> Option<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/ocr");
@@ -50,7 +50,12 @@ async fn ocr_passes_the_full_harness_including_its_golden_checks() {
         .collect();
     // The coverage gate, then the plugin's three own checks: a root image,
     // a linked (non-root) image, and the starved path.
-    assert_eq!(golden.len(), 4, "coverage gate + three golden checks ran: {}", report.render());
+    assert_eq!(
+        golden.len(),
+        4,
+        "coverage gate + three golden checks ran: {}",
+        report.render()
+    );
     assert!(report.render().contains("PASS"));
 }
 
@@ -92,11 +97,13 @@ async fn harness_fails_a_plugin_whose_golden_checks_lie() {
         "the failing check is named: {failure}"
     );
     // The contract battery still passed — only the golden phase failed.
-    assert!(report
-        .items
-        .iter()
-        .filter(|i| i.phase == Phase::Contract)
-        .all(|i| !matches!(i.outcome, Outcome::Fail(_))));
+    assert!(
+        report
+            .items
+            .iter()
+            .filter(|i| i.phase == Phase::Contract)
+            .all(|i| !matches!(i.outcome, Outcome::Fail(_)))
+    );
 }
 
 fn golden_failures(report: &inseam_wasm_host::CheckReport) -> Vec<String> {
@@ -125,13 +132,18 @@ async fn harness_fails_a_plugin_that_ships_no_golden_checks() {
     assert!(!report.passed());
     let failures = golden_failures(&report);
     assert_eq!(failures.len(), 1, "{failures:?}");
-    assert!(failures[0].contains("golden checks are mandatory"), "{failures:?}");
+    assert!(
+        failures[0].contains("golden checks are mandatory"),
+        "{failures:?}"
+    );
     // Everything before the golden phase still ran and still passed.
-    assert!(report
-        .items
-        .iter()
-        .filter(|i| i.phase != Phase::Golden)
-        .all(|i| !matches!(i.outcome, Outcome::Fail(_))));
+    assert!(
+        report
+            .items
+            .iter()
+            .filter(|i| i.phase != Phase::Golden)
+            .all(|i| !matches!(i.outcome, Outcome::Fail(_)))
+    );
 }
 
 #[tokio::test]
@@ -160,14 +172,22 @@ async fn harness_fails_vacuous_golden_checks_naming_each_missing_requirement() {
     assert!(!report.passed());
     let failures = golden_failures(&report);
     assert_eq!(failures.len(), 2, "{failures:?}");
-    assert!(failures[0].contains("mandatory coverage: no check proves the claim"), "{failures:?}");
-    assert!(failures[1].contains("mandatory coverage: no check pins the degrade path"), "{failures:?}");
+    assert!(
+        failures[0].contains("mandatory coverage: no check proves the claim"),
+        "{failures:?}"
+    );
+    assert!(
+        failures[1].contains("mandatory coverage: no check pins the degrade path"),
+        "{failures:?}"
+    );
     // The vacuous check itself still ran and passed — the gate is about
     // coverage, not about that check being wrong.
-    assert!(report
-        .items
-        .iter()
-        .any(|i| i.name == "emits something" && matches!(i.outcome, Outcome::Pass)));
+    assert!(
+        report
+            .items
+            .iter()
+            .any(|i| i.name == "emits something" && matches!(i.outcome, Outcome::Pass))
+    );
 }
 
 #[tokio::test]
@@ -203,7 +223,10 @@ async fn harness_fails_a_golden_check_for_an_unclaimed_mimetype() {
     assert!(!report.passed());
     let failures = golden_failures(&report);
     assert_eq!(failures.len(), 1, "{failures:?}");
-    assert!(failures[0].contains("outside the effective claims"), "{failures:?}");
+    assert!(
+        failures[0].contains("outside the effective claims"),
+        "{failures:?}"
+    );
 }
 
 async fn kernel_with(data_dir: &Path) -> Kernel {
@@ -266,12 +289,21 @@ async fn admission_refuses_a_failing_plugin_unless_overridden() {
         panic!("expected admission to hold the fiber");
     };
     assert!(reason.contains("failed admission"), "{reason}");
-    assert!(reason.contains("impossible"), "the failing check is named: {reason}");
-    assert!(reason.contains("admission"), "the override path is named: {reason}");
+    assert!(
+        reason.contains("impossible"),
+        "the failing check is named: {reason}"
+    );
+    assert!(
+        reason.contains("admission"),
+        "the override path is named: {reason}"
+    );
 
     // warn: mounts anyway (the cached verdict is reused, not recomputed).
     kernel
-        .reconcile(&wasm_composition(&artifact, "[entry.config]\nadmission = \"warn\"\n"))
+        .reconcile(&wasm_composition(
+            &artifact,
+            "[entry.config]\nadmission = \"warn\"\n",
+        ))
         .await
         .expect("settles");
     assert_eq!(candidate_state(&kernel), FiberState::Active);

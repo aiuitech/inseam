@@ -8,9 +8,9 @@
 mod common;
 
 use inseam_kernel::address::HostId;
+use inseam_seams::SeamError;
 use inseam_seams::connection::CONNECTIONS;
 use inseam_seams::operations::IndexRequest;
-use inseam_seams::SeamError;
 
 fn corpus() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -44,7 +44,11 @@ async fn a_node_stewards_several_hosts_and_scopes_are_explicit() {
     assert_eq!(ids, vec!["fs-one", "fs-two"], "ordered by host id");
     assert_eq!(hosts[0].entry, "fs");
     assert_eq!(hosts[1].entry, "fs-two");
-    assert!(hosts.iter().all(|h| h.capabilities.enumerates && !h.capabilities.writable));
+    assert!(
+        hosts
+            .iter()
+            .all(|h| h.capabilities.enumerates && !h.capabilities.writable)
+    );
 
     // Two hosts mounted: a scope without a host is refused by name.
     let ambiguous = ops
@@ -72,8 +76,23 @@ async fn a_node_stewards_several_hosts_and_scopes_are_explicit() {
     assert_eq!(report.indexed, 2, "the note and the folder holding it");
     let two = HostId::new("fs-two").expect("valid");
     let one = HostId::new("fs-one").expect("valid");
-    assert_eq!(kernel.store().sources_of_host(&two).await.expect("ok").len(), 2);
-    assert!(kernel.store().sources_of_host(&one).await.expect("ok").is_empty());
+    assert_eq!(
+        kernel
+            .store()
+            .sources_of_host(&two)
+            .await
+            .expect("ok")
+            .len(),
+        2
+    );
+    assert!(
+        kernel
+            .store()
+            .sources_of_host(&one)
+            .await
+            .expect("ok")
+            .is_empty()
+    );
 
     // A host nobody stewards is unknown, not a crash.
     let unknown = ops
@@ -114,10 +133,21 @@ host_id = "shared"
         .fibers()
         .iter()
         .filter(|f| f.id == "fs" || f.id == "fs-dup")
-        .map(|f| (f.id.clone(), matches!(f.state, inseam_kernel::substrate::FiberState::Failed(_))))
+        .map(|f| {
+            (
+                f.id.clone(),
+                matches!(f.state, inseam_kernel::substrate::FiberState::Failed(_)),
+            )
+        })
         .collect();
-    assert!(states.contains(&("fs".to_string(), false)), "the first registration stands");
-    assert!(states.contains(&("fs-dup".to_string(), true)), "the duplicate fails alone");
+    assert!(
+        states.contains(&("fs".to_string(), false)),
+        "the first registration stands"
+    );
+    assert!(
+        states.contains(&("fs-dup".to_string(), true)),
+        "the duplicate fails alone"
+    );
     // Everything downstream of the registry still runs.
     let ops = common::ops(&kernel);
     assert_eq!(ops.hosts().await.expect("lists").len(), 1);
