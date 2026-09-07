@@ -104,6 +104,8 @@ A run lives under `benchmarks/runs/beir-nfcorpus/<UTC timestamp>-<inseam commit>
 
 [EnterpriseRAG-Bench](https://github.com/onyx-dot-app/EnterpriseRAG-Bench) is 500 questions over slightly more than 500,000 synthetic enterprise documents. The harness pins dataset release `v1.0.0`, verifies the published checksums, and checks out the evaluator at a pinned revision. Beyond the shared model policy, it uses `stealth/ox-alpha` for answers, citation cleanup, correctness scoring, and fact scoring. Its composition embeds one 200-character summary per source (`vectors = "summaries"`); source text still enters full-text search. Reserve at least 20 GB of local disk before a full run: the 1.26 GB download, its extracted files, and a fresh index.
 
+The point-in-time [leaderboard research](enterprise-rag-leaderboard-research.md) records what the public results and system disclosures imply for Finder experiments. It separates verified submission facts from vendor descriptions and speculation.
+
 ### Set up the fixture
 
 Run this once from the repository root:
