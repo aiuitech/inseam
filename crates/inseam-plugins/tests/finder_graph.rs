@@ -13,7 +13,7 @@ use inseam_kernel::fragment::{
 fn mentions() -> RelationKind {
     RelationKind::new("mentions").expect("valid kind")
 }
-use inseam_kernel::store::{IndexStore, SearchRow, SourceId};
+use inseam_kernel::store::{SearchRole, IndexStore, SearchRow, SourceId};
 use inseam_plugins::embedder::hashed;
 use inseam_plugins::finder::{FinderConfig, FinderService};
 use inseam_seams::embedder::Embedder;
@@ -98,6 +98,7 @@ async fn seed_source(
             source: Some(sid),
             text: body.to_string(),
             vector: Some(vector),
+            role: SearchRole::Content,
         }])
         .await
         .expect("adds row");
@@ -208,6 +209,7 @@ async fn relational_relevance_beats_flat_similarity() {
             source: None,
             text: "Kitchen Reno".to_string(),
             vector: Some(entity_vec),
+            role: SearchRole::Content,
         }])
         .await
         .expect("adds entity row");
