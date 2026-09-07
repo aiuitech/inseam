@@ -1,0 +1,5 @@
+/* Only prettier-plugin-tailwindcss reads this: it needs a stylesheet that
+   loads Tailwind itself to sort classes, and theme.css deliberately leaves
+   that import to the consuming app. */
+@import "tailwindcss";
+@import "./theme.css";

@@ -9,3 +9,5 @@ plugins/*/target
 !/benchmarks/fixtures/.gitkeep
 __pycache__/
 .wrangler/
+
+node_modules

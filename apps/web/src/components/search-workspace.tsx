@@ -2,9 +2,9 @@ import { type FormEvent, useState } from "react"
 import { ArrowUpRight, FileText, Search, X } from "lucide-react"
 
 import type { ExpandResponse, FetchResponse, QueryResult } from "@/api"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { Badge } from "@inseam/brand/components/ui/badge"
+import { Button } from "@inseam/brand/components/ui/button"
+import { Input } from "@inseam/brand/components/ui/input"
 
 type Props = {
   detail: ExpandResponse | null

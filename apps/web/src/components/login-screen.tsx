@@ -1,8 +1,8 @@
 import { type FormEvent, useState } from "react"
 import { ArrowRight, LockKeyhole } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { Button } from "@inseam/brand/components/ui/button"
+import { Input } from "@inseam/brand/components/ui/input"
 
 type LoginScreenProps = {
   error: string | null

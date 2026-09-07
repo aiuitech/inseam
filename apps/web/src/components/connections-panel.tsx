@@ -1,8 +1,8 @@
 import { Link2, Link2Off, PlugZap } from "lucide-react"
 
 import type { Grant, Host } from "@/api"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Badge } from "@inseam/brand/components/ui/badge"
+import { Button } from "@inseam/brand/components/ui/button"
 
 type Props = {
   grants: Grant[]

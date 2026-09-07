@@ -2,8 +2,8 @@ import { useState } from "react"
 import { RotateCcw, Save, SlidersHorizontal } from "lucide-react"
 
 import type { Settings } from "@/api"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { Button } from "@inseam/brand/components/ui/button"
+import { Input } from "@inseam/brand/components/ui/input"
 
 type Props = {
   settings: Settings

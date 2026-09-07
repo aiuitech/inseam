@@ -2,7 +2,7 @@ import { type FormEvent, useState } from "react"
 import { RefreshCw } from "lucide-react"
 
 import type { Host, IndexReport, IndexRoot } from "@/api"
-import { Button } from "@/components/ui/button"
+import { Button } from "@inseam/brand/components/ui/button"
 
 type Props = {
   hosts: Host[]

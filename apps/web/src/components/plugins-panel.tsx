@@ -2,9 +2,9 @@ import { type FormEvent, useRef, useState } from "react"
 import { Package, Upload } from "lucide-react"
 
 import type { Plugin, PluginFile } from "@/api"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { Badge } from "@inseam/brand/components/ui/badge"
+import { Button } from "@inseam/brand/components/ui/button"
+import { Input } from "@inseam/brand/components/ui/input"
 
 type Props = {
   plugins: Plugin[]

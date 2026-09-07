@@ -24,7 +24,7 @@ cp "$APP_SRC/Info.plist" "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 cp "$BIN" "$APP/Contents/MacOS/Inseam"
 mkdir -p "$APP/Contents/Resources"
-cp "$ROOT/assets/icon-macos.icns" "$APP/Contents/Resources/Inseam.icns"
+cp "$ROOT/packages/brand/assets/icon-macos.icns" "$APP/Contents/Resources/Inseam.icns"
 codesign --force --sign - "$APP"
 
 echo "==> done: $APP"
