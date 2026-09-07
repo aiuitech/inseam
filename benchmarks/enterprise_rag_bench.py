@@ -87,8 +87,14 @@ UPSTREAM_URL = "https://github.com/onyx-dot-app/EnterpriseRAG-Bench.git"
 RELEASE_URL = f"https://github.com/onyx-dot-app/EnterpriseRAG-Bench/releases/download/{RELEASE}"
 ARCHIVE_SHA256 = "9d1174928696ad08bc15f3f104739519de633c1605a4ec2034e0e3c0087bc5cd"
 QUESTIONS_SHA256 = "f9524b9157cd43aae36b99333a124738804306ea6d07f332d49faa6d3d147905"
-ANSWER_MODEL = "stealth/ox-alpha"
-EVALUATION_MODEL = "stealth/ox-alpha"
+# The leaderboard fixes no answer model: its two baselines answer with
+# GPT-5.4 and every product submission brings its own. `stealth/ox-alpha`,
+# the first choice here, left OpenRouter in September 2026; the default is
+# now a cheap open model, and both models are run options recorded in the
+# manifest so a run says what answered and what judged.
+ANSWER_MODEL = "z-ai/glm-5.3-flash"
+EVALUATION_MODEL = "z-ai/glm-5.3-flash"
+MODEL_ID_MAX_CHARS = 128
 # OpenRouter rejects batch jobs above 5,000 requests; the endpoint plugin
 # refuses larger values at boot. Parking 65,536 planners keeps several
 # jobs filling at once.
@@ -157,6 +163,10 @@ class RunOptions:
     # Vector seeds farther than this cosine distance are dropped before
     # fusion, so a weak vector list cannot drag a strong full-text one.
     finder_max_vector_distance: float = 0.75
+    # The model that answers questions through `inseam agent`, and the one
+    # the upstream evaluator judges with.
+    answer_model: str = ANSWER_MODEL
+    evaluation_model: str = EVALUATION_MODEL
     # Which seed lists the Finder runs before fusion; one alone is a
     # diagnostic for which search the fusion is carrying.
     finder_seeds: str = "both"
@@ -331,7 +341,7 @@ base_url = "{OPENROUTER_BASE_URL}"
 api_key_env = "OPENROUTER_API_KEY"
 transform_model = "{SUMMARIZATION_MODEL}"
 transform_reasoning_effort = "none"
-agent_model = "{ANSWER_MODEL}"
+agent_model = "{options.answer_model}"
 batch_requests_max = {SUMMARY_BATCH_REQUESTS_MAX}
 
 [[entry]]
@@ -545,7 +555,7 @@ def question_commands(
             "agent",
             question_text,
             "--model",
-            ANSWER_MODEL,
+            options.answer_model,
             "--turns",
             str(options.turns),
         ],
@@ -680,8 +690,8 @@ def model_assignments(options: RunOptions) -> dict[str, str | int]:
         "finder_seeds": options.finder_seeds,
         "finder_max_vector_distance": options.finder_max_vector_distance,
         "entity_extraction": "disabled",
-        "answer_generation": "skipped" if options.skip_agent else ANSWER_MODEL,
-        "answer_evaluation": "skipped" if options.skip_evaluation else EVALUATION_MODEL,
+        "answer_generation": "skipped" if options.skip_agent else options.answer_model,
+        "answer_evaluation": "skipped" if options.skip_evaluation else options.evaluation_model,
         "embeddings": "disabled" if options.embedding_vectors == "none" else EMBEDDING_MODEL,
         "embedding_dimensions": 0 if options.embedding_vectors == "none" else EMBEDDING_DIMENSIONS,
         "embedding_vectors": options.embedding_vectors,
@@ -748,15 +758,15 @@ def run_queries(
     return queries
 
 
-def evaluator_environment() -> dict[str, str]:
+def evaluator_environment(evaluation_model: str) -> dict[str, str]:
     require_api_key()
     environment = os.environ.copy()
     environment.update(
         {
             "LLM_PROVIDER": "openai",
             "LLM_API_KEY": os.environ["OPENROUTER_API_KEY"],
-            "LLM_MODEL_NAME": EVALUATION_MODEL,
-            "CHEAP_LLM_MODEL_NAME": EVALUATION_MODEL,
+            "LLM_MODEL_NAME": evaluation_model,
+            "CHEAP_LLM_MODEL_NAME": evaluation_model,
             "OPENAI_BASE_URL": OPENROUTER_BASE_URL,
         }
     )
@@ -768,6 +778,7 @@ def evaluate(
     log_dir: Path,
     parallelism: int,
     question_count: int,
+    evaluation_model: str,
 ) -> dict[str, Any]:
     evaluator = FIXTURE_ROOT / "evaluator"
     evaluator_python = evaluator / ".venv" / "bin" / "python"
@@ -793,7 +804,7 @@ def evaluate(
         timeout_seconds=EVALUATION_TIMEOUT_SECONDS,
         progress_label=f"Evaluating {question_count} answers with {parallelism} workers",
         cwd=evaluator,
-        environment=evaluator_environment(),
+        environment=evaluator_environment(evaluation_model),
     )
     require_success(result, "evaluating answers")
     payload = json.loads(raw_results.read_text(encoding="utf-8"))
@@ -817,7 +828,7 @@ def pip_freeze(run_dir: Path) -> None:
 
 def run_benchmark(options: RunOptions) -> None:
     require_fixture()
-    evaluator_environment()
+    evaluator_environment(options.evaluation_model)
     if options.corpus_slice > 0:
         materialize_corpus_slice(options.corpus_slice)
     questions = load_questions(options.question_limit)
@@ -839,7 +850,6 @@ def run_benchmark(options: RunOptions) -> None:
 
 def resume_benchmark(run_id: str, after_kill: bool = False) -> None:
     require_fixture()
-    evaluator_environment()
     loaded = load_resumable_run(run_id, after_kill)
     (
         run_dir,
@@ -919,7 +929,11 @@ def execute_benchmark(
         if not options.skip_evaluation:
             update_run_phase(run_dir, manifest, "evaluating")
             scores["enterprise_rag_bench"] = evaluate(
-                run_dir, log_dir, options.evaluation_parallelism, len(questions)
+                run_dir,
+                log_dir,
+                options.evaluation_parallelism,
+                len(questions),
+                options.evaluation_model,
             )
             pip_freeze(run_dir)
         complete_run(manifest, scores)
@@ -1064,7 +1078,16 @@ def options_from_manifest(manifest: dict[str, Any]) -> RunOptions:
         embedding_vectors=manifest_option_choice(value, "embedding_vectors", EMBEDDER_CHOICES),
         finder_seeds=manifest_option_choice(value, "finder_seeds", FINDER_SEEDS),
         finder_max_vector_distance=manifest_option_distance(value, "finder_max_vector_distance"),
+        answer_model=manifest_option_model(value, "answer_model"),
+        evaluation_model=manifest_option_model(value, "evaluation_model"),
     )
+
+
+def manifest_option_model(value: dict[str, Any], name: str) -> str:
+    option = value[name]
+    if type(option) is not str or not option or len(option) > MODEL_ID_MAX_CHARS:
+        raise BenchmarkError(f"run option {name} is not a model id")
+    return option
 
 
 def load_completed_queries(
@@ -1154,6 +1177,8 @@ def parse_arguments() -> argparse.Namespace:
     run_parser.add_argument(
         "--finder-max-vector-distance", type=distance_argument, default=0.75
     )
+    run_parser.add_argument("--answer-model", default=ANSWER_MODEL)
+    run_parser.add_argument("--evaluation-model", default=EVALUATION_MODEL)
     resume_parser = subparsers.add_parser(
         "resume",
         help="reuse a completed index and continue a failed or interrupted run",
@@ -1188,6 +1213,8 @@ def main() -> int:
             embedding_vectors=arguments.vectors,
             finder_seeds=arguments.finder_seeds,
             finder_max_vector_distance=arguments.finder_max_vector_distance,
+            answer_model=arguments.answer_model,
+            evaluation_model=arguments.evaluation_model,
         )
         return run_main(lambda: run_benchmark(options))
     return run_main(lambda: resume_benchmark(arguments.run_id, arguments.after_kill))

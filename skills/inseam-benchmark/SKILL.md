@@ -104,7 +104,7 @@ The model assignment is an invariant shared by both benchmarks:
 - `google/gemini-2.5-flash-lite` for summaries on OpenRouter's batch lane (`summarizer.llm_lane = "batch"`), with reasoning disabled and its reasoning trace excluded.
 - Entity extraction disabled.
 - `openai/text-embedding-3-small` at 384 dimensions for embeddings when an embedder is mounted. BEIR embeds every fragment (`vectors = "all"`); EnterpriseRAG-Bench mounts no embedder by default (`--vectors none`, recorded as `models.embedding_vectors`), because on its corpus vector seeds lowered the fused ranking below full-text alone.
-- EnterpriseRAG-Bench only: `stealth/ox-alpha` for agent answers and evaluation. That model left OpenRouter in September 2026; an end-to-end run needs the user to name a replacement before it can answer a question.
+- EnterpriseRAG-Bench only: `--answer-model` answers through `inseam agent` and `--evaluation-model` judges through the upstream evaluator, both defaulting to `z-ai/glm-5.3-flash` and recorded in the manifest. The leaderboard's baselines answer with GPT-5.4; say which model a run used when comparing.
 
 BEIR's default `--llm-call-budget 500` applies to summaries; EnterpriseRAG-Bench's default is 0. State the cost implication before raising it. A value of 500,000 can cause one transform call per source during indexing. For BEIR, `--llm-call-budget 3633` (the corpus size) asks the model for every summary and is the run that measures the full indexing process; it costs well under a dollar on the batch lane.
 

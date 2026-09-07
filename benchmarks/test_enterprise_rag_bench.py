@@ -72,7 +72,7 @@ class EnterpriseRagBenchTests(unittest.TestCase):
         self.assertIn('transform_model = "google/gemini-2.5-flash-lite"', composition)
         self.assertIn('llm_lane = "batch"', composition)
         self.assertIn('transform_reasoning_effort = "none"', composition)
-        self.assertIn('agent_model = "stealth/ox-alpha"', composition)
+        self.assertIn('agent_model = "z-ai/glm-5.3-flash"', composition)
         self.assertIn('batch_requests_max = 5000', composition)
         self.assertIn('provider = "none"', composition)
         self.assertNotIn("text-embedding", composition)
@@ -166,7 +166,7 @@ class EnterpriseRagBenchTests(unittest.TestCase):
                     "finder_seeds": "both",
                     "finder_max_vector_distance": 0.75,
                     "entity_extraction": "disabled",
-                    "answer_generation": "stealth/ox-alpha",
+                    "answer_generation": "z-ai/glm-5.3-flash",
                     "answer_evaluation": "skipped",
                     "embeddings": "disabled",
                     "embedding_dimensions": 0,
