@@ -300,9 +300,17 @@ fn clean_identifiers(items: Vec<String>, max: usize) -> Vec<String> {
     out
 }
 
+/// Whether an item may become a fragment and a key: bounded in length, no
+/// control characters (a NUL inside a model's reply is not a term), and
+/// something left once punctuation is trimmed. This is the proof behind the
+/// `expect` on every key built from an item that passed it: the key is a
+/// literal prefix plus at most `ITEM_CHARS_MAX` characters, well under the
+/// kernel's bound, with no control character in either half.
 fn sized(item: &str) -> bool {
     let count = item.chars().count();
-    (ITEM_CHARS_MIN..=ITEM_CHARS_MAX).contains(&count)
+    let bounded = (ITEM_CHARS_MIN..=ITEM_CHARS_MAX).contains(&count);
+    let printable = !item.chars().any(char::is_control);
+    bounded && printable && !normalized(item).is_empty()
 }
 
 /// The dedup form of a term or identifier: lowercase, whitespace collapsed,
@@ -360,6 +368,17 @@ mod tests {
     fn garbage_yields_no_hints() {
         assert_eq!(parse_hints("no json here", LIMITS), Hints::default());
         assert_eq!(parse_hints("{not json}", LIMITS), Hints::default());
+    }
+
+    #[test]
+    fn items_with_control_characters_or_no_letters_are_dropped() {
+        let raw = "{\"identifiers\": [\"user:\\u0000john\", \"...\", \"SUP-1\"], \
+                   \"glossary\": [{\"term\": \"a\\u0001b\", \"gloss\": \"control\"}], \
+                   \"entities\": [{\"name\": \"Ann\\u0007\", \"kind\": \"person\"}]}";
+        let hints = parse_hints(raw, LIMITS);
+        assert_eq!(hints.identifiers, vec!["SUP-1"]);
+        assert!(hints.glossary.is_empty());
+        assert!(hints.entities.is_empty());
     }
 
     #[test]

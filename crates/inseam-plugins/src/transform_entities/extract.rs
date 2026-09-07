@@ -144,6 +144,11 @@ pub fn parse_entities(raw: &str, max: usize) -> Vec<ExtractedEntity> {
             if !(2..=80).contains(&count) {
                 return None;
             }
+            // A control character in a model's reply is not a name, and the
+            // key built from it would be refused — the proof behind `key()`.
+            if name.chars().any(char::is_control) {
+                return None;
+            }
             let kind = r.kind.parse().unwrap_or(EntityKind::Other);
             let entity = ExtractedEntity { name, kind };
             seen.insert(entity.key()).then_some(entity)
