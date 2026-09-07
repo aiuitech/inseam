@@ -20,7 +20,7 @@ const TOOL_RESULT_CHARS: usize = 9_000;
 pub enum AgentError {
     #[error(transparent)]
     Llm(#[from] SeamError),
-    #[error("model kept calling tools after {0} turns; raise --turns to let it finish")]
+    #[error("model kept calling tools after {0} turns and had nothing to say when asked to close; raise --turns")]
     OutOfTurns(usize),
 }
 
@@ -85,8 +85,28 @@ pub async fn run_agent(
             messages.push(ChatMessage::tool_result(call.id.clone(), result));
         }
     }
-    Err(AgentError::OutOfTurns(max_turns))
+    // The budget is spent, but the model has read things: one closing call
+    // with no tools on offer turns what it read into an answer, instead of
+    // discarding the whole exchange. Only an empty close is the failure.
+    messages.push(ChatMessage::user(CLOSING_PROMPT.to_string()));
+    let closing = ChatRequest::new(model, messages);
+    let reply = llm.chat(&closing).await?;
+    let answer = reply.content.unwrap_or_default();
+    if answer.trim().is_empty() {
+        return Err(AgentError::OutOfTurns(max_turns));
+    }
+    Ok(AgentOutcome {
+        answer,
+        turns: max_turns,
+        tool_calls: tool_calls_made,
+        spent: llm.spent(),
+    })
 }
+
+/// What the model is told when its tool turns run out.
+const CLOSING_PROMPT: &str = "Your search budget is spent and no more tools are available. \
+    Answer the question now from what you have already read, naming the sources you relied \
+    on; if what you read does not answer it, say so plainly.";
 
 /// Run one tool call against the operations seam. Errors go back to the
 /// model as text — wrong addresses and bad ranges are its problem to
