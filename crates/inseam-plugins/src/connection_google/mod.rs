@@ -288,6 +288,7 @@ impl Hosts {
                 // never written; change feeds (Gmail history, Drive
                 // changes) are declared when the scheduling hook exists.
                 capabilities: Capabilities::READ_ONLY,
+                roots: Vec::new(),
                 connection: self.connection_for(*service, host),
             };
             match self.connections.register(registration) {

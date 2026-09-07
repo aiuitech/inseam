@@ -2,14 +2,16 @@
 //! stewards several hosts at once, each connection plugin registering its
 //! host as an effect; the sweep and operations resolve by host; a scope
 //! that names no host is only accepted while exactly one host is mounted.
-//! Two filesystem entries with distinct host ids stand in for "a filesystem
-//! and a mailbox" — to the registry they are two hosts, which is the point.
+//! Two filesystem entries with distinct machine identities stand in for "a
+//! filesystem and a mailbox" — to the registry they are two hosts, which is
+//! the point.
 
 mod common;
 
 use inseam_kernel::address::HostId;
+use inseam_plugins::connection_fs::FsHost;
 use inseam_seams::SeamError;
-use inseam_seams::connection::CONNECTIONS;
+use inseam_seams::connection::{CONNECTIONS, HostKind, derive_host_id};
 use inseam_seams::operations::IndexRequest;
 
 fn corpus() -> tempfile::TempDir {
@@ -23,14 +25,25 @@ const TWO_HOSTS: &str = r#"
 id = "fs"
 plugin = "connection-fs"
 [entry.config]
-host_id = "fs-one"
+machine_id = "one"
 
 [[entry]]
 id = "fs-two"
 plugin = "connection-fs"
 [entry.config]
-host_id = "fs-two"
+machine_id = "two"
 "#;
+
+/// The host ids the two entries derive, in the order the registry lists
+/// them (by id), each with the entry that stewards it.
+fn two_hosts_in_order() -> Vec<(HostId, &'static str)> {
+    let mut hosts = vec![
+        (FsHost::derive_id("one"), "fs"),
+        (FsHost::derive_id("two"), "fs-two"),
+    ];
+    hosts.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+    hosts
+}
 
 #[tokio::test]
 async fn a_node_stewards_several_hosts_and_scopes_are_explicit() {
@@ -40,10 +53,15 @@ async fn a_node_stewards_several_hosts_and_scopes_are_explicit() {
     let ops = common::ops(&kernel);
 
     let hosts = ops.hosts().await.expect("lists");
-    let ids: Vec<&str> = hosts.iter().map(|h| h.id.as_str()).collect();
-    assert_eq!(ids, vec!["fs-one", "fs-two"], "ordered by host id");
-    assert_eq!(hosts[0].entry, "fs");
-    assert_eq!(hosts[1].entry, "fs-two");
+    let expected = two_hosts_in_order();
+    let ids: Vec<&HostId> = hosts.iter().map(|h| &h.id).collect();
+    assert_eq!(
+        ids,
+        vec![&expected[0].0, &expected[1].0],
+        "ordered by host id"
+    );
+    assert_eq!(hosts[0].entry, expected[0].1);
+    assert_eq!(hosts[1].entry, expected[1].1);
     assert!(
         hosts
             .iter()
@@ -65,7 +83,7 @@ async fn a_node_stewards_several_hosts_and_scopes_are_explicit() {
     // Naming the host sweeps through that host's connection only.
     let report = ops
         .index(IndexRequest {
-            host: Some(HostId::new("fs-two").expect("valid")),
+            host: Some(FsHost::derive_id("two")),
             root: corpus.path().display().to_string(),
             rebuild: false,
             deep_budget: None,
@@ -74,8 +92,8 @@ async fn a_node_stewards_several_hosts_and_scopes_are_explicit() {
         .await
         .expect("indexes");
     assert_eq!(report.indexed, 2, "the note and the folder holding it");
-    let two = HostId::new("fs-two").expect("valid");
-    let one = HostId::new("fs-one").expect("valid");
+    let two = FsHost::derive_id("two");
+    let one = FsHost::derive_id("one");
     assert_eq!(
         kernel
             .store()
@@ -117,13 +135,13 @@ async fn a_second_connection_to_the_same_host_fails_its_own_fiber_only() {
 id = "fs"
 plugin = "connection-fs"
 [entry.config]
-host_id = "shared"
+machine_id = "shared"
 
 [[entry]]
 id = "fs-dup"
 plugin = "connection-fs"
 [entry.config]
-host_id = "shared"
+machine_id = "shared"
 "#,
     )
     .await;
@@ -168,5 +186,40 @@ async fn unmounting_a_connection_unregisters_its_host() {
     .await;
     let hosts = common::ops(&kernel).hosts().await.expect("lists");
     assert_eq!(hosts.len(), 1);
-    assert_eq!(hosts[0].id.as_str(), "fs-one");
+    assert_eq!(hosts[0].id, FsHost::derive_id("one"));
+}
+
+/// The bug `design/addressing.md` rejects by name: a host id that is the
+/// machine's hostname. The default entry derives from machine identity —
+/// the kind-separated fingerprint every connection mints — and derives the
+/// same id for two nodes on one machine.
+#[tokio::test]
+async fn the_filesystem_host_id_is_a_fingerprint_not_the_hostname() {
+    let first = tempfile::tempdir().expect("tempdir");
+    let second = tempfile::tempdir().expect("tempdir");
+    let default_entry = "[[entry]]\nid = \"fs\"\nplugin = \"connection-fs\"\n";
+    let one = common::boot(first.path(), default_entry).await;
+    let two = common::boot(second.path(), default_entry).await;
+    let hosts = common::ops(&one).hosts().await.expect("lists");
+    assert_eq!(hosts.len(), 1);
+    assert_eq!(hosts[0].kind, HostKind::filesystem());
+    let id = hosts[0].id.as_str();
+    let digest = id
+        .strip_prefix("fs-")
+        .expect("the kind prefixes the fingerprint");
+    assert_eq!(digest.len(), 16, "{id}");
+    assert!(digest.chars().all(|c| c.is_ascii_hexdigit()), "{id}");
+
+    let hostname = gethostname::gethostname().to_string_lossy().to_lowercase();
+    assert_ne!(id, format!("fs-{hostname}"), "never the hostname");
+    assert_ne!(
+        hosts[0].id,
+        derive_host_id(&HostKind::filesystem(), &hostname)
+    );
+
+    let again = common::ops(&two).hosts().await.expect("lists");
+    assert_eq!(
+        again[0].id, hosts[0].id,
+        "two nodes on one machine, one host"
+    );
 }

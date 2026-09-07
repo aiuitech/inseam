@@ -11,23 +11,31 @@
 //! must agree on — [`text`] (previews, the `scan` line arithmetic, which
 //! content types are read as text), [`dates`] (`YYYY-MM-DD` rendering and
 //! parsing of the kernel's epoch timestamps), [`listing`] (the text a
-//! folder source is composed from and parsed back out of), and [`extract`]
-//! (the model-free selection of a text's telling sentences and terms). They
-//! are deliberately not kernel modules: the kernel knows no file format and
-//! renders nothing.
+//! folder source is composed from and parsed back out of), [`extract`]
+//! (the model-free selection of a text's telling sentences and terms), and
+//! [`fetch`] (the node's guarded HTTP request, the SSRF posture every plugin
+//! that contacts the network shares). They are deliberately not kernel
+//! modules: the kernel knows no file format, renders nothing, and opens no
+//! socket.
 
 pub mod connection;
 pub mod dates;
 pub mod embedder;
 pub mod error;
 pub mod extract;
+pub mod fetch;
 pub mod finder;
 pub mod listing;
 pub mod llm;
+pub mod node;
 pub mod oauth;
 pub mod operations;
+pub mod roster;
+pub mod routing;
 pub mod sweep;
+pub mod sync;
 pub mod text;
 pub mod transforms;
+pub mod transport;
 
 pub use error::SeamError;

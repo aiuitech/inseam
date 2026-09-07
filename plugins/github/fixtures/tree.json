@@ -1,0 +1,13 @@
+{
+  "sha": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+  "url": "https://api.github.com/repos/octo/hello/git/trees/4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+  "tree": [
+    { "path": "README.md", "mode": "100644", "type": "blob", "sha": "a1", "size": 29 },
+    { "path": "docs", "mode": "040000", "type": "tree", "sha": "d1" },
+    { "path": "docs/guide.md", "mode": "100644", "type": "blob", "sha": "a2", "size": 120 },
+    { "path": "src", "mode": "040000", "type": "tree", "sha": "d2" },
+    { "path": "src/lib.rs", "mode": "100644", "type": "blob", "sha": "a3", "size": 310 },
+    { "path": "logo.png", "mode": "100644", "type": "blob", "sha": "a4", "size": 67 }
+  ],
+  "truncated": false
+}

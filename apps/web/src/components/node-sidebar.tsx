@@ -1,7 +1,8 @@
 import { Database, LogOut, Network, ScanSearch } from "lucide-react"
 
 import type { Host, OwnerInfo, StatusReport } from "@/api"
-import { Button } from "@/components/ui/button"
+import { BrandLockup } from "@inseam/brand/components/brand-lockup"
+import { Button } from "@inseam/brand/components/ui/button"
 
 type Props = {
   hosts: Host[]
@@ -22,10 +23,7 @@ function Metric({ label, value }: { label: string; value: number | string }) {
 export function NodeSidebar({ hosts, info, status, onLogout }: Props) {
   return (
     <aside className="node-sidebar">
-      <header className="brand-lockup">
-        <span className="brand-mark">▬●▬</span>
-        <span>inseam</span>
-      </header>
+      <BrandLockup render={<header />} />
       <div className="node-presence">
         <span className="presence-dot" />
         <span>node online</span>

@@ -15,6 +15,11 @@ pnpm install
 pnpm serve
 ```
 
+`pnpm install` here installs the whole pnpm workspace at the repo root, which
+links in `@inseam/brand` from `packages/brand` — the theme, assets, and shared
+components ([docs/brand/package.md](../../docs/brand/package.md)). Everything in
+`src/index.css` is this console's own layout; brand changes go in the package.
+
 `pnpm serve` starts a node on `127.0.0.1:7337` and Vite on
 `http://localhost:5173`, and prints the owner token to paste into the login
 screen. The defaults are made for a throwaway local setup: the hosted

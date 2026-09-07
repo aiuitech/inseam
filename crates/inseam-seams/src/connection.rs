@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use inseam_kernel::address::{Address, Envelope, HostId};
-use inseam_kernel::substrate::{ApplyCx, PluginError, ServiceKey};
+use inseam_kernel::substrate::{ApplyCx, Notify, PluginError, ServiceKey};
 
 use crate::SeamError;
 
@@ -232,6 +232,12 @@ pub struct Registration {
     pub entry_id: String,
     pub host: HostDescription,
     pub capabilities: Capabilities,
+    /// The scopes the owner configured this host to index — the folders
+    /// of a filesystem host — as the connection interprets them, so an
+    /// owner surface can offer them without naming a path itself. Empty
+    /// for a host with no configured scopes: everything it enumerates is
+    /// in play, and a scope is named per run.
+    pub roots: Vec<String>,
     pub connection: Arc<dyn Connection>,
 }
 
@@ -252,6 +258,16 @@ pub trait Connections: Send + Sync {
         self.snapshot().into_iter().find(|r| r.host.id == *host)
     }
 }
+
+/// Fired after every registration and every disposal. It carries no
+/// payload on purpose: a listener re-reads [`Connections::snapshot`], so
+/// a burst of changes collapses into one read and nothing it holds can go
+/// stale. The roster listens here to publish and withdraw stewardship
+/// records as hosts come and go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ConnectionsChanged;
+
+impl Notify for ConnectionsChanged {}
 
 /// Pick the connection a scope names when the caller did not: the only
 /// sweepable one mounted, or an error listing the choices. Explicit is the

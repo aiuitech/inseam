@@ -81,7 +81,7 @@ import AppKit
         #expect(StitchStrip.elementIsNode(at: 3))
     }
 
-    /// `assets/stitch.svg` is seven elements in a 394×50 box; the strip must
+    /// `packages/brand/assets/stitch.svg` is seven elements in a 394×50 box; the strip must
     /// fit exactly those seven at canonical scale and no more.
     @Test func canonicalStripFitsSevenElements() {
         #expect(StitchStrip.elementsFitting(width: 394, height: 50) == 7)

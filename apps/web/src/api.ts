@@ -52,6 +52,8 @@ export type Host = {
   display_name: string
   entry: string
   capabilities: { enumerates: boolean; change_feed: boolean; writable: boolean }
+  /** Folders the owner configured on this host; each is an index root. */
+  roots: string[]
 }
 
 export type QueryResult = {
@@ -108,6 +110,17 @@ export type Plugin = {
   missing_secrets: Array<{ env: string; purpose: string }>
 }
 
+/** One first-party entry in the settings document: its enable switch
+ * and, for configured entries, the complete config with the node's
+ * defaults filled in. The typed shape lives on the node. */
+export type EntrySetting = {
+  enabled: boolean
+  config?: Record<string, unknown>
+}
+
+/** The first-party settings document, keyed by entry id. */
+export type Settings = Record<string, EntrySetting>
+
 /** One file of a plugin directory, contents as standard base64. */
 export type PluginFile = { path: string; bytes: string }
 
@@ -159,6 +172,10 @@ function post<T>(path: string, body: unknown): Promise<T> {
   return request<T>(path, { method: "POST", body: JSON.stringify(body) })
 }
 
+function put<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, { method: "PUT", body: JSON.stringify(body) })
+}
+
 export const api = {
   session: () => request<Session>("/session"),
   login: (token: string) => post<void>("/session", { token }),
@@ -181,4 +198,6 @@ export const api = {
   plugins: () => request<Plugin[]>("/owner/plugins"),
   installPlugin: (id: string, files: PluginFile[]) =>
     post<Plugin>("/owner/plugins/install", { id, files }),
+  settings: () => request<Settings>("/owner/settings"),
+  configure: (settings: Settings) => put<Settings>("/owner/settings", settings),
 }

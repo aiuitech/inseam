@@ -4,13 +4,23 @@ The first connection plugin: `connection-fs`, registering this machine's filesys
 
 ## Identity and addresses
 
-The host id is `fs-<hostname>` (sanitized; `host_id` in the entry config overrides it; `skip_hidden`, `gitignore`, and `ignore` configure enumeration — [ignore.md](ignore.md)). Locators are absolute paths with the leading `/` stripped, so addresses read like the paths they name:
+The host id is derived from the **machine's identity, never its hostname** ([design/addressing.md](../../design/addressing.md)): `fs-` followed by sixteen hex characters of a BLAKE3 fingerprint over the kind and the machine id, the same derivation every connection uses. The machine id is the platform's own — the IOPlatformUUID on macOS, `/etc/machine-id` on Linux, the registry's `MachineGuid` on Windows — so renaming the machine changes nothing and two nodes on one machine mint one host. Where the platform has none (a container image without systemd, a phone), the entry mints a random identity once and keeps it at `<data-dir>/<entry>/machine-id`, so the id follows the data volume. `machine_id` in the entry config replaces the identity material (a tenant name, a test fixture); it is never the id itself. `skip_hidden`, `gitignore`, and `ignore` configure enumeration ([ignore.md](ignore.md)).
+
+Locators are absolute paths with the leading `/` stripped, so addresses read like the paths they name:
 
 ```
-/Users/greg/Data/Notes/reno.md  ->  inseam://fs-gregs-mba/Users/greg/Data/Notes/reno.md
+/Users/greg/Data/Notes/reno.md  ->  inseam://fs-3f9a1b2c4d5e6f70/Users/greg/Data/Notes/reno.md
 ```
+
+An index built while the id was still the hostname names a host no steward serves; the store's schema version was bumped with the change, so such an index is dropped on open and rebuilt by the next sweep ([storage.md](storage.md)).
 
 Resolution refuses addresses for other hosts and any locator containing a parent-directory (`..`) component.
+
+## Configured folders
+
+The entry's `roots` lists the folders this host indexes, as absolute paths (at most 64, none twice, no `..`). Empty — the default — means the owner names a scope per run and any directory is one, which is what `inseam index <dir>` has always done. Once folders are configured, every scope on this host must lie inside one of them: a scope outside is refused by name, listing the configured folders, from the CLI as much as from a remote transport. A configured folder need not exist at boot (a volume mounted later is still the owner's configuration); it is checked when it is indexed.
+
+The connection reports its folders with its registration, so owner surfaces offer them as the roots to index: `inseam hosts` and the `hosts` operation carry them, the web console lists them in its index control, and the console's configuration panel (or the macOS app's Configuration tab) is where they are chosen ([../architecture/hosted-node.md](../architecture/hosted-node.md#filesystem-scopes)).
 
 ## Enumeration
 

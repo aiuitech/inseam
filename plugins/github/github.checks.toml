@@ -1,0 +1,83 @@
+# Golden checks for the GitHub connection (docs/plugins/validation.md):
+# the network as data — each check names the replies GitHub would give
+# for the URLs the plugin asks, and the sources, bytes, or envelope the
+# plugin promises to make of them. Fixture files are documented in
+# fixtures/README.md. Canned URLs are the real hosts the manifest names;
+# nothing is ever contacted.
+
+[config]
+repository = "octo/hello"
+ref = "main"
+
+# The claim: every blob in the tree becomes a source whose locator is its
+# path and whose content type follows its extension.
+[[check]]
+name = "enumerates every blob of the repository tree"
+call = "enumerate"
+[[check.fetch]]
+url = "https://api.github.com/repos/octo/hello/git/trees/main?recursive=1"
+body_file = "fixtures/tree.json"
+content_type = "application/json"
+[check.expect]
+min_sources = 4
+max_sources = 4
+locator_contains = "README.md"
+content_type = "text/markdown"
+hint_contains = "guide.md"
+
+# A scope is a directory prefix: only what is under it is listed.
+[[check]]
+name = "scopes an enumeration to a directory"
+call = "enumerate"
+root = "docs/"
+[[check.fetch]]
+url = "https://api.github.com/repos/octo/hello/git/trees/main?recursive=1"
+body_file = "fixtures/tree.json"
+[check.expect]
+min_sources = 1
+max_sources = 1
+locator_contains = "docs/guide.md"
+
+# Reads come from the raw content host at the configured ref.
+[[check]]
+name = "reads a file from the raw content host"
+call = "read"
+locator = "README.md"
+[[check.fetch]]
+url = "https://raw.githubusercontent.com/octo/hello/main/README.md"
+body = "# Hello\n\nA tiny repository.\n"
+content_type = "text/plain"
+[check.expect]
+text_contains = "A tiny repository"
+
+# Describe asks the contents API for one path.
+[[check]]
+name = "describes one path through the contents api"
+call = "describe"
+locator = "README.md"
+[[check.fetch]]
+url = "https://api.github.com/repos/octo/hello/contents/README.md?ref=main"
+body_file = "fixtures/contents.json"
+[check.expect]
+content_type = "text/markdown"
+hint_contains = "README"
+
+# A repository GitHub does not know must be an error, never an empty
+# listing that would reconcile every source away.
+[[check]]
+name = "errors on a missing repository instead of listing nothing"
+call = "enumerate"
+[[check.fetch]]
+url = "https://api.github.com/repos/octo/hello/git/trees/main?recursive=1"
+status = 404
+body = "{\"message\":\"Not Found\"}"
+[check.expect]
+error = true
+
+# The offline path: with no network at all, enumeration is an error the
+# sweep reports, not a trap and not an empty repository.
+[[check]]
+name = "errors offline"
+call = "enumerate"
+[check.expect]
+error = true

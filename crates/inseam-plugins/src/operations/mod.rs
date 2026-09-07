@@ -5,20 +5,32 @@
 //! enforcement is the [`OperationRequest`] guard on dispatch:
 //! access-control listeners deny, and denial is monotonic.
 //!
+//! The ladder's rungs live in [`ladder`], shared with the routing handler
+//! so a routed request is served by the same code as a local one. When
+//! the network entries are mounted, `query` also fans out through the
+//! `routing` seam and merges what came back ([`merge`]), and the ladder
+//! reads sources other nodes steward through the same seam; the owner's
+//! network operations are [`network`].
+//!
 //! The plugin operations (`plugins`, `install_plugin`) reach the kernel
 //! through the `composition` service: this provider runs inside the tree
 //! and cannot hold the kernel, so it submits edits the distribution
 //! applies (`design/composition.md`).
 
 mod install;
+pub(crate) mod ladder;
+mod merge;
+mod network;
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::SystemTime;
 
-use inseam_kernel::address::{Address, ContentLength, HostId};
+use crate::settings::{SettingsDocument, WriteMode};
+use inseam_kernel::address::{HostId, Timestamp};
 use inseam_kernel::store::{
     CatalogRow, CatalogSelection, IndexStore, SearchIndexRepair, SearchIndexRepairOutcome,
-    StoredFragment, StoredSource, VectorScope,
+    StoredSource, VectorScope,
 };
 use inseam_kernel::substrate::{
     ApplyCx, COMPOSITION, CompositionEdit, CompositionEditor, Entry, EventBus, Facts, Inject,
@@ -26,27 +38,31 @@ use inseam_kernel::substrate::{
 };
 use inseam_seams::SeamError;
 use inseam_seams::connection::{
-    CONNECTIONS, Connection, Connections, Registration as ConnectionRegistration, resolve_default,
+    CONNECTIONS, Connections, Registration as ConnectionRegistration, resolve_default,
 };
 use inseam_seams::dates::ymd;
-use inseam_seams::finder::{FINDER, Finder, RankedFragment};
+use inseam_seams::finder::{FINDER, Finder, QueryTrace};
+use inseam_seams::node::NODE;
 use inseam_seams::oauth::{
     AuthorizationCallback, AuthorizationStarted, Grant, GrantId, OAUTH, OAuth,
 };
 use inseam_seams::operations::{
     AuthorizeGrantRequest, AwaitAuthorizationRequest, CatalogFilter, CatalogRequest,
-    CatalogResponse, CatalogSourceView, EnvelopeView, ExpandRequest, ExpandResponse,
-    FETCH_BYTES_MAX, FetchBytesRequest, FetchBytesResponse, FetchRequest, FetchResponse, FileBytes,
-    FragmentHint, FragmentView, GrantView, HostView, IndexRequest, InstallPluginRequest,
-    OPERATIONS, OperationRequest, Operations, PluginView, QueryMeta, QueryRequest, QueryResponse,
-    QueryResult, RelationView, RepairOutcome, RepairReport, RepairRequest, RevokeGrantRequest,
-    SCAN_LINES_MAX, ScanRequest, ScanResponse, StatusReport,
+    CatalogResponse, CatalogSourceView, ExpandRequest, ExpandResponse, ExpelRequest, FanOutSummary,
+    FetchBytesRequest, FetchBytesResponse, FetchRequest, FetchResponse, GrantView, HostView,
+    IndexRequest, InstallPluginRequest, JoinRequest, NetworkView, OPERATIONS, OperationRequest,
+    Operations, PluginView, QueryMeta, QueryRequest, QueryResponse, QueryResult, RepairOutcome,
+    RepairReport, RepairRequest, RevokeGrantRequest, ScanRequest, ScanResponse, Settings,
+    StatusReport,
 };
+use inseam_seams::roster::{Invitation, ROSTER};
+use inseam_seams::routing::{FanOutReply, ROUTING, Routing};
 use inseam_seams::sweep::{IndexMonitor, IndexReport, SWEEP, Sweep, SweepRequest};
-use inseam_seams::text::{check_line_range, count_lines, is_indexable_text, preview, slice_lines};
+use inseam_seams::sync::SYNC;
 
-/// Characters of fragment text shown in hints and expand views.
-const PREVIEW_CHARS: usize = 280;
+use ladder::Reader;
+use network::NetworkOperations;
+
 /// Catalog entries one listing may return; counts still cover everything.
 const CATALOG_LIMIT_MAX: u32 = 10_000;
 
@@ -74,6 +90,13 @@ impl Plugin for OperationsPlugin {
             Inject::required("sweep"),
             Inject::required("composition"),
             Inject::optional("oauth"),
+            // The network seams are optional so a node composed without
+            // them keeps every local operation; each network operation
+            // then names the entry it lacks.
+            Inject::optional("routing"),
+            Inject::optional("roster"),
+            Inject::optional("sync"),
+            Inject::optional("node"),
         ];
         Manifest {
             name: "operations",
@@ -89,6 +112,12 @@ impl Plugin for OperationsPlugin {
             finder: cx.get(&FINDER)?,
             sweep: cx.get(&SWEEP)?,
             oauth: cx.try_get(&OAUTH)?,
+            network: NetworkOperations {
+                routing: cx.try_get(&ROUTING)?,
+                roster: cx.try_get(&ROSTER)?,
+                sync: cx.try_get(&SYNC)?,
+                node: cx.try_get(&NODE)?,
+            },
             composition: cx.get(&COMPOSITION)?,
             data_dir: cx.data_dir().to_path_buf(),
             bus: cx.bus().clone(),
@@ -110,6 +139,8 @@ pub struct OperationsService {
     /// Absent when no oauth entry is active: the grant operations then say
     /// so instead of pretending there are no grants.
     oauth: Option<Arc<dyn OAuth>>,
+    /// The network seams, each absent on a node composed without it.
+    network: NetworkOperations,
     /// The kernel's edit channel: how a plugin asks the distribution to
     /// change the composition of the node it runs in.
     composition: Arc<CompositionEditor>,
@@ -131,39 +162,28 @@ impl OperationsService {
         })
     }
 
-    async fn source_at(&self, address: &Address) -> Result<StoredSource, SeamError> {
-        self.store
-            .source_by_address(address)
-            .await?
-            .ok_or_else(|| SeamError::UnknownSource(address.clone()))
-    }
-
-    /// What the catalog knows about the content at an address: a source's
-    /// content type and byte size when the address is cataloged, else the
-    /// mimetype of a fragment that references it (a linked image). Anything
-    /// else is unknown — a fetch never reaches for content the index has no
-    /// record of.
-    async fn content_at(&self, address: &Address) -> Result<(String, Option<u64>), SeamError> {
-        if let Some(source) = self.store.source_by_address(address).await? {
-            let known_bytes = match source.envelope.length {
-                ContentLength::Bytes(n) => Some(n),
-                ContentLength::Lines(_) => None,
-            };
-            return Ok((source.envelope.content_type.to_string(), known_bytes));
+    /// How this node reads a host's content: its own connection when it
+    /// stewards the host, else the routing seam toward whichever node
+    /// does. A cataloged source whose host nobody here can reach is an
+    /// unknown host, not a crash.
+    fn reader_for(&self, host: &HostId) -> Result<Reader, SeamError> {
+        if let Some(registration) = self.connections.resolve(host) {
+            return Ok(Reader::Connection(Arc::clone(&registration.connection)));
         }
-        match self.store.fragment_referencing(address).await? {
-            Some(fragment) => Ok((fragment.mimetype.to_string(), None)),
-            None => Err(SeamError::UnknownSource(address.clone())),
+        match &self.network.routing {
+            Some(routing) => Ok(Reader::Routing(Arc::clone(routing))),
+            None => Err(SeamError::UnknownHost(host.clone())),
         }
     }
 
-    /// The connection serving a host, for reads: a cataloged source whose
-    /// steward has since been unmounted is an unknown host, not a crash.
-    fn connection_to(&self, host: &HostId) -> Result<Arc<dyn Connection>, SeamError> {
-        self.connections
-            .resolve(host)
-            .map(|r| Arc::clone(&r.connection))
-            .ok_or_else(|| SeamError::UnknownHost(host.clone()))
+    /// Whether this node's own index answers an `expand` of the source:
+    /// it stewards the host, or it deep-indexed the source itself
+    /// (`design/discovery.md`: a node may index anything it can fetch).
+    fn expands_locally(&self, source: &StoredSource) -> bool {
+        if self.connections.resolve(&source.address.host).is_some() {
+            return true;
+        }
+        source.root_fragment.is_some()
     }
 
     /// The host an index request means: the one it names, else the only
@@ -223,145 +243,88 @@ impl OperationsService {
     }
 }
 
+/// One query as a merge of this node's index with the fan-out: the local
+/// finder and the routing seam run concurrently, and what the network
+/// answers is merged by rank. A node without routing, or one that fans
+/// out to nobody, gets its local list back untouched.
+async fn query_across(
+    finder: &dyn Finder,
+    routing: Option<&dyn Routing>,
+    text: &str,
+    limit: usize,
+) -> Result<(Vec<QueryResult>, QueryTrace, Vec<FanOutSummary>), SeamError> {
+    let (local, replies) = tokio::join!(
+        ladder::query(finder, text, limit),
+        fan_out(routing, text, limit)
+    );
+    let (results, trace) = local?;
+    let merged = merge::merge(results, replies, limit);
+    Ok((merged.results, trace, merged.remote))
+}
+
+/// The fan-out's replies, or none: a fan-out that could not even start
+/// (the roster failed to list nodes) is logged and treated as no
+/// replies, because a network hiccup must never fail a local query.
+async fn fan_out(routing: Option<&dyn Routing>, text: &str, limit: usize) -> Vec<FanOutReply> {
+    let Some(routing) = routing else {
+        return Vec::new();
+    };
+    match routing.fan_out(text, limit).await {
+        Ok(replies) => replies,
+        Err(error) => {
+            tracing::warn!("query fan-out did not run: {error}");
+            Vec::new()
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl Operations for OperationsService {
     async fn query(&self, request: QueryRequest) -> Result<QueryResponse, SeamError> {
         self.guard("query")?;
         let started = std::time::Instant::now();
-        let limit = request.limit.clamp(1, 50);
-        let discovery = self.finder.query(&request.text, limit).await?;
-        let results = discovery
-            .ranked
-            .into_iter()
-            .map(|r| QueryResult {
-                address: r.source.address.clone(),
-                score: round3(r.score),
-                summary: r.summary,
-                envelope: envelope_view(&r.source),
-                hints: r.hints.iter().map(hint_view).collect(),
-                replicas: r.replicas,
-            })
-            .collect();
+        let limit = ladder::clamp_query_limit(request.limit);
+        let routing = self.network.routing.as_deref();
+        let (results, trace, remote) =
+            query_across(self.finder.as_ref(), routing, &request.text, limit).await?;
         let meta = QueryMeta {
             elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
             // The clamp above bounds `limit` to 50, so this conversion
             // cannot fail.
             limit: u32::try_from(limit).unwrap_or(50),
-            trace: discovery.trace,
+            trace,
+            remote,
         };
         Ok(QueryResponse { results, meta })
     }
 
     async fn expand(&self, request: ExpandRequest) -> Result<ExpandResponse, SeamError> {
         self.guard("expand")?;
-        let source = self.source_at(&request.address).await?;
-        let expansion = self.finder.expand(&source).await?;
-        let mut sources_cache: std::collections::HashMap<_, Address> = Default::default();
-        let mut neighbors = Vec::with_capacity(expansion.neighbors.len());
-        for f in &expansion.neighbors {
-            let mut address = None;
-            if let Some(sid) = f.source {
-                match sources_cache.get(&sid) {
-                    Some(a) => address = Some(a.clone()),
-                    None => {
-                        address = self
-                            .store
-                            .source(sid)
-                            .await
-                            .ok()
-                            .flatten()
-                            .map(|s| s.address);
-                        if let Some(a) = &address {
-                            sources_cache.insert(sid, a.clone());
-                        }
-                    }
-                }
-            }
-            neighbors.push(fragment_view(f, address));
+        let source = ladder::source_at(&self.store, &request.address).await?;
+        if self.expands_locally(&source) {
+            return ladder::expand(&self.store, self.finder.as_ref(), &source).await;
         }
-        let neighbors = neighbors;
-        Ok(ExpandResponse {
-            address: source.address.clone(),
-            summary: self.store.summary_of(source.id).await?,
-            fragments: expansion
-                .fragments
-                .iter()
-                .map(|f| fragment_view(f, None))
-                .collect(),
-            relations: expansion.relations.iter().map(RelationView::from).collect(),
-            neighbors,
-        })
+        match &self.network.routing {
+            Some(routing) => routing.expand(&source.address).await,
+            None => Err(SeamError::UnknownHost(source.address.host.clone())),
+        }
     }
 
     async fn scan(&self, request: ScanRequest) -> Result<ScanResponse, SeamError> {
         self.guard("scan")?;
-        let source = self.source_at(&request.address).await?;
-        check_line_range(request.start, request.end)?;
-        let start = request.start;
-        let end = clamp_scan_end(start, request.end);
-        assert!(start >= 1);
-        assert!(end >= start);
-        assert!(end - start < SCAN_LINES_MAX);
-        // Scan reads what the index reads as text — `text/*` and the
-        // structured application types — one list shared with `fetch` and
-        // the chunker, so the three never disagree. Everything else (media,
-        // PDFs) is served through a text descendant below.
-        if serves_text(&source.envelope.content_type) {
-            let text = self
-                .connection_to(&source.address.host)?
-                .read_lines(&source.address, start, end)
-                .await?;
-            let lines_total = match source.envelope.length {
-                ContentLength::Lines(n) => Some(n),
-                ContentLength::Bytes(_) => None,
-            };
-            return Ok(ScanResponse {
-                address: source.address,
-                mimetype: source.envelope.content_type.to_string(),
-                start,
-                end: lines_total.map_or(end, |total| end.min(total)),
-                lines_total,
-                text,
-                served_from_fragment: None,
-            });
-        }
-        // Scanning anything that is not text means reading lines of its
-        // text descendants — the transcript case. The largest one stands in.
-        let fragments = self.store.fragments_of(source.id).await?;
-        let Some((fragment, text)) = scan_stand_in(&fragments) else {
-            return Err(SeamError::NothingToScan(source.address));
-        };
-        let sliced = slice_lines(text, start, end)?;
-        let lines_total = count_lines(text);
-        Ok(ScanResponse {
-            address: source.address,
-            mimetype: fragment.mimetype.to_string(),
-            start,
-            end: end.min(lines_total),
-            lines_total: Some(lines_total),
-            text: sliced,
-            served_from_fragment: Some(fragment.id),
-        })
+        let source = ladder::source_at(&self.store, &request.address).await?;
+        let window = ladder::scan_window(request.start, request.end)?;
+        let reader = self.reader_for(&source.address.host);
+        ladder::scan(&self.store, source, window, reader).await
     }
 
     async fn fetch(&self, request: FetchRequest) -> Result<FetchResponse, SeamError> {
         self.guard("fetch")?;
-        let source = self.source_at(&request.address).await?;
-        if !serves_text(&source.envelope.content_type) {
-            return Err(SeamError::BinaryFetch(
-                source.address,
-                source.envelope.content_type.to_string(),
-            ));
-        }
-        let text = self
-            .connection_to(&source.address.host)?
-            .read_text(&source.address)
-            .await?;
-        Ok(FetchResponse {
-            address: source.address,
-            content_type: source.envelope.content_type.to_string(),
-            text,
-        })
+        let source = ladder::source_at(&self.store, &request.address).await?;
+        // Refused before any read, local or over the network.
+        ladder::check_text_fetch(&source)?;
+        let reader = self.reader_for(&source.address.host)?;
+        ladder::fetch(&reader, source).await
     }
 
     async fn fetch_bytes(
@@ -369,27 +332,12 @@ impl Operations for OperationsService {
         request: FetchBytesRequest,
     ) -> Result<FetchBytesResponse, SeamError> {
         self.guard("fetch")?;
-        let (content_type, known_bytes) = self.content_at(&request.address).await?;
+        let (content_type, known_bytes) = ladder::content_at(&self.store, &request.address).await?;
         // Refuse before reading when the catalog already knows the size;
-        // otherwise the read itself is the check (pair assertion below).
-        if let Some(bytes) = known_bytes
-            && bytes > FETCH_BYTES_MAX
-        {
-            return Err(fetch_too_large(&request.address, bytes));
-        }
-        let bytes = self
-            .connection_to(&request.address.host)?
-            .read_bytes(&request.address)
-            .await?;
-        let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
-        if size > FETCH_BYTES_MAX {
-            return Err(fetch_too_large(&request.address, size));
-        }
-        Ok(FetchBytesResponse {
-            address: request.address,
-            content_type,
-            bytes: FileBytes(bytes),
-        })
+        // otherwise the read itself is the check (paired inside the rung).
+        ladder::check_bytes_bound(&request.address, known_bytes)?;
+        let reader = self.reader_for(&request.address.host)?;
+        ladder::fetch_bytes(&reader, request.address, content_type).await
     }
 
     async fn index(&self, request: IndexRequest) -> Result<IndexReport, SeamError> {
@@ -439,6 +387,7 @@ impl Operations for OperationsService {
                 display_name: r.host.display_name.clone(),
                 entry: r.entry_id.clone(),
                 capabilities: r.capabilities,
+                roots: r.roots.clone(),
             })
             .collect())
     }
@@ -485,12 +434,47 @@ impl Operations for OperationsService {
 
     async fn plugins(&self) -> Result<Vec<PluginView>, SeamError> {
         // Owner operation: not boundary-guarded (local transports only).
-        let fibers = self
+        let snapshot = self
             .composition
             .submit(CompositionEdit::Inspect)
             .await
             .map_err(edit_error)?;
-        Ok(fibers.into_iter().map(PluginView::from).collect())
+        Ok(snapshot.fibers.into_iter().map(PluginView::from).collect())
+    }
+
+    async fn settings(&self) -> Result<Settings, SeamError> {
+        // Owner operation: not boundary-guarded (local transports only).
+        let snapshot = self
+            .composition
+            .submit(CompositionEdit::Inspect)
+            .await
+            .map_err(edit_error)?;
+        settings_of(&snapshot.composition)
+    }
+
+    async fn configure(&self, settings: Settings) -> Result<Settings, SeamError> {
+        // Owner operation: not boundary-guarded (local transports only).
+        let document: SettingsDocument = serde_json::from_value(settings.0)
+            .map_err(|error| SeamError::Refused(format!("settings document: {error}")))?;
+        document
+            .validate()
+            .map_err(|error| SeamError::Refused(error.to_string()))?;
+        // This provider is the `operations` entry: disabling it would
+        // unload the very service answering, and every transport with it.
+        if !document.operations.enabled {
+            return Err(SeamError::Refused(
+                "the operations entry cannot be disabled from a running node".to_string(),
+            ));
+        }
+        let patches = document
+            .into_patches(WriteMode::All)
+            .map_err(|error| SeamError::Refused(error.to_string()))?;
+        let snapshot = self
+            .composition
+            .submit(CompositionEdit::Configure(patches))
+            .await
+            .map_err(edit_error)?;
+        settings_of(&snapshot.composition)
     }
 
     async fn install_plugin(&self, request: InstallPluginRequest) -> Result<PluginView, SeamError> {
@@ -523,7 +507,8 @@ impl Operations for OperationsService {
         let entry =
             Entry::new(id.as_str(), &format!("wasm:{}", artifact.display())).with_config(config);
         match self.composition.submit(CompositionEdit::Mount(entry)).await {
-            Ok(fibers) => fibers
+            Ok(snapshot) => snapshot
+                .fibers
                 .into_iter()
                 .find(|fiber| fiber.id == id.as_str())
                 .map(PluginView::from)
@@ -571,6 +556,7 @@ impl Operations for OperationsService {
             reembed_pending: self.store.reembed_pending(),
             cached_embeddings: caches.embeddings,
             cached_transform_outputs: caches.transforms,
+            remote_sources: stats.remote_sources,
         })
     }
 
@@ -594,24 +580,51 @@ impl Operations for OperationsService {
             vector_index_ready: self.store.search_vector_index_ready().await?,
         })
     }
+
+    async fn network(&self) -> Result<NetworkView, SeamError> {
+        // Owner operation: not boundary-guarded (local transports only).
+        self.network.network(&self.store).await
+    }
+
+    async fn invite(&self) -> Result<Invitation, SeamError> {
+        // Owner operation: not boundary-guarded (local transports only).
+        self.network.invite().await
+    }
+
+    async fn join(&self, request: JoinRequest) -> Result<NetworkView, SeamError> {
+        // Owner operation: not boundary-guarded (local transports only).
+        let now = Timestamp::from(SystemTime::now());
+        self.network.join(&self.store, request, now).await
+    }
+
+    async fn expel(&self, request: ExpelRequest) -> Result<NetworkView, SeamError> {
+        // Owner operation: not boundary-guarded (local transports only).
+        self.network.expel(&self.store, request).await
+    }
+
+    async fn sync_now(&self) -> Result<NetworkView, SeamError> {
+        // Owner operation: not boundary-guarded (local transports only).
+        self.network.sync_now(&self.store).await
+    }
+}
+
+/// The layered composition the kernel reports, as the settings document.
+fn settings_of(composition: &inseam_kernel::substrate::Composition) -> Result<Settings, SeamError> {
+    let document = SettingsDocument::from_composition(composition)
+        .map_err(|error| SeamError::failed(error.to_string()))?;
+    let value = serde_json::to_value(document)
+        .map_err(|error| SeamError::failed(format!("settings document: {error}")))?;
+    Ok(Settings(value))
 }
 
 /// A composition edit's failure in seam vocabulary: a mount the node
-/// What `fetch` and `scan` read through the connection as text: the index's
-/// text types, plus folders — a folder has no bytes, and its host serves
-/// its name listing as text (`design/indexing.md`, folders). Folders stay
-/// out of `is_indexable_text` itself so no text transform ever claims one.
-fn serves_text(mimetype: &inseam_kernel::fragment::Mimetype) -> bool {
-    is_indexable_text(mimetype) || mimetype.is_directory()
-}
-
 /// refused or rolled back is a refusal the owner acts on; a runtime that
 /// does not apply edits is a missing capability; the rest failed.
 fn edit_error(error: SubstrateError) -> SeamError {
     match error {
-        SubstrateError::EntryExists(_) | SubstrateError::MountFailed { .. } => {
-            SeamError::Refused(error.to_string())
-        }
+        SubstrateError::EntryExists(_)
+        | SubstrateError::MountFailed { .. }
+        | SubstrateError::ConfigureFailed { .. } => SeamError::Refused(error.to_string()),
         SubstrateError::EditsUnserviced | SubstrateError::EditQueueFull => {
             SeamError::Unavailable(error.to_string())
         }
@@ -638,133 +651,169 @@ fn catalog_source_view(row: &CatalogRow) -> CatalogSourceView {
         content_type: row.content_type.to_string(),
         raw_bytes: row.raw_bytes,
         modified: row.modified.map(ymd),
+        origin: row.origin,
     }
-}
-
-/// The end line a scan serves: the request's, held to [`SCAN_LINES_MAX`]
-/// lines from `start`. The caller has already checked the range.
-fn clamp_scan_end(start: u64, end: u64) -> u64 {
-    assert!(start >= 1);
-    assert!(end >= start);
-    let span_end = start.saturating_add(SCAN_LINES_MAX - 1);
-    let clamped = end.min(span_end);
-    assert!(clamped >= start);
-    clamped
-}
-
-/// The fragment a scan of a non-text source reads instead: its largest
-/// text fragment that is source content rather than derived understanding
-/// (no summaries, no entities).
-fn scan_stand_in(fragments: &[StoredFragment]) -> Option<(&StoredFragment, &str)> {
-    fragments
-        .iter()
-        .filter(|f| is_indexable_text(&f.mimetype))
-        .filter(|f| !f.mimetype.is_inseam_defined())
-        .filter_map(|f| f.text.as_deref().map(|t| (f, t)))
-        .max_by_key(|(_, t)| t.len())
-}
-
-fn envelope_view(source: &StoredSource) -> EnvelopeView {
-    let e = &source.envelope;
-    EnvelopeView {
-        source_type: e.source_type.clone(),
-        content_type: e.content_type.to_string(),
-        length: e.length,
-        created: e.created.map(ymd),
-        modified: e.modified.map(ymd),
-        title: e.hint.clone(),
-    }
-}
-
-fn hint_view(ranked: &RankedFragment) -> FragmentHint {
-    let f = &ranked.fragment;
-    FragmentHint {
-        fragment: f.id,
-        mimetype: f.mimetype.to_string(),
-        score: round3(ranked.score),
-        extent: f.extent,
-        text: f
-            .text
-            .as_deref()
-            .map(|t| preview(t, PREVIEW_CHARS))
-            .unwrap_or_default(),
-    }
-}
-
-fn fragment_view(f: &StoredFragment, source: Option<Address>) -> FragmentView {
-    FragmentView {
-        id: f.id,
-        mimetype: f.mimetype.to_string(),
-        extent: f.extent,
-        text: f.text.as_deref().map(|t| preview(t, PREVIEW_CHARS)),
-        content_address: f.content_address.clone(),
-        source,
-    }
-}
-
-fn fetch_too_large(address: &Address, bytes: u64) -> SeamError {
-    SeamError::FetchTooLarge {
-        address: address.clone(),
-        bytes,
-        limit: FETCH_BYTES_MAX,
-    }
-}
-
-fn round3(x: f64) -> f64 {
-    (x * 1000.0).round() / 1000.0
 }
 
 #[cfg(test)]
 mod tests {
-    use inseam_kernel::fragment::{FragmentId, Mimetype};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use inseam_kernel::address::{Address, ContentDigest, Envelope, HostId};
+    use inseam_kernel::network::NodeId;
+    use inseam_seams::routing::Location;
 
     use super::*;
+    use crate::routing::fake::{StubFinder, TestSource};
 
-    #[test]
-    fn scan_end_is_held_to_the_span_bound() {
-        assert_eq!(clamp_scan_end(1, 1), 1);
-        assert_eq!(clamp_scan_end(5, 9), 9);
-        assert_eq!(clamp_scan_end(1, SCAN_LINES_MAX), SCAN_LINES_MAX);
-        assert_eq!(clamp_scan_end(1, SCAN_LINES_MAX + 1), SCAN_LINES_MAX);
-        assert_eq!(clamp_scan_end(10, u64::MAX), 10 + SCAN_LINES_MAX - 1);
-        assert_eq!(clamp_scan_end(u64::MAX, u64::MAX), u64::MAX);
+    /// A routing seam that answers fan-outs with canned replies and counts
+    /// how often it was asked; every other method is unused by `query`.
+    struct FakeRouting {
+        replies: Vec<FanOutReply>,
+        fan_outs: AtomicU32,
     }
 
-    #[test]
-    fn a_scan_stand_in_is_the_largest_text_fragment_that_is_source_content() {
-        let fragment = |id: i64, mimetype: &str, text: &str| StoredFragment {
-            id: FragmentId(id),
-            source: None,
-            mimetype: Mimetype::parse(mimetype).expect("valid"),
-            text: Some(text.to_string()),
-            extent: None,
-            content_address: None,
+    #[async_trait::async_trait]
+    impl Routing for FakeRouting {
+        async fn locate(&self, _host: &HostId) -> Result<Location, SeamError> {
+            Ok(Location::Unknown)
+        }
+        async fn read_text(&self, address: &Address) -> Result<String, SeamError> {
+            Err(SeamError::UnknownHost(address.host.clone()))
+        }
+        async fn read_lines(
+            &self,
+            address: &Address,
+            _s: u64,
+            _e: u64,
+        ) -> Result<String, SeamError> {
+            Err(SeamError::UnknownHost(address.host.clone()))
+        }
+        async fn read_bytes(&self, address: &Address) -> Result<Vec<u8>, SeamError> {
+            Err(SeamError::UnknownHost(address.host.clone()))
+        }
+        async fn describe(&self, address: &Address) -> Result<Envelope, SeamError> {
+            Err(SeamError::UnknownHost(address.host.clone()))
+        }
+        async fn expand(&self, address: &Address) -> Result<ExpandResponse, SeamError> {
+            Err(SeamError::UnknownHost(address.host.clone()))
+        }
+        async fn fan_out(&self, _text: &str, _limit: usize) -> Result<Vec<FanOutReply>, SeamError> {
+            self.fan_outs.fetch_add(1, Ordering::SeqCst);
+            Ok(self.replies.clone())
+        }
+    }
+
+    fn node(byte: u8) -> NodeId {
+        NodeId::from_bytes([byte; 32])
+    }
+
+    async fn finder_with(
+        sources: &[(&str, Option<&[u8]>)],
+    ) -> (Arc<StubFinder>, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let store = Arc::new(IndexStore::open(dir.path()).await.expect("opens"));
+        let mut ranked = Vec::new();
+        for (address, digest) in sources {
+            let source = TestSource::text(address, "one line")
+                .with_digest(digest.map(ContentDigest::of_bytes));
+            ranked.push(source.catalog(&store).await);
+        }
+        (Arc::new(StubFinder::ranked(ranked)), dir)
+    }
+
+    fn remote_result(address: &str, digest: Option<&[u8]>) -> QueryResult {
+        QueryResult {
+            address: address.parse().expect("valid address"),
+            score: 1.0,
+            summary: Some("remote".to_string()),
+            envelope: inseam_seams::operations::EnvelopeView {
+                source_type: "file".to_string(),
+                content_type: "text/plain".to_string(),
+                length: inseam_kernel::address::ContentLength::Lines(1),
+                created: None,
+                modified: None,
+                title: None,
+                content_digest: digest.map(ContentDigest::of_bytes),
+            },
+            hints: Vec::new(),
+            replicas: Vec::new(),
+            via: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_query_without_routing_is_the_local_list() {
+        let (finder, _dir) = finder_with(&[("inseam://fs-a/a.md", None)]).await;
+        let (results, _trace, remote) = query_across(finder.as_ref(), None, "a", 8)
+            .await
+            .expect("queries");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].via, None);
+        assert!(remote.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_query_merges_the_fan_out_and_survives_a_failed_node() {
+        let (finder, _dir) = finder_with(&[
+            ("inseam://fs-a/shared.md", Some(b"twin")),
+            ("inseam://fs-a/local.md", None),
+        ])
+        .await;
+        let routing = FakeRouting {
+            replies: vec![
+                FanOutReply {
+                    node: node(2),
+                    results: vec![
+                        remote_result("inseam://fs-a/shared.md", Some(b"twin")),
+                        remote_result("inseam://drive-b/twin.md", Some(b"twin")),
+                        remote_result("inseam://fs-b/remote.md", None),
+                    ],
+                    elapsed_ms: 12,
+                    error: None,
+                },
+                FanOutReply {
+                    node: node(3),
+                    results: Vec::new(),
+                    elapsed_ms: 3000,
+                    error: Some("timed out after 3000 ms".to_string()),
+                },
+            ],
+            fan_outs: AtomicU32::new(0),
         };
-        let fragments = vec![
-            fragment(
-                1,
-                "text/x-inseam-summary",
-                "a very long summary of the video",
-            ),
-            fragment(2, "text/plain", "short"),
-            fragment(3, "text/plain", "the transcript, longest"),
-            fragment(
-                4,
-                "application/json",
-                "{\"structured\": \"text counts too\"}",
-            ),
-            fragment(
-                5,
-                "image/png",
-                "not text however long this reference text is",
-            ),
-        ];
-        let (chosen, text) = scan_stand_in(&fragments).expect("a stand-in");
-        assert_eq!(chosen.id, FragmentId(4));
-        assert_eq!(text, "{\"structured\": \"text counts too\"}");
-        assert!(
-            scan_stand_in(&fragments[..1]).is_none(),
-            "summaries never stand in"
+        let (results, _trace, remote) = query_across(finder.as_ref(), Some(&routing), "x", 8)
+            .await
+            .expect("queries");
+        assert_eq!(routing.fan_outs.load(Ordering::SeqCst), 1);
+        let addresses: Vec<String> = results.iter().map(|r| r.address.to_string()).collect();
+        assert_eq!(
+            addresses[0], "inseam://fs-a/shared.md",
+            "ranked by both lists"
         );
+        assert_eq!(results[0].via, None, "the local copy is kept");
+        assert_eq!(
+            results[0].summary, None,
+            "the local copy's summary, not the remote's"
+        );
+        assert_eq!(
+            results[0]
+                .replicas
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            ["inseam://drive-b/twin.md"],
+            "the digest-equal remote copy collapsed into a replica"
+        );
+        assert!(addresses.contains(&"inseam://fs-b/remote.md".to_string()));
+        assert_eq!(
+            results
+                .iter()
+                .find(|r| r.address.to_string() == "inseam://fs-b/remote.md")
+                .and_then(|r| r.via),
+            Some(node(2))
+        );
+        assert_eq!(remote.len(), 2);
+        assert_eq!(remote[1].node, node(3));
+        assert_eq!(remote[1].error.as_deref(), Some("timed out after 3000 ms"));
     }
 }

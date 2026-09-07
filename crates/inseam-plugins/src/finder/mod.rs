@@ -22,6 +22,13 @@ use inseam_seams::finder::{
     Discovery, Expansion, FINDER, Finder, QueryTrace, RankedFragment, RankedSource,
 };
 
+/// The `k` in reciprocal rank fusion: the finder's default for fusing its
+/// two seed lists, and the constant the cross-node merge reuses to fuse
+/// ranked lists from differently-profiled indexes (`design/finder.md`).
+/// Sixty is the value the RRF paper settled on; a smaller `k` lets a
+/// single top rank dominate, a larger one flattens every list together.
+pub const RRF_K_DEFAULT: f64 = 60.0;
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct FinderConfig {
@@ -82,7 +89,7 @@ impl Default for FinderConfig {
         Self {
             seed_k: 60,
             seeds: SeedLists::Both,
-            rrf_k: 60.0,
+            rrf_k: RRF_K_DEFAULT,
             damping: 0.5,
             iterations: 12,
             epsilon: 1e-6,
@@ -481,21 +488,40 @@ impl FinderService {
 /// the other copies become its replicas. Results without a digest never
 /// collapse: best-effort dedup degrades to duplication, never a wrong merge.
 fn collapse_by_digest(ranked: Vec<RankedSource>) -> Vec<RankedSource> {
-    let mut collapsed: Vec<RankedSource> = Vec::with_capacity(ranked.len());
+    collapse_by_digest_by(
+        ranked,
+        |result| result.source.envelope.content_digest,
+        |kept, duplicate| kept.replicas.push(duplicate.source.address),
+    )
+}
+
+/// The digest collapse over any best-first list: `digest_of` names each
+/// item's merge key, and `absorb` folds a later item into the earlier one
+/// carrying the same digest. One function serves the finder's ranked
+/// sources and the operations layer's cross-node merge, so the two can
+/// never disagree about what "the same content" means.
+pub(crate) fn collapse_by_digest_by<T>(
+    ranked: Vec<T>,
+    digest_of: impl Fn(&T) -> Option<ContentDigest>,
+    mut absorb: impl FnMut(&mut T, T),
+) -> Vec<T> {
+    let incoming = ranked.len();
+    let mut collapsed: Vec<T> = Vec::with_capacity(incoming);
     let mut index_by_digest: HashMap<ContentDigest, usize> = HashMap::new();
     for result in ranked {
-        let Some(digest) = result.source.envelope.content_digest else {
+        let Some(digest) = digest_of(&result) else {
             collapsed.push(result);
             continue;
         };
         match index_by_digest.get(&digest) {
-            Some(&index) => collapsed[index].replicas.push(result.source.address),
+            Some(&index) => absorb(&mut collapsed[index], result),
             None => {
                 index_by_digest.insert(digest, collapsed.len());
                 collapsed.push(result);
             }
         }
     }
+    assert!(collapsed.len() <= incoming, "a collapse never adds results");
     collapsed
 }
 

@@ -10,9 +10,10 @@
 //! - `inseam claims <mimetype|path>` — who on this node already claims an
 //!   input, so a new plugin can complement instead of duplicate;
 //! - `inseam plugin new` — a scaffold whose first `inseam plugin check` is
-//!   red for the right reason;
-//! - `inseam plugin try` — apply an artifact to one real file through the
-//!   harness bridge and see what comes out, optionally as a golden check;
+//!   red for the right reason, on either seam;
+//! - `inseam plugin try` — apply a transform to one real file through the
+//!   harness bridge, or make one live call on a connection, and see what
+//!   comes out;
 //! - `inseam plugin mount` — put a local artifact into the composition.
 //!
 //! None of these boot the kernel except `capabilities` and `claims`, which
@@ -25,13 +26,20 @@ use anyhow::{Context, bail};
 use inseam_kernel::fragment::Mimetype;
 use inseam_kernel::substrate::Kernel;
 use inseam_plugins::connection_fs::detect_mimetype;
+use inseam_seams::connection::{CONNECTIONS, HostKind};
 use inseam_seams::llm::{self, LLM};
+use inseam_seams::oauth::OAUTH;
 use inseam_seams::transforms::TRANSFORMS;
-use inseam_wasm_host::{TRANSFORM_WIT, TryInput, TryOutcome, try_artifact};
+use inseam_wasm_host::{
+    TryCall, TryConnectionOutcome, TryInput, TryOutcome, plugin_wit, try_artifact, try_connection,
+};
 
 /// Inputs longer than this are not inlined into a generated check — a
 /// golden check is a small, readable example, not a corpus.
 const CHECK_INLINE_TEXT_CHARS_MAX: usize = 2_000;
+
+/// Config pairs one `plugin try` may carry.
+const TRY_CONFIG_PAIRS_MAX: usize = 64;
 
 // ---------------------------------------------------------------------------
 // seams
@@ -39,11 +47,13 @@ const CHECK_INLINE_TEXT_CHARS_MAX: usize = 2_000;
 
 pub fn seams(wit: bool) {
     if wit {
-        print!("{TRANSFORM_WIT}");
+        print!("{}", plugin_wit());
         return;
     }
-    println!("Seams that accept loaded plugins (manifest `seam = ...`):\n");
-    println!("  transform   WIT world `transform-plugin` (inseam:plugin@0.1.0)");
+    println!(
+        "Seams that accept loaded plugins (manifest `seam = ...`), package inseam:plugin@0.1.0:\n"
+    );
+    println!("  transform   WIT world `transform-plugin` — per-call instantiation");
     println!(
         "              exports  claims() -> claim-spec; apply(env, mimetype, is-root, text) -> output"
     );
@@ -54,6 +64,9 @@ pub fn seams(wit: bool) {
         "                       source-bytes        needs [capabilities] source_bytes = true (root only)"
     );
     println!(
+        "                       fetch               needs [capabilities] hosts = [\"api.example.com\", \"*.cdn.example\"]"
+    );
+    println!(
         "              output   child fragments only (no keyed sprouts); parent indexes an EARLIER fragment;"
     );
     println!(
@@ -62,7 +75,38 @@ pub fn seams(wit: bool) {
     println!("                       inseam-defined mimetypes (text/x-inseam-*) are refused");
     println!("              rules    degrade, never trap; fresh instance per call; fuel-metered");
     println!();
-    println!("`inseam seams --wit` prints the WIT to generate bindings from.");
+    println!("  connection  WIT world `connection-plugin` — one long-running instance per entry");
+    println!(
+        "              exports  configure(toml); describe-host() -> kind + principal + display-name;"
+    );
+    println!(
+        "                       capabilities(); enumerate(root) -> sources; locator-prefix(root);"
+    );
+    println!("                       read-bytes(locator); describe(locator) -> envelope");
+    println!("              imports  log                 always");
+    println!(
+        "                       fetch               needs [capabilities] hosts = [...]; the node performs it"
+    );
+    println!(
+        "                       fetch.authorize     needs [capabilities] grant = true and `grant = \"<id>\"` on the entry:"
+    );
+    println!(
+        "                                           the node attaches the bearer; the token never crosses"
+    );
+    println!(
+        "              manifest host_kind = \"<kind>\" (identity: must equal what describe-host exports);"
+    );
+    println!(
+        "                       [connection] enumerates / change_feed / writable (effective = declared AND exported)"
+    );
+    println!(
+        "              rules    the bridge derives the host id from kind + principal; locators are yours;"
+    );
+    println!(
+        "                       an error is the offline answer (never a trap); a trap discards the instance"
+    );
+    println!();
+    println!("`inseam seams --wit > wit/plugin.wit` prints the package to generate bindings from.");
     println!("`inseam capabilities` says what this node can grant right now.");
 }
 
@@ -111,6 +155,38 @@ pub fn capabilities(kernel: &Kernel) {
     println!("                      the node's own guards still apply). Inert without llm = true.");
     println!("  source_bytes = true GRANTABLE — the filesystem host serves raw bytes at the root");
     println!("                      (a fragment below the root never gets bytes)");
+    println!(
+        "  hosts = [...]       GRANTABLE — `fetch` reaches exactly these hosts (exact or `*.domain`),"
+    );
+    println!(
+        "                      through the node's guard: public addresses only unless named, every"
+    );
+    println!(
+        "                      redirect hop re-checked, body capped, timed out. Empty = no network."
+    );
+    println!("                      Adding a host later is capability widening (needs allow_new).");
+    match kernel.service(&OAUTH) {
+        Ok(oauth) => {
+            let ids: Vec<String> = oauth.grants().iter().map(|g| g.id().to_string()).collect();
+            println!(
+                "  grant = true        GRANTABLE — oauth seam bound; grants this node holds: {}",
+                if ids.is_empty() {
+                    "(none yet; docs/plugins/oauth.md)".to_string()
+                } else {
+                    ids.join(", ")
+                }
+            );
+            println!(
+                "                      the entry names one (`grant = \"<id>\"`); `authorize` attaches its bearer"
+            );
+        }
+        Err(e) => {
+            println!("  grant = true        NOT GRANTABLE on this node — {e}");
+            println!(
+                "                      `authorize` requests refuse; unauthenticated fetches still work"
+            );
+        }
+    }
     match kernel.service(&TRANSFORMS) {
         Ok(registry) => {
             let count = registry.snapshot().len();
@@ -120,6 +196,26 @@ pub fn capabilities(kernel: &Kernel) {
         }
         Err(e) => {
             println!("\n  transforms seam     not bound — {e}; a loaded transform cannot register")
+        }
+    }
+    match kernel.service(&CONNECTIONS) {
+        Ok(registry) => {
+            let hosts: Vec<String> = registry
+                .snapshot()
+                .iter()
+                .map(|r| format!("{} ({})", r.host.id, r.host.kind))
+                .collect();
+            println!(
+                "  connections seam    bound; {} host(s) stewarded: {}",
+                hosts.len(),
+                hosts.join(", ")
+            );
+            println!(
+                "                      a loaded connection registers one more; one connection per host per node"
+            );
+        }
+        Err(e) => {
+            println!("  connections seam    not bound — {e}; a loaded connection cannot register")
         }
     }
 }
@@ -178,17 +274,14 @@ pub fn claims(kernel: &Kernel, target: &str) -> anyhow::Result<()> {
 pub struct Scaffold<'a> {
     pub name: &'a str,
     pub seam: &'a str,
+    /// Transform seam: the claims.
     pub claims: &'a [String],
+    /// Connection seam: the host kind.
+    pub kind: Option<&'a str>,
     pub dir: &'a Path,
 }
 
 fn scaffold_validate(s: &Scaffold<'_>) -> anyhow::Result<()> {
-    if s.seam != "transform" {
-        bail!(
-            "seam `{}` accepts no loaded plugins; `inseam seams` lists those that do",
-            s.seam
-        );
-    }
     let name_ok = !s.name.is_empty()
         && s.name
             .chars()
@@ -199,8 +292,21 @@ fn scaffold_validate(s: &Scaffold<'_>) -> anyhow::Result<()> {
             s.name
         );
     }
+    match s.seam {
+        "transform" => scaffold_validate_transform(s),
+        "connection" => scaffold_validate_connection(s),
+        other => {
+            bail!("seam `{other}` accepts no loaded plugins; `inseam seams` lists those that do")
+        }
+    }
+}
+
+fn scaffold_validate_transform(s: &Scaffold<'_>) -> anyhow::Result<()> {
     if s.claims.is_empty() {
         bail!("pass at least one --claims mimetype (e.g. --claims image/png,image/jpeg)");
+    }
+    if s.kind.is_some() {
+        bail!("--kind is for the connection seam; a transform names --claims");
     }
     for claim in s.claims {
         let well_formed = match claim.strip_suffix("/*") {
@@ -216,6 +322,17 @@ fn scaffold_validate(s: &Scaffold<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn scaffold_validate_connection(s: &Scaffold<'_>) -> anyhow::Result<()> {
+    let Some(kind) = s.kind else {
+        bail!("pass --kind, the host kind this connection stewards (e.g. --kind github)");
+    };
+    HostKind::new(kind).with_context(|| format!("--kind `{kind}`"))?;
+    if !s.claims.is_empty() {
+        bail!("--claims is for the transform seam; a connection names --kind");
+    }
+    Ok(())
+}
+
 /// Whether any claim is text-shaped, which decides whether the scaffolded
 /// positive check hands in `text` or a `bytes_file`.
 fn claims_are_textual(claims: &[String]) -> bool {
@@ -227,30 +344,60 @@ fn claims_are_textual(claims: &[String]) -> bool {
 }
 
 fn scaffold_manifest(s: &Scaffold<'_>) -> String {
-    let claims = s
-        .claims
-        .iter()
-        .map(|c| format!("{c:?}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "# Reviewed by the node owner; enforced by the bridge (docs/plugins/loaded.md).\n\
-         name = {name:?}\n\
-         version = \"0.1.0\"\n\
-         seam = \"transform\"\n\
-         claims = [{claims}]      # effective claims = this ∩ what claims() exports\n\
-         roots_only = true\n\
-         kind = \"enrichment\"     # `structural` if you decompose the source itself\n\
-         \n\
-         [capabilities]            # request the MINIMUM you use; widening later re-gates approval\n\
-         llm = false               # llm-complete / llm-describe-image\n\
-         source_bytes = false      # source-bytes (raw bytes at the root)\n\
-         llm_call_budget = 0       # LLM calls per index run, when llm = true\n",
-        name = s.name
-    )
+    match s.seam {
+        "connection" => format!(
+            "# Reviewed by the node owner; enforced by the bridge (docs/plugins/loaded.md).\n\
+             name = {name:?}\n\
+             version = \"0.1.0\"\n\
+             seam = \"connection\"\n\
+             host_kind = {kind:?}       # identity: describe-host() must export exactly this kind\n\
+             \n\
+             [connection]              # effective = this AND what capabilities() exports\n\
+             enumerates = true\n\
+             change_feed = false\n\
+             writable = false\n\
+             \n\
+             [capabilities]            # request the MINIMUM you use; widening later re-gates approval\n\
+             hosts = [\"REPLACE.example.com\"]   # every host `fetch` may contact; empty = no network\n\
+             grant = false             # `authorize` attaches the entry's oauth grant bearer\n",
+            name = s.name,
+            kind = s.kind.unwrap_or_default()
+        ),
+        _ => {
+            let claims = s
+                .claims
+                .iter()
+                .map(|c| format!("{c:?}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "# Reviewed by the node owner; enforced by the bridge (docs/plugins/loaded.md).\n\
+                 name = {name:?}\n\
+                 version = \"0.1.0\"\n\
+                 seam = \"transform\"\n\
+                 claims = [{claims}]      # effective claims = this ∩ what claims() exports\n\
+                 roots_only = true\n\
+                 kind = \"enrichment\"     # `structural` if you decompose the source itself\n\
+                 \n\
+                 [capabilities]            # request the MINIMUM you use; widening later re-gates approval\n\
+                 llm = false               # llm-complete / llm-describe-image\n\
+                 source_bytes = false      # source-bytes (raw bytes at the root)\n\
+                 llm_call_budget = 0       # LLM calls per index run, when llm = true\n\
+                 hosts = []                # hosts `fetch` may contact; empty = no network\n",
+                name = s.name
+            )
+        }
+    }
 }
 
 fn scaffold_checks(s: &Scaffold<'_>) -> String {
+    match s.seam {
+        "connection" => scaffold_checks_connection(s),
+        _ => scaffold_checks_transform(s),
+    }
+}
+
+fn scaffold_checks_transform(s: &Scaffold<'_>) -> String {
     let first = &s.claims[0];
     let example_mimetype = first
         .strip_suffix("/*")
@@ -279,6 +426,9 @@ fn scaffold_checks(s: &Scaffold<'_>) -> String {
          mimetype = {mimetype:?}\n\
          {input}\n\
          # llm_returns = \"REPLACE with the kind of reply your prompt asks for\"   # needs llm = true\n\
+         # [[check.fetch]]                       # canned network, needs hosts = [...]\n\
+         # url = \"https://REPLACE.example.com/x\"\n\
+         # body = \"...\"\n\
          \n\
          [check.expect]\n\
          min_fragments = 1\n\
@@ -286,8 +436,8 @@ fn scaffold_checks(s: &Scaffold<'_>) -> String {
          relation = \"REPLACE: contains | derives | your-own-kind\"\n\
          # mimetype = \"text/plain\"   # prefix of an emitted fragment's mimetype\n\
          \n\
-         # The degrade path: no content, no LLM. Decide what happens — nothing is the\n\
-         # usual answer — and pin it.\n\
+         # The degrade path: no content, no LLM, no network. Decide what happens —\n\
+         # nothing is the usual answer — and pin it.\n\
          [[check]]\n\
          name = \"emits nothing when starved\"\n\
          mimetype = {mimetype:?}\n\
@@ -300,18 +450,70 @@ fn scaffold_checks(s: &Scaffold<'_>) -> String {
     )
 }
 
+fn scaffold_checks_connection(s: &Scaffold<'_>) -> String {
+    format!(
+        "# Golden checks for `{name}` (docs/plugins/validation.md): the network as data —\n\
+         # each check names the replies the host would give for the URLs the plugin\n\
+         # asks, and the sources, bytes, or envelope it promises to make of them.\n\
+         # Mandatory coverage, enforced by `inseam plugin check`: one check that PROVES\n\
+         # THE CLAIM (locator_contains / content_type / hint_contains / text_contains)\n\
+         # and one STARVED check (no [[check.fetch]]) that pins the offline answer\n\
+         # (error = true, or max_sources). Canned URLs must be on hosts the manifest\n\
+         # names; nothing is contacted.\n\
+         \n\
+         [config]                                  # [entry.config.plugin] every check configures with\n\
+         example = \"REPLACE\"\n\
+         \n\
+         [[check]]\n\
+         name = \"REPLACE: what enumerate lists, in one sentence\"\n\
+         call = \"enumerate\"\n\
+         root = \"\"\n\
+         [[check.fetch]]\n\
+         url = \"https://REPLACE.example.com/list\"\n\
+         body = \"REPLACE with the host's reply\"           # or body_file = \"fixtures/list.json\"\n\
+         # status = 200\n\
+         # authorized = true                        # the reply needs the grant bearer; 401 otherwise\n\
+         [check.expect]\n\
+         min_sources = 1\n\
+         locator_contains = \"REPLACE\"\n\
+         # content_type = \"text/\"\n\
+         \n\
+         # The offline path: no network at all. An error the sweep reports is the\n\
+         # right answer — never a trap, never an empty listing that reconciles every\n\
+         # source away.\n\
+         [[check]]\n\
+         name = \"errors offline\"\n\
+         call = \"enumerate\"\n\
+         [check.expect]\n\
+         error = true\n",
+        name = s.name,
+    )
+}
+
 fn scaffold_cargo_toml(s: &Scaffold<'_>) -> String {
+    let extra = if s.seam == "connection" {
+        "serde = { version = \"1\", features = [\"derive\"] }\ntoml = { version = \"0.8\", default-features = false, features = [\"parse\"] }\n"
+    } else {
+        ""
+    };
     format!(
         "[package]\nname = {:?}\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
          # Standalone: not a member of any surrounding workspace.\n[workspace]\n\n\
          [lib]\ncrate-type = [\"cdylib\"]\n\n\
-         [dependencies]\nwit-bindgen = \"0.60\"\n\n\
+         [dependencies]\nwit-bindgen = \"0.60\"\n{extra}\n\
          [profile.release]\nopt-level = \"s\"\nlto = true\nstrip = true\n",
         s.name
     )
 }
 
 fn scaffold_lib_rs(s: &Scaffold<'_>) -> String {
+    match s.seam {
+        "connection" => scaffold_lib_rs_connection(s),
+        _ => scaffold_lib_rs_transform(s),
+    }
+}
+
+fn scaffold_lib_rs_transform(s: &Scaffold<'_>) -> String {
     let claims = s
         .claims
         .iter()
@@ -326,7 +528,7 @@ fn scaffold_lib_rs(s: &Scaffold<'_>) -> String {
          wit_bindgen::generate!({{\n    path: \"wit\",\n    world: \"transform-plugin\",\n}});\n\
          \n\
          use exports::inseam::plugin::transform::{{ClaimSpec, Envelope, Fragment, Guest, Output}};\n\
-         #[allow(unused_imports)]\nuse inseam::plugin::host;\n\
+         #[allow(unused_imports)]\nuse inseam::plugin::{{fetch, host}};\n\
          \n\
          struct Plugin;\n\
          \n\
@@ -350,6 +552,7 @@ fn scaffold_lib_rs(s: &Scaffold<'_>) -> String {
          \x20       // the budget is spent — treat every Err as \"degrade\":\n\
          \x20       //   let Ok(bytes) = host::source_bytes() else {{ return Ok(empty) }};\n\
          \x20       //   let Ok(reply) = host::llm_complete(SYSTEM, &user) else {{ return Ok(empty) }};\n\
+         \x20       //   let Ok(answer) = fetch::fetch(&fetch::Request {{ method: \"GET\".into(), url, headers: vec![], body: None, authorize: false }}) else {{ return Ok(empty) }};\n\
          \x20       // Emit fragments; `parent` indexes an EARLIER fragment in this list,\n\
          \x20       // None hangs it off the claimed source:\n\
          \x20       //   Ok(Output {{ fragments: vec![Fragment {{ parent: None,\n\
@@ -365,13 +568,108 @@ fn scaffold_lib_rs(s: &Scaffold<'_>) -> String {
     )
 }
 
+fn scaffold_lib_rs_connection(s: &Scaffold<'_>) -> String {
+    format!(
+        "//! `{name}`: REPLACE with the host this connection stewards and how it reaches\n\
+         //! it (one paragraph). Every failure is an error naming what failed — the\n\
+         //! offline answer the sweep reports — never a panic.\n\
+         \n\
+         wit_bindgen::generate!({{\n    path: \"wit\",\n    world: \"connection-plugin\",\n}});\n\
+         \n\
+         use std::cell::RefCell;\n\
+         \n\
+         use exports::inseam::plugin::connection::{{\n\
+         \x20   ContentLength, EdgeCapabilities, Envelope, Guest, HostDescription, Source,\n\
+         }};\n\
+         #[allow(unused_imports)]\nuse inseam::plugin::{{fetch, host}};\n\
+         use serde::Deserialize;\n\
+         \n\
+         /// The entry's `[entry.config.plugin]`, parsed once by `configure`.\n\
+         #[derive(Debug, Clone, Deserialize)]\n\
+         #[serde(deny_unknown_fields)]\n\
+         struct Config {{\n\
+         \x20   example: String,\n\
+         }}\n\
+         \n\
+         thread_local! {{\n\
+         \x20   static CONFIG: RefCell<Option<Config>> = const {{ RefCell::new(None) }};\n\
+         }}\n\
+         \n\
+         fn configured() -> Result<Config, String> {{\n\
+         \x20   CONFIG.with(|c| c.borrow().clone()).ok_or_else(|| \"not configured\".to_string())\n\
+         }}\n\
+         \n\
+         struct Plugin;\n\
+         \n\
+         impl Guest for Plugin {{\n\
+         \x20   fn configure(config: String) -> Result<(), String> {{\n\
+         \x20       let parsed: Config = toml::from_str(&config).map_err(|e| format!(\"plugin config: {{e}}\"))?;\n\
+         \x20       CONFIG.with(|c| *c.borrow_mut() = Some(parsed));\n\
+         \x20       Ok(())\n\
+         \x20   }}\n\
+         \n\
+         \x20   /// The bridge derives the host id from kind + principal; the kind must\n\
+         \x20   /// equal the manifest's `host_kind`.\n\
+         \x20   fn describe_host() -> Result<HostDescription, String> {{\n\
+         \x20       let config = configured()?;\n\
+         \x20       Ok(HostDescription {{\n\
+         \x20           kind: {kind:?}.to_string(),\n\
+         \x20           principal: config.example.to_ascii_lowercase(),\n\
+         \x20           display_name: format!(\"REPLACE · {{}}\", config.example),\n\
+         \x20       }})\n\
+         \x20   }}\n\
+         \n\
+         \x20   fn capabilities() -> EdgeCapabilities {{\n\
+         \x20       EdgeCapabilities {{ enumerates: true, change_feed: false, writable: false }}\n\
+         \x20   }}\n\
+         \n\
+         \x20   fn enumerate(_root: String) -> Result<Vec<Source>, String> {{\n\
+         \x20       let _config = configured()?;\n\
+         \x20       // Describe the request; the node performs it under the manifest's hosts:\n\
+         \x20       //   let answer = fetch::fetch(&fetch::Request {{ method: \"GET\".into(), url, headers: vec![], body: None, authorize: false }})?;\n\
+         \x20       //   if !(200..300).contains(&answer.status) {{ return Err(format!(\"status {{}}\", answer.status)); }}\n\
+         \x20       // Then one Source per item: locator (your vocabulary), envelope, raw_bytes.\n\
+         \x20       let _ = (Source {{ locator: String::new(), envelope: Envelope {{ source_type: String::new(), content_type: String::new(), length: ContentLength::Bytes(0), created: None, modified: None, hint: None }}, raw_bytes: 0 }},);\n\
+         \x20       Err(\"REPLACE: not implemented\".to_string())\n\
+         \x20   }}\n\
+         \n\
+         \x20   fn locator_prefix(_root: String) -> Option<String> {{\n\
+         \x20       Some(String::new())\n\
+         \x20   }}\n\
+         \n\
+         \x20   fn read_bytes(_locator: String) -> Result<Vec<u8>, String> {{\n\
+         \x20       Err(\"REPLACE: not implemented\".to_string())\n\
+         \x20   }}\n\
+         \n\
+         \x20   fn describe(_locator: String) -> Result<Envelope, String> {{\n\
+         \x20       Err(\"this host describes sources only by enumeration\".to_string())\n\
+         \x20   }}\n\
+         }}\n\
+         \n\
+         export!(Plugin);\n",
+        name = s.name,
+        kind = s.kind.unwrap_or_default(),
+    )
+}
+
 fn scaffold_readme(s: &Scaffold<'_>) -> String {
+    let try_line = if s.seam == "connection" {
+        format!(
+            "inseam plugin try {name}.wasm --config example=REPLACE --enumerate \"\"   # one live call",
+            name = s.name
+        )
+    } else {
+        format!(
+            "inseam plugin try {name}.wasm <file>       # what it emits for one real file",
+            name = s.name
+        )
+    };
     format!(
         "# {name}\n\nREPLACE: what it does, what it needs (capabilities and why), what it emits.\n\n\
          ## Develop\n\n```sh\n\
          cargo build --release --target wasm32-wasip2 && cp target/wasm32-wasip2/release/{crate}.wasm {name}.wasm\n\
          inseam plugin check {name}.wasm            # the gate: must end PASS\n\
-         inseam plugin try {name}.wasm <file>       # what it emits for one real file\n\
+         {try_line}\n\
          ```\n\n## Mount\n\n```sh\ninseam plugin mount $PWD/{name}.wasm      # appends the entry below to the composition\n```\n\n\
          ```toml\n[[entry]]\nid = {name:?}\nplugin = \"wasm:<path>/{name}.wasm\"\n```\n",
         name = s.name,
@@ -379,7 +677,7 @@ fn scaffold_readme(s: &Scaffold<'_>) -> String {
     )
 }
 
-const FIXTURES_README: &str = "# Fixtures\n\nByte fixtures referenced by the checks file (`bytes_file`), handed to the\nplugin as `source-bytes` during `inseam plugin check`. Keep them tiny and\nwell-formed; the harness's LLM is canned, so content never matters — only\nthat bytes reach the plugin and come back shaped right. Every installing\nnode downloads them.\n\n| File | What | Why |\n| --- | --- | --- |\n";
+const FIXTURES_README: &str = "# Fixtures\n\nByte fixtures referenced by the checks file (`bytes_file` on a transform\ncheck, `body_file` on a canned reply), handed to the plugin during\n`inseam plugin check`. Keep them tiny and well-formed; the harness's LLM and\nnetwork are canned, so content never matters — only that bytes reach the\nplugin and come back shaped right. Every installing node downloads them.\n\n| File | What | Why |\n| --- | --- | --- |\n";
 
 pub fn plugin_new(s: &Scaffold<'_>) -> anyhow::Result<PathBuf> {
     scaffold_validate(s)?;
@@ -401,7 +699,7 @@ pub fn plugin_new(s: &Scaffold<'_>) -> anyhow::Result<PathBuf> {
         ),
         (root.join("Cargo.toml"), scaffold_cargo_toml(s)),
         (root.join("src/lib.rs"), scaffold_lib_rs(s)),
-        (root.join("wit/transform.wit"), TRANSFORM_WIT.to_string()),
+        (root.join("wit/plugin.wit"), plugin_wit()),
         (root.join("README.md"), scaffold_readme(s)),
         (root.join("fixtures/README.md"), FIXTURES_README.to_string()),
     ];
@@ -411,7 +709,7 @@ pub fn plugin_new(s: &Scaffold<'_>) -> anyhow::Result<PathBuf> {
     Ok(root)
 }
 
-pub fn print_scaffold_next_steps(root: &Path, name: &str) {
+pub fn print_scaffold_next_steps(root: &Path, name: &str, seam: &str) {
     println!("scaffolded {}\n", root.display());
     println!("next — the loop (skills/inseam-loaded-plugin):");
     println!("  1. edit {name}.checks.toml: replace every REPLACE with the behavior you promise");
@@ -425,10 +723,21 @@ pub fn print_scaffold_next_steps(root: &Path, name: &str) {
     println!(
         "  4. inseam plugin check {name}.wasm      # red on your first check — that is the to-do"
     );
-    println!(
-        "  5. implement src/lib.rs until it ends PASS; `inseam plugin try {name}.wasm <file>` shows output"
-    );
-    println!("  6. inseam plugin mount $PWD/{name}.wasm && inseam plugins && inseam index <dir>");
+    if seam == "connection" {
+        println!(
+            "  5. implement src/lib.rs until it ends PASS; `inseam plugin try {name}.wasm --config k=v --enumerate \"\"` makes one live call"
+        );
+        println!(
+            "  6. inseam plugin mount $PWD/{name}.wasm, add [entry.config.plugin] to the entry, then `inseam hosts` and `inseam index --host <id> \"\"`"
+        );
+    } else {
+        println!(
+            "  5. implement src/lib.rs until it ends PASS; `inseam plugin try {name}.wasm <file>` shows output"
+        );
+        println!(
+            "  6. inseam plugin mount $PWD/{name}.wasm && inseam plugins && inseam index <dir>"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -575,6 +884,119 @@ pub async fn plugin_try(request: &TryRequest<'_>, as_check: bool) -> anyhow::Res
 }
 
 // ---------------------------------------------------------------------------
+// plugin try — connection seam
+// ---------------------------------------------------------------------------
+
+/// Exactly one of the three connection calls, or none (a transform try).
+pub fn try_call(
+    enumerate: Option<&str>,
+    read: Option<&str>,
+    describe: Option<&str>,
+) -> anyhow::Result<Option<TryCall>> {
+    let named = [enumerate.is_some(), read.is_some(), describe.is_some()]
+        .iter()
+        .filter(|set| **set)
+        .count();
+    if named > 1 {
+        bail!("pass one of --enumerate, --read, --describe");
+    }
+    Ok(match (enumerate, read, describe) {
+        (Some(root), _, _) => Some(TryCall::Enumerate {
+            root: root.to_string(),
+        }),
+        (_, Some(locator), _) => Some(TryCall::Read {
+            locator: locator.to_string(),
+        }),
+        (_, _, Some(locator)) => Some(TryCall::Describe {
+            locator: locator.to_string(),
+        }),
+        (None, None, None) => None,
+    })
+}
+
+/// `key=value` pairs as the TOML a component's `configure` receives. Values
+/// are typed by shape — `true`/`false`, integers — and strings otherwise,
+/// which is what a composition author would write.
+pub fn config_toml(pairs: &[String]) -> anyhow::Result<String> {
+    if pairs.len() > TRY_CONFIG_PAIRS_MAX {
+        bail!("at most {TRY_CONFIG_PAIRS_MAX} --config pairs");
+    }
+    let mut table = toml::Table::new();
+    for pair in pairs {
+        let Some((key, value)) = pair.split_once('=') else {
+            bail!("--config `{pair}` is not key=value");
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            bail!("--config `{pair}` has an empty key");
+        }
+        let typed = match value.trim() {
+            "true" => toml::Value::Boolean(true),
+            "false" => toml::Value::Boolean(false),
+            other => match other.parse::<i64>() {
+                Ok(n) => toml::Value::Integer(n),
+                Err(_) => toml::Value::String(other.to_string()),
+            },
+        };
+        table.insert(key.to_string(), typed);
+    }
+    Ok(toml::to_string(&table)?)
+}
+
+fn print_connection_outcome(outcome: &TryConnectionOutcome) {
+    println!(
+        "host    kind={}  principal={:?}  display={:?}",
+        outcome.host_kind, outcome.host_principal, outcome.host_display_name
+    );
+    for note in &outcome.notes {
+        println!("note    {note}");
+    }
+    if let Some(e) = &outcome.plugin_error {
+        println!("plugin returned Err({e:?})");
+    }
+    if !outcome.sources.is_empty()
+        || outcome.bytes.is_none() && outcome.envelope.is_none() && outcome.plugin_error.is_none()
+    {
+        println!("output  {} source(s)", outcome.sources.len());
+        for (i, source) in outcome.sources.iter().enumerate().take(200) {
+            println!(
+                "  #{i:<4} {:<40} {:<24} {:>9} bytes  {}",
+                source.locator,
+                source.content_type,
+                source.raw_bytes,
+                source.hint.as_deref().unwrap_or("")
+            );
+        }
+        if outcome.sources.len() > 200 {
+            println!("  … {} more", outcome.sources.len() - 200);
+        }
+    }
+    if let Some(bytes) = &outcome.bytes {
+        println!("output  {} byte(s)", bytes.len());
+        let text = String::from_utf8_lossy(bytes);
+        for line in text.lines().take(12) {
+            println!("       │ {line}");
+        }
+    }
+    if let Some((content_type, hint)) = &outcome.envelope {
+        println!("output  envelope  content-type={content_type}  hint={hint:?}");
+    }
+}
+
+pub async fn plugin_try_connection(
+    artifact: &Path,
+    config: &[String],
+    call: TryCall,
+) -> anyhow::Result<()> {
+    let config = config_toml(config)?;
+    let outcome = try_connection(artifact, &config, call)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}: {e}", artifact.display()))?;
+    print_connection_outcome(&outcome);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // plugin mount
 // ---------------------------------------------------------------------------
 
@@ -610,6 +1032,7 @@ mod tests {
             name: "demo-plugin",
             seam: "transform",
             claims,
+            kind: None,
             dir,
         }
     }
@@ -631,6 +1054,12 @@ mod tests {
         let none: Vec<String> = Vec::new();
         s.claims = &none;
         assert!(scaffold_validate(&s).is_err());
+        s.seam = "connection";
+        assert!(scaffold_validate(&s).is_err(), "a connection needs --kind");
+        s.kind = Some("Git Hub");
+        assert!(scaffold_validate(&s).is_err());
+        s.kind = Some("github");
+        assert!(scaffold_validate(&s).is_ok());
     }
 
     #[test]
@@ -643,7 +1072,7 @@ mod tests {
             "demo-plugin.checks.toml",
             "Cargo.toml",
             "src/lib.rs",
-            "wit/transform.wit",
+            "wit/plugin.wit",
             "README.md",
             "fixtures/README.md",
         ] {
@@ -679,6 +1108,61 @@ mod tests {
         let checks = std::fs::read_to_string(root.join("demo-plugin.checks.toml")).expect("reads");
         assert!(checks.contains("bytes_file = \"fixtures/example.bin\""));
         assert!(checks.contains("mimetype = \"image/example\""));
+    }
+
+    #[test]
+    fn a_connection_scaffold_parses_on_the_connection_schema() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let none: Vec<String> = Vec::new();
+        let root = plugin_new(&Scaffold {
+            name: "demo-host",
+            seam: "connection",
+            claims: &none,
+            kind: Some("demo"),
+            dir: dir.path(),
+        })
+        .expect("scaffolds");
+        let checks = std::fs::read_to_string(root.join("demo-host.checks.toml")).expect("reads");
+        let parsed = inseam_conformance::ConnectionChecksFile::parse(&checks)
+            .expect("connection checks parse");
+        assert!(parsed.required_coverage().is_ok());
+        let manifest: inseam_wasm_host::ArtifactManifest = toml::from_str(
+            &std::fs::read_to_string(root.join("demo-host.manifest.toml")).expect("reads"),
+        )
+        .expect("manifest parses");
+        assert_eq!(manifest.seam, "connection");
+        assert_eq!(manifest.host_kind.as_deref(), Some("demo"));
+        assert!(
+            std::fs::read_to_string(root.join("src/lib.rs"))
+                .expect("reads")
+                .contains("connection-plugin")
+        );
+    }
+
+    #[test]
+    fn try_config_pairs_are_typed_by_shape() {
+        let toml = config_toml(&[
+            "repository=octo/hello".into(),
+            "authorize=true".into(),
+            "files_max=10".into(),
+        ])
+        .expect("builds");
+        let table: toml::Table = toml::from_str(&toml).expect("parses");
+        assert_eq!(table["repository"].as_str(), Some("octo/hello"));
+        assert_eq!(table["authorize"].as_bool(), Some(true));
+        assert_eq!(table["files_max"].as_integer(), Some(10));
+        assert!(config_toml(&["novalue".into()]).is_err());
+        assert!(config_toml(&["=x".into()]).is_err());
+    }
+
+    #[test]
+    fn exactly_one_connection_call_is_accepted() {
+        assert!(try_call(None, None, None).expect("none").is_none());
+        assert!(matches!(
+            try_call(Some(""), None, None).expect("one"),
+            Some(TryCall::Enumerate { .. })
+        ));
+        assert!(try_call(Some(""), Some("x"), None).is_err());
     }
 
     #[test]

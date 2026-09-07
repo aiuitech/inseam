@@ -6,8 +6,11 @@
 
 * @greghunt
 
-# The trust roots: CI definitions, the registry index, and the advisory
-# feed. Changes here decide what every installing node believes.
+# The trust roots: CI definitions, the registry index, the publisher
+# roster, and the advisory feed. Changes here decide what every installing
+# node believes — the roster above all, since a key admitted here signs
+# what nodes install.
 /.github/ @greghunt
 /plugins/registry.toml @greghunt
+/plugins/publishers.toml @greghunt
 /plugins/advisories.toml @greghunt

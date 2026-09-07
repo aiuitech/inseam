@@ -46,14 +46,14 @@ inseam indexes data where it sits (a laptop's filesystem, a Gmail account, a ser
 `docs/brand/README.md` is **binding** for all surfaces (confirmed 2026-08):
 
 - Colors: ground `#0a0b0a` (near-black, faintly green), thread `#d8ff1c` (chartreuse) for dashes/accents/links, node `#f2f0e9` off-white for dots/body (pure `#ffffff` below ~32px). Dark-first; rare light surfaces invert with ground as ink, thread staying `#d8ff1c` on white.
-- Mark: dash-dash-dot stitch (`●▬▬●▬▬●`), degrades gracefully to plain UTF-8. Mark and stitch-strip SVGs in `assets/`; canonical geometry in the brand doc. Always one horizontal line — a seam, never stacked.
+- Mark: dash-dash-dot stitch (`●▬▬●▬▬●`), degrades gracefully to plain UTF-8. Mark and stitch-strip SVGs in `packages/brand/assets/`; canonical geometry in the brand doc. Always one horizontal line — a seam, never stacked.
 - Type: monospace everywhere — headings, body, UI. Lowercase `inseam` wordmark, no custom lettering, no italics, regular/bold only.
 - Voice: plain, lowercase-leaning, declarative. Say what it does. No exclamation points, no marketing superlatives. Should look at home in a terminal.
 
 ## Evidence on Hand
 
 - Full README narrative and positioning (`README.md`).
-- Brand assets: `assets/mark.svg`, `assets/stitch.svg`, favicons, macOS icon, PNG exports; build script `assets/build-icons.sh`.
+- Brand assets: `packages/brand/assets/mark.svg`, `packages/brand/assets/stitch.svg`, favicons, macOS icon, PNG exports; build script `packages/brand/assets/build-icons.sh`.
 - Working software: the CLI, kernel, plugins, and the agent-authored `plugins/ocr` as a live proof of the AI-authorship claim.
 - Docs tree (`docs/`) and design-intent tree (`design/`).
 - **Absent — do not fabricate:** testimonials, customers, case studies, benchmarks, pricing, press. No hosted node exists yet to point at.

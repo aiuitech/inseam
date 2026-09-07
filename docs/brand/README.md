@@ -1,5 +1,7 @@
 # Brand
 
+The brand as code — theme, assets, and components for the web apps — is the [`@inseam/brand` package](package.md); the [assets](assets.md) live inside it.
+
 Inseam is the seam that runs underneath all your context — connecting you everywhere, seamlessly connecting everything. The brand stays technical, simple, straightforward: it should look at home in a terminal.
 
 ## Mark
@@ -10,8 +12,8 @@ Dash dash dot. Nodes joined by stitches. The iconography degrades gracefully to 
 ●▬▬●▬▬●
 ```
 
-- **Mark** (`assets/mark.svg`): a single stitch, `▬●▬` — used square (favicon, app icon).
-- **Stitch strip** (`assets/stitch.svg`): the repeating `●▬▬●▬▬●` run — used as a horizontal rule, hero band, or underline. It may extend or truncate to fit; always cut on a whole element, never mid-shape.
+- **Mark** (`packages/brand/assets/mark.svg`): a single stitch, `▬●▬` — used square (favicon, app icon).
+- **Stitch strip** (`packages/brand/assets/stitch.svg`): the repeating `●▬▬●▬▬●` run — used as a horizontal rule, hero band, or underline. It may extend or truncate to fit; always cut on a whole element, never mid-shape.
 
 Geometry (canonical units, scale freely): dash 49×35, node circle r 25, gap 8 between every element. Everything vertically centered on one line — it is a seam, never stacked.
 

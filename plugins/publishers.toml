@@ -1,0 +1,13 @@
+# The publisher roster of the inseam plugin registry (design/registry.md):
+# who may sign what `registry.toml` lists. Each entry is a publisher id and
+# the base64 minisign public key its release records are verified against.
+# This file is a trust root — it enters the tree only through CODEOWNERS
+# review, and a node installing a plugin trusts exactly these keys, never
+# the channel that served the bytes. Enroll a key with
+# `cargo xtask plugin keygen --publisher <id>`; the secret half stays on the
+# publisher's machine and never in CI.
+
+[[publisher]]
+id = "inseam"
+public_key = "RWT8t9jXmKM07Knwa/TJrQjisKqp8QCXdtlUSrvD9/Qim9BK7V7yR1Np"
+description = "The inseam maintainers: first-party plugins built in this repository"

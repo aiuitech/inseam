@@ -113,9 +113,16 @@ private struct ConnectionSettingsView: View {
             }
             Section("local filesystem") {
                 Toggle("enabled", isOn: $settings.fs.enabled)
-                TextField("automatic host id", text: optionalText($settings.fs.config.hostId))
+                labeledTextField(
+                    "machine identity (automatic)",
+                    text: optionalText($settings.fs.config.machineId)
+                )
                 Toggle("skip hidden files and folders", isOn: $settings.fs.config.skipHidden)
                 Toggle("honor .gitignore files", isOn: $settings.fs.config.gitignore)
+                VStack(alignment: .leading) {
+                    Text("folders to index").font(Brand.font(.caption))
+                    TextEditor(text: stringList($settings.fs.config.roots)).frame(minHeight: 70)
+                }
                 VStack(alignment: .leading) {
                     Text("additional ignore patterns").font(Brand.font(.caption))
                     TextEditor(text: stringList($settings.fs.config.ignore)).frame(minHeight: 90)
@@ -134,10 +141,10 @@ private struct GoogleSettingsSection: View {
     var body: some View {
         Section("Google Workspace") {
             Toggle("enabled", isOn: $google.enabled)
-            TextField("grant id", text: $google.config.grant)
-            TextField("client id variable", text: $google.config.clientIdEnv)
+            labeledTextField("grant id", text: $google.config.grant)
+            labeledTextField("client id variable", text: $google.config.clientIdEnv)
                 .textInputAutocapitalization(.characters)
-            TextField("client secret variable", text: $google.config.clientSecretEnv)
+            labeledTextField("client secret variable", text: $google.config.clientSecretEnv)
                 .textInputAutocapitalization(.characters)
             numberField("sources per service", value: $google.config.sourcesMax)
             ForEach(GoogleService.allCases) { service in
@@ -170,26 +177,31 @@ private struct OAuthSettingsSection: View {
         Section("OAuth") {
             Toggle("enabled", isOn: $oauth.enabled)
             numberField("callback port", value: $oauth.config.callbackPort)
-            TextField(
-                "authorization timeout seconds",
-                value: $oauth.config.authorizationTimeoutSecs,
-                format: .number
-            )
-            TextField(
+            ConfigField("authorization timeout seconds") {
+                TextField(
+                    "Value",
+                    value: $oauth.config.authorizationTimeoutSecs,
+                    format: .number
+                )
+                .keyboardType(.numberPad)
+            }
+            labeledTextField(
                 "credentials directory",
                 text: optionalText($oauth.config.credentialsDir)
             )
             ForEach($oauth.config.grants) { $grant in
                 DisclosureGroup(grant.grantId) {
-                    TextField("grant id", text: $grant.grantId)
-                    TextField("authorization URL", text: $grant.authorizationUrl)
-                    TextField("token URL", text: $grant.tokenUrl)
-                    TextField("client id variable", text: $grant.clientIdEnv)
-                    TextField(
+                    labeledTextField("grant id", text: $grant.grantId)
+                    labeledTextField("authorization URL", text: $grant.authorizationUrl)
+                    labeledTextField("token URL", text: $grant.tokenUrl)
+                    labeledTextField("client id variable", text: $grant.clientIdEnv)
+                    labeledTextField(
                         "client secret variable",
                         text: optionalText($grant.clientSecretEnv)
                     )
-                    TextEditor(text: stringList($grant.scopes)).frame(minHeight: 80)
+                    ConfigField("scopes, one per line") {
+                        TextEditor(text: stringList($grant.scopes)).frame(minHeight: 80)
+                    }
                     OAuthParametersEditor(parameters: $grant.authorizationParams)
                     Button("remove grant", role: .destructive) {
                         oauth.config.grants.removeAll { $0.formId == grant.formId }
@@ -263,14 +275,14 @@ private struct ModelSettingsView: View {
         Form {
             Section("language model") {
                 Toggle("enabled", isOn: $settings.llm.enabled)
-                TextField("base URL", text: $settings.llm.config.baseUrl)
-                TextField("API key variable", text: $settings.llm.config.apiKeyEnv)
-                TextField("transform model", text: $settings.llm.config.transformModel)
-                TextField(
+                labeledTextField("base URL", text: $settings.llm.config.baseUrl)
+                labeledTextField("API key variable", text: $settings.llm.config.apiKeyEnv)
+                labeledTextField("transform model", text: $settings.llm.config.transformModel)
+                labeledTextField(
                     "transform reasoning effort",
                     text: optionalText($settings.llm.config.transformReasoningEffort)
                 )
-                TextField("agent model", text: $settings.llm.config.agentModel)
+                labeledTextField("agent model", text: $settings.llm.config.agentModel)
             }
             Section("embeddings") {
                 LabeledContent("provider", value: "Apple on-device")
@@ -317,7 +329,7 @@ private struct SweepSettingsSection: View {
     @Binding var sweep: Configurable<SweepConfig>
 
     var body: some View {
-        Section("sweep limits") {
+        Section {
             Toggle("enabled", isOn: $sweep.enabled)
             numberField("maximum sources", value: $sweep.config.maxSources)
             numberField("concurrent sources", value: $sweep.config.concurrency)
@@ -325,9 +337,20 @@ private struct SweepSettingsSection: View {
             numberField("concurrent source reads", value: $sweep.config.sourceReadsInFlightMax)
             numberField("fragments per source", value: $sweep.config.maxFragmentsPerSource)
             numberField("maximum depth", value: $sweep.config.maxDepth)
-            TextField("maximum content bytes", value: $sweep.config.maxContentBytes, format: .number)
+            ConfigField("maximum content bytes") {
+                TextField("Value", value: $sweep.config.maxContentBytes, format: .number)
+                    .keyboardType(.numberPad)
+            }
             numberField("reference follow depth", value: $sweep.config.maxReferenceHops)
-            TextField("modified on or after", text: optionalText($sweep.config.modifiedAfter))
+            labeledTextField(
+                "modified on or after",
+                text: optionalText($sweep.config.modifiedAfter),
+                prompt: "YYYY-MM-DD or empty"
+            )
+        } header: {
+            Text("sweep limits")
+        } footer: {
+            Text("Maximum sources uses 0 for unlimited. Dates use YYYY-MM-DD.")
         }
     }
 }
@@ -339,13 +362,13 @@ private struct IgnoreSettingsSection: View {
         Section("source ignore rules") {
             ForEach($rules) { $rule in
                 DisclosureGroup(ruleLabel(rule)) {
-                    TextField("address", text: optionalText($rule.address))
-                    TextField("host", text: optionalText($rule.host))
-                    TextField("locator", text: optionalText($rule.locator))
-                    TextField("source type", text: optionalText($rule.sourceType))
-                    TextField("content type", text: optionalText($rule.contentType))
-                    TextField("hint", text: optionalText($rule.hint))
-                    TextField("property", text: optionalText($rule.property))
+                    labeledTextField("address", text: optionalText($rule.address))
+                    labeledTextField("host", text: optionalText($rule.host))
+                    labeledTextField("locator", text: optionalText($rule.locator))
+                    labeledTextField("source type", text: optionalText($rule.sourceType))
+                    labeledTextField("content type", text: optionalText($rule.contentType))
+                    labeledTextField("hint", text: optionalText($rule.hint))
+                    labeledTextField("property", text: optionalText($rule.property))
                     Button("remove rule", role: .destructive) {
                         rules.removeAll { $0.id == rule.id }
                     }
@@ -457,10 +480,12 @@ private struct SecretsEditor: View {
                 }
             }
             Section("add secret") {
-                TextField("ENV_VAR_NAME", text: $name)
+                labeledTextField("environment variable", text: $name, prompt: "ENV_VAR_NAME")
                     .textInputAutocapitalization(.characters)
                     .autocorrectionDisabled()
-                SecureField("secret value", text: $value)
+                ConfigField("secret value") {
+                    SecureField("Value", text: $value)
+                }
                 Button("save to Keychain") { save() }
                     .disabled(value.isEmpty || model.busy)
             }
@@ -563,11 +588,49 @@ private struct AdvancedEditor: View {
 }
 
 private func numberField(_ label: String, value: Binding<Int>) -> some View {
-    TextField(label, value: value, format: .number).keyboardType(.numberPad)
+    ConfigField(label) {
+        TextField("Value", value: value, format: .number).keyboardType(.numberPad)
+    }
 }
 
 private func decimalField(_ label: String, value: Binding<Double>) -> some View {
-    TextField(label, value: value, format: .number).keyboardType(.decimalPad)
+    ConfigField(label) {
+        TextField("Value", value: value, format: .number).keyboardType(.decimalPad)
+    }
+}
+
+private func labeledTextField(
+    _ label: String,
+    text: Binding<String>,
+    prompt: String = "Not set"
+) -> some View {
+    ConfigField(label) {
+        TextField("", text: text, prompt: Text(prompt))
+            .accessibilityLabel(label)
+    }
+}
+
+private struct ConfigField<Content: View>: View {
+    let label: String
+    let content: Content
+
+    init(_ label: String, @ViewBuilder content: () -> Content) {
+        self.label = label
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label)
+                .font(Brand.font(.caption2))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            content
+                .font(Brand.font(.body))
+                .accessibilityLabel(label)
+        }
+        .padding(.vertical, 2)
+    }
 }
 
 private func optionalText(_ value: Binding<String?>) -> Binding<String> {

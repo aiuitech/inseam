@@ -4,6 +4,9 @@
 //! registry's CI — runs this same code, so passing it once means passing it
 //! everywhere.
 //!
+//! Both seams run the same four phases; this file holds the report and the
+//! transform seam's harness, `check_connection.rs` the connection seam's.
+//!
 //! Four phases, in increasing depth:
 //! - **static** — the manifest is well-formed and internally coherent;
 //! - **mount** — the component compiles, instantiates against the real
@@ -27,15 +30,16 @@ use std::sync::Arc;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Engine, Store};
 
-use inseam_conformance::{ChecksFile, Emitted, EmittedFragment, GoldenCheck};
+use inseam_conformance::{ChecksFile, ConnectionChecksFile, Emitted, EmittedFragment, GoldenCheck};
 use inseam_kernel::fragment::{Mimetype, RelationKind};
 use inseam_seams::SeamError;
 use inseam_seams::transforms::GrantedLlm;
 
+use crate::check_connection::CannedNetwork;
 use crate::exports::inseam::plugin::transform::{ClaimSpec, Envelope, Fragment};
 use crate::{
-    ArtifactManifest, Invocation, TransformPlugin, WasmEntryConfig, build_linker, new_engine,
-    pattern_matches, patterns_overlap,
+    ArtifactManifest, GrantedFetch, Grants, GuardedFetch, Invocation, SEAMS, TransformPlugin,
+    WasmEntryConfig, build_linker, new_engine, pattern_matches, patterns_overlap,
 };
 
 // ---------------------------------------------------------------------------
@@ -95,7 +99,7 @@ impl CheckReport {
         }
     }
 
-    fn push(&mut self, phase: Phase, name: impl Into<String>, outcome: Outcome) {
+    pub(crate) fn push(&mut self, phase: Phase, name: impl Into<String>, outcome: Outcome) {
         self.items.push(CheckItem {
             phase,
             name: name.into(),
@@ -182,11 +186,41 @@ impl CheckReport {
 // definition of "what counts as a test" across both tiers.
 
 /// The fixture paths a checks file references (relative to itself) — what an
-/// installer must fetch alongside the checks file.
-pub fn fixture_files(checks_toml: &str) -> Vec<PathBuf> {
-    ChecksFile::parse(checks_toml)
-        .map(|f| f.fixture_files())
-        .unwrap_or_default()
+/// installer must fetch alongside the checks file. The seam decides the
+/// file's shape.
+pub fn fixture_files(seam: &str, checks_toml: &str) -> Vec<PathBuf> {
+    match seam {
+        "connection" => ConnectionChecksFile::parse(checks_toml)
+            .map(|f| f.fixture_files())
+            .unwrap_or_default(),
+        _ => ChecksFile::parse(checks_toml)
+            .map(|f| f.fixture_files())
+            .unwrap_or_default(),
+    }
+}
+
+/// The static items every seam checks about a manifest's capabilities:
+/// the allow list parses, and the grant has a network to ride on.
+pub(crate) fn capability_items(manifest: &ArtifactManifest) -> Vec<CheckItem> {
+    let mut items = Vec::new();
+    items.push(CheckItem {
+        phase: Phase::Static,
+        name: "hosts are well-formed".into(),
+        outcome: match manifest.capabilities.host_patterns() {
+            Ok(_) => Outcome::Pass,
+            Err(e) => Outcome::Fail(e),
+        },
+    });
+    if manifest.capabilities.grant && manifest.capabilities.hosts.is_empty() {
+        items.push(CheckItem {
+            phase: Phase::Static,
+            name: "grant has a network".into(),
+            outcome: Outcome::Warn(
+                "`grant = true` without `hosts` is inert: nothing can be fetched".into(),
+            ),
+        });
+    }
+    items
 }
 
 /// The wasm seam's output in the tier-neutral shape the golden matcher
@@ -271,13 +305,23 @@ pub async fn check_artifact(artifact: &Path) -> CheckReport {
             return report;
         }
     };
-    if manifest.seam != "transform" {
-        report.push(
-            Phase::Static,
-            "seam is supported",
-            Outcome::Fail(format!("unsupported seam `{}`", manifest.seam)),
-        );
-        return report;
+    match manifest.seam.as_str() {
+        "transform" => {}
+        "connection" => return crate::check_connection::check(report, artifact, manifest).await,
+        other => {
+            report.push(
+                Phase::Static,
+                "seam is supported",
+                Outcome::Fail(format!(
+                    "unsupported seam `{other}`; one of {}",
+                    SEAMS.join(", ")
+                )),
+            );
+            return report;
+        }
+    }
+    for item in capability_items(&manifest) {
+        report.items.push(item);
     }
     report.push(
         Phase::Static,
@@ -401,14 +445,21 @@ pub async fn check_artifact(artifact: &Path) -> CheckReport {
     };
 
     // ---- contract ----------------------------------------------------------
+    let allowed = manifest.capabilities.host_patterns().unwrap_or_default();
     let grant = |llm: Option<Arc<dyn GrantedLlm>>, bytes: Option<Vec<u8>>| {
         Invocation::new(
             manifest.name.clone(),
-            if manifest.capabilities.llm { llm } else { None },
-            if manifest.capabilities.source_bytes {
-                bytes
-            } else {
-                None
+            Grants {
+                llm: if manifest.capabilities.llm { llm } else { None },
+                bytes: if manifest.capabilities.source_bytes {
+                    bytes
+                } else {
+                    None
+                },
+                // The battery's network refuses everything: a transform that
+                // fetches must degrade when it cannot.
+                fetch: Some(Arc::new(CannedNetwork::refusing(allowed.clone()))),
+                fetch_calls_max: WasmEntryConfig::default().fetch_calls_max,
             },
         )
     };
@@ -649,6 +700,13 @@ pub async fn try_artifact(artifact: &Path, input: TryInput) -> Result<TryOutcome
         }
         None
     };
+    let fetch = GuardedFetch::for_manifest(&manifest, &WasmEntryConfig::default(), None)?;
+    if fetch.is_some() {
+        notes.push(format!(
+            "fetch is live under the manifest's hosts {:?}; authorize refuses (no grant)",
+            manifest.capabilities.hosts
+        ));
+    }
     let essence = input
         .mimetype
         .split(';')
@@ -666,7 +724,15 @@ pub async fn try_artifact(artifact: &Path, input: TryInput) -> Result<TryOutcome
         &engine,
         &component,
         &linker,
-        Invocation::new(manifest.name.clone(), llm, bytes),
+        Invocation::new(
+            manifest.name.clone(),
+            Grants {
+                llm,
+                bytes,
+                fetch,
+                fetch_calls_max: WasmEntryConfig::default().fetch_calls_max,
+            },
+        ),
         fuel,
         &synthetic_envelope(&input.mimetype),
         &input.mimetype,
@@ -741,11 +807,28 @@ async fn run_golden(
         .capabilities
         .llm
         .then(|| Arc::new(CannedLlm(check.llm_returns.clone())) as Arc<dyn GrantedLlm>);
+    if !check.fetch.is_empty() && manifest.capabilities.hosts.is_empty() {
+        return Outcome::Warn("[[check.fetch]] is inert: the manifest names no `hosts`".into());
+    }
+    let allowed = manifest.capabilities.host_patterns().unwrap_or_default();
+    let fetch: Arc<dyn GrantedFetch> =
+        match CannedNetwork::from_canned(&check.fetch, checks_path, allowed) {
+            Ok(network) => Arc::new(network),
+            Err(reason) => return Outcome::Fail(reason),
+        };
     let verdict = raw_apply(
         engine,
         component,
         linker,
-        Invocation::new(manifest.name.clone(), llm, bytes),
+        Invocation::new(
+            manifest.name.clone(),
+            Grants {
+                llm,
+                bytes,
+                fetch: Some(fetch),
+                fetch_calls_max: WasmEntryConfig::default().fetch_calls_max,
+            },
+        ),
         fuel,
         &synthetic_envelope(&check.mimetype),
         &check.mimetype,
@@ -832,7 +915,7 @@ async fn call_claims(
     name: &str,
     fuel: u64,
 ) -> Result<ClaimSpec, wasmtime::Error> {
-    let mut store = Store::new(engine, Invocation::new(name.to_string(), None, None));
+    let mut store = Store::new(engine, Invocation::new(name.to_string(), Grants::none()));
     store.set_fuel(fuel)?;
     let plugin = TransformPlugin::instantiate_async(&mut store, component, linker).await?;
     plugin

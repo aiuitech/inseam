@@ -12,6 +12,8 @@ The SwiftUI shell in `apps/ios` embeds the node core through `crates/inseam-ffi`
 - **Shows each indexing run** as it enumerates, catalogs, indexes, and finalizes. The process view reports source counts and the current address and can pause, resume, or stop the Rust sweep. A stopped run keeps completed sources and the next run resumes.
 - **Configures the node** from a Settings sheet. Connections, model endpoints, indexing limits, ignore rules, search ranking, Keychain secrets, and raw composition use the same validated settings bridge as macOS. Visual saves retain the Apple on-device embedder; raw composition can replace it deliberately.
 
+Configuration rows keep a caption visible above each editable value. Placeholder text only describes an empty value; it never carries the field's identity.
+
 ## Layout
 
 - `project.yml` — the XcodeGen spec; `xcodegen generate` writes `Inseam.xcodeproj`. Deployment target iOS 26, Swift 5 language mode, iPhone portrait orientation, all iPad orientations, and `LIBRARY_SEARCH_PATHS` pointing at `Core/<platform>/`.

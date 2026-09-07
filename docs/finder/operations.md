@@ -1,6 +1,6 @@
 # Finder Operations
 
-The boundary operations from [design/node-api.md](../../design/node-api.md), served by the `operations` plugin on its seam (`inseam-seams::operations`). Messages are plain serde types — JSON-serializable by construction, with no transport assumptions. The CLI and the agent demo are both thin wrappers over these; HTTP and MCP adapters will wrap the same types.
+The boundary operations from [design/node-api.md](../../design/node-api.md), served by the `operations` plugin on its seam (`inseam-seams::operations`). Messages are plain serde types — JSON-serializable by construction, with no transport assumptions. The CLI, the agent demo, the HTTP owner transport ([../architecture/hosted-node.md](../architecture/hosted-node.md)), and the MCP server ([../architecture/mcp-server.md](../architecture/mcp-server.md)) are all thin wrappers over these.
 
 ## The ladder
 
@@ -25,8 +25,21 @@ A query result is a decision point, so each one carries what the follow-up needs
 | `envelope.length` | `{"unit": "lines", "value": n}` for text the index has read — the last line a `scan` can reach — or `{"unit": "bytes", …}` for a binary or a text source too large to have been read |
 | `hints[].extent` | where the matching fragment sits in its source, `{"unit": "lines", "start", "end"}` for text; `scan` accepts the numbers verbatim, and a client widens around them for context |
 | `hints[].score` | the fragment's own score on the query's scale (the top result's source is `1.0`), so the client sees which hint made the hit |
+| `envelope.content_digest` | the source's BLAKE3 content digest when its steward has one — the key results collapse by, carried so a merge across nodes collapses the same way one node's results do |
+| `via` | the node whose index produced the result when a fan-out did; absent for the answering node's own results |
 
 `expand` renders every fragment's `extent` the same structured way. The CLI prints extents as `[lines 5-9]`; `--json` carries the objects.
+
+## Across the network
+
+When the `routing` entry is mounted ([../network/routing.md](../network/routing.md)), the ladder reaches sources other nodes steward:
+
+- `query` runs the local finder and the fan-out concurrently, then merges: reciprocal rank fusion (the finder's own `k = 60`) across the local list and each remote list; one copy per address — the local copy when this node ranked the address, else the best-ranked remote copy, its `via` set; then digest-equal copies collapse into `replicas`; then the list is cut to `limit` with the top result at `1.0`. With no remote results the local list stands untouched. A node that timed out or refused appears in `meta.remote` with its error, and the query still succeeds ([../network/discovery.md](../network/discovery.md)).
+- `expand` is served from this node's own index when it stewards the host or holds the source's subtree, else routed to the steward's index.
+- `scan` of a remote text source reads its lines through routing after the same range check and clamp; a remote source that is not text is served from this node's own text fragments when it deep-indexed the source, and refused with `NothingToScan` otherwise.
+- `fetch` and `fetch_bytes` refuse before dialing — a binary text fetch, a byte fetch the catalog already knows is past 32 MiB — and then read through routing.
+
+A host no node stewards is `UnknownHost`; one whose stewards were tried and none answered is `Unreachable`, naming who was tried. Without the `routing` entry, a source of an unstewarded host is `UnknownHost`, exactly as before.
 
 ## Scan
 
@@ -55,12 +68,27 @@ Every `query` response carries a `meta` object beside `results`, so a slow or th
 | `fts_hits`, `vector_hits`, `seeds` | fragments the full-text and vector searches returned (vector after the distance floor; zero on a node without an embedder), and distinct fragments left after rank fusion |
 | `relations` | relations loaded around the seeds for the walk |
 | `candidate_sources` | distinct sources holding a scored fragment, before the limit cut — how much competition the results won |
+| `remote` | one entry per node the query fanned out to: `node`, `results` it contributed before the merge, `elapsed_ms`, and `error` when it contributed none; absent when the query fanned out to nobody |
 
 `elapsed_ms` always contains the three phases; the remainder is dispatch, the access guard, and building the views. `inseam query` prints the same numbers as one footer line; `--json` carries them verbatim.
 
 ## Owner operations
 
 `operations.index { host?, root, rebuild }` — hands off to the `sweep` seam over a scope of one stewarded host, returning an `IndexReport` (counts per summary kind, fragments, relations, keyed fragments anchored, dollars spent). `host` may be omitted only while the node stewards exactly one host; with several, the error lists them. `operations.hosts` — every host this node stewards: id, kind, display name, the entry whose connection serves it, and its capabilities ([indexing/connections.md](../indexing/connections.md)). `operations.grants` / `authorize_grant { grant, redirect }` / `await_authorization { state }` / `complete_authorization { state, code, … }` / `revoke_grant { grant }` — the OAuth grants and the owner's authorization of them, shaped so a local transport can take the loopback redirect and a remote one can serve the redirect itself ([plugins/oauth.md](../plugins/oauth.md)). All owner-only; never exposed through a boundary adapter.
+
+`operations.status` reports `remote_sources` — cataloged sources learned from peers' logs rather than stewarded here, counted within `sources` — and each `operations.catalog` entry carries `origin`, the steward's node id, for such a row.
+
+The network operations, owner-only like the rest:
+
+| Operation | Does |
+| --- | --- |
+| `network` | the network as this node sees it: its own record; every admitted node with `is_local`, `live` (a session is open or the last exchange succeeded), `last_sync` as `YYYY-MM-DD`, `last_error`, and the hosts it stewards; every known host with its stewards; and the replicated log's entry and origin counts |
+| `invite` | mints an invitation through this node; the owner carries its text form (`inseam-invite:…`) to the joining node |
+| `join { invitation }` | parses the text, refuses one already expired by name, dials the inviter with the token, syncs once, and returns `network` |
+| `expel { node }` | publishes the expulsion through the roster and returns `network` |
+| `sync_now` | one sync round with every dialable node, then `network` |
+
+Each answers `Unavailable`, naming the entry it lacks (`roster`, `sync`, `node`), on a node composed without the network plugins. `inseam network` and its subcommands ([../cli.md](../cli.md)) and the `/api/v1/owner/network` routes ([../architecture/hosted-node.md](../architecture/hosted-node.md#network)) are thin wrappers over these five; [../network/README.md](../network/README.md) covers the plugins behind them.
 
 ## The agent demo
 

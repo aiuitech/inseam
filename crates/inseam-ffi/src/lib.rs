@@ -115,6 +115,26 @@ plugin = "sweep"
 [[entry]]
 id = "operations"
 plugin = "operations"
+
+[[entry]]
+id = "node"
+plugin = "node"
+
+[[entry]]
+id = "transport"
+plugin = "transport-iroh"
+
+[[entry]]
+id = "roster"
+plugin = "roster"
+
+[[entry]]
+id = "sync"
+plugin = "sync"
+
+[[entry]]
+id = "routing"
+plugin = "routing"
 "#;
 
 /// An open node: the runtime, the kernel (owning fibers and effects until
@@ -726,6 +746,7 @@ fn register_bridged_host(
         display_name: host.display_name.clone(),
         entry: entry_id.clone(),
         capabilities,
+        roots: Vec::new(),
     };
     if registry.resolve(&host.id).is_some() {
         let existing = registry
@@ -742,6 +763,7 @@ fn register_bridged_host(
             entry_id,
             host,
             capabilities,
+            roots: Vec::new(),
             connection: Arc::new(bridged),
         })
         .map_err(|e| e.to_string())?;

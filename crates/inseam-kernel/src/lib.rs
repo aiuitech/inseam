@@ -15,6 +15,7 @@
 
 pub mod address;
 pub mod fragment;
+pub mod network;
 pub mod state;
 pub mod store;
 pub mod substrate;

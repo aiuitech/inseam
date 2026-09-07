@@ -1,0 +1,32 @@
+{
+  "name": "@inseam/mcp",
+  "private": true,
+  "version": "0.1.0",
+  "description": "The inseam MCP server: the node's operations as MCP tools over stdio or streamable HTTP.",
+  "type": "module",
+  "bin": {
+    "inseam-mcp": "./build/main.js"
+  },
+  "files": [
+    "build"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod 755 build/main.js",
+    "start": "node build/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.json && node --test build/**/*.test.js",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "@modelcontextprotocol/node": "2.0.0",
+    "@modelcontextprotocol/server": "2.0.0",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/core": "2.0.0",
+    "@types/node": "^24",
+    "prettier": "^3.8.3",
+    "typescript": "~6"
+  }
+}

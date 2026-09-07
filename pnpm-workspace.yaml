@@ -1,0 +1,13 @@
+# The JavaScript side of the repo: the node console and the brand package it
+# shares with the hosted console (a separate repo, which consumes the package
+# as a git dependency). The Astro sites under apps/ keep their own installs
+# for now; each carries its own pnpm-workspace.yaml, so pnpm treats them as
+# their own roots.
+packages:
+  - apps/web
+  - apps/mcp
+  - packages/brand
+
+allowBuilds:
+  esbuild: true
+  msw: false

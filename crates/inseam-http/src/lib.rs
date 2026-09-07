@@ -19,7 +19,7 @@ mod error;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
 use axum::extract::Query;
@@ -28,14 +28,16 @@ use axum::middleware;
 use axum::response::{Html, IntoResponse, Redirect as HttpRedirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use inseam_kernel::address::HostId;
+use inseam_kernel::address::{HostId, Timestamp};
+use inseam_kernel::network::NodeId;
 use inseam_seams::llm::LlmLane;
 use inseam_seams::oauth::{AuthorizationCallback, GrantId, Redirect};
 use inseam_seams::operations::{
     AuthorizeGrantRequest, CatalogRequest, CatalogResponse, ExpandRequest, ExpandResponse,
-    FetchBytesRequest, FetchBytesResponse, FetchRequest, FetchResponse, GrantView, HostView,
-    IndexRequest, InstallPluginRequest, Operations, PluginView, QueryRequest, QueryResponse,
-    RevokeGrantRequest, ScanRequest, ScanResponse, StatusReport,
+    ExpelRequest, FetchBytesRequest, FetchBytesResponse, FetchRequest, FetchResponse, GrantView,
+    HostView, IndexRequest, InstallPluginRequest, JoinRequest, NetworkView, Operations, PluginView,
+    QueryRequest, QueryResponse, RevokeGrantRequest, ScanRequest, ScanResponse, Settings,
+    StatusReport,
 };
 use inseam_seams::sweep::DeepBudget;
 use serde::{Deserialize, Serialize};
@@ -151,9 +153,36 @@ impl ServerConfig {
     }
 }
 
+/// The `operations` service as the transport reaches it. A composition
+/// edit that restarts a provider `operations` consumes restarts
+/// `operations` too, so the service the transport was handed at boot goes
+/// stale after the first settings write; the distribution that applies
+/// the edit puts the fresh binding here and every request takes the
+/// current one. One writer per edit, many readers per request: a lock
+/// held for the length of a pointer copy.
+pub struct OperationsSlot {
+    current: RwLock<Arc<dyn Operations>>,
+}
+
+impl OperationsSlot {
+    pub fn new(operations: Arc<dyn Operations>) -> Self {
+        Self {
+            current: RwLock::new(operations),
+        }
+    }
+
+    pub fn get(&self) -> Arc<dyn Operations> {
+        Arc::clone(&self.current.read().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    pub fn replace(&self, operations: Arc<dyn Operations>) {
+        *self.current.write().unwrap_or_else(PoisonError::into_inner) = operations;
+    }
+}
+
 #[derive(Clone)]
 struct AppState {
-    operations: Arc<dyn Operations>,
+    operations: Arc<OperationsSlot>,
     auth: Arc<Auth>,
     index_roots: Arc<[IndexRoot]>,
     /// Where providers redirect the owner's browser back.
@@ -181,6 +210,18 @@ struct HttpGrantRequest {
     grant: GrantId,
 }
 
+/// A minted invitation as the console shows it: the text the owner
+/// carries to the joining node, and beside it what that text names, so
+/// the console can say who it is from and when it lapses without parsing
+/// the text itself.
+#[derive(Debug, Serialize)]
+struct InvitationResponse {
+    /// `inseam-invite:…`, exactly what `inseam network join` takes.
+    invitation: String,
+    node: NodeId,
+    expires: Timestamp,
+}
+
 #[derive(Debug, Deserialize)]
 struct HttpIndexRequest {
     #[serde(default)]
@@ -198,7 +239,7 @@ struct HttpIndexRequest {
 
 pub async fn serve(
     config: ServerConfig,
-    operations: Arc<dyn Operations>,
+    operations: Arc<OperationsSlot>,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), ConfigError> {
     let config = config.validate()?;
@@ -214,7 +255,7 @@ pub async fn serve(
         .map_err(ConfigError::Serve)
 }
 
-fn router(config: ServerConfig, operations: Arc<dyn Operations>) -> Result<Router, ConfigError> {
+fn router(config: ServerConfig, operations: Arc<OperationsSlot>) -> Result<Router, ConfigError> {
     let oauth_callback_url = config.oauth_callback_url()?;
     let state = AppState {
         operations,
@@ -262,6 +303,12 @@ fn owner_router(state: &AppState) -> Router<AppState> {
         .route("/grants/authorize", post(authorize_grant))
         .route("/grants/revoke", post(revoke_grant))
         .route("/plugins", get(plugins))
+        .route("/settings", get(settings).put(configure))
+        .route("/network", get(network))
+        .route("/network/invite", post(invite))
+        .route("/network/join", post(join))
+        .route("/network/expel", post(expel))
+        .route("/network/sync", post(sync_now))
         .route(
             "/plugins/install",
             post(install_plugin).layer(DefaultBodyLimit::max(PLUGIN_UPLOAD_BODY_BYTES_MAX)),
@@ -335,7 +382,7 @@ async fn info(State(state): State<AppState>) -> Json<OwnerInfo> {
 }
 
 async fn grants(State(state): State<AppState>) -> Result<Json<Vec<GrantView>>, ApiError> {
-    Ok(Json(state.operations.grants().await?))
+    Ok(Json(state.operations.get().grants().await?))
 }
 
 /// Start an authorization whose redirect this server serves: the console
@@ -347,6 +394,7 @@ async fn authorize_grant(
 ) -> Result<Json<inseam_seams::oauth::AuthorizationStarted>, ApiError> {
     let started = state
         .operations
+        .get()
         .authorize_grant(AuthorizeGrantRequest {
             grant: request.grant,
             redirect: Redirect::External {
@@ -364,6 +412,7 @@ async fn revoke_grant(
     Ok(Json(
         state
             .operations
+            .get()
             .revoke_grant(RevokeGrantRequest {
                 grant: request.grant,
             })
@@ -380,7 +429,11 @@ async fn oauth_callback(
     State(state): State<AppState>,
     Query(callback): Query<AuthorizationCallback>,
 ) -> Response {
-    let outcome = state.operations.complete_authorization(callback).await;
+    let outcome = state
+        .operations
+        .get()
+        .complete_authorization(callback)
+        .await;
     let (grant, message) = match &outcome {
         Ok(view) => (Some(view.id.to_string()), None),
         Err(error) => (None, Some(error.to_string())),
@@ -437,7 +490,7 @@ fn callback_page(title: &str, message: &str) -> String {
 }
 
 async fn plugins(State(state): State<AppState>) -> Result<Json<Vec<PluginView>>, ApiError> {
-    Ok(Json(state.operations.plugins().await?))
+    Ok(Json(state.operations.get().plugins().await?))
 }
 
 /// Install a loaded plugin into the running node. The request is the
@@ -447,57 +500,107 @@ async fn install_plugin(
     State(state): State<AppState>,
     Json(request): Json<InstallPluginRequest>,
 ) -> Result<Json<PluginView>, ApiError> {
-    Ok(Json(state.operations.install_plugin(request).await?))
+    Ok(Json(state.operations.get().install_plugin(request).await?))
+}
+
+/// The first-party settings document as the node runs it.
+async fn settings(State(state): State<AppState>) -> Result<Json<Settings>, ApiError> {
+    Ok(Json(state.operations.get().settings().await?))
+}
+
+/// Replace the first-party settings: the complete document, applied to the
+/// running node; the reply is the document afterwards.
+async fn configure(
+    State(state): State<AppState>,
+    Json(settings): Json<Settings>,
+) -> Result<Json<Settings>, ApiError> {
+    Ok(Json(state.operations.get().configure(settings).await?))
 }
 
 async fn status(State(state): State<AppState>) -> Result<Json<StatusReport>, ApiError> {
-    Ok(Json(state.operations.status().await?))
+    Ok(Json(state.operations.get().status().await?))
+}
+
+/// The network as this node sees it (`design/roster.md`).
+async fn network(State(state): State<AppState>) -> Result<Json<NetworkView>, ApiError> {
+    Ok(Json(state.operations.get().network().await?))
+}
+
+/// Mint an invitation; the reply carries its text form for the owner to
+/// copy to the joining node.
+async fn invite(State(state): State<AppState>) -> Result<Json<InvitationResponse>, ApiError> {
+    let invitation = state.operations.get().invite().await?;
+    Ok(Json(InvitationResponse {
+        invitation: invitation.to_string(),
+        node: invitation.node,
+        expires: invitation.expires,
+    }))
+}
+
+/// Join through an invitation's text; the reply is the network afterwards.
+async fn join(
+    State(state): State<AppState>,
+    Json(request): Json<JoinRequest>,
+) -> Result<Json<NetworkView>, ApiError> {
+    Ok(Json(state.operations.get().join(request).await?))
+}
+
+async fn expel(
+    State(state): State<AppState>,
+    Json(request): Json<ExpelRequest>,
+) -> Result<Json<NetworkView>, ApiError> {
+    Ok(Json(state.operations.get().expel(request).await?))
+}
+
+/// One sync round with every dialable node now.
+async fn sync_now(State(state): State<AppState>) -> Result<Json<NetworkView>, ApiError> {
+    Ok(Json(state.operations.get().sync_now().await?))
 }
 
 async fn catalog(
     State(state): State<AppState>,
     Json(request): Json<CatalogRequest>,
 ) -> Result<Json<CatalogResponse>, ApiError> {
-    Ok(Json(state.operations.catalog(request).await?))
+    Ok(Json(state.operations.get().catalog(request).await?))
 }
 
 async fn hosts(State(state): State<AppState>) -> Result<Json<Vec<HostView>>, ApiError> {
-    Ok(Json(state.operations.hosts().await?))
+    Ok(Json(state.operations.get().hosts().await?))
 }
 
 async fn query(
     State(state): State<AppState>,
     Json(request): Json<QueryRequest>,
 ) -> Result<Json<QueryResponse>, ApiError> {
-    Ok(Json(state.operations.query(request).await?))
+    Ok(Json(state.operations.get().query(request).await?))
 }
 
 async fn expand(
     State(state): State<AppState>,
     Json(request): Json<ExpandRequest>,
 ) -> Result<Json<ExpandResponse>, ApiError> {
-    Ok(Json(state.operations.expand(request).await?))
+    Ok(Json(state.operations.get().expand(request).await?))
 }
 
 async fn scan(
     State(state): State<AppState>,
     Json(request): Json<ScanRequest>,
 ) -> Result<Json<ScanResponse>, ApiError> {
-    Ok(Json(state.operations.scan(request).await?))
+    Ok(Json(state.operations.get().scan(request).await?))
 }
 
 async fn fetch(
     State(state): State<AppState>,
     Json(request): Json<FetchRequest>,
 ) -> Result<Json<FetchResponse>, ApiError> {
-    Ok(Json(state.operations.fetch(request).await?))
+    Ok(Json(state.operations.get().fetch(request).await?))
 }
 
 async fn fetch_bytes(
     State(state): State<AppState>,
     Json(request): Json<FetchBytesRequest>,
 ) -> Result<Json<FetchBytesResponse>, ApiError> {
-    Ok(Json(state.operations.fetch_bytes(request).await?))
+    Ok(Json(state.operations.get().fetch_bytes(request).await?))
 }
 
 /// Content types a browser may render inline from the owner origin: raster
@@ -517,7 +620,7 @@ async fn raw(
     State(state): State<AppState>,
     Query(request): Query<FetchBytesRequest>,
 ) -> Result<Response, ApiError> {
-    let response = state.operations.fetch_bytes(request).await?;
+    let response = state.operations.get().fetch_bytes(request).await?;
     Ok((raw_headers(&response.content_type), response.bytes.0).into_response())
 }
 
@@ -547,28 +650,54 @@ fn raw_headers(content_type: &str) -> [(axum::http::HeaderName, axum::http::Head
     ]
 }
 
+/// Reconcile the index over one scope. `root` is an approved index root's
+/// id (`--index-root`), or a folder the owner configured on a host —
+/// matched verbatim against what the node reports for that host — so the
+/// route never accepts a path of its own.
 async fn index(
     State(state): State<AppState>,
     Json(request): Json<HttpIndexRequest>,
 ) -> Result<Json<inseam_seams::sweep::IndexReport>, ApiError> {
-    let Some(root) = state
+    let operations = state.operations.get();
+    let approved = state
         .index_roots
         .iter()
         .find(|root| root.id == request.root)
-    else {
-        return Err(ApiError::unknown_index_root(&request.root));
+        .map(|root| root.path.to_string_lossy().into_owned());
+    let root = match approved {
+        Some(path) => path,
+        None => configured_root(operations.as_ref(), request.host.as_ref(), &request.root).await?,
     };
-    let response = state
-        .operations
+    let response = operations
         .index(IndexRequest {
             host: request.host,
-            root: root.path.to_string_lossy().into_owned(),
+            root,
             rebuild: request.rebuild,
             deep_budget: request.deep_budget,
             llm_lane: request.llm_lane,
         })
         .await?;
     Ok(Json(response))
+}
+
+/// `root` exactly as some host reports it among its configured roots —
+/// the named host's when one is named, any host's otherwise.
+async fn configured_root(
+    operations: &dyn Operations,
+    host: Option<&HostId>,
+    root: &str,
+) -> Result<String, ApiError> {
+    let hosts = operations.hosts().await?;
+    let known = hosts
+        .iter()
+        .filter(|view| host.is_none_or(|named| *named == view.id))
+        .flat_map(|view| view.roots.iter())
+        .any(|configured| configured == root);
+    if known {
+        Ok(root.to_string())
+    } else {
+        Err(ApiError::unknown_index_root(root))
+    }
 }
 
 fn validate_root_id(id: &str) -> Result<(), ConfigError> {
@@ -603,14 +732,17 @@ mod tests {
     use axum::body::{Body, to_bytes};
     use axum::http::header::{CONTENT_TYPE, COOKIE, SET_COOKIE};
     use axum::http::{Request, StatusCode};
+    use inseam_kernel::network::{HostRecord, NodeCapabilities, NodeRecord};
     use inseam_seams::SeamError;
     use inseam_seams::oauth::{AuthorizationStarted, GrantState};
     use inseam_seams::operations::{
-        AwaitAuthorizationRequest, ExpandResponse, FetchResponse, IndexRequest,
-        PLUGIN_UPLOAD_BYTES_MAX, PluginState, QueryMeta, QueryResponse, RepairOutcome,
-        RepairReport, RepairRequest, ScanResponse,
+        AwaitAuthorizationRequest, ExpandResponse, FetchResponse, IndexRequest, LogSummary,
+        NetworkHostView, NetworkNodeView, PLUGIN_UPLOAD_BYTES_MAX, PluginState, QueryMeta,
+        QueryResponse, RepairOutcome, RepairReport, RepairRequest, ScanResponse,
     };
+    use inseam_seams::roster::Invitation;
     use inseam_seams::sweep::IndexReport;
+    use inseam_seams::transport::InvitationToken;
     use tower::ServiceExt;
 
     use super::*;
@@ -622,10 +754,66 @@ mod tests {
 
     #[derive(Default)]
     struct StubOperations {
+        configured: Mutex<Option<Settings>>,
         indexed: Mutex<Option<IndexRequest>>,
         authorized: Mutex<Option<AuthorizeGrantRequest>>,
         completed: Mutex<Option<AuthorizationCallback>>,
         installed: Mutex<Option<InstallPluginRequest>>,
+        joined: Mutex<Option<JoinRequest>>,
+        expelled: Mutex<Option<ExpelRequest>>,
+        sync_rounds: std::sync::atomic::AtomicU32,
+    }
+
+    fn node_record(byte: u8, name: &str) -> NodeRecord {
+        NodeRecord {
+            id: NodeId::from_bytes([byte; 32]),
+            display_name: name.to_string(),
+            endpoints: Vec::new(),
+            capabilities: NodeCapabilities {
+                always_on: false,
+                deep_index: true,
+                relays: true,
+            },
+        }
+    }
+
+    /// Two nodes, one host stewarded by the peer: enough shape for a
+    /// transport test to see every field cross the wire.
+    fn network_view() -> NetworkView {
+        let host = HostId::new("fs-peer").expect("valid");
+        NetworkView {
+            local: node_record(1, "mini"),
+            nodes: vec![
+                NetworkNodeView {
+                    record: node_record(1, "mini"),
+                    is_local: true,
+                    live: true,
+                    last_sync: None,
+                    last_error: None,
+                    hosts: Vec::new(),
+                },
+                NetworkNodeView {
+                    record: node_record(2, "laptop"),
+                    is_local: false,
+                    live: false,
+                    last_sync: Some("2026-09-07".to_string()),
+                    last_error: Some("dial failed".to_string()),
+                    hosts: vec![host.clone()],
+                },
+            ],
+            hosts: vec![NetworkHostView {
+                host: HostRecord {
+                    id: host,
+                    kind: "fs".to_string(),
+                    display_name: "Laptop disk".to_string(),
+                },
+                stewards: vec![NodeId::from_bytes([2; 32])],
+            }],
+            log: LogSummary {
+                entries: 9,
+                origins: 2,
+            },
+        }
     }
 
     fn grant_view(state: GrantState) -> GrantView {
@@ -685,7 +873,14 @@ mod tests {
         }
 
         async fn hosts(&self) -> Result<Vec<HostView>, SeamError> {
-            Ok(Vec::new())
+            Ok(vec![HostView {
+                id: HostId::new("fs-test").expect("valid"),
+                kind: inseam_seams::connection::HostKind::filesystem(),
+                display_name: "test".to_string(),
+                entry: "fs".to_string(),
+                capabilities: inseam_seams::connection::Capabilities::READ_ONLY,
+                roots: vec!["/srv/notes".to_string()],
+            }])
         }
 
         async fn catalog(&self, _request: CatalogRequest) -> Result<CatalogResponse, SeamError> {
@@ -714,6 +909,7 @@ mod tests {
                 reembed_pending: false,
                 cached_embeddings: 0,
                 cached_transform_outputs: 0,
+                remote_sources: 0,
             })
         }
 
@@ -811,6 +1007,58 @@ mod tests {
                 missing_secrets: Vec::new(),
             })
         }
+
+        async fn settings(&self) -> Result<Settings, SeamError> {
+            Ok(Settings(serde_json::json!({
+                "sweep": { "enabled": true, "config": { "max_depth": 6 } }
+            })))
+        }
+
+        async fn configure(&self, settings: Settings) -> Result<Settings, SeamError> {
+            *self
+                .configured
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(settings.clone());
+            Ok(settings)
+        }
+
+        async fn network(&self) -> Result<NetworkView, SeamError> {
+            Ok(network_view())
+        }
+
+        async fn invite(&self) -> Result<Invitation, SeamError> {
+            Ok(Invitation {
+                node: NodeId::from_bytes([1; 32]),
+                endpoints: Vec::new(),
+                token: InvitationToken::new("one-time").expect("valid"),
+                expires: Timestamp(1_800_000_000),
+            })
+        }
+
+        async fn join(&self, request: JoinRequest) -> Result<NetworkView, SeamError> {
+            if !request.invitation.starts_with("inseam-invite:") {
+                return Err(SeamError::Refused("invitation: not one".to_string()));
+            }
+            *self
+                .joined
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(request);
+            Ok(network_view())
+        }
+
+        async fn expel(&self, request: ExpelRequest) -> Result<NetworkView, SeamError> {
+            *self
+                .expelled
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(request);
+            Ok(network_view())
+        }
+
+        async fn sync_now(&self) -> Result<NetworkView, SeamError> {
+            self.sync_rounds
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(network_view())
+        }
     }
 
     fn unused() -> SeamError {
@@ -829,7 +1077,75 @@ mod tests {
     }
 
     fn test_router(operations: Arc<StubOperations>, index_roots: Vec<IndexRoot>) -> Router {
-        router(test_config(index_roots, None), operations).expect("valid router")
+        router(test_config(index_roots, None), slot(operations)).expect("valid router")
+    }
+
+    fn slot(operations: Arc<StubOperations>) -> Arc<OperationsSlot> {
+        Arc::new(OperationsSlot::new(operations))
+    }
+
+    #[tokio::test]
+    async fn settings_are_read_and_replaced_through_the_document_routes() {
+        let operations = Arc::new(StubOperations::default());
+        let app = test_router(Arc::clone(&operations), Vec::new());
+        let cookie = login_cookie(&app).await;
+        let request = Request::get("/api/v1/owner/settings")
+            .header(COOKIE, cookie.clone())
+            .body(Body::empty())
+            .expect("valid request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), 4096).await.expect("body");
+        let body: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON");
+        assert_eq!(body["sweep"]["config"]["max_depth"], 6);
+
+        let request = Request::put("/api/v1/owner/settings")
+            .header(CONTENT_TYPE, "application/json")
+            .header(COOKIE, cookie)
+            .body(Body::from(
+                r#"{"sweep":{"enabled":false,"config":{"max_depth":2}}}"#,
+            ))
+            .expect("valid request");
+        let response = app.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let configured = operations
+            .configured
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let configured = configured.expect("the operation saw the document");
+        assert_eq!(configured.0["sweep"]["enabled"], false);
+    }
+
+    #[tokio::test]
+    async fn a_replaced_operations_service_answers_the_next_request() {
+        let first = Arc::new(StubOperations::default());
+        let slot = slot(Arc::clone(&first));
+        let app = router(test_config(Vec::new(), None), Arc::clone(&slot)).expect("valid router");
+        let cookie = login_cookie(&app).await;
+        let second = Arc::new(StubOperations::default());
+        slot.replace(Arc::clone(&second) as Arc<dyn Operations>);
+        let request = Request::put("/api/v1/owner/settings")
+            .header(CONTENT_TYPE, "application/json")
+            .header(COOKIE, cookie)
+            .body(Body::from(r#"{"sweep":{"enabled":true}}"#))
+            .expect("valid request");
+        let response = app.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            first
+                .configured
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_none()
+        );
+        assert!(
+            second
+                .configured
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_some()
+        );
     }
 
     async fn login_cookie(app: &Router) -> String {
@@ -935,7 +1251,7 @@ mod tests {
         std::fs::write(web_dir.path().join("index.html"), "web client").expect("web index");
         let app = router(
             test_config(Vec::new(), Some(web_dir.path().to_path_buf())),
-            Arc::new(StubOperations::default()),
+            slot(Arc::new(StubOperations::default())),
         )
         .expect("valid router");
         let request = Request::get("/api/v1/not-a-route")
@@ -1076,7 +1392,7 @@ mod tests {
         let operations = Arc::new(StubOperations::default());
         let app = router(
             test_config(Vec::new(), Some(web_dir.path().to_path_buf())),
-            Arc::clone(&operations) as Arc<dyn Operations>,
+            slot(Arc::clone(&operations)),
         )
         .expect("valid router");
         let request = Request::get("/api/v1/oauth/callback?code=abc&state=st")
@@ -1126,6 +1442,229 @@ mod tests {
             .await
             .expect("response")
             .status()
+    }
+
+    #[tokio::test]
+    async fn a_folder_configured_on_a_host_is_an_accepted_index_root() {
+        let operations = Arc::new(StubOperations::default());
+        let app = test_router(Arc::clone(&operations), Vec::new());
+        let cookie = login_cookie(&app).await;
+        assert_eq!(
+            index_request(&app, &cookie, "/srv/notes").await,
+            StatusCode::OK
+        );
+        let indexed = operations
+            .indexed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        assert_eq!(indexed.expect("the operation ran").root, "/srv/notes");
+        // A path the node never reported is still refused: the route
+        // matches verbatim and invents nothing.
+        assert_eq!(
+            index_request(&app, &cookie, "/srv").await,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            index_request(&app, &cookie, "/srv/notes/sub").await,
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    /// One owner request with an optional JSON body, answered as status
+    /// and parsed body; every network route is exercised through it.
+    async fn owner_json(
+        app: &Router,
+        cookie: Option<&str>,
+        method: &str,
+        path: &str,
+        body: Option<&str>,
+    ) -> (StatusCode, serde_json::Value) {
+        let mut builder = Request::builder().method(method).uri(path);
+        if let Some(cookie) = cookie {
+            builder = builder.header(COOKIE, cookie);
+        }
+        let request = match body {
+            Some(json) => builder
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(json.to_string())),
+            None => builder.body(Body::empty()),
+        }
+        .expect("valid request");
+        let response = app.clone().oneshot(request).await.expect("response");
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("body");
+        let value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, value)
+    }
+
+    #[tokio::test]
+    async fn the_network_route_serves_the_owner_view() {
+        let app = test_router(Arc::new(StubOperations::default()), Vec::new());
+        let cookie = login_cookie(&app).await;
+        let (status, body) =
+            owner_json(&app, Some(&cookie), "GET", "/api/v1/owner/network", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["local"]["display_name"], "mini");
+        assert_eq!(body["nodes"][1]["last_error"], "dial failed");
+        assert_eq!(body["nodes"][1]["hosts"][0], "fs-peer");
+        assert_eq!(body["hosts"][0]["stewards"][0], "02".repeat(32));
+        assert_eq!(body["log"]["entries"], 9);
+        let (status, _) = owner_json(&app, None, "GET", "/api/v1/owner/network", None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn the_invite_route_answers_with_the_text_the_owner_carries() {
+        let app = test_router(Arc::new(StubOperations::default()), Vec::new());
+        let cookie = login_cookie(&app).await;
+        let (status, body) = owner_json(
+            &app,
+            Some(&cookie),
+            "POST",
+            "/api/v1/owner/network/invite",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let text = body["invitation"].as_str().expect("the text form");
+        let parsed: Invitation = text.parse().expect("the text parses back");
+        assert_eq!(parsed.node, NodeId::from_bytes([1; 32]));
+        assert_eq!(body["node"], "01".repeat(32));
+        assert_eq!(body["expires"], 1_800_000_000);
+        assert!(
+            body.get("token").is_none(),
+            "the token travels only inside the text"
+        );
+        let (status, _) =
+            owner_json(&app, None, "POST", "/api/v1/owner/network/invite", None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn the_join_route_hands_the_invitation_to_the_operation() {
+        let operations = Arc::new(StubOperations::default());
+        let app = test_router(Arc::clone(&operations), Vec::new());
+        let cookie = login_cookie(&app).await;
+        let request = r#"{"invitation":"inseam-invite:abc"}"#;
+        let (status, body) = owner_json(
+            &app,
+            Some(&cookie),
+            "POST",
+            "/api/v1/owner/network/join",
+            Some(request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["nodes"].as_array().map(Vec::len), Some(2));
+        let joined = operations
+            .joined
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        assert_eq!(
+            joined.expect("the operation ran").invitation,
+            "inseam-invite:abc"
+        );
+        // The operation's refusal is the owner's answer, not a 500.
+        let (status, body) = owner_json(
+            &app,
+            Some(&cookie),
+            "POST",
+            "/api/v1/owner/network/join",
+            Some(r#"{"invitation":"nope"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["error"]["code"], "refused");
+        let (status, _) = owner_json(
+            &app,
+            None,
+            "POST",
+            "/api/v1/owner/network/join",
+            Some(request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn the_expel_route_names_the_node_to_the_operation() {
+        let operations = Arc::new(StubOperations::default());
+        let app = test_router(Arc::clone(&operations), Vec::new());
+        let cookie = login_cookie(&app).await;
+        let request = format!(r#"{{"node":"{}"}}"#, "02".repeat(32));
+        let (status, body) = owner_json(
+            &app,
+            Some(&cookie),
+            "POST",
+            "/api/v1/owner/network/expel",
+            Some(&request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["local"]["id"], "01".repeat(32));
+        let expelled = operations
+            .expelled
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        assert_eq!(
+            expelled.expect("the operation ran").node,
+            NodeId::from_bytes([2; 32])
+        );
+        // A malformed id never reaches the operation.
+        let (status, _) = owner_json(
+            &app,
+            Some(&cookie),
+            "POST",
+            "/api/v1/owner/network/expel",
+            Some(r#"{"node":"short"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        let (status, _) = owner_json(
+            &app,
+            None,
+            "POST",
+            "/api/v1/owner/network/expel",
+            Some(&request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn the_sync_route_runs_one_round_and_answers_with_the_view() {
+        let operations = Arc::new(StubOperations::default());
+        let app = test_router(Arc::clone(&operations), Vec::new());
+        let cookie = login_cookie(&app).await;
+        let (status, body) = owner_json(
+            &app,
+            Some(&cookie),
+            "POST",
+            "/api/v1/owner/network/sync",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["log"]["origins"], 2);
+        assert_eq!(
+            operations
+                .sync_rounds
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        let (status, _) = owner_json(&app, None, "POST", "/api/v1/owner/network/sync", None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            operations
+                .sync_rounds
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
     }
 
     #[test]

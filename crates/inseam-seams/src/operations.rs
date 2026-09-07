@@ -11,8 +11,9 @@
 
 use std::sync::Arc;
 
-use inseam_kernel::address::{Address, ContentLength, HostId};
+use inseam_kernel::address::{Address, ContentDigest, ContentLength, HostId};
 use inseam_kernel::fragment::{Extent, FragmentId, Relation};
+use inseam_kernel::network::{HostRecord, NodeId, NodeRecord};
 use inseam_kernel::store::VectorScope;
 use inseam_kernel::substrate::{FiberState, FiberView, Guard, SecretNeed, ServiceKey};
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,7 @@ use crate::connection::{Capabilities, HostKind};
 use crate::finder::QueryTrace;
 use crate::llm::LlmLane;
 use crate::oauth::{AuthorizationCallback, AuthorizationStarted, GrantId, GrantState, Redirect};
+use crate::roster::Invitation;
 use crate::sweep::{DeepBudget, IndexMonitor, IndexReport};
 
 pub const OPERATIONS: ServiceKey<dyn Operations> = ServiceKey::new("operations");
@@ -109,7 +111,51 @@ pub trait Operations: Send + Sync {
     /// kernel reconciles; an entry that fails to activate (admission, a
     /// bad manifest) is rolled back and the failure is the error.
     async fn install_plugin(&self, request: InstallPluginRequest) -> Result<PluginView, SeamError>;
+    /// Owner operation: the first-party settings document — every
+    /// first-party entry's enable switch and complete config, defaults
+    /// applied — as the running node's composition projects it.
+    async fn settings(&self) -> Result<Settings, SeamError>;
+    /// Owner operation: replace the first-party settings with a complete
+    /// document and apply it to the running node now — the overlay is
+    /// rewritten, changed entries restart, and an entry that fails to come
+    /// back rolls the whole write back. The reply is the document as it
+    /// stands afterwards.
+    async fn configure(&self, settings: Settings) -> Result<Settings, SeamError>;
+
+    // The network operations are required, not defaulted: a provider on a
+    // node without the network entries mounted answers each one with
+    // `SeamError::Unavailable` naming the missing entry, so a transport
+    // never has to guess whether "no network" means unmounted or broken.
+
+    /// Owner operation: the network as this node sees it — every roster
+    /// node with what the last sync learned about it, every host with its
+    /// stewards, and the size of the replicated log.
+    async fn network(&self) -> Result<NetworkView, SeamError>;
+    /// Owner operation: mint an invitation for another node to join
+    /// through this one; the owner carries its text form across.
+    async fn invite(&self) -> Result<Invitation, SeamError>;
+    /// Owner operation: join the network an invitation names — dial the
+    /// inviter, present the token, sync once — and report the network as
+    /// it looks afterwards.
+    async fn join(&self, request: JoinRequest) -> Result<NetworkView, SeamError>;
+    /// Owner operation: expel a node — every node stops admitting it and
+    /// drops its logs; this node disconnects it now.
+    async fn expel(&self, request: ExpelRequest) -> Result<NetworkView, SeamError>;
+    /// Owner operation: one sync round with every dialable node now, and
+    /// the network as it looks afterwards.
+    async fn sync_now(&self) -> Result<NetworkView, SeamError>;
 }
+
+/// The first-party settings document on the wire. Its typed shape
+/// (`inseam_plugins::settings::SettingsDocument`) is built from the plugin
+/// config types, which live above this seam, so the seam carries it as
+/// the JSON both GUIs already speak and the provider parses it into the
+/// typed document at its boundary. `{ "<entry id>": { "enabled": bool,
+/// "config": { … } } }` for configured entries; `{ "enabled": bool }` for
+/// toggle-only ones.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Settings(pub serde_json::Value);
 
 // ---------------------------------------------------------------------------
 // Operation messages
@@ -145,6 +191,23 @@ pub struct QueryMeta {
     pub limit: u32,
     #[serde(flatten)]
     pub trace: QueryTrace,
+    /// What each node the query fanned out to answered
+    /// (`design/discovery.md`): its result count, or why it gave none.
+    /// Empty on a node that fanned out to nobody.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remote: Vec<FanOutSummary>,
+}
+
+/// One fanned-out node's part in a query, as the caller sees it: how many
+/// results it contributed before the merge, how long it took, and the
+/// error when it contributed none. A failed node never fails the query.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FanOutSummary {
+    pub node: NodeId,
+    pub results: u32,
+    pub elapsed_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,6 +223,10 @@ pub struct QueryResult {
     /// time (`design/finder.md`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub replicas: Vec<Address>,
+    /// The node whose index produced this result when a fan-out did;
+    /// `None` for the answering node's own index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<NodeId>,
 }
 
 /// Envelope fields rendered for clients: dates as `YYYY-MM-DD`, length as
@@ -177,6 +244,11 @@ pub struct EnvelopeView {
     pub modified: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// The envelope's content digest, when the steward has one — carried
+    /// so results merged across nodes collapse by it exactly as one node's
+    /// results do (`design/finder.md`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_digest: Option<ContentDigest>,
 }
 
 /// One fragment that earned its source a place in the ranking: enough to
@@ -386,6 +458,10 @@ pub struct CatalogSourceView {
     pub raw_bytes: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modified: Option<String>,
+    /// The steward's node when the row was learned from a peer's log;
+    /// absent for a source this node stewards itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<NodeId>,
 }
 
 /// One stewarded host as owner surfaces show it.
@@ -397,6 +473,10 @@ pub struct HostView {
     /// The composition entry whose connection stewards it.
     pub entry: String,
     pub capabilities: Capabilities,
+    /// The scopes configured for this host — an `index` request may name
+    /// one verbatim as its `root`.
+    #[serde(default)]
+    pub roots: Vec<String>,
 }
 
 /// One grant as owner surfaces show it: what it is for, where it stands,
@@ -644,6 +724,10 @@ pub struct StatusReport {
     /// Transform outputs the digest-keyed transform cache holds.
     #[serde(default)]
     pub cached_transform_outputs: u64,
+    /// Sources learned from peers' logs rather than stewarded here; counted
+    /// within `sources`.
+    #[serde(default)]
+    pub remote_sources: u64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -667,6 +751,70 @@ pub struct RepairReport {
     pub vectors_converted: u64,
     pub outcome: RepairOutcome,
     pub vector_index_ready: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Network: the owner's view of the roster and the replicated log
+// ---------------------------------------------------------------------------
+
+/// The network as this node sees it (`design/roster.md`): the roster's
+/// durable facts, and beside each node what the last sync learned by
+/// trying — never a synced "online" bit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkView {
+    /// This node's own record as last published.
+    pub local: NodeRecord,
+    /// Every admitted node, this one included, ordered by id.
+    pub nodes: Vec<NetworkNodeView>,
+    /// Every known host with its stewards, ordered by host id.
+    pub hosts: Vec<NetworkHostView>,
+    pub log: LogSummary,
+}
+
+/// One roster node as owner surfaces show it: the synced record, and the
+/// local session knowledge beside it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkNodeView {
+    pub record: NodeRecord,
+    pub is_local: bool,
+    /// A session with the node is open, or the last exchange succeeded.
+    pub live: bool,
+    /// When the last successful exchange happened, as `YYYY-MM-DD`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_sync: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    /// The hosts this node stewards.
+    #[serde(default)]
+    pub hosts: Vec<HostId>,
+}
+
+/// One known host and the nodes claiming to steward it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkHostView {
+    pub host: HostRecord,
+    pub stewards: Vec<NodeId>,
+}
+
+/// How much replicated knowledge this node holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct LogSummary {
+    /// Log entries held across every origin.
+    pub entries: u64,
+    /// Origins whose logs this node holds.
+    pub origins: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinRequest {
+    /// The invitation's text form (`inseam-invite:…`), as the inviting
+    /// node rendered it; parsed by the provider.
+    pub invitation: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExpelRequest {
+    pub node: NodeId,
 }
 
 #[cfg(test)]
@@ -723,5 +871,64 @@ mod tests {
         let json = serde_json::to_value(&view).expect("serializes");
         assert_eq!(json["state"]["state"], "failed");
         assert_eq!(json["state"]["reason"], "admission");
+    }
+
+    #[test]
+    fn network_view_roundtrips_through_serde() {
+        use inseam_kernel::network::NodeCapabilities;
+        let local = NodeRecord {
+            id: NodeId::from_bytes([1; 32]),
+            display_name: "mini".to_string(),
+            endpoints: Vec::new(),
+            capabilities: NodeCapabilities {
+                always_on: true,
+                deep_index: true,
+                relays: true,
+            },
+        };
+        let host = HostId::new("fs-mini").expect("valid");
+        let view = NetworkView {
+            local: local.clone(),
+            nodes: vec![NetworkNodeView {
+                record: local,
+                is_local: true,
+                live: true,
+                last_sync: None,
+                last_error: None,
+                hosts: vec![host.clone()],
+            }],
+            hosts: vec![NetworkHostView {
+                host: HostRecord {
+                    id: host,
+                    kind: "fs".to_string(),
+                    display_name: "Mini".to_string(),
+                },
+                stewards: vec![NodeId::from_bytes([1; 32])],
+            }],
+            log: LogSummary {
+                entries: 12,
+                origins: 1,
+            },
+        };
+        let json = serde_json::to_value(&view).expect("serializes");
+        assert!(
+            json["nodes"][0].get("last_sync").is_none(),
+            "absent dates are not written"
+        );
+        assert_eq!(json["log"]["entries"], 12);
+        assert_eq!(json["hosts"][0]["stewards"][0], "01".repeat(32));
+        let back: NetworkView = serde_json::from_value(json).expect("parses");
+        assert_eq!(back, view);
+    }
+
+    #[test]
+    fn network_requests_parse_from_their_wire_form() {
+        let join: JoinRequest =
+            serde_json::from_str(r#"{"invitation":"inseam-invite:abc"}"#).expect("parses");
+        assert_eq!(join.invitation, "inseam-invite:abc");
+        let expel: ExpelRequest =
+            serde_json::from_str(&format!(r#"{{"node":"{}"}}"#, "02".repeat(32))).expect("parses");
+        assert_eq!(expel.node, NodeId::from_bytes([2; 32]));
+        assert!(serde_json::from_str::<ExpelRequest>(r#"{"node":"short"}"#).is_err());
     }
 }

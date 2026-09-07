@@ -8,6 +8,7 @@ publish = false
 anyhow.workspace = true
 minisign.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tempfile.workspace = true
 toml.workspace = true
 wit-bindgen-core = "0.46"

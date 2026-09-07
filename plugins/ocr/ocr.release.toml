@@ -1,0 +1,13 @@
+# The signed release record of `ocr` 0.2.0 (design/registry.md):
+# every file this release is made of and its sha256, signed by the
+# publisher in `ocr.release.toml.minisig`. Regenerate with
+# `cargo xtask plugin sign ocr`; never edit by hand.
+name = "ocr"
+version = "0.2.0"
+publisher = "inseam"
+
+[files]
+"fixtures/pixel.png" = "43739c566e26fd7cb88f69d3864ea34740372f5ee99acac169e090beffbce5c6"
+"ocr.checks.toml" = "c34233dc21aa7d73779d05ccc286bbf7efb99cb1e3631c80908e1d25bd70e390"
+"ocr.manifest.toml" = "3b456a7ffed6647f8c66db2babf6d6d60e4f6be2aefdab1b4b0ff664fe33a90c"
+"ocr.wasm" = "db6c941d3de615fd84d49341775ddec43ff294f00ff8e8f2dcf87d9203adddff"

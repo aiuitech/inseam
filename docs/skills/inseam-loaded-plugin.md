@@ -7,7 +7,10 @@
 ## Authoring a loaded inseam plugin
 
 A loaded plugin is three files: a WASM component, a manifest, and golden
-checks. You need the `inseam` CLI and a toolchain that emits WASM
+checks. It implements one of two seams: a **transform** (turns a claimed
+source or fragment into fragments; per-call instances) or a **connection**
+(stewards one host — a service reached through the node's guarded `fetch`;
+one long-running instance per entry). You need the `inseam` CLI and a toolchain that emits WASM
 components (Rust on `wasm32-wasip2` — `rustup target add wasm32-wasip2` —
 or componentize-py, ComponentizeJS/jco, TinyGo). You do **not** need the
 inseam source tree or the network: **the CLI is the authoring
@@ -28,11 +31,12 @@ ships with the plugin.
 
 | Question | Command |
 | --- | --- |
-| Which seams take loaded plugins, under what contract? | `inseam seams` — and `inseam seams --wit > wit/transform.wit` for bindings |
-| What may my manifest request, and will *this* node grant it? | `inseam capabilities` |
-| Who already handles this input on this node? | `inseam claims <mimetype\|path>` |
-| Start a plugin that is red for the right reason | `inseam plugin new <name> --claims a/b,c/*` |
+| Which seams take loaded plugins, under what contract? | `inseam seams` — and `inseam seams --wit > wit/plugin.wit` for bindings (both worlds, one package) |
+| What may my manifest request, and will *this* node grant it? | `inseam capabilities` — llm, source_bytes, `hosts`, `grant`; which hosts are already stewarded |
+| Who already handles this input on this node? | `inseam claims <mimetype\|path>` (transforms); `inseam hosts` (connections) |
+| Start a plugin that is red for the right reason | `inseam plugin new <name> --claims a/b,c/*` or `--seam connection --kind <kind>` |
 | What does my artifact emit for this real file? | `inseam plugin try <name>.wasm <file> [--llm-returns "…"] [--as-check]` |
+| What does my connection answer for this real host? | `inseam plugin try <name>.wasm --config key=value… --enumerate ""` (or `--read`, `--describe`) — live, under the manifest's hosts |
 | Is it fit to ship? | `inseam plugin check <name>.wasm` |
 | Put it in this node's composition | `inseam plugin mount $PWD/<name>.wasm` |
 | Is it running, and doing what I meant? | `inseam plugins`, `inseam index <dir>`, `inseam status`, `inseam query "…"`, `inseam expand <address>` |
@@ -50,25 +54,46 @@ Rules that hold on every seam — design around them:
   `inseam capabilities` lists the imports, the manifest key that grants
   each, and whether this node can honor it right now — a plugin whose
   capability the node cannot grant mounts fine and runs its degrade path.
-- **Degrade, never gate**: on withheld capability or unusable input,
-  return `Ok` with empty output. Never panic; an `Err` from your apply
-  entry point is logged and produces nothing.
-- A fresh instance per call: no state, no caching, no counting — the host
-  meters your LLM budget.
+- **The network is a described request.** `fetch` takes a method, URL,
+  headers, body; the node performs it, only to hosts your manifest's
+  `hosts` list names (exact or `*.domain`), through its SSRF guard, with
+  a body cap, a timeout, and a per-call budget. A non-success status is an
+  answer you read, not an error. Request the *minimum* hosts: adding one
+  later is capability widening every node re-approves. With `authorize:
+  true` the node attaches the entry's OAuth grant bearer (needs `grant =
+  true` in the manifest and `grant = "<id>"` on the entry) — you never
+  see the token.
+- **Degrade, never gate** (transform): on withheld capability or unusable
+  input, return `Ok` with empty output. Never panic; an `Err` from your
+  apply entry point is logged and produces nothing.
+- **An error is the offline answer** (connection): when the network
+  refuses or the host answers something unusable, return `Err` naming what
+  failed — the sweep reports it. Never an empty listing (it would
+  reconcile every source away), never a panic (a trap discards your
+  instance).
+- Instances: a transform gets a fresh instance per call — no state, no
+  caching, no counting; the host meters your LLM budget. A connection is
+  one instance per entry, configured once (`configure` receives the
+  entry's `[entry.config.plugin]` as TOML), so cursors and small caches
+  may live in it; every call still gets its own fuel and fetch budget.
 - Output is hygiene-checked: on the transform seam a fragment's `parent`
   must index an earlier fragment in your own output, relations are from a
-  fixed set, and inseam-defined mimetypes are refused.
+  fixed set, and inseam-defined mimetypes are refused. On the connection
+  seam the bridge derives the host id from the kind and principal you
+  describe (the kind must equal the manifest's `host_kind`), drops sources
+  with malformed locators, and stamps every envelope's `observed` itself.
 
 ### Shape
 
-`inseam plugin new <name> --claims <mimetypes>` writes all of this:
+`inseam plugin new <name> --claims <mimetypes>` (or `--seam connection
+--kind <kind>`) writes all of this:
 
 ```
 <name>/
   <name>.manifest.toml   # what an owner reviews; the bridge enforces it
   <name>.checks.toml     # golden checks, pre-shaped to the mandatory coverage
   src/lib.rs             # a Rust stub that degrades everywhere (any language works)
-  wit/transform.wit      # the contract, embedded from your binary
+  wit/plugin.wit         # the contract, embedded from your binary
   fixtures/README.md     # what each fixture is and why — required
   README.md              # what it does, what it needs, the mount snippet
 ```
@@ -88,6 +113,25 @@ kind = "enrichment"      # or "structural"
 llm = true
 source_bytes = true
 llm_call_budget = 25
+hosts = []               # hosts `fetch` may contact; empty = no network
+```
+
+or, for a connection:
+
+```toml
+name = "<name>"
+version = "0.1.0"
+seam = "connection"
+host_kind = "github"     # identity: describe-host() must export exactly this
+
+[connection]             # effective = this AND what capabilities() exports
+enumerates = true
+change_feed = false
+writable = false
+
+[capabilities]
+hosts = ["api.github.com", "raw.githubusercontent.com"]
+grant = true             # `authorize` may attach the entry's grant bearer
 ```
 
 ### The TDD loop
@@ -99,8 +143,10 @@ worked; run it, read the report, then move on.
 
 ```sh
 inseam claims <a file you intend to handle>   # who claims it today; complement, don't duplicate
-inseam capabilities                           # what this node grants: an LLM? which model?
-inseam plugin new <name> --claims <mimetype,…>
+inseam hosts                                  # which hosts are stewarded today (a connection adds one)
+inseam capabilities                           # what this node grants: an LLM? which model? which grants?
+inseam plugin new <name> --claims <mimetype,…>              # a transform
+inseam plugin new <name> --seam connection --kind <kind>    # a connection
 ```
 
 #### 1. State the claim as checks (red)
@@ -111,24 +157,36 @@ promises, as input → expected output shape. Schema:
 minimum coverage, already shaped for you:
 
 - **One check that proves the claim** — a substantive expectation
-  (`fragment_contains`, `relation`, or `mimetype`), not just "something
-  came out". This is the plugin's reason to exist, in one example.
-- **One check that pins the degrade path** — no `text`, no `llm_returns`,
-  and `max_fragments` set (`0` for "emits nothing", or the fallback's
-  shape). This is what the plugin does on an offline node or with a spent
-  budget; it must be deliberate, never accidental.
+  (`fragment_contains`, `relation`, or `mimetype` for a transform;
+  `locator_contains`, `content_type`, `hint_contains`, or `text_contains`
+  for a connection), not just "something came out". This is the plugin's
+  reason to exist, in one example.
+- **One check that pins the degrade path** — a starved check: for a
+  transform no `text`, no `llm_returns`, and `max_fragments` set (`0` for
+  "emits nothing", or the fallback's shape); for a connection no
+  `[[check.fetch]]` replies and `error = true` (or `max_sources`). This is
+  what the plugin does on an offline node or with a spent budget; it must
+  be deliberate, never accidental.
 - Add a check per distinct behavior you implement (a second mimetype, the
   LLM refusing while text is present, a malformed input you handle).
   Don't pad: the harness's own hostile-input battery already covers
   "doesn't crash"; your checks cover "does what it says".
 
-Each check's `mimetype` must fall inside your manifest's claims, or the
-harness fails it. The LLM is always canned during checks (`llm_returns`
-is the verbatim reply; absent means it refuses), so checks prove plumbing
-and shape, never model quality — write `llm_returns` as the kind of reply
-your prompt asks for, and assert on how your code shapes it.
+Each transform check's `mimetype` must fall inside your manifest's claims,
+or the harness fails it. The LLM is always canned during checks
+(`llm_returns` is the verbatim reply; absent means it refuses), and so is
+the network: a connection check (and a fetching transform's) carries
+`[[check.fetch]]` replies keyed by the exact URL your code asks — on hosts
+your manifest names, never contacted — with a `body` or a `body_file`
+fixture, a `status`, and `authorized = true` when the reply needs the
+grant bearer (an unauthorized request gets 401). A connection check also
+names the `call` (`enumerate` with a `root`, `read` or `describe` with a
+`locator`) and the `[config]` the instance is configured with. Checks
+prove plumbing and shape, never model or host quality — write the canned
+replies as the host really answers, and assert on how your code shapes
+them.
 
-Fixtures (`bytes_file`) live in `fixtures/`, relative to the checks file,
+Fixtures (`bytes_file`, `body_file`) live in `fixtures/`, relative to the checks file,
 and must be **tiny and well-formed** — the smallest valid PNG, a
 three-line CSV. Every fixture gets a row in `fixtures/README.md`: the
 harness's LLM is fake and the component is sandboxed, so fixture *content*
@@ -158,10 +216,13 @@ disagree). The first run cold-compiles wasmtime — minutes, not a hang.
 
 Implement the smallest code that turns the failing check green; rerun;
 repeat. Between runs, look at what the plugin actually does to a real
-file:
+file — or, for a connection, what it answers for a real host (a live
+call through the guarded network, under your manifest's hosts; no grant,
+so `authorize` refuses):
 
 ```sh
 inseam plugin try <name>.wasm <file> [--llm-returns "a reply like your prompt asks for"]
+inseam plugin try <name>.wasm --config repository=octo/hello --enumerate ""   # or --read <locator>, --describe <locator>
 ```
 
 It applies the artifact once through the same bridge the harness uses —
@@ -190,8 +251,10 @@ plugin — admission refuses the mount, naming the failing check.
 ```sh
 export INSEAM_DATA_DIR=$(mktemp -d)          # a throwaway node (omit to use your real one)
 inseam plugin mount $PWD/<name>.wasm         # appends the entry; --id to name it
+# a connection: fill in [entry.config.plugin] on the entry (inseam config prints it)
 inseam plugins                               # fiber `<name>` active, effects listed
-inseam index <dir-with-files-you-claim>      # the sweep applies you to each root
+inseam index <dir-with-files-you-claim>      # transform: the sweep applies you to each root
+inseam hosts && inseam index --host <id> ""  # connection: your host, swept
 inseam status                                # fragment counts moved
 inseam query "<words your plugin should surface>"
 inseam expand <address-from-the-query>       # the fragments you hung off the source
@@ -217,5 +280,8 @@ id = "<name>"
 plugin = "wasm:<path>/<name>.wasm"
 ```
 
-(`inseam plugin mount` writes exactly this), or distribute through a
-registry and `inseam plugin install`.
+(`inseam plugin mount` writes exactly this; a connection's entry also
+needs `[entry.config.plugin]`), or distribute through a registry and
+`inseam plugin install` — a registry release is signed by its publisher
+(`cargo xtask plugin sign <name>` in the inseam repository), so every
+installing node can prove who shipped it (`docs/plugins/registry.md`).

@@ -195,12 +195,25 @@ private struct SourceConfigurationView: View {
                 Toggle("Enabled", isOn: $settings.fs.enabled)
                 Divider()
                 VStack(alignment: .leading, spacing: 12) {
-                    LabeledContent("Host ID") {
-                        TextField("Automatic", text: optionalText($settings.fs.config.hostId))
+                    LabeledContent("Machine identity") {
+                        TextField("Automatic", text: optionalText($settings.fs.config.machineId))
                             .frame(width: 260)
                     }
                     Toggle("Skip hidden files and folders", isOn: $settings.fs.config.skipHidden)
                     Toggle("Honor .gitignore files", isOn: $settings.fs.config.gitignore)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Folders to index")
+                        TextEditor(text: stringList($settings.fs.config.roots))
+                            .font(.body.monospaced())
+                            .frame(height: 80)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 5)
+                                    .stroke(.separator, lineWidth: 1)
+                            }
+                        Text("One absolute path per line. Empty: any folder you choose per index run; otherwise indexing is bounded to these.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     VStack(alignment: .leading, spacing: 5) {
                         Text("Additional ignore patterns")
                         TextEditor(text: stringList($settings.fs.config.ignore))

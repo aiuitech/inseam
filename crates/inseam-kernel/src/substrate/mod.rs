@@ -11,8 +11,8 @@ mod service;
 
 pub use composition::{Composition, CompositionError, ENTRY_COUNT_MAX, Entry};
 pub use edits::{
-    COMPOSITION, CompositionEdit, CompositionEditor, CompositionEdits, EDIT_TIMEOUT, EditOutcome,
-    PendingEdit,
+    COMPOSITION, CompositionEdit, CompositionEditor, CompositionEdits, CompositionSnapshot,
+    EDIT_TIMEOUT, EditOutcome, PendingEdit,
 };
 pub use error::{PluginError, SubstrateError};
 pub use events::{EventBus, Guard, Next, Notify, Subscription, Verdict, Waterfall};

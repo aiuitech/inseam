@@ -118,6 +118,8 @@ A run lives under `benchmarks/runs/beir-nfcorpus/<UTC timestamp>-<inseam commit>
 
 [EnterpriseRAG-Bench](https://github.com/onyx-dot-app/EnterpriseRAG-Bench) is 500 questions over slightly more than 500,000 synthetic enterprise documents. The harness pins dataset release `v1.0.0`, verifies the published checksums, and checks out the evaluator at a pinned revision. Beyond the shared model policy, `--answer-model` and `--evaluation-model` (default `z-ai/glm-5.3-flash`) answer and judge. Its default composition mounts no embedder and holds each document as one full-text row of its whole text (`--vectors none`, `--structural off`, `--summary-target-chars 24000`, `--llm-call-budget 0`); see the slice and retrieval-only section below for how that shape was chosen and how to try another. Reserve at least 20 GB of local disk before a full run: the 1.26 GB download, its extracted files, and a fresh index.
 
+The point-in-time [leaderboard research](enterprise-rag-leaderboard-research.md) records what the public results and system disclosures imply for Finder experiments. It separates verified submission facts from vendor descriptions and speculation.
+
 ### Set up the fixture
 
 Run this once from the repository root:

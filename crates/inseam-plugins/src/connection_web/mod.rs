@@ -8,10 +8,8 @@
 //!
 //! Mounting this entry is the owner's consent for the node to contact
 //! linked sites, so it is not in the base composition, and every request
-//! goes through the guard in [`fetch`]: an optional allow list, a public-
+//! goes through the guard in `inseam_seams::fetch`: an optional allow list, a public-
 //! address check on every hop, pinned resolution, a byte cap, a timeout.
-
-pub(crate) mod fetch;
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -27,7 +25,7 @@ use inseam_seams::connection::{
 };
 use inseam_seams::text::{check_line_range, slice_lines};
 
-use fetch::{Fetcher, HostPattern};
+use inseam_seams::fetch::{Fetcher, HostPattern};
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -154,6 +152,7 @@ impl Plugin for WebConnection {
                     change_feed: false,
                     writable: false,
                 },
+                roots: Vec::new(),
                 connection: Arc::new(host),
             },
         )

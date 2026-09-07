@@ -4,6 +4,12 @@
 owner API. It can also serve the compiled Vite console from `--web-dir`, so
 local and hosted nodes present the same client and operation messages.
 
+This page covers the node side only. The commercial hosted service —
+provisioning, tenant isolation, metering, and the OAuth callback router —
+lives in its own repository,
+[inseam-console](https://github.com/aiuitech/inseam-console), and drives an
+ordinary node through exactly what is described here.
+
 ## HTTP owner transport
 
 `crates/inseam-http` translates JSON to calls on the `operations` seam. It
@@ -71,10 +77,42 @@ error. The same mount-time gates as any `wasm:` entry apply
 ([../plugins/loaded.md](../plugins/loaded.md)); `serve` is the transport
 that applies such edits, because it owns the running kernel.
 
+## Settings from the console
+
+`GET /api/v1/owner/settings` returns the first-party settings document —
+every first-party entry's enable switch and, for configured entries, its
+complete config with the node's defaults filled in — as the running node's
+composition projects it. `PUT /api/v1/owner/settings` takes the whole
+document back and applies it **without restarting the node**: the
+document is validated field by field the way each plugin validates its
+config at mount (a bad value is refused by name, `sweep.max_depth must be
+greater than zero`, before anything changes), the node's `composition.toml`
+is rewritten with every entry's config replaced wholesale (the layering
+rule; comments in the overlay are normalized away), the kernel reconciles,
+and only the entries whose config or toggle changed restart. If any
+configured entry fails to come back, or the composition refuses the
+result, file and tree go back to what they were and the failure is the
+error. The reply is the document as the node runs it afterwards.
+
+The document is the same JSON the macOS app's Configuration tab reads and
+writes through the FFI (`inseam_plugins::settings::SettingsDocument`), so
+both GUIs are one typed projection of the composition
+([../configuration.md](../configuration.md)). Two limits follow from
+where the write runs: the `operations` entry cannot be disabled this way
+(it is the service answering), and secrets are still environment
+variables the entries name — the console edits the names, never the
+values.
+
+A settings write may restart the `operations` provider itself (it
+consumes the finder, sweep, and connections it was configured against),
+so the transport holds it in a slot the distribution refreshes after each
+applied edit rather than a binding taken once at boot.
+
 ## Filesystem scopes
 
-The web API never accepts an arbitrary filesystem path. Each `--index-root`
-or `INSEAM_INDEX_ROOTS` entry maps a short ID to one absolute directory:
+The web API never accepts an arbitrary filesystem path. An `index` request
+names one of two things. Each `--index-root` or `INSEAM_INDEX_ROOTS` entry
+maps a short ID to one absolute directory:
 
 ```sh
 inseam serve --index-root documents=/srv/inseam/hosts/documents
@@ -82,19 +120,50 @@ inseam serve --index-root documents=/srv/inseam/hosts/documents
 
 The client sends `documents`; the transport resolves the configured path
 before it calls `operations.index`. At most 64 unique root IDs may be active.
+Or the request names a folder the owner configured on a host — the `fs`
+entry's `roots`, chosen in the configuration panel — verbatim, with the
+host: the transport accepts it only if the `hosts` operation reports that
+exact string among that host's roots, so the route still invents no path.
+Anything else is `unknown_index_root`. A node with neither has nothing to
+index from the console until a folder is configured; a hosted node that
+wants the owner never to name paths at all leaves `roots` empty and sets
+`--index-root` ([../indexing/filesystem-host.md](../indexing/filesystem-host.md#configured-folders)).
 The same request may carry `deep_budget` (`"catalog_only"`, `{"sources": N}`,
 or `"unlimited"`) to override the composition's `sweep.max_sources` for that
 run; `POST /api/v1/owner/catalog` lists the catalog (`host`, `filter` =
 `all` | `indexed` | `pending`, `limit`).
+
+## Network
+
+The owner's network operations ([../network/README.md](../network/README.md))
+are five routes under `/api/v1/owner/network`:
+
+| Route | Body | Answers |
+| --- | --- | --- |
+| `GET /api/v1/owner/network` | — | the network as this node sees it: its own record; every node with `live`, `last_sync`, `last_error`, and its hosts; every host with its stewards; the log's size |
+| `POST /api/v1/owner/network/invite` | — | `{ "invitation": "inseam-invite:…", "node", "expires" }` — the text the owner carries to the joining node, exactly what `inseam network join` takes, with the inviting node's id and the expiry beside it so a console can show them without parsing the text |
+| `POST /api/v1/owner/network/join` | `{ "invitation": "inseam-invite:…" }` | dials the inviter with the token, syncs once, answers with the network |
+| `POST /api/v1/owner/network/expel` | `{ "node": "<64 hex>" }` | publishes the expulsion, disconnects the node, answers with the network |
+| `POST /api/v1/owner/network/sync` | — | one sync round with every dialable node, then the network |
+
+Each is the operation of the same name
+([../finder/operations.md](../finder/operations.md#owner-operations)); on a
+node composed without the network entries, each answers `unavailable`
+naming the entry it lacks.
 
 ## Web console
 
 `apps/web` is a React, TypeScript, Vite, and shadcn client. It shows node
 statistics and mounted hosts, searches the index, expands and fetches a
 source, connects and disconnects accounts (the Connections panel lists every
-grant and the hosts it stewards), installs a loaded plugin from a chosen
+grant and the hosts it stewards), edits the node's first-party configuration
+in place (the configuration panel: Connections, Models, Indexing, and
+Search groups with an enable switch per entry and a control per field;
+**apply** sends the whole document to the settings route above and
+**revert** discards the draft), installs a loaded plugin from a chosen
 plugin directory and lists what the node runs (the Plugins panel), and
-triggers a sweep over an approved root. `pnpm serve` in `apps/web` starts a
+triggers a sweep over an approved root or a configured folder (the index
+control lists both). `pnpm serve` in `apps/web` starts a
 development node and Vite together with throwaway defaults; Vite proxies
 `/api` to the node ([apps/web/README.md](../../apps/web/README.md)). A
 production build can be served by the node from the same origin.
@@ -108,3 +177,36 @@ host loopback and expects a TLS reverse proxy for remote access.
 
 One running process owns one data directory. A service with several owners
 runs one process and persistent volume per personal trust domain.
+
+## Backbone
+
+A hosted node is the natural backbone of its owner's network
+([../network/README.md](../network/README.md)): it is always on, so it is
+the node the owner's laptops and phones keep a standing connection to, the
+meeting point through which the roster and the catalog converge, and the
+node worth deep-indexing on. Its composition says so — `always_on = true`
+on the `node` entry, a fixed `bind_port` on the `transport` entry, and
+`relay` naming the network's own iroh relay run beside it, so no traffic
+depends on public relay infrastructure
+([../network/transport.md](../network/transport.md#relays)):
+
+```toml
+[[entry]]
+id = "node"
+[entry.config]
+display_name = "hosted"
+always_on = true
+
+[[entry]]
+id = "transport"
+[entry.config]
+bind_port = 7000
+relay = "https://relay.example"
+```
+
+The container package publishes only the HTTP port today; a backbone also
+needs its QUIC port (`bind_port`, UDP) reachable from the internet, and the
+relay is a separate server the operator runs. The owner invites their other
+devices from the hosted node (`POST /api/v1/owner/network/invite`) and
+expels a lost one from it, since it is the node that is always there to run
+the command on ([../network/joining.md](../network/joining.md)).

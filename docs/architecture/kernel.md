@@ -2,7 +2,7 @@
 
 `crates/inseam-kernel` implements the two kernel jobs from [design/kernel.md](../../design/kernel.md): run plugins, and own the stored data. Everything else in a running node is a plugin.
 
-The crate is exactly those two jobs plus the data model they share: `substrate/`, `store.rs` + `state.rs`, and the vocabulary types the store persists (`address.rs` — addresses, envelopes, timestamps, properties; `fragment.rs` — mimetypes, fragments, relation kinds as validated names, keyed-fragment keys). The kernel defines two relation kinds, `contains` and `derives`; every other kind is a plugin's. There is deliberately nothing else: no ignore rules (the sweep plugin's), no text or date helpers and no "which types are text" list (`inseam-seams`, beside the seams that need them), no host, format, ranking, or transport knowledge of any kind.
+The crate is exactly those two jobs plus the data model they share: `substrate/`, `store.rs` + `state.rs`, and the vocabulary types the store persists (`address.rs` — addresses, envelopes, timestamps, properties; `fragment.rs` — mimetypes, fragments, relation kinds as validated names, keyed-fragment keys; `network.rs` — node ids, the roster's record kinds, log entries, version vectors). The kernel defines two relation kinds, `contains` and `derives`; every other kind is a plugin's. There is deliberately nothing else: no ignore rules (the sweep plugin's), no text or date helpers and no "which types are text" list (`inseam-seams`, beside the seams that need them), no host, format, ranking, or transport knowledge of any kind.
 
 ## The substrate (`substrate/`)
 
@@ -14,10 +14,11 @@ The crate is exactly those two jobs plus the data model they share: `substrate/`
 
 ## The store (`store.rs`, `state.rs`)
 
-One libSQL database: catalog tables hold the graph and plugin state, derived search tables hold full-text and vectors ([indexing/storage.md](../indexing/storage.md)). Kernel-owned rules:
+One libSQL database: catalog tables hold the graph, plugin state, the replicated log, and the roster it materializes; derived search tables hold full-text and vectors ([indexing/storage.md](../indexing/storage.md)). Kernel-owned rules:
 
 - **No migrations, ever.** A schema-version change drops and recreates the tables; everything in them is derived, and the next sweep rebuilds it. Plugins extend by vocabulary (mimetypes, relation kinds, properties), never by changing the schema.
 - **The search surface is tied to the embedder.** The embedder declares its identity (`declare_embedding(model, dims)`) when it starts, and the search tables open under that identity. If it doesn't match what's recorded, an in-place re-embed is queued. No embedder mounted → searches refuse, with instructions. A vector whose width disagrees with the declaration — on the way in or as a query — is a `StoreError::DimensionMismatch` reported to the caller, never a crash: a plugin's fault lands on that plugin.
 - **Every id-list read and delete is chunked** (400 ids per `IN (...)`), so no caller can build unbounded SQL, and batch reads (`fragments`, `sources_of_fragments`, `relations_touching`) are one query per chunk rather than one per id. Search primitives return `FragmentId`s, not raw integers.
 - **Plugin state is namespaced and versioned** (the `state` service): a version mismatch discards the namespace. State must be rebuildable; credentials never live here.
 - **Two records per source track what built it**: the `shape_stamp` (a fingerprint of the transforms that participated) and the `mimetypes` inventory. These are what let a plugin change re-index only the sources it actually touches ([indexing/maintenance.md](../indexing/maintenance.md)).
+- **The replicated log is the store's; the identity is not.** Catalog writes log themselves (`store/replication.rs`): an upsert that changes an envelope appends a `Source` entry, a delete of a local row appends its tombstone, roster records enter through `publish`, and a peer's batch applies in one transaction with origin-wins enforced there. The store never learns the node's own id — identity is the transport's key, minted above the kernel by the `node` plugin — so the local log is filed under an empty origin and the sync seam maps it to the node id at the boundary ([../network/sync.md](../network/sync.md)).

@@ -3,6 +3,7 @@
 //! `Failed` with a message that says what failed and why.
 
 use inseam_kernel::address::{Address, HostId};
+use inseam_kernel::network::NodeId;
 use inseam_kernel::store::StoreError;
 use thiserror::Error;
 
@@ -46,6 +47,14 @@ pub enum SeamError {
     /// The call needed a capability that is not granted or not mounted.
     #[error("capability unavailable: {0}")]
     Unavailable(String),
+    /// Routing tried every steward the roster names for the host and none
+    /// answered: the host is known but nobody serving it is live.
+    #[error("no steward of host `{host}` answered (tried {})", nodes_list(.tried))]
+    Unreachable { host: HostId, tried: Vec<NodeId> },
+    /// A peer that is not in the roster, or was expelled from it, tried
+    /// to connect or was named as a target.
+    #[error("node {0} is not admitted to this network")]
+    NotAdmitted(NodeId),
     #[error(transparent)]
     Store(#[from] StoreError),
     #[error("{0}")]
@@ -62,6 +71,19 @@ fn hosts_list(hosts: &[HostId]) -> String {
     hosts
         .iter()
         .map(|h| format!("`{h}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Short ids, as listings show them; "nobody" when routing had no
+/// candidate to try at all.
+fn nodes_list(nodes: &[NodeId]) -> String {
+    if nodes.is_empty() {
+        return "nobody".to_string();
+    }
+    nodes
+        .iter()
+        .map(|n| n.short())
         .collect::<Vec<_>>()
         .join(", ")
 }

@@ -2,18 +2,29 @@
 #
 # This tree IS registry v0: every plugin listed here ships as a directory
 # beside this file (source, artifact, manifest, golden checks, fixtures).
-# CI re-verifies on every merge that each sha256 matches the committed
-# artifact and that the artifact rebuilds from its source;
-# `inseam plugin install` verifies the fetched bytes against this index
-# before anything runs. An entry's sha256 is authoritative — a mismatch
-# anywhere is a refusal, not a warning.
+# Every entry names its publisher, whose key (`publishers.toml`) signs the
+# plugin's release record (`<name>/<name>.release.toml` and `.minisig`) —
+# the sha256 of every file the release is made of. CI re-verifies on every
+# merge that each artifact rebuilds from its source, that the signature
+# holds, and that the index and the signed record agree;
+# `inseam plugin install` proves all of it again on the installing node
+# before anything runs. A mismatch anywhere is a refusal, not a warning.
 #
-# Recompute after rebuilding an artifact:
-#   shasum -a 256 plugins/<name>/<name>.wasm
+# After rebuilding an artifact, re-sign and re-index it in one step:
+#   cargo xtask plugin sign <name>
 
 [[plugin]]
 name = "ocr"
 version = "0.2.0"
 description = "Transcribe text in images, root or linked, through the granted vision LLM"
+publisher = "inseam"
 artifact = "ocr/ocr.wasm"
-sha256 = "56e6c78e7c593631b64cb59c11d1348ebfca7b0a34ee20d735faf905d44fc886"
+sha256 = "db6c941d3de615fd84d49341775ddec43ff294f00ff8e8f2dcf87d9203adddff"
+
+[[plugin]]
+name = "github"
+version = "0.1.0"
+description = "One GitHub repository as a host: the reference loaded connection, reached through the guarded fetch"
+publisher = "inseam"
+artifact = "github/github.wasm"
+sha256 = "67c3294434b8ab15327e098095cb8cb1919bf132fb27480bc62485e01123043a"

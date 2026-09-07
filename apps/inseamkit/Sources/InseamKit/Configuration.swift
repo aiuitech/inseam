@@ -122,10 +122,24 @@ public struct FeatureToggle: Codable {
 }
 
 public struct FilesystemConfig: Codable {
-    public var hostId: String?
+    /// Identity material the host id is derived from; nil uses the
+    /// machine's own id. Never the id itself.
+    public var machineId: String?
     public var skipHidden: Bool
     public var gitignore: Bool
     public var ignore: [String]
+    /// The folders this host indexes, absolute. Empty: any folder named
+    /// per run. Older nodes omit the key, so decoding defaults it.
+    public var roots: [String]
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        machineId = try container.decodeIfPresent(String.self, forKey: .machineId)
+        skipHidden = try container.decode(Bool.self, forKey: .skipHidden)
+        gitignore = try container.decode(Bool.self, forKey: .gitignore)
+        ignore = try container.decode([String].self, forKey: .ignore)
+        roots = try container.decodeIfPresent([String].self, forKey: .roots) ?? []
+    }
 }
 
 public struct LanguageModelConfig: Codable {

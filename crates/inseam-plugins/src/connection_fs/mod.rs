@@ -4,6 +4,8 @@
 //! Service-specific connections (Gmail, Slack, ...) register the same way
 //! on the same seam, linked or loaded.
 
+pub mod machine;
+
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -19,15 +21,18 @@ use inseam_kernel::substrate::{ApplyCx, Inject, Manifest, Plugin, PluginError, p
 use inseam_seams::SeamError;
 use inseam_seams::connection::{
     Capabilities, Connection, EnumeratedSource, HostDescription, HostKind, Registration,
-    register_as_effect,
+    derive_host_id, register_as_effect,
 };
 use inseam_seams::text::{slice_lines, slice_lines_from_reader};
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct FsConnectionConfig {
-    /// Override the derived `fs-<hostname>` host id (tests, containers).
-    pub host_id: Option<String>,
+    /// The identity material this host's id is derived from, in place of
+    /// the machine's own id ([`machine`]): a stable tenant name for a
+    /// container, a fixture name for a test. Never the id itself — ids are
+    /// derived, never configured (`design/addressing.md`).
+    pub machine_id: Option<String>,
     /// Skip dot-named files and directories (the root the caller names is
     /// never skipped).
     pub skip_hidden: bool,
@@ -42,15 +47,24 @@ pub struct FsConnectionConfig {
     /// and `!` re-includes. Host-native and prunes the walk — a matched
     /// directory is never descended into.
     pub ignore: Vec<String>,
+    /// The folders this host indexes, as absolute paths. Empty means the
+    /// owner names a scope per run and any directory is one (the CLI's
+    /// `inseam index <dir>`); once folders are configured, every scope on
+    /// this host must lie inside one of them, and owner surfaces offer
+    /// them as the roots to index. Absent from older overlays, hence the
+    /// serde default.
+    #[serde(default)]
+    pub roots: Vec<String>,
 }
 
 impl Default for FsConnectionConfig {
     fn default() -> Self {
         Self {
-            host_id: None,
+            machine_id: None,
             skip_hidden: true,
             gitignore: true,
             ignore: Vec::new(),
+            roots: Vec::new(),
         }
     }
 }
@@ -96,12 +110,18 @@ impl Plugin for FsConnection {
     }
 
     async fn apply(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
-        let id = match &self.config.host_id {
-            Some(id) => HostId::new(id.clone()).map_err(|e| PluginError(e.to_string()))?,
-            None => FsHost::local_id(),
-        };
+        let keep_dir = cx.data_dir().join(cx.entry_id());
+        let identity = machine::resolve(
+            self.config.machine_id.as_deref(),
+            machine::platform_machine_id(),
+            &keep_dir,
+        )
+        .map_err(|e| PluginError(e.to_string()))?;
+        let id = FsHost::derive_id(identity.principal());
+        tracing::info!(host = %id, source = ?identity.source(), "filesystem host identity");
         let walk = WalkConfig::compile(&self.config).map_err(|e| PluginError(e.to_string()))?;
-        let host = FsHost::new(id, walk);
+        let roots = configured_roots(&self.config.roots).map_err(|e| PluginError(e.to_string()))?;
+        let host = FsHost::new(id, walk).with_roots(roots);
         let registration = Registration {
             entry_id: cx.entry_id().to_string(),
             host: HostDescription {
@@ -112,6 +132,7 @@ impl Plugin for FsConnection {
             // A plain filesystem walk: no FSEvents watcher yet, and never a
             // write path.
             capabilities: Capabilities::READ_ONLY,
+            roots: self.config.roots.clone(),
             connection: Arc::new(host) as Arc<dyn Connection>,
         };
         register_as_effect(cx, registration)?;
@@ -196,9 +217,51 @@ const _: () = assert!(
 pub struct FsHost {
     id: HostId,
     walk: WalkConfig,
+    /// The configured folders, absolute; empty admits any scope.
+    roots: Vec<PathBuf>,
     /// Shared by every clone of this host, so the bound is per node rather
     /// than per handle.
     reads: Arc<Semaphore>,
+}
+
+/// Most folders one host may be configured with.
+pub const ROOTS_MAX: usize = 64;
+
+/// The configured folders as paths: each absolute, no more than
+/// [`ROOTS_MAX`], none listed twice. Existence is not required here — a
+/// folder on an unmounted volume is still the owner's configuration — and
+/// is reported when the folder is indexed.
+pub fn configured_roots(roots: &[String]) -> Result<Vec<PathBuf>, SeamError> {
+    if roots.len() > ROOTS_MAX {
+        return Err(SeamError::failed(format!(
+            "at most {ROOTS_MAX} folders may be configured; {} given",
+            roots.len()
+        )));
+    }
+    let mut paths: Vec<PathBuf> = Vec::with_capacity(roots.len());
+    for root in roots {
+        let path = Path::new(root.trim());
+        if !path.is_absolute() {
+            return Err(SeamError::failed(format!(
+                "folder `{root}` must be an absolute path"
+            )));
+        }
+        if path
+            .components()
+            .any(|c| c == std::path::Component::ParentDir)
+        {
+            return Err(SeamError::failed(format!(
+                "folder `{root}` must not contain `..`"
+            )));
+        }
+        if paths.iter().any(|known| known == path) {
+            return Err(SeamError::failed(format!(
+                "folder `{root}` is listed twice"
+            )));
+        }
+        paths.push(path.to_path_buf());
+    }
+    Ok(paths)
 }
 
 impl FsHost {
@@ -206,7 +269,42 @@ impl FsHost {
         Self {
             id,
             walk,
+            roots: Vec::new(),
             reads: Arc::new(Semaphore::new(READS_IN_FLIGHT_MAX)),
+        }
+    }
+
+    pub fn with_roots(mut self, roots: Vec<PathBuf>) -> Self {
+        self.roots = roots;
+        self
+    }
+
+    /// The canonical directory a scope names, refused when folders are
+    /// configured and the scope lies outside every one of them. Roots are
+    /// canonicalized here rather than at mount so a folder that appears
+    /// later (a volume mounted after boot) still admits its scopes.
+    fn admitted_scope(&self, root: &str) -> Result<PathBuf, SeamError> {
+        let dir = Self::scope_path(root)
+            .canonicalize()
+            .map_err(|e| SeamError::failed(format!("cannot enumerate {root}: {e}")))?;
+        if self.roots.is_empty() {
+            return Ok(dir);
+        }
+        let inside = self
+            .roots
+            .iter()
+            .filter_map(|configured| configured.canonicalize().ok())
+            .any(|configured| dir.starts_with(&configured));
+        if inside {
+            Ok(dir)
+        } else {
+            let configured: Vec<String> =
+                self.roots.iter().map(|p| p.display().to_string()).collect();
+            Err(SeamError::Refused(format!(
+                "{root} is outside the folders configured for host `{}` ({}); add it to the fs entry's `roots` or index inside one of them",
+                self.id,
+                configured.join(", ")
+            )))
         }
     }
 
@@ -277,17 +375,12 @@ impl FsHost {
         .map_err(|e| SeamError::failed(format!("line read task failed: {e}")))?
     }
 
-    /// The host id for this machine: `fs-<hostname>`, sanitized.
-    pub fn local_id() -> HostId {
-        let raw = gethostname::gethostname().to_string_lossy().to_lowercase();
-        let mut cleaned: String = raw
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-            .collect();
-        cleaned.truncate(48);
-        let cleaned = cleaned.trim_matches('-');
-        let id = if cleaned.is_empty() { "local" } else { cleaned };
-        HostId::new(format!("fs-{id}")).expect("sanitized host id is valid")
+    /// The host id for the filesystem of the machine identified by
+    /// `principal`: the kind-separated fingerprint every connection mints
+    /// (`design/addressing.md`), so the id survives a rename of the machine
+    /// and two nodes on it agree without coordinating.
+    pub fn derive_id(principal: &str) -> HostId {
+        derive_host_id(&HostKind::filesystem(), principal)
     }
 
     pub fn id(&self) -> &HostId {
@@ -307,7 +400,7 @@ impl FsHost {
 
     /// The directory a sweep scope names: an absolute path as given, or a
     /// locator (what an `inseam://<host>/<root>` address carries) rooted at
-    /// `/` — so `inseam index inseam://fs-mba/Users/greg/Notes` and
+    /// `/` — so `inseam index inseam://fs-3f9a1b2c4d5e6f70/Users/greg/Notes` and
     /// `inseam index /Users/greg/Notes` are the same scope.
     fn scope_path(root: &str) -> PathBuf {
         if root.starts_with('/') {
@@ -502,9 +595,7 @@ impl Connection for FsHost {
     /// prune here, so an ignored file never becomes an address. Read-only;
     /// symlinks are not followed.
     async fn enumerate(&self, root: &str) -> Result<Vec<EnumeratedSource>, SeamError> {
-        let dir = Self::scope_path(root)
-            .canonicalize()
-            .map_err(|e| SeamError::failed(format!("cannot enumerate {root}: {e}")))?;
+        let dir = self.admitted_scope(root)?;
         // The walk is synchronous disk work; it runs on the blocking pool so
         // it never stalls the runtime the sweep's pipeline lives on.
         let host = self.clone();
@@ -793,6 +884,37 @@ mod tests {
             names(&host_with(config), dir.path()).await,
             vec!["final.md"]
         );
+    }
+
+    #[tokio::test]
+    async fn configured_folders_bound_every_scope() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(dir.path(), "notes/a.md", "# a\n");
+        write(dir.path(), "elsewhere/b.md", "# b\n");
+        let notes = dir.path().join("notes");
+        let bounded = host().with_roots(vec![notes.clone()]);
+        assert_eq!(names(&bounded, &notes).await, vec!["a.md"]);
+        let outside = bounded
+            .enumerate(dir.path().join("elsewhere").to_str().expect("utf8"))
+            .await;
+        assert!(matches!(outside, Err(SeamError::Refused(_))), "{outside:?}");
+        // The whole tree is not inside `notes` either.
+        assert!(matches!(
+            bounded.enumerate(dir.path().to_str().expect("utf8")).await,
+            Err(SeamError::Refused(_))
+        ));
+        // No folders configured: any scope is in play, as before.
+        assert_eq!(names(&host(), &notes).await, vec!["a.md"]);
+    }
+
+    #[test]
+    fn configured_folders_must_be_absolute_and_distinct() {
+        assert!(configured_roots(&["relative/notes".to_string()]).is_err());
+        assert!(configured_roots(&["/a/../b".to_string()]).is_err());
+        assert!(configured_roots(&["/a".to_string(), "/a".to_string()]).is_err());
+        assert_eq!(configured_roots(&["/a".to_string()]).unwrap().len(), 1);
+        let many: Vec<String> = (0..=ROOTS_MAX).map(|i| format!("/r{i}")).collect();
+        assert!(configured_roots(&many).is_err());
     }
 
     #[tokio::test]

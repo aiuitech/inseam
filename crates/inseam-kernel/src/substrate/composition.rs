@@ -189,6 +189,36 @@ impl Composition {
     pub fn to_toml(&self) -> String {
         toml::to_string_pretty(self).unwrap_or_default()
     }
+
+    /// Put `patch` into this layer with the same semantics layering gives
+    /// a patch entry: an existing entry with its id takes the patch's
+    /// `plugin` and `disabled` when present and its `config` when
+    /// nonempty; an unknown id is appended at the top level. This is how a
+    /// settings write lands in an overlay — the file is the truth a fresh
+    /// boot converges to, so the overlay is edited, never the base.
+    pub fn configure_entry(&mut self, patch: &Entry) -> Result<(), CompositionError> {
+        match path_of(&self.entries, &patch.id)? {
+            Some(path) => {
+                let target = entry_at_mut(&mut self.entries, &path);
+                if let Some(plugin) = &patch.plugin {
+                    target.plugin = Some(plugin.clone());
+                }
+                if !patch.config.is_empty() {
+                    target.config = patch.config.clone();
+                }
+                if let Some(disabled) = patch.disabled {
+                    target.disabled = Some(disabled);
+                }
+            }
+            None => {
+                if self.entries.len() >= ENTRY_COUNT_MAX {
+                    return Err(CompositionError::TooManyEntries);
+                }
+                self.entries.push(patch.clone());
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Pre-order walk of an entry tree, without recursion: an explicit stack,
@@ -363,6 +393,39 @@ mod tests {
             .expect("parses");
         let layered = base().layered(over).expect("layers");
         assert!(layered.resolved().iter().all(|e| e.id != "entities"));
+    }
+
+    #[test]
+    fn configure_entry_patches_in_place_or_appends() {
+        let mut overlay = Composition::parse(
+            "[[entry]]\nid = \"llm\"\ndisabled = true\n[entry.config]\nagent_model = \"a\"\n",
+            "test",
+        )
+        .unwrap();
+        // A toggle-only patch keeps the config the overlay already holds.
+        overlay
+            .configure_entry(&Entry {
+                id: "llm".to_string(),
+                disabled: Some(false),
+                ..Entry::default()
+            })
+            .unwrap();
+        assert_eq!(overlay.entries[0].disabled, Some(false));
+        assert_eq!(overlay.entries[0].config["agent_model"].as_str(), Some("a"));
+        // A config patch replaces the table wholesale.
+        let mut config = toml::Table::new();
+        config.insert("target_chars".to_string(), toml::Value::Integer(9));
+        overlay
+            .configure_entry(&Entry {
+                id: "chunker".to_string(),
+                config: config.clone(),
+                disabled: Some(false),
+                ..Entry::default()
+            })
+            .unwrap();
+        assert_eq!(overlay.entries.len(), 2);
+        assert_eq!(overlay.entries[1].id, "chunker");
+        assert_eq!(overlay.entries[1].config, config);
     }
 
     #[test]

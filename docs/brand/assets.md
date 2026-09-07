@@ -1,6 +1,6 @@
 # Brand Assets
 
-`assets/` holds the brand sources and their rendered outputs. The brand itself — mark geometry, colors, type, voice — is defined in `docs/brand/README.md`.
+`packages/brand/assets/` holds the brand sources and their rendered outputs. They ship inside the [`@inseam/brand` package](package.md), so every app that installs the package has them. The brand itself — mark geometry, colors, type, voice — is defined in `docs/brand/README.md`.
 
 ## Sources (SVG, hand-edited)
 
@@ -13,6 +13,10 @@
 
 ## Generated (committed, rebuilt by script)
 
-`assets/build-icons.sh` renders the sources into `favicon.ico` (16/32/48), `icon-macos.icns` (all macOS iconset sizes), and reference PNGs under `assets/png/`. It needs ImageMagick (`brew install imagemagick`) and macOS `iconutil` for the `.icns`. Outputs are committed so app builds never need those tools — re-run the script after editing any source SVG.
+`packages/brand/assets/build-icons.sh` renders the sources into `favicon.ico` (16/32/48), `icon-macos.icns` (all macOS iconset sizes), and reference PNGs under `png/`. It needs ImageMagick (`brew install imagemagick`) and macOS `iconutil` for the `.icns`. Outputs are committed so app builds never need those tools — re-run the script after editing any source SVG.
 
-`apps/macos/build.sh` copies `icon-macos.icns` into the app bundle as `Inseam.icns` (referenced by `CFBundleIconFile`).
+## Who reads them
+
+- Web apps import them through the package: `import favicon from "@inseam/brand/assets/favicon.svg"` gives Vite a URL it hashes into the build like any other asset.
+- `apps/macos/build.sh` copies `icon-macos.icns` into the app bundle as `Inseam.icns` (referenced by `CFBundleIconFile`).
+- The Astro sites (`apps/www.inseam.io`, `apps/docs.inseam.io`) still carry their own copies under `public/` and `src/assets/`; they are not in the pnpm workspace yet.

@@ -8,8 +8,9 @@
 //! [`run`]. Command handlers are a thin transport over the `operations`
 //! seam; no command contains node logic.
 
-mod registry;
+pub mod registry;
 mod release;
+pub mod signing;
 
 pub use release::UpdateChannel;
 
@@ -26,16 +27,19 @@ mod agent;
 mod authoring;
 
 use agent::{AgentEvent, run_agent};
-use inseam_kernel::address::{Address, HostId};
+use inseam_kernel::address::{Address, HostId, Timestamp};
+use inseam_kernel::network::{NodeId, NodeRecord};
 use inseam_kernel::substrate::{Composition, CompositionEdits, FiberState, Kernel, SubstrateError};
+use inseam_seams::dates::ymd;
 use inseam_seams::llm::{self, LLM, LlmLane, ModelInfo};
 use inseam_seams::oauth::{GrantId, GrantState, Redirect};
 use inseam_seams::operations::{
     AuthorizeGrantRequest, AwaitAuthorizationRequest, CatalogFilter, CatalogRequest,
-    CatalogResponse, ExpandRequest, FetchBytesRequest, FetchRequest, GrantView, IndexRequest,
-    OPERATIONS, Operations, QueryRequest, QueryResponse, RepairOutcome, RepairReport,
-    RepairRequest, RevokeGrantRequest, ScanRequest,
+    CatalogResponse, ExpandRequest, ExpelRequest, FetchBytesRequest, FetchRequest, GrantView,
+    IndexRequest, JoinRequest, NetworkView, OPERATIONS, Operations, QueryRequest, QueryResponse,
+    RepairOutcome, RepairReport, RepairRequest, RevokeGrantRequest, ScanRequest,
 };
+use inseam_seams::roster::Invitation;
 use inseam_seams::sweep::DeepBudget;
 
 pub use inseam_kernel::substrate::PluginFactory;
@@ -108,6 +112,26 @@ plugin = "sweep"
 [[entry]]
 id = "operations"
 plugin = "operations"
+
+[[entry]]
+id = "node"
+plugin = "node"
+
+[[entry]]
+id = "transport"
+plugin = "transport-iroh"
+
+[[entry]]
+id = "roster"
+plugin = "roster"
+
+[[entry]]
+id = "sync"
+plugin = "sync"
+
+[[entry]]
+id = "routing"
+plugin = "routing"
 "#;
 const REPAIR_PROGRESS_INTERVAL: Duration = Duration::from_secs(5);
 const REPAIR_PROGRESS_TICKS_MAX: u32 = 51_840;
@@ -335,6 +359,16 @@ enum Command {
     },
     /// Index and catalog statistics for this node.
     Status,
+    /// This node's network: every node the roster admits with what the
+    /// last sync learned about it, every host with its stewards, and the
+    /// replicated log — or one of the ceremonies that change it.
+    Network {
+        #[command(subcommand)]
+        command: Option<NetworkCommand>,
+        /// Emit the network view as JSON.
+        #[arg(long, global = true)]
+        json: bool,
+    },
     /// Repair the derived search index without fetching or re-embedding
     /// sources. Use --rebuild to reconstruct an existing DiskANN index.
     Repair {
@@ -391,21 +425,29 @@ enum PluginCommand {
     /// stub, the WIT, and READMEs. Needs no network and no source tree.
     New {
         name: String,
-        /// Mimetypes the plugin claims (essences or `type/*`).
-        #[arg(long, value_delimiter = ',', required = true)]
+        /// Transform seam: mimetypes the plugin claims (essences or `type/*`).
+        #[arg(long, value_delimiter = ',')]
         claims: Vec<String>,
+        /// `transform` or `connection`.
         #[arg(long, default_value = "transform")]
         seam: String,
+        /// Connection seam: the host kind the plugin stewards (`github`).
+        #[arg(long)]
+        kind: Option<String>,
         /// Parent directory for the new `<name>/` folder.
         #[arg(long, default_value = ".")]
         dir: PathBuf,
     },
-    /// Apply an artifact to one real file through the harness bridge (canned
-    /// LLM, fake capabilities) and print what it emits; --as-check prints the
-    /// observed output as a golden check to paste and tighten.
+    /// Transform: apply an artifact to one real file through the harness
+    /// bridge (canned LLM, fake capabilities) and print what it emits;
+    /// --as-check prints the observed output as a golden check to paste and
+    /// tighten. Connection: configure the artifact (--config key=value) and
+    /// make one live call (--enumerate, --read, --describe) under the
+    /// manifest's host allow list.
     Try {
         artifact: PathBuf,
-        file: PathBuf,
+        /// Transform seam: the file to apply the plugin to.
+        file: Option<PathBuf>,
         /// Override the detected mimetype.
         #[arg(long)]
         mimetype: Option<String>,
@@ -417,6 +459,19 @@ enum PluginCommand {
         not_root: bool,
         #[arg(long)]
         as_check: bool,
+        /// Connection seam: one `key=value` of the plugin's config; repeat
+        /// per key (`authorize=true`, `files_max=100` are typed by shape).
+        #[arg(long = "config")]
+        config: Vec<String>,
+        /// Connection seam: enumerate this scope (`""` for the whole host).
+        #[arg(long)]
+        enumerate: Option<String>,
+        /// Connection seam: read this locator's bytes.
+        #[arg(long)]
+        read: Option<String>,
+        /// Connection seam: describe this locator.
+        #[arg(long)]
+        describe: Option<String>,
     },
     /// Append a local artifact to this node's composition (`wasm:<path>`),
     /// id defaulting to the artifact's stem.
@@ -430,7 +485,8 @@ enum PluginCommand {
     /// plugin's own golden checks (<artifact>.checks.toml). Exits nonzero
     /// on failure — the same verdict install-time admission enforces.
     Check { artifact: PathBuf },
-    /// Fetch a plugin from a registry, verify its sha256 against the
+    /// Fetch a plugin from a registry, verify its publisher's signature and
+    /// every file's sha256 against the signed release record and the
     /// reviewed index, run the conformance harness, and mount it in this
     /// node's composition.
     Install {
@@ -440,6 +496,35 @@ enum PluginCommand {
         #[arg(long, env = "INSEAM_REGISTRY")]
         registry: Option<String>,
     },
+    /// Prove one plugin, or every plugin the index lists, without
+    /// installing: publisher signature, release record, and hashes — the
+    /// registry's own CI gate. Exits nonzero on any failure.
+    Verify {
+        name: Option<String>,
+        #[arg(long, env = "INSEAM_REGISTRY")]
+        registry: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum NetworkCommand {
+    /// Mint an invitation for another node to join through this one: one
+    /// string to carry across, good for one node, once, for a day.
+    Invite,
+    /// Join the network an invitation names: dial the inviter, present the
+    /// token, sync once.
+    Join {
+        /// The invitation text (`inseam-invite:…`) as the inviting node printed it.
+        invitation: String,
+    },
+    /// Expel a node: every node stops admitting it and drops its logs;
+    /// this node disconnects it now.
+    Expel {
+        /// The node's full id (64 hex characters), as `inseam network` lists it.
+        node: String,
+    },
+    /// One sync round with every dialable node now.
+    Sync,
 }
 
 #[derive(Subcommand)]
@@ -526,19 +611,24 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 let composition_path = composition_path_of(&cli, &data_dir);
                 registry::install(name, registry.as_deref(), &data_dir, &composition_path).await?;
             }
+            PluginCommand::Verify { name, registry } => {
+                registry::verify(name.as_deref(), registry.as_deref()).await?;
+            }
             PluginCommand::New {
                 name,
                 claims,
                 seam,
+                kind,
                 dir,
             } => {
                 let root = authoring::plugin_new(&authoring::Scaffold {
                     name,
                     seam,
                     claims,
+                    kind: kind.as_deref(),
                     dir,
                 })?;
-                authoring::print_scaffold_next_steps(&root, name);
+                authoring::print_scaffold_next_steps(&root, name, seam);
             }
             PluginCommand::Try {
                 artifact,
@@ -547,18 +637,37 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 llm_returns,
                 not_root,
                 as_check,
+                config,
+                enumerate,
+                read,
+                describe,
             } => {
-                authoring::plugin_try(
-                    &authoring::TryRequest {
-                        artifact,
-                        file,
-                        mimetype: mimetype.as_deref(),
-                        llm_returns: llm_returns.as_deref(),
-                        not_root: *not_root,
-                    },
-                    *as_check,
-                )
-                .await?;
+                let call = authoring::try_call(
+                    enumerate.as_deref(),
+                    read.as_deref(),
+                    describe.as_deref(),
+                )?;
+                match (file, call) {
+                    (_, Some(call)) => {
+                        authoring::plugin_try_connection(artifact, config, call).await?;
+                    }
+                    (Some(file), None) => {
+                        authoring::plugin_try(
+                            &authoring::TryRequest {
+                                artifact,
+                                file,
+                                mimetype: mimetype.as_deref(),
+                                llm_returns: llm_returns.as_deref(),
+                                not_root: *not_root,
+                            },
+                            *as_check,
+                        )
+                        .await?;
+                    }
+                    (None, None) => anyhow::bail!(
+                        "pass a file to apply a transform to, or --enumerate/--read/--describe for a connection"
+                    ),
+                }
             }
             PluginCommand::Mount { artifact, id } => {
                 let composition_path = composition_path_of(&cli, &data_dir);
@@ -622,7 +731,9 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 .iter()
                 .map(|value| parse_http_index_root(value))
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            let operations = kernel.service(&OPERATIONS)?;
+            let operations = Arc::new(inseam_http::OperationsSlot::new(
+                kernel.service(&OPERATIONS)?,
+            ));
             let edits = kernel
                 .take_composition_edits()
                 .expect("a freshly booted kernel hands out its edits once");
@@ -636,10 +747,18 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                     web_dir,
                     public_url,
                 },
-                operations,
+                Arc::clone(&operations),
                 shutdown_signal(),
             ));
-            serve_composition_edits(&mut kernel, &base, &overlay_path, edits, transport).await?;
+            serve_composition_edits(
+                &mut kernel,
+                &base,
+                &overlay_path,
+                edits,
+                &operations,
+                transport,
+            )
+            .await?;
         }
         Command::Index {
             root,
@@ -968,6 +1087,14 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 "caches         {} embeddings, {} transform outputs",
                 status.cached_embeddings, status.cached_transform_outputs
             );
+            println!(
+                "remote sources {} (learned from other nodes' logs, counted in sources)",
+                status.remote_sources
+            );
+        }
+        Command::Network { command, json } => {
+            let ops = kernel.service(&OPERATIONS)?;
+            run_network_command(ops.as_ref(), command, json).await?;
         }
         Command::Repair { rebuild } => {
             let ops = kernel.service(&OPERATIONS)?;
@@ -1000,6 +1127,162 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
     }
     kernel.shutdown().await;
     Ok(())
+}
+
+/// The `network` group: every ceremony answers with the network as it
+/// looks afterwards, printed the same way as the bare listing; `invite`
+/// prints the invitation instead, since that is what the owner carries.
+async fn run_network_command(
+    operations: &dyn Operations,
+    command: Option<NetworkCommand>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let view = match command {
+        None => operations.network().await?,
+        Some(NetworkCommand::Invite) => {
+            let invitation = operations.invite().await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&invitation)?);
+            } else {
+                print_invitation(&invitation);
+            }
+            return Ok(());
+        }
+        Some(NetworkCommand::Join { invitation }) => {
+            operations.join(JoinRequest { invitation }).await?
+        }
+        Some(NetworkCommand::Expel { node }) => {
+            let node: NodeId = node
+                .parse()
+                .context("expel takes a node's full id, as `inseam network` lists it")?;
+            operations.expel(ExpelRequest { node }).await?
+        }
+        Some(NetworkCommand::Sync) => operations.sync_now().await?,
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&view)?);
+    } else {
+        print_network(&view);
+    }
+    Ok(())
+}
+
+/// The invitation on a line of its own — so it copies cleanly — and what
+/// it is good for.
+fn print_invitation(invitation: &Invitation) {
+    println!("{invitation}");
+    println!();
+    println!(
+        "Expires {}; admits one node, once. On the joining node, run:",
+        hm_utc(invitation.expires)
+    );
+    println!("  inseam network join <the line above>");
+}
+
+fn print_network(view: &NetworkView) {
+    print_network_local(&view.local);
+    print_network_nodes(view);
+    print_network_hosts(view);
+    println!(
+        "log: {} entries from {} origins",
+        view.log.entries, view.log.origins
+    );
+}
+
+fn print_network_local(local: &NodeRecord) {
+    println!("this node    {} ({})", local.id.short(), local.display_name);
+    println!("id           {}", local.id);
+    println!("capabilities {}", capability_flags(local));
+    if local.endpoints.is_empty() {
+        println!("endpoints    none (outbound-only: reached through sessions it opens)");
+    }
+    for endpoint in &local.endpoints {
+        println!("endpoint     {endpoint}");
+    }
+    println!();
+}
+
+fn print_network_nodes(view: &NetworkView) {
+    // The name column fits a hostname plus the "(this node)" marker.
+    println!(
+        "{:12} {:28} {:22} {:5} {:10} {:5} last error",
+        "node", "name", "capabilities", "live", "last sync", "hosts"
+    );
+    for node in &view.nodes {
+        let name = if node.is_local {
+            format!("{} (this node)", node.record.display_name)
+        } else {
+            node.record.display_name.clone()
+        };
+        println!(
+            "{:12} {:28} {:22} {:5} {:10} {:5} {}",
+            node.record.id.short(),
+            name,
+            capability_flags(&node.record),
+            if node.live { "yes" } else { "no" },
+            node.last_sync.as_deref().unwrap_or("-"),
+            node.hosts.len(),
+            node.last_error.as_deref().unwrap_or("-"),
+        );
+    }
+    println!();
+}
+
+fn print_network_hosts(view: &NetworkView) {
+    if view.hosts.is_empty() {
+        println!("hosts: none known");
+        println!();
+        return;
+    }
+    println!("{:28} {:8} {:24} stewards", "host", "kind", "name");
+    for host in &view.hosts {
+        let stewards: Vec<String> = host.stewards.iter().map(NodeId::short).collect();
+        println!(
+            "{:28} {:8} {:24} {}",
+            host.host.id,
+            host.host.kind,
+            host.host.display_name,
+            if stewards.is_empty() {
+                "none (unreachable)".to_string()
+            } else {
+                stewards.join(" ")
+            }
+        );
+    }
+    println!();
+}
+
+/// The three capability flags as a short label list: what discovery
+/// fan-out and routing branch on.
+fn capability_flags(record: &NodeRecord) -> String {
+    let c = record.capabilities;
+    let flags = [
+        (c.always_on, "always-on"),
+        (c.deep_index, "deep-index"),
+        (c.relays, "relays"),
+    ];
+    let named: Vec<&str> = flags
+        .iter()
+        .filter(|(on, _)| *on)
+        .map(|(_, name)| *name)
+        .collect();
+    if named.is_empty() {
+        "-".to_string()
+    } else {
+        named.join(",")
+    }
+}
+
+/// A timestamp to the minute, UTC: the date the shared helper renders,
+/// plus the time of day an expiry needs.
+fn hm_utc(timestamp: Timestamp) -> String {
+    const SECS_PER_DAY: i64 = 86_400;
+    let seconds_into_day = timestamp.0.rem_euclid(SECS_PER_DAY);
+    let hours = seconds_into_day / 3600;
+    let minutes = (seconds_into_day % 3600) / 60;
+    assert!(hours < 24);
+    assert!(minutes < 60);
+    format!("{} {hours:02}:{minutes:02} UTC", ymd(timestamp))
 }
 
 async fn repair_with_progress(
@@ -1119,9 +1402,15 @@ fn print_catalog(response: &CatalogResponse, filter: CatalogFilter) {
         response.sources, response.indexed, response.pending
     );
     for entry in &response.entries {
+        // A row learned from a peer's log names its steward; this node's
+        // own rows say so, so the two never read alike.
+        let via = entry
+            .origin
+            .map_or("local".to_string(), |origin| origin.short());
         println!(
-            "{:8} {:>10} {:10} {:28} {}",
+            "{:8} {:12} {:>10} {:10} {:28} {}",
             if entry.indexed { "indexed" } else { "pending" },
+            via,
             human_bytes(entry.raw_bytes),
             entry.modified.as_deref().unwrap_or("-"),
             entry.content_type,
@@ -1198,15 +1487,18 @@ async fn shutdown_signal() {
 }
 
 /// Keep a running node editable: apply composition edits submitted through
-/// the `composition` service (an owner installing a plugin) until the
-/// transport finishes. The kernel stays here, on the node's own task, so a
-/// reconcile never runs concurrently with itself; each edit is applied
-/// whole, replied to, and the next one taken.
+/// the `composition` service (an owner installing a plugin, a settings
+/// write) until the transport finishes. The kernel stays here, on the
+/// node's own task, so a reconcile never runs concurrently with itself;
+/// each edit is applied whole, replied to, and the next one taken. An
+/// edit may have restarted the `operations` provider, so the transport's
+/// slot is refreshed after every one.
 async fn serve_composition_edits(
     kernel: &mut Kernel,
     base: &Composition,
     overlay_path: &Path,
     mut edits: CompositionEdits,
+    operations: &inseam_http::OperationsSlot,
     mut transport: tokio::task::JoinHandle<Result<(), inseam_http::ConfigError>>,
 ) -> anyhow::Result<()> {
     loop {
@@ -1228,6 +1520,13 @@ async fn serve_composition_edits(
                     .await;
                 if let Err(error) = &outcome {
                     tracing::warn!("composition edit not applied: {error}");
+                }
+                match kernel.service(&OPERATIONS) {
+                    Ok(current) => operations.replace(current),
+                    // The edit left `operations` waiting or failed: the
+                    // transport keeps the last service and its calls say
+                    // what is missing.
+                    Err(error) => tracing::warn!("operations not rebound after edit: {error}"),
                 }
                 pending.reply(outcome);
             }
@@ -1269,7 +1568,11 @@ fn print_results(response: &QueryResponse) {
         return;
     }
     for (i, r) in response.results.iter().enumerate() {
-        println!("{:2}. {}  ({:.3})", i + 1, r.address, r.score);
+        let via = r
+            .via
+            .map(|node| format!("  via {}", node.short()))
+            .unwrap_or_default();
+        println!("{:2}. {}  ({:.3}){via}", i + 1, r.address, r.score);
         let e = &r.envelope;
         let modified = e
             .modified
@@ -1310,6 +1613,28 @@ fn print_query_meta(meta: &inseam_seams::operations::QueryMeta) {
         t.candidate_sources,
         meta.limit,
     );
+    print_query_remote(meta);
+}
+
+/// One line per node the query fanned out to: what it contributed before
+/// the merge, or why it contributed nothing. A node that failed never
+/// failed the query, so this is where its failure shows.
+fn print_query_remote(meta: &inseam_seams::operations::QueryMeta) {
+    for summary in &meta.remote {
+        match &summary.error {
+            Some(error) => println!(
+                "via {}: no results ({} ms): {error}",
+                summary.node.short(),
+                summary.elapsed_ms
+            ),
+            None => println!(
+                "via {}: {} results ({} ms)",
+                summary.node.short(),
+                summary.results,
+                summary.elapsed_ms
+            ),
+        }
+    }
 }
 
 /// Write fetched bytes to `path`, or to stdout for `-`, so a binary fetch
