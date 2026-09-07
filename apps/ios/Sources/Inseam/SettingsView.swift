@@ -114,8 +114,8 @@ private struct ConnectionSettingsView: View {
             Section("local filesystem") {
                 Toggle("enabled", isOn: $settings.fs.enabled)
                 labeledTextField(
-                    "automatic host id",
-                    text: optionalText($settings.fs.config.hostId)
+                    "machine identity (automatic)",
+                    text: optionalText($settings.fs.config.machineId)
                 )
                 Toggle("skip hidden files and folders", isOn: $settings.fs.config.skipHidden)
                 Toggle("honor .gitignore files", isOn: $settings.fs.config.gitignore)

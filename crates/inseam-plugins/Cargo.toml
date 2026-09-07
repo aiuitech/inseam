@@ -26,6 +26,11 @@ toml.workspace = true
 tracing.workspace = true
 url.workspace = true
 
+# The platform's own machine id, only where a platform provides one; every
+# other target mints and keeps an identity (`connection_fs::machine`).
+[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows", target_os = "freebsd"))'.dependencies]
+machine-uid.workspace = true
+
 [dev-dependencies]
 inseam-conformance.workspace = true
 axum.workspace = true

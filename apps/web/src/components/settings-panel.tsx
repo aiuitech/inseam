@@ -62,10 +62,10 @@ const GROUPS: Group[] = [
             hint: "one absolute path per line; empty lets any folder be named per run, otherwise indexing is bounded to these",
           },
           {
-            key: "host_id",
-            label: "host id",
+            key: "machine_id",
+            label: "machine identity",
             kind: "text_or_null",
-            hint: "blank: fs-<hostname>",
+            hint: "blank: this machine's own id; the host id is derived from it",
           },
           { key: "skip_hidden", label: "skip hidden files", kind: "boolean" },
           { key: "gitignore", label: "honor .gitignore", kind: "boolean" },

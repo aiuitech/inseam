@@ -11,6 +11,10 @@
 //! properties — never by DDL. The search surface binds lazily to whatever
 //! embedding identity the mounted embedder declares; a changed identity pends
 //! an in-place re-embed instead of refusing to open.
+//!
+//! The catalog is also what the network replicates (`design/address-sync.md`):
+//! every local catalog write logs itself, peers' logs land beside it, and the
+//! roster is materialized from the same stream — all in [`replication`].
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -26,9 +30,19 @@ use crate::address::{
 use crate::fragment::{
     Extent, FragmentId, FragmentKey, Mimetype, NewFragment, Relation, RelationKind,
 };
+use crate::network::{Epoch, NetworkError, NodeId};
 use crate::subtree::{PlanNode, SubtreePlan};
 
-const SCHEMA_VERSION: &str = "7";
+mod replication;
+
+pub use replication::{AppliedReport, LogCount};
+
+// 8: filesystem host ids became machine-identity fingerprints instead of
+// `fs-<hostname>`, so every address an earlier index holds names a host no
+// steward serves; dropping and re-sweeping is the only migration. The same
+// bump adds the replicated log and the roster tables, and `origin` on
+// `sources` (design/address-sync.md).
+const SCHEMA_VERSION: &str = "8";
 /// Ids per `IN (...)` predicate: every id-list query and delete is issued in
 /// chunks of this many, so no caller can build unbounded SQL.
 const ID_LIST_CHUNK: usize = 400;
@@ -75,6 +89,8 @@ pub enum StoreError {
     DimensionMismatch { expected: usize, actual: usize },
     #[error("stored row {0} is corrupt: {1}")]
     Corrupt(i64, String),
+    #[error("record refused before it entered the log: {0}")]
+    RecordOutOfBounds(#[from] NetworkError),
 }
 
 /// Identifier of a cataloged source, local to this node.
@@ -89,6 +105,9 @@ pub struct StoredSource {
     pub address: Address,
     pub envelope: Envelope,
     pub root_fragment: Option<FragmentId>,
+    /// `None` when this node stewards the source; otherwise the node whose
+    /// log the row was learned from (`design/address-sync.md`).
+    pub origin: Option<NodeId>,
 }
 
 /// A fragment as the graph stores it. `source` is `None` only for keyed
@@ -239,6 +258,9 @@ pub struct StoreStats {
     /// Bytes of source content the catalog covers (the `raw_bytes` every
     /// cataloged row carries, summed) — the hosts' size, not the node's.
     pub content_bytes: u64,
+    /// Sources learned from peers' logs rather than stewarded here; counted
+    /// within `sources`.
+    pub remote_sources: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -281,6 +303,9 @@ pub struct CatalogRow {
     pub content_type: Mimetype,
     pub raw_bytes: u64,
     pub modified: Option<Timestamp>,
+    /// The steward's node when the row came from a peer's log; `None` for
+    /// this node's own rows.
+    pub origin: Option<NodeId>,
 }
 
 /// Counts over one host selection of the catalog.
@@ -408,6 +433,9 @@ pub struct IndexStore {
     /// their statements into each other's transactions. Holding this across
     /// each write keeps every write atomic on its own; reads stay free.
     write_lock: tokio::sync::Mutex<()>,
+    /// The epoch the local log runs under, settled by the schema converge
+    /// at open and fixed for the store's life (`design/address-sync.md`).
+    log_epoch: Epoch,
 }
 
 impl IndexStore {
@@ -432,13 +460,14 @@ impl IndexStore {
         // transaction each.
         catalog.query("PRAGMA synchronous = NORMAL", ()).await?;
         catalog.query("PRAGMA foreign_keys = ON", ()).await?;
-        converge_schema(&catalog).await?;
+        let log_epoch = converge_schema(&catalog).await?;
         Ok(Self {
             db,
             database_path,
             catalog,
             search: Mutex::new(SearchState::default()),
             write_lock: tokio::sync::Mutex::new(()),
+            log_epoch,
         })
     }
 
@@ -546,7 +575,8 @@ impl IndexStore {
     }
 
     /// Write a source's envelope into the catalog, clearing its indexed mark
-    /// until `mark_indexed` confirms the fragments are in place.
+    /// until `mark_indexed` confirms the fragments are in place. A changed
+    /// envelope is logged for the network in the same write.
     pub async fn upsert_source(
         &self,
         address: &Address,
@@ -554,7 +584,12 @@ impl IndexStore {
         raw_bytes: u64,
     ) -> Result<SourceId, StoreError> {
         let _write = self.write().await;
-        upsert_source_in(&self.catalog, address, envelope, raw_bytes).await
+        let tx = self.catalog.transaction().await?;
+        let id =
+            replication::upsert_source_in(&tx, self.log_epoch, address, envelope, raw_bytes)
+                .await?;
+        tx.commit().await?;
+        Ok(id)
     }
 
     /// Confirm a source's index run completed. A deep-indexed source records
@@ -581,7 +616,14 @@ impl IndexStore {
         let _write = self.write().await;
         let tx = self.catalog.transaction().await?;
         for entry in entries {
-            let sid = upsert_source_in(&tx, entry.address, entry.envelope, entry.raw_bytes).await?;
+            let sid = replication::upsert_source_in(
+                &tx,
+                self.log_epoch,
+                entry.address,
+                entry.envelope,
+                entry.raw_bytes,
+            )
+            .await?;
             match entry.mark {
                 CatalogMark::Seen => {}
                 CatalogMark::CatalogOnly => mark_indexed_in(&tx, sid, None).await?,
@@ -602,7 +644,14 @@ impl IndexStore {
         assert!(plan.is_well_ordered(), "a subtree plan names only earlier positions");
         let _write = self.write().await;
         let tx = self.catalog.transaction().await?;
-        let source = upsert_source_in(&tx, &plan.address, &plan.envelope, plan.raw_bytes).await?;
+        let source = replication::upsert_source_in(
+            &tx,
+            self.log_epoch,
+            &plan.address,
+            &plan.envelope,
+            plan.raw_bytes,
+        )
+        .await?;
         delete_fragments_of_in(&tx, source).await?;
         let root = insert_fragment_in(&tx, Some(source), &plan.root).await?;
         tx.execute(
@@ -667,8 +716,6 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Every cataloged source of a host, as `(id, locator)` — the sweep's
-    /// deletion reconciliation diffs this against what enumeration saw.
     /// The direct children of a folder source — cataloged sources exactly one
     /// locator segment below `folder` on the same host — in locator order,
     /// each with its summary when one has landed. This is what a folder's
@@ -737,6 +784,10 @@ impl IndexStore {
         Ok(out)
     }
 
+    /// Every source of a host this node stewards, as `(id, locator)` — the
+    /// sweep's deletion reconciliation diffs this against what enumeration
+    /// saw. Rows learned from a remote steward are left out: they are that
+    /// steward's to withdraw, through its own log.
     pub async fn sources_of_host(
         &self,
         host: &HostId,
@@ -744,7 +795,7 @@ impl IndexStore {
         let mut rows = self
             .catalog
             .query(
-                "SELECT id, locator FROM sources WHERE host = ?1",
+                "SELECT id, locator FROM sources WHERE host = ?1 AND origin IS NULL",
                 params![host.as_str()],
             )
             .await?;
@@ -754,59 +805,6 @@ impl IndexStore {
         }
         Ok(out)
     }
-}
-
-/// Write a source's envelope into the catalog, clearing its indexed mark
-/// until it is confirmed again.
-async fn upsert_source_in(
-    conn: &libsql::Connection,
-    address: &Address,
-    envelope: &Envelope,
-    raw_bytes: u64,
-) -> Result<SourceId, StoreError> {
-    let properties = serde_json::to_string(&envelope.properties)
-        .expect("envelope properties serialize to JSON");
-    let id = drain_single_i64(
-        conn.query(
-                "INSERT INTO sources
-                   (host, locator, source_type, content_type, len_unit, len,
-                    created, modified, observed, hint, properties, digest, raw_bytes, indexed)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0)
-                 ON CONFLICT (host, locator) DO UPDATE SET
-                   source_type = excluded.source_type,
-                   content_type = excluded.content_type,
-                   len_unit = excluded.len_unit,
-                   len = excluded.len,
-                   created = excluded.created,
-                   modified = excluded.modified,
-                   observed = excluded.observed,
-                   hint = excluded.hint,
-                   properties = excluded.properties,
-                   digest = excluded.digest,
-                   raw_bytes = excluded.raw_bytes,
-                   indexed = 0
-                 RETURNING id",
-                params![
-                    address.host.as_str(),
-                    address.locator.as_str(),
-                    envelope.source_type.as_str(),
-                    envelope.content_type.to_string(),
-                    envelope.length.unit(),
-                    i64::try_from(envelope.length.value()).unwrap_or(i64::MAX),
-                    envelope.created.map(|t| t.0),
-                    envelope.modified.map(|t| t.0),
-                    envelope.observed.0,
-                    envelope.hint.as_deref(),
-                    properties,
-                    envelope.content_digest.map(|d| d.to_hex()),
-                    i64::try_from(raw_bytes).unwrap_or(i64::MAX),
-                ],
-            )
-            .await?,
-    )
-    .await?
-    .ok_or_else(|| StoreError::Corrupt(0, "source upsert returned no id".into()))?;
-    Ok(SourceId(id))
 }
 
 /// Set a source's `indexed` mark, with its shape records (deep-indexed) or
@@ -964,19 +962,13 @@ impl IndexStore {
     /// Remove a source and everything derived from it in one transaction:
     /// its search rows, its catalog row, and — through the foreign-key
     /// cascades — its fragments and their relations. A crash can never leave
-    /// search rows pointing at fragments the catalog no longer has.
+    /// search rows pointing at fragments the catalog no longer has. A row
+    /// this node stewards leaves a tombstone in the local log so the removal
+    /// reaches every peer's catalog.
     pub async fn delete_source(&self, source: SourceId) -> Result<(), StoreError> {
         let _write = self.write().await;
         let tx = self.catalog.transaction().await?;
-        if search_tables_exist(&tx).await? {
-            tx.execute(
-                "DELETE FROM search_rows WHERE source = ?1",
-                params![source.0],
-            )
-            .await?;
-        }
-        tx.execute("DELETE FROM sources WHERE id = ?1", params![source.0])
-            .await?;
+        replication::delete_source_in(&tx, self.log_epoch, source).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -1351,6 +1343,9 @@ impl IndexStore {
             content_bytes: self
                 .count_of("SELECT COALESCE(SUM(raw_bytes), 0) FROM sources")
                 .await?,
+            remote_sources: self
+                .count_of("SELECT COUNT(*) FROM sources WHERE origin IS NOT NULL")
+                .await?,
         })
     }
 
@@ -1400,7 +1395,7 @@ impl IndexStore {
             .query(
                 &format!(
                     "SELECT id, host, locator, content_type, raw_bytes,
-                            ({DEEP_INDEXED}), modified
+                            ({DEEP_INDEXED}), modified, origin
                      FROM sources
                      WHERE (?1 = '' OR host = ?1) AND ({selected})
                      ORDER BY host, locator
@@ -1863,8 +1858,10 @@ impl std::fmt::Debug for IndexStore {
 /// Converge the SQLite schema — never migrate. A stored schema version other
 /// than the current one drops every table and recreates them: the catalog is
 /// re-derived by the next sweep's enumeration and everything else is derived
-/// data by design (`design/kernel.md`).
-async fn converge_schema(conn: &libsql::Connection) -> Result<(), StoreError> {
+/// data by design (`design/kernel.md`). Returns the epoch the local log runs
+/// under: kept across an ordinary open, minted afresh — and strictly later —
+/// when the rebuild starts the log over (`design/address-sync.md`).
+async fn converge_schema(conn: &libsql::Connection) -> Result<Epoch, StoreError> {
     let stored: Option<String> = match conn
         .query("SELECT value FROM meta WHERE key = 'schema_version'", ())
         .await
@@ -1876,6 +1873,13 @@ async fn converge_schema(conn: &libsql::Connection) -> Result<(), StoreError> {
         // A fresh database has no meta table yet; that is the None case.
         Err(_) => None,
     };
+    // Read before the drop takes the meta table with it: a rebuilt log's
+    // epoch must exceed the one it supersedes even if the clock stepped
+    // back. A version-7 store has none, and a fresh database no table.
+    let superseded = match stored.as_deref() {
+        Some(_) => replication::read_log_epoch_in(conn).await?,
+        None => None,
+    };
     if stored.as_deref().is_some_and(|v| v != SCHEMA_VERSION) {
         tracing::warn!(
             from = stored.as_deref().unwrap_or("?"),
@@ -1883,15 +1887,17 @@ async fn converge_schema(conn: &libsql::Connection) -> Result<(), StoreError> {
             "store schema version changed; dropping derived tables for rebuild"
         );
         conn.execute_batch(SEARCH_SCHEMA_DROP_SQL).await?;
+        conn.execute_batch(replication::SCHEMA_DROP_SQL).await?;
         conn.execute_batch(CATALOG_SCHEMA_DROP_SQL).await?;
     }
     conn.execute_batch(CATALOG_SCHEMA_SQL).await?;
+    conn.execute_batch(replication::SCHEMA_SQL).await?;
     conn.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
         params![SCHEMA_VERSION],
     )
     .await?;
-    Ok(())
+    replication::converge_log_in(conn, superseded).await
 }
 
 /// The catalog tables: the source of truth the search tables derive from.
@@ -1918,8 +1924,13 @@ const CATALOG_SCHEMA_SQL: &str = "CREATE TABLE IF NOT EXISTS meta (
        indexed INTEGER NOT NULL DEFAULT 0,
        shape_stamp TEXT,
        mimetypes TEXT,
+       -- NULL: this node stewards the row. Otherwise the 64-hex id of the
+       -- node whose log it was learned from (design/address-sync.md).
+       origin TEXT,
        UNIQUE (host, locator)
      );
+     -- A purge drops every row of one origin; the sweep lists local rows.
+     CREATE INDEX IF NOT EXISTS sources_by_origin ON sources(origin);
      CREATE TABLE IF NOT EXISTS fragments (
        id INTEGER PRIMARY KEY,
        source INTEGER REFERENCES sources(id) ON DELETE CASCADE,
@@ -2368,7 +2379,7 @@ fn fts_match_expression(q: &str) -> String {
 
 const SOURCE_COLUMNS: &str =
     "id, host, locator, source_type, content_type, len_unit, len, created, modified, observed, \
-     hint, properties, root_fragment, digest";
+     hint, properties, root_fragment, digest, origin";
 
 /// A missing file is a zero-byte footprint: the WAL is absent between
 /// checkpoints, and the database itself only before the first open.
@@ -2387,6 +2398,7 @@ fn row_to_catalog_row(r: &libsql::Row) -> Result<CatalogRow, StoreError> {
     let raw_bytes: i64 = r.get(4)?;
     let indexed: i64 = r.get(5)?;
     let modified: Option<i64> = r.get(6)?;
+    let origin: Option<String> = r.get(7)?;
     Ok(CatalogRow {
         address: Address::new(
             HostId::new(host).map_err(|e| corrupt(id, e))?,
@@ -2396,7 +2408,15 @@ fn row_to_catalog_row(r: &libsql::Row) -> Result<CatalogRow, StoreError> {
         content_type: Mimetype::parse(&content_type).map_err(|e| corrupt(id, e))?,
         raw_bytes: u64::try_from(raw_bytes).unwrap_or(0),
         modified: modified.map(Timestamp),
+        origin: parse_origin(id, origin)?,
     })
+}
+
+/// The `origin` column as a node id; a row with none is this node's own.
+fn parse_origin(id: i64, origin: Option<String>) -> Result<Option<NodeId>, StoreError> {
+    origin
+        .map(|o| o.parse::<NodeId>().map_err(|e| corrupt(id, e)))
+        .transpose()
 }
 
 fn row_to_source(r: &libsql::Row) -> Result<StoredSource, StoreError> {
@@ -2408,6 +2428,7 @@ fn row_to_source(r: &libsql::Row) -> Result<StoredSource, StoreError> {
     let len: i64 = r.get(6)?;
     let properties: String = r.get(11)?;
     let digest: Option<String> = r.get(13)?;
+    let origin: Option<String> = r.get(14)?;
     let address = Address::new(
         HostId::new(host).map_err(|e| corrupt(id, e))?,
         Locator::new(locator).map_err(|e| corrupt(id, e))?,
@@ -2435,6 +2456,7 @@ fn row_to_source(r: &libsql::Row) -> Result<StoredSource, StoreError> {
                 .transpose()?,
         },
         root_fragment: r.get::<Option<i64>>(12)?.map(FragmentId),
+        origin: parse_origin(id, origin)?,
     })
 }
 
@@ -2539,7 +2561,8 @@ fn extent_bound(bound: u64) -> i64 {
 mod tests {
     use super::*;
 
-    fn envelope(modified: i64, bytes: u64) -> Envelope {
+    /// Shared with the replication tests, which exercise the same catalog.
+    pub(super) fn envelope(modified: i64, bytes: u64) -> Envelope {
         Envelope {
             source_type: "file".into(),
             content_type: Mimetype::markdown(),
@@ -2553,7 +2576,7 @@ mod tests {
         }
     }
 
-    fn addr(s: &str) -> Address {
+    pub(super) fn addr(s: &str) -> Address {
         s.parse().expect("test address parses")
     }
 

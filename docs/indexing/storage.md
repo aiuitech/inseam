@@ -11,7 +11,7 @@ One libSQL database (`catalog.sqlite3`) under the node's data dir, owned entirel
 - `embedding_cache` — one vector per (text digest, embedding model, width): the digest-keyed artifact cache the embedding stage reads before calling the endpoint ([embeddings.md](embeddings.md#reuse-across-rebuilds)). It survives a re-embed, which drops only the search tables.
 - `transform_cache` — one output per (input digest, mimetype, position, transform entry, shape fingerprint): the LLM transform outputs the planner reads before applying a transform ([maintenance.md](maintenance.md#what-a-rebuild-costs)).
 - `plugin_state` / `plugin_state_meta` — the kernel's `state` service: per-plugin namespaced key-value, declared with a version; a version mismatch discards the namespace (the wasm host keeps its release-cooldown first-seen clocks here).
-- `meta` — schema version (7) plus the embedding identity the index was built with (model, dimensions, and which fragments carry vectors; [embeddings.md](embeddings.md)).
+- `meta` — schema version (8) plus the embedding identity the index was built with (model, dimensions, and which fragments carry vectors; [embeddings.md](embeddings.md)).
 
 ## Search tables: derived search surface
 

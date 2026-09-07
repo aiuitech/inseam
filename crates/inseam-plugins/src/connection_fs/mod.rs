@@ -4,6 +4,8 @@
 //! Service-specific connections (Gmail, Slack, ...) register the same way
 //! on the same seam, linked or loaded.
 
+pub mod machine;
+
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -17,8 +19,8 @@ use inseam_kernel::address::{Address, ContentLength, Envelope, HostId, Locator, 
 use inseam_kernel::fragment::Mimetype;
 use inseam_kernel::substrate::{parse_config, ApplyCx, Inject, Manifest, Plugin, PluginError};
 use inseam_seams::connection::{
-    register_as_effect, Capabilities, Connection, EnumeratedSource, HostDescription, HostKind,
-    Registration,
+    derive_host_id, register_as_effect, Capabilities, Connection, EnumeratedSource,
+    HostDescription, HostKind, Registration,
 };
 use inseam_seams::text::{slice_lines, slice_lines_from_reader};
 use inseam_seams::SeamError;
@@ -26,8 +28,11 @@ use inseam_seams::SeamError;
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct FsConnectionConfig {
-    /// Override the derived `fs-<hostname>` host id (tests, containers).
-    pub host_id: Option<String>,
+    /// The identity material this host's id is derived from, in place of
+    /// the machine's own id ([`machine`]): a stable tenant name for a
+    /// container, a fixture name for a test. Never the id itself — ids are
+    /// derived, never configured (`design/addressing.md`).
+    pub machine_id: Option<String>,
     /// Skip dot-named files and directories (the root the caller names is
     /// never skipped).
     pub skip_hidden: bool,
@@ -55,7 +60,7 @@ pub struct FsConnectionConfig {
 impl Default for FsConnectionConfig {
     fn default() -> Self {
         Self {
-            host_id: None,
+            machine_id: None,
             skip_hidden: true,
             gitignore: true,
             ignore: Vec::new(),
@@ -105,10 +110,15 @@ impl Plugin for FsConnection {
     }
 
     async fn apply(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
-        let id = match &self.config.host_id {
-            Some(id) => HostId::new(id.clone()).map_err(|e| PluginError(e.to_string()))?,
-            None => FsHost::local_id(),
-        };
+        let keep_dir = cx.data_dir().join(cx.entry_id());
+        let identity = machine::resolve(
+            self.config.machine_id.as_deref(),
+            machine::platform_machine_id(),
+            &keep_dir,
+        )
+        .map_err(|e| PluginError(e.to_string()))?;
+        let id = FsHost::derive_id(identity.principal());
+        tracing::info!(host = %id, source = ?identity.source(), "filesystem host identity");
         let walk = WalkConfig::compile(&self.config).map_err(|e| PluginError(e.to_string()))?;
         let roots = configured_roots(&self.config.roots).map_err(|e| PluginError(e.to_string()))?;
         let host = FsHost::new(id, walk).with_roots(roots);
@@ -356,17 +366,12 @@ impl FsHost {
         .map_err(|e| SeamError::failed(format!("line read task failed: {e}")))?
     }
 
-    /// The host id for this machine: `fs-<hostname>`, sanitized.
-    pub fn local_id() -> HostId {
-        let raw = gethostname::gethostname().to_string_lossy().to_lowercase();
-        let mut cleaned: String = raw
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-            .collect();
-        cleaned.truncate(48);
-        let cleaned = cleaned.trim_matches('-');
-        let id = if cleaned.is_empty() { "local" } else { cleaned };
-        HostId::new(format!("fs-{id}")).expect("sanitized host id is valid")
+    /// The host id for the filesystem of the machine identified by
+    /// `principal`: the kind-separated fingerprint every connection mints
+    /// (`design/addressing.md`), so the id survives a rename of the machine
+    /// and two nodes on it agree without coordinating.
+    pub fn derive_id(principal: &str) -> HostId {
+        derive_host_id(&HostKind::filesystem(), principal)
     }
 
     pub fn id(&self) -> &HostId {
@@ -386,7 +391,7 @@ impl FsHost {
 
     /// The directory a sweep scope names: an absolute path as given, or a
     /// locator (what an `inseam://<host>/<root>` address carries) rooted at
-    /// `/` — so `inseam index inseam://fs-mba/Users/greg/Notes` and
+    /// `/` — so `inseam index inseam://fs-3f9a1b2c4d5e6f70/Users/greg/Notes` and
     /// `inseam index /Users/greg/Notes` are the same scope.
     fn scope_path(root: &str) -> PathBuf {
         if root.starts_with('/') {

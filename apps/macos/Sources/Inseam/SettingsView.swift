@@ -195,8 +195,8 @@ private struct SourceConfigurationView: View {
                 Toggle("Enabled", isOn: $settings.fs.enabled)
                 Divider()
                 VStack(alignment: .leading, spacing: 12) {
-                    LabeledContent("Host ID") {
-                        TextField("Automatic", text: optionalText($settings.fs.config.hostId))
+                    LabeledContent("Machine identity") {
+                        TextField("Automatic", text: optionalText($settings.fs.config.machineId))
                             .frame(width: 260)
                     }
                     Toggle("Skip hidden files and folders", isOn: $settings.fs.config.skipHidden)

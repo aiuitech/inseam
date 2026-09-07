@@ -122,7 +122,9 @@ public struct FeatureToggle: Codable {
 }
 
 public struct FilesystemConfig: Codable {
-    public var hostId: String?
+    /// Identity material the host id is derived from; nil uses the
+    /// machine's own id. Never the id itself.
+    public var machineId: String?
     public var skipHidden: Bool
     public var gitignore: Bool
     public var ignore: [String]
@@ -132,7 +134,7 @@ public struct FilesystemConfig: Codable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        hostId = try container.decodeIfPresent(String.self, forKey: .hostId)
+        machineId = try container.decodeIfPresent(String.self, forKey: .machineId)
         skipHidden = try container.decode(Bool.self, forKey: .skipHidden)
         gitignore = try container.decode(Bool.self, forKey: .gitignore)
         ignore = try container.decode([String].self, forKey: .ignore)

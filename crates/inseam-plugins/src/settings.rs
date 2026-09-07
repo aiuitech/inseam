@@ -8,11 +8,11 @@
 //! document through the `operations` seam and the running node applies it
 //! as a composition edit. One document, one rule, two transports.
 
-use inseam_kernel::address::HostId;
 use inseam_kernel::substrate::{Composition, Entry, parse_config};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use crate::connection_fs::machine::MACHINE_IDENTITY_CHARS_MAX;
 use crate::connection_fs::{configured_roots, FsConnectionConfig, WalkConfig};
 use crate::connection_google::{GoogleConnection, GoogleConnectionConfig};
 use crate::embedder::{EmbedderConfig, Provider};
@@ -233,8 +233,18 @@ fn validate_google(config: &GoogleConnectionConfig) -> Result<(), SettingsError>
 }
 
 fn validate_source(config: &FsConnectionConfig) -> Result<(), SettingsError> {
-    if let Some(host_id) = &config.host_id {
-        HostId::new(host_id).map_err(|error| format!("fs.host_id: {error}"))?;
+    if let Some(machine_id) = &config.machine_id {
+        if machine_id.trim().is_empty() {
+            return Err(SettingsError::from(
+                "fs.machine_id: may not be empty; leave it unset to use this machine's own id"
+                    .to_string(),
+            ));
+        }
+        if machine_id.chars().count() > MACHINE_IDENTITY_CHARS_MAX {
+            return Err(SettingsError::from(format!(
+                "fs.machine_id: longer than {MACHINE_IDENTITY_CHARS_MAX} characters"
+            )));
+        }
     }
     WalkConfig::compile(config).map_err(|error| format!("fs.ignore: {error}"))?;
     configured_roots(&config.roots).map_err(|error| format!("fs.roots: {error}"))?;
