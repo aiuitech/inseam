@@ -9,12 +9,17 @@
 //! `release` is the operator half of `design/releases.md`: `keygen` makes
 //! the signing keypair, `promote <tag>` signs a manifest for a CI-built
 //! draft release and publishes it.
+//!
+//! `plugin` is the publisher half of `design/registry.md`: `keygen` makes
+//! a publisher's keypair and enrolls it, `sign <name>` signs a plugin's
+//! release record and updates the index.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
+mod plugin;
 mod release;
 
 fn main() -> Result<()> {
@@ -23,7 +28,10 @@ fn main() -> Result<()> {
     match args.first().map(String::as_str) {
         Some("docs") => docs(&root),
         Some("release") => release::run(&args[1..]),
-        _ => bail!("usage: cargo xtask docs | cargo xtask release <keygen|promote>"),
+        Some("plugin") => plugin::run(&root, &args[1..]),
+        _ => bail!(
+            "usage: cargo xtask docs | cargo xtask release <keygen|promote> | cargo xtask plugin <keygen|sign>"
+        ),
     }
 }
 
@@ -130,11 +138,14 @@ fn wit_pages(root: &Path) -> Result<()> {
     let (pkg, _) = resolve
         .push_path(&wit_dir)
         .with_context(|| format!("parsing {}", wit_dir.display()))?;
-    let world = resolve.select_world(&[pkg], None)?;
-
+    // Every world in the package gets its page: the transform seam's and
+    // the connection seam's.
+    let worlds: Vec<_> = resolve.packages[pkg].worlds.values().copied().collect();
     let mut files = wit_bindgen_core::Files::default();
-    let opts = wit_bindgen_markdown::Opts::default();
-    opts.build().generate(&resolve, world, &mut files)?;
+    for world in worlds {
+        let opts = wit_bindgen_markdown::Opts::default();
+        opts.build().generate(&resolve, world, &mut files)?;
+    }
 
     for (name, contents) in files.iter() {
         if !name.ends_with(".md") {

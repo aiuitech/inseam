@@ -14,20 +14,24 @@ mechanical.
 The `plugins/` tree of the inseam repository **is** the registry. No proxy,
 no server, no separate infrastructure:
 
-- **`plugins/registry.toml`** — the index: name, version, artifact path,
-  sha256. The committed hash is the integrity anchor.
+- **`plugins/registry.toml`** — the index: name, version, publisher,
+  artifact path, sha256. The committed hash is one integrity anchor.
+- **`plugins/publishers.toml`** — the publisher roster: ids and minisign
+  public keys. The other anchor's trust root.
 - **`plugins/advisories.toml`** — the yank/flag feed, appended by PR.
 - **`plugins/<name>/`** — source, committed artifact, manifest, golden
-  checks, fixtures. One directory per plugin; the layout is documented in
-  `plugins/README.md`.
+  checks, fixtures, and the publisher-signed release record. One directory
+  per plugin; the layout is documented in `plugins/README.md`.
 
-`inseam plugin install <name>` fetches the index and artifact from GitHub
-raw (or any checkout via `--registry <path>` — one code path, so tests
-never need the network), verifies the artifact's sha256 against the index,
-refuses anything in the advisory feed, downloads the golden checks and
-their fixtures, runs the conformance harness locally, and appends the
-composition entry. Mount-time gates (admission, release cooldown,
-capability widening) still apply — install is convenience, not trust.
+`inseam plugin install <name>` fetches the index from GitHub raw (or any
+checkout via `--registry <path>` — one code path, so tests never need the
+network), refuses anything in the advisory feed, verifies the publisher's
+signature over the release record against the roster, requires the record
+and the index to agree, downloads every signed file — artifact, manifest,
+golden checks, fixtures — checking each against its digest, runs the
+conformance harness locally, and appends the composition entry.
+Mount-time gates (admission, release cooldown, capability widening) still
+apply — install is convenience, not trust.
 
 ### Why no proxy
 
@@ -38,10 +42,40 @@ hashes committed in a reviewed tree — the serving channel (GitHub raw, a
 mirror, a local checkout) never needs to be trusted, because the fetched
 bytes are verified against the index and the index itself entered through
 review. If the index's own channel is the concern, the answer is pinning
-install to a commit hash or signing the index in CI — cryptography, not
-middleware.
+install to a commit hash or signing — cryptography, not middleware; the
+per-publisher signature below is that answer, shipped.
 
-### Trust is mechanical: three gates, one harness
+### Per-publisher signing: two anchors that must agree
+
+A release is signed by whoever publishes it, and the signature is over a
+**release record** — `<name>.release.toml`, the sha256 of every file the
+release is made of: the artifact, the manifest, the golden checks, and
+each fixture the checks name. The publisher's minisign public key is
+enrolled in `publishers.toml`, which enters the tree only through review
+and is a trust root under CODEOWNERS like the index. An installing node
+then holds two independent anchors — the index's digest (the reviewed
+tree) and the signed record's (the publisher) — and refuses unless both
+agree with each other and with the bytes. Either catches what the other
+missed: a mis-reviewed index entry cannot install without the publisher's
+signature, and a leaked publisher key cannot install without an index
+entry a human reviewed. Signing every file rather than the artifact alone
+matters because the checks are re-run on-node at admission: a fixture or
+a check swapped under an unsigned sidecar could steer the verdict.
+
+The key ceremony is the release key's (`releases.md`): `cargo xtask
+plugin keygen` makes an encrypted key on the publisher's machine and
+enrolls its public half; `cargo xtask plugin sign <name>` writes the
+record, its signature, and the index entry in one step so the two anchors
+cannot disagree by accident. CI verifies (`inseam plugin verify`) and
+never holds a key. *Rejected:* signing the index in CI (a CI key is a key
+the pipeline holds, and the pipeline is the thing this posture assumes
+compromised); a self-claimed publish timestamp in the record (the
+publisher is exactly who cooldown does not trust about time — the
+registry-signed timestamp remains open below); and per-artifact
+signatures without a record (one key operation binding every file is what
+keeps the checks trustworthy).
+
+### Trust is mechanical: four gates, one harness
 
 Every version enters through a PR, and the merge gate
 (`.github/workflows/plugins.yml`) runs:
@@ -49,16 +83,21 @@ Every version enters through a PR, and the merge gate
 1. **Reproducibility** — the committed `.wasm` must match a `--locked`
    rebuild from the PR's source on a pinned toolchain. The artifact cannot
    diverge from the code a reviewer sees.
-2. **The conformance harness** — `inseam plugin check`: static manifest
+1. **Provenance** — `inseam plugin verify --registry plugins`: every
+   publisher signature holds, every signed file hashes as recorded, and
+   the index agrees with each record — the same function a node runs at
+   install.
+1. **The conformance harness** — `inseam plugin check`: static manifest
    coherence, a real bridge mount, the hostile-input contract battery, and
    the plugin's own golden checks — mandatory, and held to a coverage rule
    ([plugins.md](plugins.md)). The *same harness* runs at authoring
    time (the skill's loop), in CI, and on every installing node at
    admission — passing once means passing everywhere, and a node never
    takes CI's word for it.
-3. **AI security review** — a model reviews every plugin diff for
-   capability overreach, exfiltration through LLM prompts or emitted
-   fragments, prompt-injection staging, and obfuscation; a scheduled sweep
+1. **AI security review** — a model reviews every plugin diff for
+   capability overreach (the `hosts` allow list above all), exfiltration
+   through LLM prompts, fetch requests, or emitted fragments,
+   prompt-injection staging, and obfuscation; a scheduled sweep
    re-audits the whole tree weekly and files issues that become advisory
    entries. This is the WordPress reviewer, made mechanical and continuous.
 
@@ -89,7 +128,8 @@ right:
 - **A green check name proves nothing.** A PR can edit the workflow that
   emits its own required check, so the merge gate that cannot be forged is
   **human CODEOWNERS review** (`.github/CODEOWNERS`), with `.github/**`,
-  `registry.toml`, and `advisories.toml` called out as trust roots.
+  `registry.toml`, `publishers.toml`, and `advisories.toml` called out as
+  trust roots.
   Branch protection must require it; the AI review is explicitly
   advisory, instructed never to approve, and must never be a required
   approver — a malicious plugin could try to prompt-inject its own
@@ -108,22 +148,25 @@ right:
   collaborators' workflow runs (a setting GitHub only exposes on public
   repos; the default covers only first-time contributors).
 - **The node is the last line, and it holds without CI.** Even a fully
-  subverted pipeline changes nothing a node trusts: install verifies
-  sha256 against the human-reviewed index, re-runs the harness locally,
-  and mount-time admission, cooldown, and capability gates run on-node.
-  Corrupting what nodes install requires merging an index change — which
-  is exactly the human-reviewed act the rest of the posture protects.
+  subverted pipeline changes nothing a node trusts: install verifies the
+  publisher's signature against the human-reviewed roster and the sha256
+  against the human-reviewed index, re-runs the harness locally, and
+  mount-time admission, cooldown, and capability gates run on-node.
+  Corrupting what nodes install requires merging an index change *and*
+  holding a publisher's key — the human-reviewed act the rest of the
+  posture protects, plus a secret that never enters the pipeline.
 
 ## Graduation path (not yet)
 
 Signals that v0 has outgrown the repo: third-party submissions arriving
 faster than repo review tolerates, or plugins needing their own release
-cadence. Then: a separate registry repository with the same layout (the
-client already takes `--registry`), per-publisher namespacing, an index
-signed in CI (minisign), and a transparency expectation that the index is
-append-only in git history. The registry-signed publish timestamps that
-cooldown can honor ([plugins.md](plugins.md)) fall out of that signing
-step.
+cadence. Then: a separate registry repository with the same layout (the client
+already takes `--registry`, and per-publisher signing already ships),
+per-publisher namespacing of plugin names, and a transparency expectation
+that the index is append-only in git history. The registry-signed publish
+timestamps that cooldown can honor ([plugins.md](plugins.md)) would come
+from a registry-held key that countersigns records on merge — distinct
+from the publisher's, and still open.
 
 ## Paths not taken
 

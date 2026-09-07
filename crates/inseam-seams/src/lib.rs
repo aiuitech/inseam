@@ -10,15 +10,18 @@
 //! Beside the seams sit the two small conventions every plugin speaking them
 //! must agree on — [`text`] (previews, the `scan` line arithmetic, which
 //! content types are read as text) and [`dates`] (`YYYY-MM-DD` rendering and
-//! parsing of the kernel's epoch timestamps) — and a third, [`listing`],
-//! the text a folder source is composed from and parsed back out of. They
-//! are deliberately not kernel modules: the kernel knows no file format and
-//! renders nothing.
+//! parsing of the kernel's epoch timestamps) — a third, [`listing`], the
+//! text a folder source is composed from and parsed back out of, and a
+//! fourth, [`fetch`], the node's guarded HTTP request (the SSRF posture
+//! every plugin that contacts the network shares). They are deliberately
+//! not kernel modules: the kernel knows no file format, renders nothing,
+//! and opens no socket.
 
 pub mod connection;
 pub mod dates;
 pub mod embedder;
 pub mod error;
+pub mod fetch;
 pub mod finder;
 pub mod listing;
 pub mod llm;

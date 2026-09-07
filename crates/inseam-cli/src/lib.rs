@@ -8,8 +8,9 @@
 //! [`run`]. Command handlers are a thin transport over the `operations`
 //! seam; no command contains node logic.
 
-mod registry;
+pub mod registry;
 mod release;
+pub mod signing;
 
 pub use release::UpdateChannel;
 
@@ -420,21 +421,29 @@ enum PluginCommand {
     /// stub, the WIT, and READMEs. Needs no network and no source tree.
     New {
         name: String,
-        /// Mimetypes the plugin claims (essences or `type/*`).
-        #[arg(long, value_delimiter = ',', required = true)]
+        /// Transform seam: mimetypes the plugin claims (essences or `type/*`).
+        #[arg(long, value_delimiter = ',')]
         claims: Vec<String>,
+        /// `transform` or `connection`.
         #[arg(long, default_value = "transform")]
         seam: String,
+        /// Connection seam: the host kind the plugin stewards (`github`).
+        #[arg(long)]
+        kind: Option<String>,
         /// Parent directory for the new `<name>/` folder.
         #[arg(long, default_value = ".")]
         dir: PathBuf,
     },
-    /// Apply an artifact to one real file through the harness bridge (canned
-    /// LLM, fake capabilities) and print what it emits; --as-check prints the
-    /// observed output as a golden check to paste and tighten.
+    /// Transform: apply an artifact to one real file through the harness
+    /// bridge (canned LLM, fake capabilities) and print what it emits;
+    /// --as-check prints the observed output as a golden check to paste and
+    /// tighten. Connection: configure the artifact (--config key=value) and
+    /// make one live call (--enumerate, --read, --describe) under the
+    /// manifest's host allow list.
     Try {
         artifact: PathBuf,
-        file: PathBuf,
+        /// Transform seam: the file to apply the plugin to.
+        file: Option<PathBuf>,
         /// Override the detected mimetype.
         #[arg(long)]
         mimetype: Option<String>,
@@ -446,6 +455,19 @@ enum PluginCommand {
         not_root: bool,
         #[arg(long)]
         as_check: bool,
+        /// Connection seam: one `key=value` of the plugin's config; repeat
+        /// per key (`authorize=true`, `files_max=100` are typed by shape).
+        #[arg(long = "config")]
+        config: Vec<String>,
+        /// Connection seam: enumerate this scope (`""` for the whole host).
+        #[arg(long)]
+        enumerate: Option<String>,
+        /// Connection seam: read this locator's bytes.
+        #[arg(long)]
+        read: Option<String>,
+        /// Connection seam: describe this locator.
+        #[arg(long)]
+        describe: Option<String>,
     },
     /// Append a local artifact to this node's composition (`wasm:<path>`),
     /// id defaulting to the artifact's stem.
@@ -459,13 +481,22 @@ enum PluginCommand {
     /// plugin's own golden checks (<artifact>.checks.toml). Exits nonzero
     /// on failure — the same verdict install-time admission enforces.
     Check { artifact: PathBuf },
-    /// Fetch a plugin from a registry, verify its sha256 against the
+    /// Fetch a plugin from a registry, verify its publisher's signature and
+    /// every file's sha256 against the signed release record and the
     /// reviewed index, run the conformance harness, and mount it in this
     /// node's composition.
     Install {
         name: String,
         /// Registry root: an https URL or a local directory containing
         /// registry.toml. Defaults to the inseam repository's plugins tree.
+        #[arg(long, env = "INSEAM_REGISTRY")]
+        registry: Option<String>,
+    },
+    /// Prove one plugin, or every plugin the index lists, without
+    /// installing: publisher signature, release record, and hashes — the
+    /// registry's own CI gate. Exits nonzero on any failure.
+    Verify {
+        name: Option<String>,
         #[arg(long, env = "INSEAM_REGISTRY")]
         registry: Option<String>,
     },
@@ -576,19 +607,24 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 let composition_path = composition_path_of(&cli, &data_dir);
                 registry::install(name, registry.as_deref(), &data_dir, &composition_path).await?;
             }
+            PluginCommand::Verify { name, registry } => {
+                registry::verify(name.as_deref(), registry.as_deref()).await?;
+            }
             PluginCommand::New {
                 name,
                 claims,
                 seam,
+                kind,
                 dir,
             } => {
                 let root = authoring::plugin_new(&authoring::Scaffold {
                     name,
                     seam,
                     claims,
+                    kind: kind.as_deref(),
                     dir,
                 })?;
-                authoring::print_scaffold_next_steps(&root, name);
+                authoring::print_scaffold_next_steps(&root, name, seam);
             }
             PluginCommand::Try {
                 artifact,
@@ -597,18 +633,37 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 llm_returns,
                 not_root,
                 as_check,
+                config,
+                enumerate,
+                read,
+                describe,
             } => {
-                authoring::plugin_try(
-                    &authoring::TryRequest {
-                        artifact,
-                        file,
-                        mimetype: mimetype.as_deref(),
-                        llm_returns: llm_returns.as_deref(),
-                        not_root: *not_root,
-                    },
-                    *as_check,
-                )
-                .await?;
+                let call = authoring::try_call(
+                    enumerate.as_deref(),
+                    read.as_deref(),
+                    describe.as_deref(),
+                )?;
+                match (file, call) {
+                    (_, Some(call)) => {
+                        authoring::plugin_try_connection(artifact, config, call).await?;
+                    }
+                    (Some(file), None) => {
+                        authoring::plugin_try(
+                            &authoring::TryRequest {
+                                artifact,
+                                file,
+                                mimetype: mimetype.as_deref(),
+                                llm_returns: llm_returns.as_deref(),
+                                not_root: *not_root,
+                            },
+                            *as_check,
+                        )
+                        .await?;
+                    }
+                    (None, None) => anyhow::bail!(
+                        "pass a file to apply a transform to, or --enumerate/--read/--describe for a connection"
+                    ),
+                }
             }
             PluginCommand::Mount { artifact, id } => {
                 let composition_path = composition_path_of(&cli, &data_dir);

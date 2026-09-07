@@ -1,0 +1,14 @@
+# The signed release record of `github` 0.1.0 (design/registry.md):
+# every file this release is made of and its sha256, signed by the
+# publisher in `github.release.toml.minisig`. Regenerate with
+# `cargo xtask plugin sign github`; never edit by hand.
+name = "github"
+version = "0.1.0"
+publisher = "inseam"
+
+[files]
+"fixtures/contents.json" = "2416e8dd6d474276044487744ec3e3d14a8a4890f271a6a8f0dae360d42fb452"
+"fixtures/tree.json" = "b79bc46fe1e11bbc71f1f68747e6ae80652501d2bdf6b304405e0c90da711b07"
+"github.checks.toml" = "6b58161fd4ad122e8af95f4082e5dffcc1efaf629b35cfacc22d6e154a1f780d"
+"github.manifest.toml" = "184e8e70e9acd64d8c9b1dfa1407a57040eba233696f829c780ba06c5af4823c"
+"github.wasm" = "67c3294434b8ab15327e098095cb8cb1919bf132fb27480bc62485e01123043a"

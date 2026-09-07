@@ -2,7 +2,14 @@
 //! plugins** — WASM components against the WIT projection of the service
 //! seams — into the same plugin model linked plugins use. Tier is
 //! provenance, not shape: to the `transforms` registry, a component-backed
-//! transform is indistinguishable from a linked one.
+//! transform is indistinguishable from a linked one, and to the
+//! `connections` registry a component-backed host is one more steward.
+//!
+//! Two seams cross the boundary today. A **transform** (`transform.rs`) is
+//! instantiated per call, so nothing leaks between sources. A
+//! **connection** (`connection.rs`) is long-running: one instance per
+//! entry, configured once, kept for the life of the fiber, re-instantiated
+//! only after a trap.
 //!
 //! Security posture, in order:
 //! - **Sandboxed by construction**: a component sees only the host imports
@@ -10,15 +17,19 @@
 //!   filesystem, no ambient anything.
 //! - **Capability attenuation at the bridge**: the LLM handle a component
 //!   calls through is the same metered grant linked transforms get; the
-//!   manifest gates whether it exists at all.
+//!   network is a described request the node performs under the manifest's
+//!   host allow list and the node's SSRF guard; an OAuth grant is a bearer
+//!   the node attaches, never a token the component sees.
 //! - **Claims cannot widen silently**: effective claims are the manifest's
-//!   declared claims intersected with what the component exports.
+//!   declared claims intersected with what the component exports; a
+//!   connection's effective capabilities are declared AND exported, and its
+//!   host kind must be the one the manifest names.
 //! - **Release cooldown**: a newly observed artifact soaks before it may
 //!   activate, on a locally unforgeable first-seen clock; capability
-//!   widening between versions requires explicit owner approval regardless
-//!   of soak (`design/plugins.md` — release cooldown).
-//! - **Fuel limits**: every application runs with bounded fuel, so a
-//!   spinning component times out instead of wedging the sweep.
+//!   widening between versions — a new host in the allow list included —
+//!   requires explicit owner approval regardless of soak.
+//! - **Fuel limits**: every call runs with bounded fuel, so a spinning
+//!   component times out instead of wedging the sweep.
 //! - **Install-time admission**: the first time this node sees an artifact,
 //!   the conformance harness ([`check_artifact`]) runs against it — a
 //!   component that traps on hostile input or fails its own golden checks
@@ -26,22 +37,19 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
-use wasmtime::component::{Component, Linker};
-use wasmtime::{Engine, Store};
+use wasmtime::Engine;
+use wasmtime::component::Linker;
 
-use inseam_kernel::fragment::{Mimetype, NewFragment, RelationKind, Sprout};
 use inseam_kernel::substrate::{
-    ApplyCx, Inject, Manifest as PluginManifest, Plugin, PluginError, STATE, SchemeFactory, fnv1a,
-    parse_config,
+    ApplyCx, Plugin, PluginError, STATE, SchemeFactory, fnv1a, parse_config,
 };
-use inseam_seams::llm::LlmLane;
-use inseam_seams::transforms::{
-    GrantedLlm, Registration, Transform, TransformCtx, TransformKind, TransformOutput,
-    register_as_effect,
-};
+use inseam_seams::SeamError;
+use inseam_seams::fetch::{FetchMethod, FetchRequest, FetchResponse, Fetcher, HostPattern};
+use inseam_seams::oauth::{Grant, GrantId, OAUTH};
+use inseam_seams::transforms::GrantedLlm;
 
 wasmtime::component::bindgen!({
     world: "transform-plugin",
@@ -49,17 +57,50 @@ wasmtime::component::bindgen!({
     exports: { default: async },
 });
 
+/// The connection world shares the `host` and `fetch` imports with the
+/// transform world — one implementation of each, one linker.
+mod connection_world {
+    wasmtime::component::bindgen!({
+        world: "connection-plugin",
+        imports: { default: async },
+        exports: { default: async },
+        with: {
+            "inseam:plugin/host": crate::inseam::plugin::host,
+            "inseam:plugin/fetch": crate::inseam::plugin::fetch,
+        },
+    });
+}
+
 mod check;
+mod check_connection;
+mod connection;
+mod transform;
 
 pub use check::{
     CheckItem, CheckReport, Outcome, Phase, TriedFragment, TryInput, TryOutcome, check_artifact,
     fixture_files, try_artifact,
 };
+pub use check_connection::{TriedSource, TryCall, TryConnectionOutcome, try_connection};
+pub use connection::WasmConnectionPlugin;
+pub use transform::WasmTransformPlugin;
 
-/// The transform seam's WIT world, embedded so the CLI can hand it to an
-/// author (`inseam seams --wit`) without a source checkout or a network.
-pub const TRANSFORM_WIT: &str = include_str!("../wit/transform.wit");
+/// The whole WIT package, embedded so the CLI can hand it to an author
+/// (`inseam seams --wit`) without a source checkout or a network. Both
+/// worlds, one package, one file: redirect it to `wit/plugin.wit` and
+/// generate bindings from it.
+pub fn plugin_wit() -> String {
+    const TRANSFORM: &str = include_str!("../wit/transform.wit");
+    const CONNECTION: &str = include_str!("../wit/connection.wit");
+    let package_line = "package inseam:plugin@0.1.0;\n";
+    assert!(TRANSFORM.contains(package_line));
+    assert!(CONNECTION.starts_with(package_line));
+    format!("{TRANSFORM}\n{}", &CONNECTION[package_line.len()..])
+}
 
+/// The seams that accept loaded plugins, as the manifest names them.
+pub const SEAMS: [&str; 2] = ["transform", "connection"];
+
+use inseam::plugin::fetch::{Host as FetchImports, Request, Response};
 use inseam::plugin::host::Host as HostImports;
 
 /// The engine every bridge and harness instance shares the configuration
@@ -71,12 +112,16 @@ fn new_engine() -> Engine {
     Engine::new(&config).expect("static wasmtime config is valid")
 }
 
-/// The real bridge linker: our `host` interface plus core WASI (satisfied
-/// only by the empty context). The harness links the same way, so a
-/// component that mounts under `check` mounts under the kernel.
+/// The real bridge linker: our `host` and `fetch` interfaces plus core WASI
+/// (satisfied only by the empty context). The harness links the same way,
+/// so a component that mounts under `check` mounts under the kernel.
 fn build_linker(engine: &Engine) -> Result<Linker<Invocation>, wasmtime::Error> {
     let mut linker: Linker<Invocation> = Linker::new(engine);
     inseam::plugin::host::add_to_linker::<Invocation, wasmtime::component::HasSelf<Invocation>>(
+        &mut linker,
+        |state| state,
+    )?;
+    inseam::plugin::fetch::add_to_linker::<Invocation, wasmtime::component::HasSelf<Invocation>>(
         &mut linker,
         |state| state,
     )?;
@@ -84,28 +129,134 @@ fn build_linker(engine: &Engine) -> Result<Linker<Invocation>, wasmtime::Error> 
     Ok(linker)
 }
 
-/// One transform application's host-side state: the capabilities this
-/// invocation was granted, and nothing else. The WASI context exists only
-/// because the `wasm32-wasip2` std links core WASI interfaces; it is built
-/// **empty** — no preopened directories, no environment, no args, no
-/// network — so the component's real surface stays the `host` interface.
-struct Invocation {
+// ---------------------------------------------------------------------------
+// Granted capabilities
+// ---------------------------------------------------------------------------
+
+/// The network as a component sees it: a described request the node
+/// performs, or refuses. The real grant is the SSRF-guarded fetcher under
+/// the manifest's allow list; the harness's is canned replies.
+#[async_trait::async_trait]
+pub trait GrantedFetch: Send + Sync {
+    /// Perform `request`; with `authorize`, attach the granted credential
+    /// first (refuse when there is none).
+    async fn fetch(
+        &self,
+        request: FetchRequest,
+        authorize: bool,
+    ) -> Result<FetchResponse, SeamError>;
+}
+
+/// The bridge's real network grant: the guard, and the OAuth grant whose
+/// bearer `authorize` attaches. The token is read here and only here —
+/// it never crosses into the component.
+pub struct GuardedFetch {
+    fetcher: Fetcher,
+    grant: Option<Arc<dyn Grant>>,
+}
+
+impl GuardedFetch {
+    /// The network grant a manifest earns under an entry's dials: the
+    /// guard over the manifest's allow list, plus the grant when there is
+    /// one. `None` when the manifest names no host — then `fetch` refuses.
+    pub(crate) fn for_manifest(
+        manifest: &ArtifactManifest,
+        config: &WasmEntryConfig,
+        grant: Option<Arc<dyn Grant>>,
+    ) -> Result<Option<Arc<dyn GrantedFetch>>, String> {
+        let patterns = manifest.capabilities.host_patterns()?;
+        if patterns.is_empty() {
+            return Ok(None);
+        }
+        let fetcher = Fetcher::for_allowed_hosts_only(
+            patterns,
+            config.fetch_bytes_max.max(1),
+            Duration::from_millis(config.fetch_timeout_ms.max(1)),
+            config.fetch_redirects_max,
+            format!(
+                "inseam/{} plugin/{}",
+                env!("CARGO_PKG_VERSION"),
+                manifest.name
+            ),
+        );
+        Ok(Some(Arc::new(Self { fetcher, grant })))
+    }
+}
+
+#[async_trait::async_trait]
+impl GrantedFetch for GuardedFetch {
+    async fn fetch(
+        &self,
+        request: FetchRequest,
+        authorize: bool,
+    ) -> Result<FetchResponse, SeamError> {
+        let mut extra: Vec<(String, String)> = Vec::new();
+        if authorize {
+            let Some(grant) = &self.grant else {
+                return Err(SeamError::Unavailable(
+                    "authorize requested, but this entry names no oauth grant (set `grant = \"<id>\"` on the entry)"
+                        .to_string(),
+                ));
+            };
+            let token = grant.access_token().await?;
+            extra.push(("Authorization".to_string(), token.authorization_header()));
+        }
+        self.fetcher.send(&request, &extra).await
+    }
+}
+
+/// Everything a component may be handed for one instantiation. Each
+/// field is `None` unless the manifest requested it and the node can
+/// grant it.
+pub(crate) struct Grants {
+    pub llm: Option<Arc<dyn GrantedLlm>>,
+    pub bytes: Option<Vec<u8>>,
+    pub fetch: Option<Arc<dyn GrantedFetch>>,
+    /// Requests one instantiation (a transform) or one seam call (a
+    /// connection) may perform.
+    pub fetch_calls_max: u32,
+}
+
+impl Grants {
+    pub(crate) fn none() -> Self {
+        Self {
+            llm: None,
+            bytes: None,
+            fetch: None,
+            fetch_calls_max: 0,
+        }
+    }
+}
+
+/// One instantiation's host-side state: the capabilities it was granted,
+/// and nothing else. The WASI context exists only because the
+/// `wasm32-wasip2` std links core WASI interfaces; it is built **empty** —
+/// no preopened directories, no environment, no args, no network — so the
+/// component's real surface stays the `host` and `fetch` interfaces.
+pub(crate) struct Invocation {
     plugin: String,
-    llm: Option<Arc<dyn GrantedLlm>>,
-    bytes: Option<Vec<u8>>,
+    grants: Grants,
+    fetch_calls_left: u32,
     wasi: wasmtime_wasi::WasiCtx,
     table: wasmtime_wasi::ResourceTable,
 }
 
 impl Invocation {
-    fn new(plugin: String, llm: Option<Arc<dyn GrantedLlm>>, bytes: Option<Vec<u8>>) -> Self {
+    pub(crate) fn new(plugin: String, grants: Grants) -> Self {
+        let fetch_calls_left = grants.fetch_calls_max;
         Self {
             plugin,
-            llm,
-            bytes,
+            grants,
+            fetch_calls_left,
             wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
             table: wasmtime_wasi::ResourceTable::new(),
         }
+    }
+
+    /// Start a fresh call budget: what a long-running connection does
+    /// before every seam call.
+    pub(crate) fn renew_call_budget(&mut self) {
+        self.fetch_calls_left = self.grants.fetch_calls_max;
     }
 }
 
@@ -124,7 +275,7 @@ impl HostImports for Invocation {
     }
 
     async fn llm_complete(&mut self, system: String, user: String) -> Result<String, String> {
-        match &self.llm {
+        match &self.grants.llm {
             Some(llm) => llm
                 .complete(&system, &user)
                 .await
@@ -139,7 +290,7 @@ impl HostImports for Invocation {
         mimetype: String,
         image: Vec<u8>,
     ) -> Result<String, String> {
-        match &self.llm {
+        match &self.grants.llm {
             Some(llm) => llm
                 .describe_image(&prompt, &mimetype, &image)
                 .await
@@ -149,10 +300,52 @@ impl HostImports for Invocation {
     }
 
     async fn source_bytes(&mut self) -> Result<Vec<u8>, String> {
-        self.bytes
+        self.grants
+            .bytes
             .clone()
             .ok_or_else(|| "source-bytes capability not granted".to_string())
     }
+}
+
+impl FetchImports for Invocation {
+    async fn fetch(&mut self, request: Request) -> Result<Response, String> {
+        let Some(granted) = &self.grants.fetch else {
+            return Err("fetch capability not granted: the manifest names no hosts".to_string());
+        };
+        if self.fetch_calls_left == 0 {
+            return Err(format!(
+                "fetch call budget spent ({} per call)",
+                self.grants.fetch_calls_max
+            ));
+        }
+        self.fetch_calls_left -= 1;
+        let described = describe_request(&request).map_err(|e| e.to_string())?;
+        let answer = granted
+            .fetch(described, request.authorize)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(Response {
+            status: answer.status,
+            headers: answer.headers,
+            body: answer.body,
+        })
+    }
+}
+
+/// Parse a component's request at the boundary: a known method, a URL that
+/// parses, hygienic headers. Refusals name what was wrong.
+fn describe_request(request: &Request) -> Result<FetchRequest, SeamError> {
+    let method = FetchMethod::try_from(request.method.as_str())?;
+    let url = url::Url::parse(&request.url)
+        .map_err(|e| SeamError::Refused(format!("url `{}`: {e}", request.url)))?;
+    let described = FetchRequest {
+        method,
+        url,
+        headers: request.headers.clone(),
+        body: request.body.clone(),
+    };
+    described.validate()?;
+    Ok(described)
 }
 
 // ---------------------------------------------------------------------------
@@ -161,30 +354,56 @@ impl HostImports for Invocation {
 
 /// The manifest that ships beside a `.wasm` artifact
 /// (`<artifact>.manifest.toml`): identity, which seam the component
-/// implements, its declared claims, and the capabilities it requests. This
-/// is what an owner (or a registry scanner) reviews — the bridge enforces
-/// that the component gets nothing beyond it.
+/// implements, what it declares for that seam, and the capabilities it
+/// requests. This is what an owner (or a registry scanner) reviews — the
+/// bridge enforces that the component gets nothing beyond it.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactManifest {
     pub name: String,
     pub version: String,
-    /// The seam the component implements; `transform` is the first.
+    /// The seam the component implements: `transform` or `connection`.
     pub seam: String,
-    /// Declared claims: mimetype essences or `type/*` patterns.
+    /// Transform seam: declared claims, mimetype essences or `type/*`.
     #[serde(default)]
     pub claims: Vec<String>,
     #[serde(default = "default_true")]
     pub roots_only: bool,
-    /// `structural` or `enrichment` (default).
+    /// Transform seam: `structural` or `enrichment` (default).
     #[serde(default)]
     pub kind: Option<String>,
+    /// Connection seam: the host kind the component stewards (`github`).
+    /// Identity, not a hint — the exported kind must equal it.
+    #[serde(default)]
+    pub host_kind: Option<String>,
+    /// Connection seam: what the edge is declared to support; the
+    /// effective capabilities are these AND what the component exports.
+    #[serde(default)]
+    pub connection: ConnectionDeclaration,
     #[serde(default)]
     pub capabilities: Capabilities,
 }
 
 fn default_true() -> bool {
     true
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ConnectionDeclaration {
+    pub enumerates: bool,
+    pub change_feed: bool,
+    pub writable: bool,
+}
+
+impl Default for ConnectionDeclaration {
+    fn default() -> Self {
+        Self {
+            enumerates: true,
+            change_feed: false,
+            writable: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -196,14 +415,34 @@ pub struct Capabilities {
     pub source_bytes: bool,
     /// LLM calls per index run charged to this plugin.
     pub llm_call_budget: usize,
+    /// The hosts `fetch` may contact — exact hosts or `*.domain`
+    /// patterns. Empty means the component can reach nothing; adding one
+    /// later is capability widening.
+    pub hosts: Vec<String>,
+    /// May ask `fetch` to attach the bearer token of the OAuth grant the
+    /// entry names (`grant = "…"` in the entry config).
+    pub grant: bool,
 }
 
 impl Capabilities {
     fn summary(&self) -> String {
+        let mut hosts = self.hosts.clone();
+        hosts.sort();
         format!(
-            "llm={},source_bytes={},budget={}",
-            self.llm, self.source_bytes, self.llm_call_budget
+            "llm={},source_bytes={},budget={},hosts=[{}],grant={}",
+            self.llm,
+            self.source_bytes,
+            self.llm_call_budget,
+            hosts.join(","),
+            self.grant
         )
+    }
+
+    /// The allow list, parsed. Every pattern must be well-formed: a
+    /// manifest naming a host the guard cannot read is a manifest that
+    /// grants something nobody reviewed.
+    pub fn host_patterns(&self) -> Result<Vec<HostPattern>, String> {
+        self.hosts.iter().map(|h| HostPattern::parse(h)).collect()
     }
 }
 
@@ -219,7 +458,7 @@ pub enum AdmissionMode {
 }
 
 /// Per-entry bridge config (the composition side, distinct from the
-/// artifact's own manifest).
+/// artifact's own manifest): the owner's dials.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct WasmEntryConfig {
@@ -231,13 +470,30 @@ pub struct WasmEntryConfig {
     /// Explicit owner override: activate a version regardless of soak time
     /// or capability widening. A consent moment, not a default.
     pub allow_new: bool,
-    /// Fuel per application; a spinning component runs out instead of
-    /// wedging the sweep.
+    /// Fuel per call; a spinning component runs out instead of wedging
+    /// the sweep.
     pub fuel: u64,
     /// Install-time admission: run the conformance harness the first time
     /// this artifact (+ manifest + checks) is seen, and refuse a failing
     /// plugin. Cached by content hash in the node's state.
     pub admission: AdmissionMode,
+    /// The plugin's own configuration, handed to a connection component
+    /// through `configure` as TOML. Its schema is the plugin's.
+    pub plugin: toml::Table,
+    /// Connection seam: the scopes the owner configured this host to
+    /// index, as the component interprets them (`Registration::roots`).
+    pub roots: Vec<String>,
+    /// The OAuth grant whose bearer `fetch` attaches on `authorize`
+    /// (requires the manifest's `grant` capability).
+    pub grant: Option<GrantId>,
+    /// Most bytes one fetched body may be.
+    pub fetch_bytes_max: u64,
+    /// Whole-request timeout for one fetch.
+    pub fetch_timeout_ms: u64,
+    /// Redirect hops one fetch may follow, each re-guarded; at most ten.
+    pub fetch_redirects_max: u32,
+    /// Fetches per transform application, or per connection call.
+    pub fetch_calls_max: u32,
 }
 
 impl Default for WasmEntryConfig {
@@ -247,12 +503,19 @@ impl Default for WasmEntryConfig {
             allow_new: false,
             fuel: 2_000_000_000,
             admission: AdmissionMode::Enforce,
+            plugin: toml::Table::new(),
+            roots: Vec::new(),
+            grant: None,
+            fetch_bytes_max: 16 * 1024 * 1024,
+            fetch_timeout_ms: 10_000,
+            fetch_redirects_max: 3,
+            fetch_calls_max: 64,
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// The scheme factory and plugin
+// The scheme factory
 // ---------------------------------------------------------------------------
 
 /// Resolves `wasm:<path-to-artifact>` plugin refs for the kernel. One shared
@@ -279,7 +542,32 @@ impl SchemeFactory for WasmSchemeFactory {
         artifact_ref: &str,
         config: &toml::Table,
     ) -> Result<Box<dyn Plugin>, PluginError> {
-        let artifact = PathBuf::from(artifact_ref);
+        let mounted = Mounted::load(self.engine.clone(), Path::new(artifact_ref), config)?;
+        match mounted.manifest.seam.as_str() {
+            "transform" => Ok(Box::new(WasmTransformPlugin::new(mounted))),
+            "connection" => Ok(Box::new(WasmConnectionPlugin::new(mounted))),
+            other => Err(PluginError(format!(
+                "unsupported seam `{other}`; this bridge mounts {} components",
+                SEAMS.join(" and ")
+            ))),
+        }
+    }
+}
+
+/// Everything both seams' plugins share: the loaded artifact, its
+/// manifest and entry config, and the gates every mount passes.
+pub(crate) struct Mounted {
+    pub engine: Engine,
+    pub artifact: PathBuf,
+    pub artifact_hash: String,
+    admission_hash: String,
+    pub artifact_bytes: Vec<u8>,
+    pub manifest: ArtifactManifest,
+    pub config: WasmEntryConfig,
+}
+
+impl Mounted {
+    fn load(engine: Engine, artifact: &Path, config: &toml::Table) -> Result<Self, PluginError> {
         let manifest_path = artifact.with_extension("manifest.toml");
         let raw = std::fs::read_to_string(&manifest_path).map_err(|e| {
             PluginError(format!(
@@ -289,13 +577,24 @@ impl SchemeFactory for WasmSchemeFactory {
         })?;
         let manifest: ArtifactManifest = toml::from_str(&raw)
             .map_err(|e| PluginError(format!("{}: {e}", manifest_path.display())))?;
-        if manifest.seam != "transform" {
+        let config: WasmEntryConfig = parse_config(config)?;
+        manifest.capabilities.host_patterns().map_err(|e| {
+            PluginError(format!(
+                "{}: [capabilities] hosts: {e}",
+                manifest_path.display()
+            ))
+        })?;
+        if config.grant.is_some() && !manifest.capabilities.grant {
             return Err(PluginError(format!(
-                "unsupported seam `{}`; this bridge mounts `transform` components",
-                manifest.seam
+                "entry names grant `{}`, but the manifest does not request the `grant` capability",
+                config
+                    .grant
+                    .as_ref()
+                    .map(|g| g.as_str())
+                    .unwrap_or_default()
             )));
         }
-        let bytes = std::fs::read(&artifact).map_err(|e| {
+        let bytes = std::fs::read(artifact).map_err(|e| {
             PluginError(format!("cannot read artifact {}: {e}", artifact.display()))
         })?;
         // Admission is keyed over everything that decides its verdict, so
@@ -306,124 +605,44 @@ impl SchemeFactory for WasmSchemeFactory {
             "{:016x}",
             fnv1a(&[bytes.as_slice(), raw.as_bytes(), checks.as_slice()].concat())
         );
-        Ok(Box::new(WasmTransformPlugin {
-            engine: self.engine.clone(),
-            artifact,
+        Ok(Self {
+            engine,
+            artifact: artifact.to_path_buf(),
             artifact_hash: format!("{:016x}", fnv1a(&bytes)),
             admission_hash,
             artifact_bytes: bytes,
             manifest,
-            config: parse_config(config)?,
-        }))
-    }
-}
-
-pub struct WasmTransformPlugin {
-    engine: Engine,
-    artifact: PathBuf,
-    artifact_hash: String,
-    admission_hash: String,
-    artifact_bytes: Vec<u8>,
-    manifest: ArtifactManifest,
-    config: WasmEntryConfig,
-}
-
-#[async_trait::async_trait]
-impl Plugin for WasmTransformPlugin {
-    fn manifest(&self) -> PluginManifest {
-        static INJECT: &[Inject] = &[
-            Inject::required("transforms"),
-            Inject::required("state"),
-            Inject::optional("llm"),
-        ];
-        PluginManifest {
-            name: "wasm-transform",
-            inject: INJECT,
-            provides: &[],
-        }
+            config,
+        })
     }
 
-    async fn apply(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
+    /// The gates every mount passes, in order: cooldown, then admission.
+    pub(crate) async fn pass_gates(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
         self.enforce_cooldown(cx).await?;
-        self.admit(cx).await?;
-
-        let component = Component::new(&self.engine, &self.artifact_bytes).map_err(|e| {
-            PluginError(format!(
-                "{}: not a valid component: {e}",
-                self.artifact.display()
-            ))
-        })?;
-        let linker = build_linker(&self.engine).map_err(|e| PluginError(format!("linker: {e}")))?;
-
-        // Ask the component for its claims once, at mount: the effective
-        // claim set is declared ∩ exported.
-        let exported = self.call_claims(&component, &linker).await.map_err(|e| {
-            PluginError(format!("{}: claims() failed: {e}", self.artifact.display()))
-        })?;
-        let effective: Vec<String> = self
-            .manifest
-            .claims
-            .iter()
-            .filter(|declared| {
-                exported
-                    .mimetypes
-                    .iter()
-                    .any(|e| patterns_overlap(declared, e))
-            })
-            .cloned()
-            .collect();
-        if effective.is_empty() {
-            return Err(PluginError(format!(
-                "{}: no effective claims (manifest declares {:?}, component exports {:?})",
-                self.manifest.name, self.manifest.claims, exported.mimetypes
-            )));
-        }
-
-        let kind = match self.manifest.kind.as_deref() {
-            Some("structural") => TransformKind::Structural,
-            _ => TransformKind::Enrichment,
-        };
-        let transform = WasmTransform {
-            engine: self.engine.clone(),
-            component,
-            linker: Arc::new(linker),
-            plugin_name: self.manifest.name.clone(),
-            claims: effective,
-            roots_only: self.manifest.roots_only || exported.roots_only,
-            kind,
-            wants_bytes: self.manifest.capabilities.source_bytes,
-            grant_llm: self.manifest.capabilities.llm,
-            fuel: self.config.fuel,
-        };
-
-        register_as_effect(
-            cx,
-            Registration {
-                entry_id: cx.entry_id().to_string(),
-                name: self.manifest.name.clone(),
-                transform: Arc::new(transform),
-                llm_call_budget: if self.manifest.capabilities.llm {
-                    self.manifest.capabilities.llm_call_budget
-                } else {
-                    0
-                },
-                // Loaded transforms ride the interactive lane; a run-level
-                // `--batch` still moves them, since the lane is the
-                // grantor's choice, not the transform's.
-                llm_lane: LlmLane::Interactive,
-                // The artifact version and content hash are in the shape
-                // fingerprint: an upgraded loaded transform dirties exactly
-                // the sources it built (`design/index-maintenance.md`).
-                shape_fingerprint: format!(
-                    "wasm|{}|{}|{}",
-                    self.manifest.name, self.manifest.version, self.artifact_hash
-                ),
-            },
-        )
+        self.admit(cx).await
     }
-}
 
-impl WasmTransformPlugin {
+    /// The network grant this entry gets: the guard under the manifest's
+    /// allow list, plus the entry's OAuth grant when the manifest may use
+    /// one. `None` when the manifest names no host — then `fetch` refuses.
+    pub(crate) fn granted_fetch(
+        &self,
+        cx: &ApplyCx<'_>,
+    ) -> Result<Option<Arc<dyn GrantedFetch>>, PluginError> {
+        let grant = match (&self.config.grant, self.manifest.capabilities.grant) {
+            (Some(id), true) => {
+                let oauth = cx.get(&OAUTH)?;
+                Some(oauth.grant(id).ok_or_else(|| {
+                    PluginError(format!(
+                        "entry names grant `{id}`, which no oauth provider holds (docs/plugins/oauth.md)"
+                    ))
+                })?)
+            }
+            _ => None,
+        };
+        GuardedFetch::for_manifest(&self.manifest, &self.config, grant).map_err(PluginError)
+    }
+
     /// The release-cooldown gate. First-seen timestamps live in the
     /// kernel-provided state service under this bridge's namespace; the
     /// capability summary of the last approved version is stored beside
@@ -546,193 +765,10 @@ impl WasmTransformPlugin {
             ))),
         }
     }
-
-    async fn call_claims(
-        &self,
-        component: &Component,
-        linker: &Linker<Invocation>,
-    ) -> Result<exports::inseam::plugin::transform::ClaimSpec, wasmtime::Error> {
-        let mut store = Store::new(
-            &self.engine,
-            Invocation::new(self.manifest.name.clone(), None, None),
-        );
-        store.set_fuel(self.config.fuel)?;
-        let plugin = TransformPlugin::instantiate_async(&mut store, component, linker).await?;
-        plugin
-            .inseam_plugin_transform()
-            .call_claims(&mut store)
-            .await
-    }
-}
-
-// ---------------------------------------------------------------------------
-// The bridged transform
-// ---------------------------------------------------------------------------
-
-struct WasmTransform {
-    engine: Engine,
-    component: Component,
-    linker: Arc<Linker<Invocation>>,
-    plugin_name: String,
-    claims: Vec<String>,
-    roots_only: bool,
-    kind: TransformKind,
-    wants_bytes: bool,
-    grant_llm: bool,
-    fuel: u64,
-}
-
-#[async_trait::async_trait]
-impl Transform for WasmTransform {
-    fn kind(&self) -> TransformKind {
-        self.kind
-    }
-
-    fn claims(&self, mimetype: &Mimetype, is_root: bool) -> bool {
-        if mimetype.is_inseam_defined() || (self.roots_only && !is_root) {
-            return false;
-        }
-        self.claims
-            .iter()
-            .any(|pattern| pattern_matches(pattern, mimetype.essence()))
-    }
-
-    fn wants_bytes(&self) -> bool {
-        self.wants_bytes
-    }
-
-    /// Transforms are per-call instantiations (`design/plugins.md`): fresh
-    /// component state every application, so a poisoned run cannot leak
-    /// into the next source.
-    async fn apply(&self, ctx: TransformCtx<'_>) -> TransformOutput {
-        let mut store = Store::new(
-            &self.engine,
-            Invocation::new(
-                self.plugin_name.clone(),
-                if self.grant_llm {
-                    ctx.llm.clone()
-                } else {
-                    None
-                },
-                ctx.bytes.map(<[u8]>::to_vec),
-            ),
-        );
-        if store.set_fuel(self.fuel).is_err() {
-            return TransformOutput::default();
-        }
-        let envelope = exports::inseam::plugin::transform::Envelope {
-            source_type: ctx.envelope.source_type.clone(),
-            content_type: ctx.envelope.content_type.to_string(),
-            hint: ctx.envelope.hint.clone(),
-            modified: ctx.envelope.modified.map(|t| t.0),
-            raw_bytes: ctx.envelope.length.value(),
-        };
-        let result = async {
-            let plugin =
-                TransformPlugin::instantiate_async(&mut store, &self.component, &self.linker)
-                    .await?;
-            plugin
-                .inseam_plugin_transform()
-                .call_apply(
-                    &mut store,
-                    &envelope,
-                    &ctx.mimetype.to_string(),
-                    ctx.is_root,
-                    ctx.text,
-                )
-                .await
-        }
-        .await;
-        match result {
-            Ok(Ok(output)) => sprout_forest(&self.plugin_name, output.fragments),
-            Ok(Err(plugin_error)) => {
-                tracing::warn!(
-                    plugin = %self.plugin_name,
-                    "loaded transform reported an error, emitting nothing: {plugin_error}"
-                );
-                TransformOutput::default()
-            }
-            Err(trap) => {
-                tracing::warn!(
-                    plugin = %self.plugin_name,
-                    "loaded transform trapped (fuel exhausted or fault), emitting nothing: {trap}"
-                );
-                TransformOutput::default()
-            }
-        }
-    }
-}
-
-/// Rebuild the sprout tree from the WIT-flattened fragment list. A parent
-/// must index an earlier fragment; violations are logged and treated as
-/// roots rather than trusted.
-fn sprout_forest(
-    plugin: &str,
-    fragments: Vec<exports::inseam::plugin::transform::Fragment>,
-) -> TransformOutput {
-    let mut nodes: Vec<Option<Sprout>> = Vec::with_capacity(fragments.len());
-    let mut children_of: Vec<Vec<usize>> = vec![Vec::new(); fragments.len()];
-    let mut roots: Vec<usize> = Vec::new();
-
-    for (i, f) in fragments.iter().enumerate() {
-        let mimetype = match Mimetype::parse(&f.mimetype) {
-            Ok(m) if !m.is_inseam_defined() => m,
-            Ok(_) => {
-                tracing::warn!(plugin, mimetype = %f.mimetype, "loaded transform may not emit inseam-defined mimetypes; dropped");
-                nodes.push(None);
-                continue;
-            }
-            Err(e) => {
-                tracing::warn!(plugin, "dropping fragment with bad mimetype: {e}");
-                nodes.push(None);
-                continue;
-            }
-        };
-        let relation = RelationKind::new(f.relation.as_str()).unwrap_or_else(|e| {
-            tracing::warn!(plugin, relation = %f.relation, "malformed relation kind ({e}); using contains");
-            RelationKind::contains()
-        });
-        nodes.push(Some(Sprout::leaf(
-            NewFragment {
-                mimetype,
-                text: f.text.clone(),
-                extent: None,
-                content_address: None,
-            },
-            relation,
-        )));
-        match f.parent {
-            Some(p) if (p as usize) < i => children_of[p as usize].push(i),
-            Some(_) => {
-                tracing::warn!(
-                    plugin,
-                    "fragment parent must index an earlier fragment; treating as root"
-                );
-                roots.push(i);
-            }
-            None => roots.push(i),
-        }
-    }
-
-    fn build(i: usize, nodes: &mut [Option<Sprout>], children_of: &[Vec<usize>]) -> Option<Sprout> {
-        let mut sprout = nodes[i].take()?;
-        for &c in &children_of[i] {
-            if let Some(child) = build(c, nodes, children_of) {
-                sprout.children.push(child);
-            }
-        }
-        Some(sprout)
-    }
-
-    let sprouts = roots
-        .into_iter()
-        .filter_map(|i| build(i, &mut nodes, &children_of))
-        .collect();
-    TransformOutput::sprouts(sprouts)
 }
 
 /// `type/*` and exact-essence matching for claim patterns.
-fn pattern_matches(pattern: &str, essence: &str) -> bool {
+pub(crate) fn pattern_matches(pattern: &str, essence: &str) -> bool {
     match pattern.strip_suffix("/*") {
         Some(prefix) => essence
             .split_once('/')
@@ -743,7 +779,7 @@ fn pattern_matches(pattern: &str, essence: &str) -> bool {
 
 /// Whether two claim patterns can match a common essence (used for the
 /// declared ∩ exported intersection).
-fn patterns_overlap(a: &str, b: &str) -> bool {
+pub(crate) fn patterns_overlap(a: &str, b: &str) -> bool {
     match (a.strip_suffix("/*"), b.strip_suffix("/*")) {
         (Some(pa), Some(pb)) => pa.eq_ignore_ascii_case(pb),
         (Some(_), None) => pattern_matches(a, b),
@@ -774,47 +810,61 @@ mod tests {
     }
 
     #[test]
-    fn sprout_forest_rebuilds_trees_and_rejects_bad_parents() {
-        use exports::inseam::plugin::transform::Fragment;
-        let out = sprout_forest(
-            "test",
-            vec![
-                Fragment {
-                    parent: None,
-                    mimetype: "text/plain".into(),
-                    relation: "transcribes".into(),
-                    text: Some("root".into()),
-                },
-                Fragment {
-                    parent: Some(0),
-                    mimetype: "text/plain".into(),
-                    relation: "contains".into(),
-                    text: Some("child".into()),
-                },
-                Fragment {
-                    parent: Some(9),
-                    mimetype: "text/plain".into(),
-                    relation: "contains".into(),
-                    text: Some("orphan".into()),
-                },
-                Fragment {
-                    parent: None,
-                    mimetype: "text/x-inseam-summary".into(),
-                    relation: "derived-from".into(),
-                    text: Some("forged summary".into()),
-                },
-            ],
-        );
-        assert_eq!(
-            out.sprouts.len(),
-            2,
-            "root + orphan-as-root; forged summary dropped"
-        );
-        assert_eq!(out.sprouts[0].relation.as_str(), "transcribes");
-        assert_eq!(out.sprouts[0].children.len(), 1);
-        assert_eq!(
-            out.sprouts[0].children[0].fragment.text.as_deref(),
-            Some("child")
-        );
+    fn the_capability_summary_orders_hosts_so_only_real_widening_gates() {
+        let a = Capabilities {
+            hosts: vec!["b.example".into(), "a.example".into()],
+            ..Capabilities::default()
+        };
+        let b = Capabilities {
+            hosts: vec!["a.example".into(), "b.example".into()],
+            ..Capabilities::default()
+        };
+        assert_eq!(a.summary(), b.summary());
+        let wider = Capabilities {
+            hosts: vec!["a.example".into(), "b.example".into(), "c.example".into()],
+            ..Capabilities::default()
+        };
+        assert_ne!(a.summary(), wider.summary());
+        let granted = Capabilities {
+            grant: true,
+            ..a.clone()
+        };
+        assert_ne!(a.summary(), granted.summary());
+    }
+
+    #[test]
+    fn manifests_refuse_malformed_host_patterns() {
+        let manifest: ArtifactManifest = toml::from_str(
+            "name = \"x\"\nversion = \"0.1.0\"\nseam = \"connection\"\nhost_kind = \"x\"\n[capabilities]\nhosts = [\"*\"]\n",
+        )
+        .expect("parses");
+        assert!(manifest.capabilities.host_patterns().is_err());
+    }
+
+    #[test]
+    fn described_requests_are_parsed_at_the_boundary() {
+        let fine = Request {
+            method: "get".into(),
+            url: "https://api.example.com/x".into(),
+            headers: vec![("Accept".into(), "application/json".into())],
+            body: None,
+            authorize: false,
+        };
+        assert!(describe_request(&fine).is_ok());
+        let bad_method = Request {
+            method: "TRACE".into(),
+            ..fine.clone()
+        };
+        assert!(describe_request(&bad_method).is_err());
+        let bad_url = Request {
+            url: "not a url".into(),
+            ..fine.clone()
+        };
+        assert!(describe_request(&bad_url).is_err());
+        let bad_header = Request {
+            headers: vec![("Host".into(), "evil".into())],
+            ..fine
+        };
+        assert!(describe_request(&bad_header).is_err());
     }
 }

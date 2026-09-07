@@ -4,6 +4,7 @@
 
  - Imports:
     - interface `inseam:plugin/host@0.1.0`
+    - interface `inseam:plugin/fetch@0.1.0`
  - Exports:
     - interface `inseam:plugin/transform@0.1.0`
 
@@ -11,7 +12,7 @@
 
 Host capabilities, granted per the plugin's manifest. Calling a function
 the manifest did not request (or whose budget is spent) returns an error
-string; a well-behaved transform degrades to emitting less.
+string; a well-behaved plugin degrades to doing less.
 
 ----
 
@@ -63,6 +64,66 @@ the plugin claims non-roots too.
 ##### Return values
 
 - <a id="source_bytes.0"></a> result<list<`u8`>, `string`>
+
+## <a id="inseam_plugin_fetch_0_1_0"></a>Import interface inseam:plugin/fetch@0.1.0
+
+The node's guarded HTTP request, performed on the component's behalf
+(requires `[capabilities] hosts = [...]` — the manifest names every host
+the plugin may contact, and the guard refuses everything else, redirect
+hops included). The node owns the network stack: it resolves the host,
+pins the connection, caps the body, and times the request out; the
+component only describes the request.
+
+----
+
+### Types
+
+#### <a id="request"></a>`record request`
+
+One request to perform. `method` is one of GET, HEAD, POST, PUT,
+PATCH, DELETE. Headers the transport owns (`host`,
+`content-length`, ...) are refused. With `authorize`, the node
+attaches the bearer token of the OAuth grant the entry names
+(requires `[capabilities] grant = true`); the token itself never
+crosses this boundary.
+
+##### Record Fields
+
+- <a id="request.method"></a>`method`: `string`
+- <a id="request.url"></a>`url`: `string`
+- <a id="request.headers"></a>`headers`: list<(`string`, `string`)>
+- <a id="request.body"></a>`body`: option<list<`u8`>>
+- <a id="request.authorize"></a>`authorize`: `bool`
+
+#### <a id="response"></a>`record response`
+
+The answer, status included: a non-success status is an answer a
+plugin reads for itself, never an error. The body is under the
+entry's byte cap.
+
+##### Record Fields
+
+- <a id="response.status"></a>`status`: `u16`
+- <a id="response.headers"></a>`headers`: list<(`string`, `string`)>
+- <a id="response.body"></a>`body`: list<`u8`>
+
+----
+
+### Functions
+
+#### <a id="fetch"></a>`fetch: func`
+
+Perform one request. Errors are the guard's refusals (a host the
+manifest does not name, a private address, a spent call budget),
+the network's, and the caps'.
+
+##### Params
+
+- <a id="fetch.request"></a>`request`: [`request`](#request)
+
+##### Return values
+
+- <a id="fetch.0"></a> result<[`response`](#response), `string`>
 
 ## <a id="inseam_plugin_transform_0_1_0"></a>Export interface inseam:plugin/transform@0.1.0
 

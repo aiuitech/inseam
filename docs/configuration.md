@@ -59,6 +59,15 @@ plugin = "wasm:plugins/ocr/ocr.wasm"
 cooldown_days = 7      # wait period before a newly seen plugin version activates
 # allow_new = true     # explicit consent to activate a version still inside its wait period
 # admission = "enforce"  # validation on first sighting: enforce | warn | off
+
+[[entry]]
+id = "github"
+plugin = "wasm:plugins/github/github.wasm"   # a loaded connection: a host, not a transform
+[entry.config]
+roots = [""]           # the scopes this host is indexed by
+# grant = "github"     # the oauth grant whose bearer the plugin's authorized requests carry
+[entry.config.plugin]  # the plugin's own config, handed to it as TOML
+repository = "octo/hello"
 ```
 
 Secrets never live in the composition or the store: the `llm` entry names an environment variable (`api_key_env`), and OAuth grants — the `google` entry's, or generic ones on `oauth` — name `client_id_env` and optional `client_secret_env` variables. The CLI reads those variables from your shell; the macOS app has no shell environment, so its Settings screen stores each value in your login Keychain and exports it into the process environment at node open ([architecture/macos-app.md](architecture/macos-app.md)). The app's visual Configuration tab reads and writes these same entries through native controls; its Advanced tab edits the same `composition.toml` directly. The web console's configuration panel edits the same document on a running node ([architecture/hosted-node.md](architecture/hosted-node.md#settings-from-the-console)): the node validates it, rewrites its `composition.toml`, and restarts only the entries that changed. CLI, app, and console therefore remain one node with one config. The node's key is not configuration either: it is minted on first boot into `<data-dir>/node/secret.key` and lives nowhere else ([network/identity.md](network/identity.md)).

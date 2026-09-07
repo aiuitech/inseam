@@ -26,7 +26,11 @@ use inseam_seams::transforms::{
     GrantedLlm, Registration, TRANSFORMS, TransformCtx, TransformOutput,
 };
 
-pub use golden::{ChecksFile, Emitted, EmittedFragment, EmittedKeyed, Expect, GoldenCheck};
+pub use golden::{
+    CannedFetch, ChecksFile, ConnectionCall, ConnectionCheck, ConnectionChecksFile,
+    ConnectionExpect, ConnectionOutcome, Emitted, EmittedEnvelope, EmittedFragment, EmittedKeyed,
+    EmittedSource, Expect, GoldenCheck,
+};
 
 /// Sweep a distribution's factories: every plugin must build from its
 /// enrolled minimal config and declare a coherent manifest. `config_for`

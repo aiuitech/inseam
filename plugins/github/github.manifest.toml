@@ -1,0 +1,14 @@
+# Reviewed by the node owner; enforced by the bridge (docs/plugins/loaded.md).
+name = "github"
+version = "0.1.0"
+seam = "connection"
+host_kind = "github"
+
+[connection]           # effective = this AND what capabilities() exports
+enumerates = true
+change_feed = false
+writable = false
+
+[capabilities]         # the MINIMUM used; widening later re-gates approval
+hosts = ["api.github.com", "raw.githubusercontent.com"]
+grant = true           # `authorize = true` in the plugin config sends the entry's grant bearer

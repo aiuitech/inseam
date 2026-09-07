@@ -1,16 +1,20 @@
-//! The web host's fetch path: one guarded HTTP request at a time, with the
-//! decisions a node must make before it contacts anything on the open
-//! web — is this host allowed, is its address public, how far may a
-//! redirect carry us, how much may come back — kept as pure helpers here
-//! so they can be tested without a socket.
+//! The node's guarded HTTP fetch: one request at a time, with the decisions
+//! a node must make before it contacts anything on the open web — is this
+//! host allowed, is its address public, how far may a redirect carry us,
+//! how much may come back — kept as pure helpers so they can be tested
+//! without a socket.
 //!
 //! The guard is the node's SSRF posture (`design/connections.md`): a node
-//! indexes personal data and, hosted, sits beside internal services, so a
-//! link in an indexed document must never turn the node into a proxy for
-//! reaching them. Every hop resolves its host first, refuses any address
-//! that is not globally routable unless the owner allow-listed that host
-//! by name, and pins the connection to the addresses it checked, so a DNS
-//! answer cannot change between the check and the connect.
+//! indexes personal data and, hosted, sits beside internal services, so
+//! neither a link in an indexed document nor a loaded plugin describing a
+//! request must ever turn the node into a proxy for reaching them. Every
+//! hop resolves its host first, refuses any address that is not globally
+//! routable unless the owner allow-listed that host by name, and pins the
+//! connection to the addresses it checked, so a DNS answer cannot change
+//! between the check and the connect. It lives beside the seams because two
+//! plugins speak it — the web connection, and the plugin-host bridge that
+//! performs requests on a sandboxed component's behalf — and neither may
+//! own the other's posture.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
@@ -20,24 +24,25 @@ use reqwest::redirect::Policy;
 use url::Url;
 
 use inseam_kernel::fragment::Mimetype;
-use inseam_seams::SeamError;
+
+use crate::SeamError;
 
 /// Most redirect hops any single fetch may follow, whatever the config
 /// asks: past this a chain is a loop or a trap.
-pub(crate) const REDIRECTS_MAX_CEILING: u32 = 10;
+pub const REDIRECTS_MAX_CEILING: u32 = 10;
 
 /// A host the owner allowed by name: an exact host, or a domain and
 /// everything under it (`*.example.com` matches `example.com` and
 /// `img.example.com`). Comparison is case-insensitive and ignores a
 /// trailing dot.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum HostPattern {
+pub enum HostPattern {
     Exact(String),
     Domain(String),
 }
 
 impl HostPattern {
-    pub(crate) fn parse(pattern: &str) -> Result<Self, String> {
+    pub fn parse(pattern: &str) -> Result<Self, String> {
         let pattern = normalize_host(pattern);
         if pattern.is_empty() {
             return Err("an allow_hosts entry may not be empty".to_string());
@@ -54,7 +59,7 @@ impl HostPattern {
         }
     }
 
-    pub(crate) fn matches(&self, host: &str) -> bool {
+    pub fn matches(&self, host: &str) -> bool {
         let host = normalize_host(host);
         match self {
             Self::Exact(exact) => host == *exact,
@@ -79,7 +84,7 @@ fn normalize_host(host: &str) -> String {
 /// loopback, private and carrier-grade NAT, link-local, the unspecified
 /// and broadcast addresses, multicast, documentation, and everything
 /// reserved above 240/4.
-pub(crate) fn is_public_ip(ip: IpAddr) -> bool {
+pub fn is_public_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_public_v4(v4),
         IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
@@ -124,15 +129,129 @@ fn is_public_v6(ip: Ipv6Addr) -> bool {
 /// What one request answered: the content type and length the headers
 /// declared, and the body when one was asked for.
 #[derive(Debug, Clone)]
-pub(crate) struct Fetched {
-    pub(crate) content_type: Mimetype,
-    pub(crate) content_length: Option<u64>,
-    pub(crate) bytes: Vec<u8>,
+pub struct Fetched {
+    pub content_type: Mimetype,
+    pub content_length: Option<u64>,
+    pub bytes: Vec<u8>,
+}
+
+/// The methods a described request may use: the HTTP verbs a host API is
+/// spoken with, and nothing exotic. Parsed once at the boundary so the
+/// transport never sees an arbitrary string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FetchMethod {
+    Get,
+    Head,
+    Post,
+    Put,
+    Patch,
+    Delete,
+}
+
+impl FetchMethod {
+    fn as_reqwest(self) -> Method {
+        match self {
+            Self::Get => Method::GET,
+            Self::Head => Method::HEAD,
+            Self::Post => Method::POST,
+            Self::Put => Method::PUT,
+            Self::Patch => Method::PATCH,
+            Self::Delete => Method::DELETE,
+        }
+    }
+}
+
+impl TryFrom<&str> for FetchMethod {
+    type Error = SeamError;
+
+    fn try_from(method: &str) -> Result<Self, Self::Error> {
+        match method.to_ascii_uppercase().as_str() {
+            "GET" => Ok(Self::Get),
+            "HEAD" => Ok(Self::Head),
+            "POST" => Ok(Self::Post),
+            "PUT" => Ok(Self::Put),
+            "PATCH" => Ok(Self::Patch),
+            "DELETE" => Ok(Self::Delete),
+            other => Err(SeamError::Refused(format!(
+                "method `{other}` is not one of GET, HEAD, POST, PUT, PATCH, DELETE"
+            ))),
+        }
+    }
+}
+
+/// Request headers the transport owns; a caller naming one is describing
+/// the wire, not the request, and is refused.
+const HEADERS_TRANSPORT_OWNED: [&str; 4] =
+    ["host", "content-length", "transfer-encoding", "connection"];
+
+/// Most headers one described request may carry.
+pub const REQUEST_HEADERS_MAX: usize = 32;
+
+/// A request described by a caller — a loaded plugin, in the usual case —
+/// for the node to perform on its behalf: the caller names the method,
+/// URL, headers, and body; the node decides whether the host may be
+/// contacted at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchRequest {
+    pub method: FetchMethod,
+    pub url: Url,
+    pub headers: Vec<(String, String)>,
+    pub body: Option<Vec<u8>>,
+}
+
+impl FetchRequest {
+    /// Header hygiene: bounded, no transport-owned names, no control
+    /// characters in names or values (a `\r\n` in a value is a request
+    /// smuggled inside a request).
+    pub fn validate(&self) -> Result<(), SeamError> {
+        if self.headers.len() > REQUEST_HEADERS_MAX {
+            return Err(SeamError::Refused(format!(
+                "a request may carry at most {REQUEST_HEADERS_MAX} headers; this one has {}",
+                self.headers.len()
+            )));
+        }
+        for (name, value) in &self.headers {
+            let name_ok = !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+            if !name_ok {
+                return Err(SeamError::Refused(format!(
+                    "header name `{name}` is malformed"
+                )));
+            }
+            if HEADERS_TRANSPORT_OWNED.contains(&name.to_ascii_lowercase().as_str()) {
+                return Err(SeamError::Refused(format!(
+                    "header `{name}` belongs to the transport and may not be set by a request"
+                )));
+            }
+            if value.bytes().any(|b| b < 0x20 || b == 0x7f) {
+                return Err(SeamError::Refused(format!(
+                    "header `{name}` carries a control character in its value"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// What a described request answered, status included: a plugin speaking
+/// a host API needs to read a 404 or a 429 for itself, so a non-success
+/// status is an answer here, never an error. The body is under the cap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchResponse {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
 }
 
 /// The guarded fetcher: the config's dials, compiled once.
-pub(crate) struct Fetcher {
+pub struct Fetcher {
     allow_hosts: Vec<HostPattern>,
+    /// Whether an empty allow list means "any public host" (the web
+    /// connection, where mounting the entry is the consent) or "no host at
+    /// all" (a loaded plugin, whose manifest must name every host).
+    empty_allows_public: bool,
     content_bytes_max: u64,
     timeout: Duration,
     redirects_max: u32,
@@ -140,7 +259,9 @@ pub(crate) struct Fetcher {
 }
 
 impl Fetcher {
-    pub(crate) fn new(
+    /// The web connection's posture: an empty allow list admits any host
+    /// whose address is public.
+    pub fn new(
         allow_hosts: Vec<HostPattern>,
         content_bytes_max: u64,
         timeout: Duration,
@@ -149,6 +270,7 @@ impl Fetcher {
     ) -> Self {
         Self {
             allow_hosts,
+            empty_allows_public: true,
             content_bytes_max,
             timeout,
             redirects_max: redirects_max.min(REDIRECTS_MAX_CEILING),
@@ -156,13 +278,41 @@ impl Fetcher {
         }
     }
 
-    pub(crate) fn content_bytes_max(&self) -> u64 {
+    /// A plugin's posture: only the hosts its reviewed manifest names,
+    /// and none when it names none.
+    pub fn for_allowed_hosts_only(
+        allow_hosts: Vec<HostPattern>,
+        content_bytes_max: u64,
+        timeout: Duration,
+        redirects_max: u32,
+        user_agent: String,
+    ) -> Self {
+        Self {
+            empty_allows_public: false,
+            ..Self::new(
+                allow_hosts,
+                content_bytes_max,
+                timeout,
+                redirects_max,
+                user_agent,
+            )
+        }
+    }
+
+    pub fn content_bytes_max(&self) -> u64 {
         self.content_bytes_max
+    }
+
+    /// Whether the guard would let a request reach `host` by name, before
+    /// any resolution — what an authoring surface can answer offline.
+    pub fn allows_host(&self, host: &str) -> bool {
+        let allow_listed = self.allow_hosts.iter().any(|p| p.matches(host));
+        allow_listed || (self.allow_hosts.is_empty() && self.empty_allows_public)
     }
 
     /// The headers of a resource without its body: `HEAD`, falling back to
     /// a `GET` whose body is dropped unread when the server refuses `HEAD`.
-    pub(crate) async fn head(&self, url: &Url) -> Result<Fetched, SeamError> {
+    pub async fn head(&self, url: &Url) -> Result<Fetched, SeamError> {
         match self.request(url, Method::HEAD, BodyWant::None).await {
             Ok(fetched) => Ok(fetched),
             Err(_) => self.request(url, Method::GET, BodyWant::None).await,
@@ -170,16 +320,75 @@ impl Fetcher {
     }
 
     /// The resource, body included, under the byte cap.
-    pub(crate) async fn get(&self, url: &Url) -> Result<Fetched, SeamError> {
+    pub async fn get(&self, url: &Url) -> Result<Fetched, SeamError> {
         self.request(url, Method::GET, BodyWant::Whole).await
     }
 
     /// The resource's body through its first `lines` lines, under the byte
     /// cap; the connection is dropped once they are in hand. The body ends
     /// mid-line when it is cut, so callers slice by line, never by byte.
-    pub(crate) async fn get_lines(&self, url: &Url, lines: u64) -> Result<Fetched, SeamError> {
+    pub async fn get_lines(&self, url: &Url, lines: u64) -> Result<Fetched, SeamError> {
         assert!(lines >= 1);
         self.request(url, Method::GET, BodyWant::Lines(lines)).await
+    }
+
+    /// Perform a described request. Every hop passes the guard; the
+    /// caller's headers and body ride only on hops to the host the caller
+    /// named, so a redirect elsewhere can never carry a credential with it
+    /// (`extra` is the node's own contribution — a granted bearer token —
+    /// and is bound by the same rule). The final status is returned as an
+    /// answer; only the guard, the network, and the caps produce errors.
+    pub async fn send(
+        &self,
+        request: &FetchRequest,
+        extra: &[(String, String)],
+    ) -> Result<FetchResponse, SeamError> {
+        request.validate()?;
+        let origin_host = guard_url(&request.url)?.to_string();
+        let hops_max = self.redirects_max + 1;
+        let mut current = request.url.clone();
+        for hop in 0..hops_max {
+            assert!(hop <= REDIRECTS_MAX_CEILING);
+            let same_host = current
+                .host_str()
+                .is_some_and(|h| h.eq_ignore_ascii_case(&origin_host));
+            let (headers, body): (Vec<(String, String)>, Option<Vec<u8>>) = if same_host {
+                (
+                    request.headers.iter().chain(extra).cloned().collect(),
+                    request.body.clone(),
+                )
+            } else {
+                (Vec::new(), None)
+            };
+            let response = self
+                .send_once(&current, request.method.as_reqwest(), &headers, body)
+                .await?;
+            if response.status().is_redirection() {
+                current = redirect_target(&current, &response)?;
+                continue;
+            }
+            let status = response.status().as_u16();
+            let response_headers: Vec<(String, String)> = response
+                .headers()
+                .iter()
+                .filter_map(|(name, value)| {
+                    value
+                        .to_str()
+                        .ok()
+                        .map(|v| (name.as_str().to_string(), v.to_string()))
+                })
+                .collect();
+            let fetched = self.finish(current, response, BodyWant::Whole).await?;
+            return Ok(FetchResponse {
+                status,
+                headers: response_headers,
+                body: fetched.bytes,
+            });
+        }
+        Err(SeamError::failed(format!(
+            "{:?} {}: more than {} redirects",
+            request.method, request.url, self.redirects_max
+        )))
     }
 
     /// Follow at most `redirects_max` hops, guarding every one, and read
@@ -194,7 +403,7 @@ impl Fetcher {
         let mut current = url.clone();
         for hop in 0..hops_max {
             assert!(hop <= REDIRECTS_MAX_CEILING);
-            let response = self.send_once(&current, method.clone()).await?;
+            let response = self.send_once(&current, method.clone(), &[], None).await?;
             if response.status().is_redirection() {
                 current = redirect_target(&current, &response)?;
                 continue;
@@ -215,12 +424,18 @@ impl Fetcher {
 
     /// One hop: the guard, then the request, with no automatic redirects
     /// so every hop comes back through the guard.
-    async fn send_once(&self, url: &Url, method: Method) -> Result<reqwest::Response, SeamError> {
+    async fn send_once(
+        &self,
+        url: &Url,
+        method: Method,
+        headers: &[(String, String)],
+        body: Option<Vec<u8>>,
+    ) -> Result<reqwest::Response, SeamError> {
         let host = guard_url(url)?;
         let allow_listed = self.allow_hosts.iter().any(|p| p.matches(host));
-        if !self.allow_hosts.is_empty() && !allow_listed {
+        if !self.allows_host(host) {
             return Err(SeamError::Refused(format!(
-                "host `{host}` is not in the web connection's allow_hosts"
+                "host `{host}` is not in the allowed hosts"
             )));
         }
         let port = url.port_or_known_default().unwrap_or(80);
@@ -233,13 +448,11 @@ impl Fetcher {
         }
         // An allow-listed host may be private (a LAN image server, a test
         // fixture); anything else must be globally routable.
-        if !allow_listed {
-            if let Some(private) = addresses.iter().find(|a| !is_public_ip(a.ip())) {
-                return Err(SeamError::Refused(format!(
-                    "host `{host}` resolves to {}, which is not a public address",
-                    private.ip()
-                )));
-            }
+        if !allow_listed && let Some(private) = addresses.iter().find(|a| !is_public_ip(a.ip())) {
+            return Err(SeamError::Refused(format!(
+                "host `{host}` resolves to {}, which is not a public address",
+                private.ip()
+            )));
         }
         let client = reqwest::Client::builder()
             .redirect(Policy::none())
@@ -248,8 +461,14 @@ impl Fetcher {
             .resolve_to_addrs(host, &addresses)
             .build()
             .map_err(|e| SeamError::failed(format!("http client: {e}")))?;
-        client
-            .request(method.clone(), url.clone())
+        let mut builder = client.request(method.clone(), url.clone());
+        for (name, value) in headers {
+            builder = builder.header(name, value);
+        }
+        if let Some(body) = body {
+            builder = builder.body(body);
+        }
+        builder
             .send()
             .await
             .map_err(|e| SeamError::failed(format!("{method} {url}: {e}")))
@@ -358,7 +577,9 @@ enum BodyWant {
 
 /// The body under the cap. With `lines_wanted`, reading stops at the chunk
 /// that completes that many lines — the count of `\n` seen — and the rest
-/// of the body never arrives.
+/// of the body never arrives; what one chunk carried past the wanted line
+/// is cut before the cap is judged, so the head of a huge log is readable
+/// even when the server hands it over in one piece.
 async fn read_body(
     url: &Url,
     mut response: reqwest::Response,
@@ -380,19 +601,39 @@ async fn read_body(
             chunks <= cap.saturating_add(1),
             "each chunk carries at least one byte"
         );
+        let before = bytes.len();
         bytes.extend_from_slice(&chunk);
+        if let Some(wanted) = lines_wanted
+            && let Some(end) = nth_line_end(&bytes[before..], wanted - newlines)
+        {
+            bytes.truncate(before + end);
+            newlines = wanted;
+        } else {
+            newlines +=
+                u64::try_from(chunk.iter().filter(|b| **b == b'\n').count()).unwrap_or(u64::MAX);
+        }
         if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > cap {
             return Err(SeamError::Refused(format!(
                 "{url} exceeds the web connection's {cap} byte cap"
             )));
         }
-        newlines +=
-            u64::try_from(chunk.iter().filter(|b| **b == b'\n').count()).unwrap_or(u64::MAX);
         if lines_wanted.is_some_and(|wanted| newlines >= wanted) {
             break;
         }
     }
     Ok(bytes)
+}
+
+/// The byte length through the `n`th newline of `chunk`, when it holds
+/// that many; `n` is at least one.
+fn nth_line_end(chunk: &[u8], n: u64) -> Option<usize> {
+    assert!(n >= 1);
+    chunk
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| **b == b'\n')
+        .nth(usize::try_from(n - 1).ok()?)
+        .map(|(i, _)| i + 1)
 }
 
 #[cfg(test)]
@@ -474,6 +715,78 @@ mod tests {
         assert!(guard_url(&Url::parse("ftp://example.com/a").expect("url")).is_err());
         assert!(guard_url(&Url::parse("file:///etc/passwd").expect("url")).is_err());
         assert!(guard_url(&Url::parse("data:image/png;base64,AAAA").expect("url")).is_err());
+    }
+
+    #[test]
+    fn described_requests_refuse_transport_headers_and_control_characters() {
+        let url = Url::parse("https://example.com/api").expect("url");
+        let fine = FetchRequest {
+            method: FetchMethod::Get,
+            url: url.clone(),
+            headers: vec![("Accept".into(), "application/json".into())],
+            body: None,
+        };
+        assert!(fine.validate().is_ok());
+        for (name, value) in [
+            ("Host", "evil.example"),
+            ("content-length", "0"),
+            ("X-Injected", "a\r\nX-Other: b"),
+            ("bad name", "x"),
+            ("", "x"),
+        ] {
+            let bad = FetchRequest {
+                headers: vec![(name.into(), value.into())],
+                ..fine.clone()
+            };
+            assert!(bad.validate().is_err(), "{name:?} must be refused");
+        }
+        let many = FetchRequest {
+            headers: (0..=REQUEST_HEADERS_MAX)
+                .map(|i| (format!("X-{i}"), "v".to_string()))
+                .collect(),
+            ..fine
+        };
+        assert!(many.validate().is_err());
+    }
+
+    #[test]
+    fn methods_parse_case_insensitively_and_refuse_the_exotic() {
+        assert_eq!(
+            FetchMethod::try_from("get").expect("parses"),
+            FetchMethod::Get
+        );
+        assert_eq!(
+            FetchMethod::try_from("DELETE").expect("parses"),
+            FetchMethod::Delete
+        );
+        assert!(FetchMethod::try_from("TRACE").is_err());
+        assert!(FetchMethod::try_from("CONNECT").is_err());
+    }
+
+    #[test]
+    fn an_empty_allow_list_means_public_for_the_web_and_nothing_for_a_plugin() {
+        let web = Fetcher::new(Vec::new(), 1, Duration::from_secs(1), 1, "ua".into());
+        assert!(web.allows_host("example.com"));
+        let plugin =
+            Fetcher::for_allowed_hosts_only(Vec::new(), 1, Duration::from_secs(1), 1, "ua".into());
+        assert!(!plugin.allows_host("example.com"));
+        let listed = Fetcher::for_allowed_hosts_only(
+            vec![HostPattern::parse("*.example.com").expect("parses")],
+            1,
+            Duration::from_secs(1),
+            1,
+            "ua".into(),
+        );
+        assert!(listed.allows_host("api.example.com"));
+        assert!(!listed.allows_host("example.org"));
+    }
+
+    #[test]
+    fn line_ends_are_found_by_count_within_a_chunk() {
+        assert_eq!(nth_line_end(b"a\nb\nc", 1), Some(2));
+        assert_eq!(nth_line_end(b"a\nb\nc", 2), Some(4));
+        assert_eq!(nth_line_end(b"a\nb\nc", 3), None);
+        assert_eq!(nth_line_end(b"", 1), None);
     }
 
     #[test]

@@ -35,14 +35,17 @@ inseam catalog                      # every cataloged source, indexed or pending
 inseam repair                       # convert legacy vectors and build a missing DiskANN index
 inseam repair --rebuild             # reconstruct an existing DiskANN index
 inseam plugins                      # every running plugin, its state, and its live effects
-inseam seams [--wit]                # seams that take loaded plugins; --wit prints the contract (plugins/authoring-cli.md)
-inseam capabilities                 # what a manifest may request, and what this node grants right now
+inseam seams [--wit]                # seams that take loaded plugins (transform, connection); --wit prints the WIT package (plugins/authoring-cli.md)
+inseam capabilities                 # what a manifest may request (llm, source_bytes, hosts, grant), and what this node grants right now
 inseam claims <mimetype|path>       # which transforms on this node claim an input
-inseam plugin new <name> --claims … # scaffold a plugin whose first check is red for the right reason
-inseam plugin try <artifact> <file> # apply a plugin to one real file and print what it emits (--as-check)
-inseam plugin check <artifact.wasm> # validate a plugin (plugins/validation.md)
+inseam plugin new <name> --claims … # scaffold a transform whose first check is red for the right reason
+inseam plugin new <name> --seam connection --kind <kind>   # scaffold a connection
+inseam plugin try <artifact> <file> # apply a transform to one real file and print what it emits (--as-check)
+inseam plugin try <artifact> --config k=v --enumerate <root>   # one live call on a connection (--read, --describe)
+inseam plugin check <artifact.wasm> # validate a plugin, either seam (plugins/validation.md)
 inseam plugin mount <artifact.wasm> # append a local artifact to the composition
-inseam plugin install <name>        # fetch from the registry, verify, check, mount (plugins/registry.md)
+inseam plugin install <name>        # fetch from the registry, verify signature + hashes, check, mount (plugins/registry.md)
+inseam plugin verify [name]         # prove a registry's plugins without installing; the registry's CI gate
 inseam config [--resolved]          # the composition; --resolved = exactly what the node boots with
 inseam self update [--check]        # swap this binary for the release the signed manifest names (releases.md)
 ```

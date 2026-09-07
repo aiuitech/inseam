@@ -6,7 +6,14 @@ The plugin-host bridge (`design/plugins.md`): mounts **loaded
 plugins** — WASM components against the WIT projection of the service
 seams — into the same plugin model linked plugins use. Tier is
 provenance, not shape: to the `transforms` registry, a component-backed
-transform is indistinguishable from a linked one.
+transform is indistinguishable from a linked one, and to the
+`connections` registry a component-backed host is one more steward.
+
+Two seams cross the boundary today. A **transform** (`transform.rs`) is
+instantiated per call, so nothing leaks between sources. A
+**connection** (`connection.rs`) is long-running: one instance per
+entry, configured once, kept for the life of the fiber, re-instantiated
+only after a trap.
 
 Security posture, in order:
 - **Sandboxed by construction**: a component sees only the host imports
@@ -14,15 +21,19 @@ Security posture, in order:
   filesystem, no ambient anything.
 - **Capability attenuation at the bridge**: the LLM handle a component
   calls through is the same metered grant linked transforms get; the
-  manifest gates whether it exists at all.
+  network is a described request the node performs under the manifest's
+  host allow list and the node's SSRF guard; an OAuth grant is a bearer
+  the node attaches, never a token the component sees.
 - **Claims cannot widen silently**: effective claims are the manifest's
-  declared claims intersected with what the component exports.
+  declared claims intersected with what the component exports; a
+  connection's effective capabilities are declared AND exported, and its
+  host kind must be the one the manifest names.
 - **Release cooldown**: a newly observed artifact soaks before it may
   activate, on a locally unforgeable first-seen clock; capability
-  widening between versions requires explicit owner approval regardless
-  of soak (`design/plugins.md` — release cooldown).
-- **Fuel limits**: every application runs with bounded fuel, so a
-  spinning component times out instead of wedging the sweep.
+  widening between versions — a new host in the allow list included —
+  requires explicit owner approval regardless of soak.
+- **Fuel limits**: every call runs with bounded fuel, so a spinning
+  component times out instead of wedging the sweep.
 - **Install-time admission**: the first time this node sees an artifact,
   the conformance harness ([`check_artifact`]) runs against it — a
   component that traps on hostile input or fails its own golden checks

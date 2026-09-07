@@ -1,0 +1,108 @@
+package inseam:plugin@0.1.0;
+
+/// The `connections` seam projected across the component boundary
+/// (`design/connections.md`): a loaded connection stewards one host — a
+/// service reached through `fetch` under the manifest's host allow list —
+/// and the bridge registers it into the same registry the filesystem and
+/// Google connections use. Unlike a transform, a connection is
+/// **long-running**: the bridge instantiates the component once at mount,
+/// configures it, and keeps that instance for the life of the entry, so
+/// pagination cursors and small caches survive between calls; every call is
+/// still fuel-metered on its own.
+///
+/// The component never sees a host id: it names its host by kind and
+/// principal, and the bridge derives the id (`derive_host_id`), so two
+/// nodes stewarding one account mint one host and a plugin cannot forge
+/// another host's identity. Locators are the component's own vocabulary;
+/// the bridge turns them into addresses on its host and back.
+interface connection {
+    /// Which host this instance stewards, once configured.
+    record host-description {
+        /// The locator-schema family (`github`, `gmail`): lowercase ASCII,
+        /// digits and `-`, at most 32 characters — the domain separator
+        /// in host-id derivation.
+        kind: string,
+        /// The host's own identity (a repository, an account), never the
+        /// protocol used to reach it. Trimmed and lowercased before
+        /// hashing.
+        principal: string,
+        /// Owner-facing name.
+        display-name: string,
+    }
+
+    /// What the edge supports. The bridge intersects these with the
+    /// manifest's declared capabilities — effective = declared AND
+    /// exported — so a component cannot declare itself writable past what
+    /// its manifest promised.
+    record edge-capabilities {
+        enumerates: bool,
+        change-feed: bool,
+        writable: bool,
+    }
+
+    /// Content length as the envelope records it: lines for text, bytes
+    /// otherwise.
+    variant content-length {
+        lines(u64),
+        bytes(u64),
+    }
+
+    /// A source's envelope, as the connection knows it. The bridge stamps
+    /// `observed` and validates `content-type` (an unparseable one becomes
+    /// `application/octet-stream`).
+    record envelope {
+        /// Plugin-level kind of source (`file`, `issue`); the vocabulary is
+        /// the connection's.
+        source-type: string,
+        content-type: string,
+        length: content-length,
+        /// Unix-epoch seconds.
+        created: option<s64>,
+        modified: option<s64>,
+        /// Title-grade discovery hint.
+        hint: option<string>,
+    }
+
+    /// One enumerated source: its locator on this host, its envelope, and
+    /// the raw byte size the sweep stores for change detection.
+    record source {
+        locator: string,
+        envelope: envelope,
+        raw-bytes: u64,
+    }
+
+    /// Receive the entry's plugin configuration (`[entry.config.plugin]`,
+    /// serialized as TOML) before anything else is asked. A configuration
+    /// the plugin cannot use is an error that fails the mount, named.
+    configure: func(config: string) -> result<_, string>;
+
+    /// The host this instance stewards. Asked once, after `configure`.
+    describe-host: func() -> result<host-description, string>;
+
+    /// What the edge supports. Asked once, after `configure`.
+    capabilities: func() -> edge-capabilities;
+
+    /// Every enumerable source under `root`, a connection-interpreted scope
+    /// (a directory, a label, `""` for the whole host). Bounded by the
+    /// connection: an enumeration is one run's worth, never a stream.
+    enumerate: func(root: string) -> result<list<source>, string>;
+
+    /// The locator prefix `root` covers, for reconciling vanished sources
+    /// (`""` says the whole host; none says the scope has no stable
+    /// prefix and reconciliation is skipped).
+    locator-prefix: func(root: string) -> option<string>;
+
+    /// The raw bytes of one source. Text sources serve their UTF-8; the
+    /// bridge derives text and line reads from these bytes.
+    read-bytes: func(locator: string) -> result<list<u8>, string>;
+
+    /// The envelope of one locator without enumerating. A host that only
+    /// learns envelopes by enumeration returns an error saying so.
+    describe: func(locator: string) -> result<envelope, string>;
+}
+
+world connection-plugin {
+    import host;
+    import fetch;
+    export connection;
+}

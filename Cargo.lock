@@ -2185,10 +2185,13 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "inseam-kernel",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "tokio",
  "toml",
+ "url",
 ]
 
 [[package]]
@@ -2197,16 +2200,19 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "axum",
  "inseam-conformance",
  "inseam-kernel",
  "inseam-plugins",
  "inseam-seams",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "toml",
  "tracing",
+ "url",
  "wasmtime",
  "wasmtime-wasi",
 ]
@@ -6159,6 +6165,7 @@ dependencies = [
  "anyhow",
  "minisign",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "toml",
  "wit-bindgen-core",

@@ -1,16 +1,18 @@
-/// The sandboxed-transform contract: the `transforms` seam projected across
-/// the component boundary (`design/plugins.md` — the native seam is the
-/// source of truth; this WIT world is its projection, kept in lockstep with
-/// `inseam-seams::transforms`).
+/// The loaded-plugin contract (`design/plugins.md`): the service seams
+/// projected across the component boundary — the native seam is the source
+/// of truth; each WIT world here is its projection, kept in lockstep with
+/// `inseam-seams`. This file holds what every seam shares (the `host` and
+/// `fetch` capability imports) and the `transforms` seam; `connection.wit`
+/// holds the `connections` seam.
 ///
 /// Capabilities are imports: a component only ever receives what the bridge
 /// hands it, attenuated per its manifest. There are no sockets, no
-/// filesystem, no clocks — a transform describes work; the host performs it.
+/// filesystem, no clocks — a plugin describes work; the host performs it.
 package inseam:plugin@0.1.0;
 
 /// Host capabilities, granted per the plugin's manifest. Calling a function
 /// the manifest did not request (or whose budget is spent) returns an error
-/// string; a well-behaved transform degrades to emitting less.
+/// string; a well-behaved plugin degrades to doing less.
 interface host {
     /// Diagnostic logging into the node's tracing output.
     log: func(message: string);
@@ -80,7 +82,44 @@ interface transform {
     apply: func(env: envelope, mimetype: string, is-root: bool, text: option<string>) -> result<output, string>;
 }
 
+/// The node's guarded HTTP request, performed on the component's behalf
+/// (requires `[capabilities] hosts = [...]` — the manifest names every host
+/// the plugin may contact, and the guard refuses everything else, redirect
+/// hops included). The node owns the network stack: it resolves the host,
+/// pins the connection, caps the body, and times the request out; the
+/// component only describes the request.
+interface fetch {
+    /// One request to perform. `method` is one of GET, HEAD, POST, PUT,
+    /// PATCH, DELETE. Headers the transport owns (`host`,
+    /// `content-length`, ...) are refused. With `authorize`, the node
+    /// attaches the bearer token of the OAuth grant the entry names
+    /// (requires `[capabilities] grant = true`); the token itself never
+    /// crosses this boundary.
+    record request {
+        method: string,
+        url: string,
+        headers: list<tuple<string, string>>,
+        body: option<list<u8>>,
+        authorize: bool,
+    }
+
+    /// The answer, status included: a non-success status is an answer a
+    /// plugin reads for itself, never an error. The body is under the
+    /// entry's byte cap.
+    record response {
+        status: u16,
+        headers: list<tuple<string, string>>,
+        body: list<u8>,
+    }
+
+    /// Perform one request. Errors are the guard's refusals (a host the
+    /// manifest does not name, a private address, a spent call budget),
+    /// the network's, and the caps'.
+    fetch: func(request: request) -> result<response, string>;
+}
+
 world transform-plugin {
     import host;
+    import fetch;
     export transform;
 }
