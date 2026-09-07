@@ -65,11 +65,19 @@ python3 benchmarks/beir.py run --summary-target-chars 12000 --llm-call-budget 1 
 
 The model-summary shape — one query-shaped summary and the model's keywords per abstract — is `--summary-target-chars 400 --llm-call-budget 3633` on the default batch lane. `--embedding-dimensions`, `--finder-seeds` (`full-text` or `vector` alone, a diagnostic), `--corpus markdown` (the title as a `#` heading), and `--structural markdown` isolate where a score comes from. Every dial is recorded in the manifest's `options` and `models`, so runs of different shapes are never compared as one.
 
-EnterpriseRAG-Bench, full:
+EnterpriseRAG-Bench, full, retrieval only (the shape its corpus rewarded: no embedder, each document one full-text row of its whole text, no model calls — about five minutes to index and nothing spent):
 
 ```sh
-python3 benchmarks/enterprise_rag_bench.py run
+python3 benchmarks/enterprise_rag_bench.py run --skip-agent
 ```
+
+The same without `--skip-agent` adds the agent answers and the LLM judge: hours, and it needs a live answer model (see the model assignment below). To compare an indexing change before paying for a full index, run it on a slice first, retrieval only, and compare only with other slices of the same size:
+
+```sh
+python3 benchmarks/enterprise_rag_bench.py run --skip-agent --corpus-slice 25000 --structural markdown --vectors summaries --summary-target-chars 600
+```
+
+`--corpus-slice N`, `--structural`, `--vectors` (`summaries`, `all`, or `none`), `--summary-target-chars`, `--keywords-max`, `--finder-seeds`, and `--finder-max-vector-distance` are recorded in the manifest's `options` and `models` (`models.corpus` reads `slice-<N>` or `full`). The shapes already measured and what each cost are tabulated in `design/benchmarking.md`; read it before proposing a new one.
 
 A harness check that still builds a valid full-corpus index but answers one question:
 
@@ -88,16 +96,18 @@ python3 benchmarks/beir.py resume <run-id>
 python3 benchmarks/enterprise_rag_bench.py resume <run-id>
 ```
 
+A run whose process was killed outright still reads `status: running`; confirm no process owns it (`pgrep -f <run-id>`), then resume with `--after-kill`, which closes the dead attempt as interrupted with no duration.
+
 Resume must target the same run. Do not copy its index into a new run or change its original options. The command verifies the stored pins and composition, restores the durable query checkpoint, and records a new attempt with separate timings, Inseam identity, errors, and logs. If the index completion record is absent, it reruns indexing in the same node. The reconciling sweep skips every source already marked indexed and repeats sources that had not reached that durable mark.
 
 The model assignment is an invariant shared by both benchmarks:
 
 - `google/gemini-2.5-flash-lite` for summaries on OpenRouter's batch lane (`summarizer.llm_lane = "batch"`), with reasoning disabled and its reasoning trace excluded.
 - Entity extraction disabled.
-- `openai/text-embedding-3-small` at 384 dimensions for embeddings. EnterpriseRAG-Bench embeds summaries only (`vectors = "summaries"`); BEIR embeds every fragment (`vectors = "all"`), recorded as `models.embedding_vectors`.
-- EnterpriseRAG-Bench only: `stealth/ox-alpha` for agent answers and evaluation.
+- `openai/text-embedding-3-small` at 384 dimensions for embeddings when an embedder is mounted. BEIR embeds every fragment (`vectors = "all"`); EnterpriseRAG-Bench mounts no embedder by default (`--vectors none`, recorded as `models.embedding_vectors`), because on its corpus vector seeds lowered the fused ranking below full-text alone.
+- EnterpriseRAG-Bench only: `stealth/ox-alpha` for agent answers and evaluation. That model left OpenRouter in September 2026; an end-to-end run needs the user to name a replacement before it can answer a question.
 
-The default `--llm-call-budget 500` applies to summaries. State the cost implication before raising it. A value of 500,000 can cause one transform call per source during indexing. For BEIR, `--llm-call-budget 3633` (the corpus size) asks the model for every summary and is the run that measures the full indexing process; it costs well under a dollar on the batch lane.
+BEIR's default `--llm-call-budget 500` applies to summaries; EnterpriseRAG-Bench's default is 0. State the cost implication before raising it. A value of 500,000 can cause one transform call per source during indexing. For BEIR, `--llm-call-budget 3633` (the corpus size) asks the model for every summary and is the run that measures the full indexing process; it costs well under a dollar on the batch lane.
 
 `indexing.summary.embeddings_reused` and `transforms_reused` count what the node answered from its digest-keyed caches. A fresh run reports zero for both; a resumed attempt reports how much of the interrupted work was kept.
 
