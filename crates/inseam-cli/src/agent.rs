@@ -300,9 +300,11 @@ mod tests {
                     created: None,
                     modified: None,
                     title: None,
+                    content_digest: None,
                 },
                 hints: Vec::new(),
                 replicas: Vec::new(),
+                via: None,
             })
             .collect();
         let response = query_for_model(QueryResponse {
