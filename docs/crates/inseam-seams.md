@@ -11,12 +11,13 @@ its well-known key, and the capability facts consumers may branch on.
 The kernel-provided `store` and `state` services are defined in
 `inseam-kernel` itself; everything else is here.
 
-Beside the seams sit the two small conventions every plugin speaking them
+Beside the seams sit the small conventions every plugin speaking them
 must agree on — [`text`] (previews, the `scan` line arithmetic, which
-content types are read as text) and [`dates`] (`YYYY-MM-DD` rendering and
-parsing of the kernel's epoch timestamps) — a third, [`listing`], the
-text a folder source is composed from and parsed back out of, and a
-fourth, [`fetch`], the node's guarded HTTP request (the SSRF posture
-every plugin that contacts the network shares). They are deliberately
-not kernel modules: the kernel knows no file format, renders nothing,
-and opens no socket.
+content types are read as text), [`dates`] (`YYYY-MM-DD` rendering and
+parsing of the kernel's epoch timestamps), [`listing`] (the text a
+folder source is composed from and parsed back out of), [`extract`]
+(the model-free selection of a text's telling sentences and terms), and
+[`fetch`] (the node's guarded HTTP request, the SSRF posture every plugin
+that contacts the network shares). They are deliberately not kernel
+modules: the kernel knows no file format, renders nothing, and opens no
+socket.
