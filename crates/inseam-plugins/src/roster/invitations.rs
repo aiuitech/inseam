@@ -5,14 +5,14 @@
 //! roster should carry or sync. The ledger is pure: it takes the clock as
 //! an argument, so its behavior is checkable without one.
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use rand::RngCore as _;
 
 use inseam_kernel::address::Timestamp;
-use inseam_seams::roster::{INVITATIONS_OPEN_MAX, INVITATION_TTL_SECS};
-use inseam_seams::transport::{InvitationToken, INVITATION_TOKEN_CHARS_MAX};
 use inseam_seams::SeamError;
+use inseam_seams::roster::{INVITATION_TTL_SECS, INVITATIONS_OPEN_MAX};
+use inseam_seams::transport::{INVITATION_TOKEN_CHARS_MAX, InvitationToken};
 
 /// Random bytes behind one token: 256 bits, so a guess is hopeless within
 /// the day a token stays open.
@@ -47,7 +47,10 @@ impl OpenInvitations {
     /// Mint a fresh token open until `now + INVITATION_TTL_SECS`. Expired
     /// invitations are pruned first, so a ledger full of stale ones never
     /// blocks a new invitation; a ledger full of live ones refuses.
-    pub(crate) fn mint(&mut self, now: Timestamp) -> Result<(InvitationToken, Timestamp), SeamError> {
+    pub(crate) fn mint(
+        &mut self,
+        now: Timestamp,
+    ) -> Result<(InvitationToken, Timestamp), SeamError> {
         self.prune(now);
         if self.open.len() >= INVITATIONS_OPEN_MAX {
             return Err(SeamError::Refused(format!(
@@ -115,7 +118,10 @@ mod tests {
         assert_eq!(expires, Timestamp(NOW.0 + INVITATION_TTL_SECS));
         assert_eq!(ledger.open_count(), 1);
         assert!(ledger.redeem(&token, NOW));
-        assert!(!ledger.redeem(&token, NOW), "a token is spent by its first redeem");
+        assert!(
+            !ledger.redeem(&token, NOW),
+            "a token is spent by its first redeem"
+        );
         assert_eq!(ledger.open_count(), 0);
     }
 
@@ -126,7 +132,11 @@ mod tests {
         let (b, _) = ledger.mint(NOW).expect("mints");
         assert_ne!(a, b);
         assert_eq!(a.secret().len(), TOKEN_CHARS);
-        assert!(a.secret().chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+        assert!(
+            a.secret()
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        );
     }
 
     #[test]

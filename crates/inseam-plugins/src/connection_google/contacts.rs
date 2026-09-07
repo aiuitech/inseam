@@ -8,12 +8,12 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use inseam_kernel::address::{Address, HostId, Locator, Timestamp};
+use inseam_seams::SeamError;
 use inseam_seams::connection::{Connection, EnumeratedSource};
 use inseam_seams::dates::parse_rfc3339_epoch;
 use inseam_seams::text::slice_lines;
-use inseam_seams::SeamError;
 
-use super::api::{opt_str_field, rendered, str_field, GoogleApi};
+use super::api::{GoogleApi, opt_str_field, rendered, str_field};
 
 /// Contacts per page — the People API's maximum.
 const PAGE_SIZE: &str = "1000";
@@ -46,14 +46,20 @@ impl ContactsConnection {
             )));
         }
         let id = address.locator.as_str();
-        let valid = id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        let valid = id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
         if !valid {
             return Err(SeamError::Refused(format!("`{id}` is not a contact id")));
         }
         Ok(id)
     }
 
-    fn source_of(&self, person: &serde_json::Value, observed: Timestamp) -> Option<EnumeratedSource> {
+    fn source_of(
+        &self,
+        person: &serde_json::Value,
+        observed: Timestamp,
+    ) -> Option<EnumeratedSource> {
         let resource = opt_str_field(person, "resourceName")?;
         let id = resource.strip_prefix(RESOURCE_PREFIX).unwrap_or(&resource);
         let locator = Locator::new(id).ok()?;
@@ -90,7 +96,11 @@ fn display_name(person: &serde_json::Value) -> Option<String> {
     values_of(person, "names", "displayName")
         .into_iter()
         .next()
-        .or_else(|| values_of(person, "emailAddresses", "value").into_iter().next())
+        .or_else(|| {
+            values_of(person, "emailAddresses", "value")
+                .into_iter()
+                .next()
+        })
 }
 
 /// The `key` field of every entry under `list`, in order, non-empty.
@@ -98,7 +108,12 @@ fn values_of(person: &serde_json::Value, list: &str, key: &str) -> Vec<String> {
     person
         .get(list)
         .and_then(|l| l.as_array())
-        .map(|entries| entries.iter().filter_map(|e| opt_str_field(e, key)).collect())
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|e| opt_str_field(e, key))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -200,7 +215,12 @@ impl Connection for ContactsConnection {
         Ok(render_person(&person))
     }
 
-    async fn read_lines(&self, address: &Address, start: u64, end: u64) -> Result<String, SeamError> {
+    async fn read_lines(
+        &self,
+        address: &Address,
+        start: u64,
+        end: u64,
+    ) -> Result<String, SeamError> {
         let text = self.read_text(address).await?;
         slice_lines(&text, start, end)
     }
@@ -235,7 +255,9 @@ mod tests {
         axum::Router::new()
             .route(
                 "/v1/people/me/connections",
-                get(|| async { axum::Json(serde_json::json!({"connections": [person("c1"), person("c2")]})) }),
+                get(|| async {
+                    axum::Json(serde_json::json!({"connections": [person("c1"), person("c2")]}))
+                }),
             )
             .route(
                 "/v1/people/{id}",
@@ -255,9 +277,16 @@ mod tests {
         let ids: Vec<&str> = sources.iter().map(|s| s.address.locator.as_str()).collect();
         assert_eq!(ids, vec!["c1", "c2"]);
         assert_eq!(sources[0].envelope.hint.as_deref(), Some("Ada Lovelace"));
-        assert_eq!(sources[0].envelope.modified, Some(Timestamp(1_735_787_045)), "the latest source wins");
+        assert_eq!(
+            sources[0].envelope.modified,
+            Some(Timestamp(1_735_787_045)),
+            "the latest source wins"
+        );
         assert_eq!(sources[0].envelope.source_type, "contact");
-        assert!(matches!(contacts.enumerate("starred").await, Err(SeamError::Refused(_))));
+        assert!(matches!(
+            contacts.enumerate("starred").await,
+            Err(SeamError::Refused(_))
+        ));
         assert_eq!(contacts.locator_prefix(""), Some(String::new()));
     }
 

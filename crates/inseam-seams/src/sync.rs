@@ -16,8 +16,8 @@ use inseam_kernel::address::Timestamp;
 use inseam_kernel::network::{NodeId, VersionVector};
 use inseam_kernel::substrate::ServiceKey;
 
-use crate::transport::PeerAddress;
 use crate::SeamError;
+use crate::transport::PeerAddress;
 
 pub const SYNC: ServiceKey<dyn Synchronizer> = ServiceKey::new("sync");
 

@@ -15,11 +15,11 @@ use inseam_kernel::address::{Address, Envelope, HostId};
 use inseam_kernel::network::NodeId;
 use serde::{Deserialize, Serialize};
 
+use inseam_seams::SeamError;
 use inseam_seams::operations::{ExpandResponse, QueryResult, ScanResponse};
 use inseam_seams::routing::HOPS_MAX;
 use inseam_seams::text::check_line_range;
 use inseam_seams::transport::ProtocolName;
-use inseam_seams::SeamError;
 
 use crate::operations::ladder::QUERY_LIMIT_MAX;
 
@@ -28,7 +28,10 @@ pub const ROUTE_PROTOCOL: &str = "inseam/route/1";
 /// Most nodes a request's `visited` list may name: the requester plus one
 /// per hop it may still take.
 pub const VISITED_MAX: usize = HOPS_MAX as usize + 1;
-const _: () = assert!(VISITED_MAX >= 2, "a visited list holds the requester and at least one relay");
+const _: () = assert!(
+    VISITED_MAX >= 2,
+    "a visited list holds the requester and at least one relay"
+);
 /// Most bytes a routed request may occupy: an address, a query, and the
 /// visited list are small; anything larger is not a request.
 pub const REQUEST_BYTES_MAX: usize = 64 * 1024;
@@ -77,7 +80,10 @@ impl RouteRequest {
         let mut seen: Vec<NodeId> = Vec::with_capacity(self.visited.len());
         for node in &self.visited {
             if seen.contains(node) {
-                return Err(malformed(format!("visited names node {} twice", node.short())));
+                return Err(malformed(format!(
+                    "visited names node {} twice",
+                    node.short()
+                )));
             }
             seen.push(*node);
         }
@@ -90,16 +96,35 @@ impl RouteRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum RouteBody {
-    ReadText { address: Address },
-    ReadLines { address: Address, start: u64, end: u64 },
-    ReadBytes { address: Address },
-    Describe { address: Address },
-    Expand { address: Address },
-    Scan { address: Address, start: u64, end: u64 },
+    ReadText {
+        address: Address,
+    },
+    ReadLines {
+        address: Address,
+        start: u64,
+        end: u64,
+    },
+    ReadBytes {
+        address: Address,
+    },
+    Describe {
+        address: Address,
+    },
+    Expand {
+        address: Address,
+    },
+    Scan {
+        address: Address,
+        start: u64,
+        end: u64,
+    },
     /// Answered from the serving node's index and never forwarded: a
     /// fan-out reaches every target directly, and a relayed query would
     /// count one index twice.
-    Query { text: String, limit: u32 },
+    Query {
+        text: String,
+        limit: u32,
+    },
 }
 
 impl RouteBody {
@@ -173,7 +198,10 @@ pub enum RouteResponse {
     /// The steward's typed refusal, or a relay's failure to reach one.
     /// `kind` is the `SeamError` variant in snake case, so a requester
     /// can rebuild the variant it needs and relay the rest verbatim.
-    Error { kind: String, message: String },
+    Error {
+        kind: String,
+        message: String,
+    },
 }
 
 /// One reply as it crosses the wire: JSON, or the raw bytes of a fetch.
@@ -217,7 +245,8 @@ pub fn decode_request(bytes: &[u8]) -> Result<RouteRequest, SeamError> {
             bytes.len()
         )));
     }
-    let request: RouteRequest = serde_json::from_slice(bytes).map_err(|error| malformed(error.to_string()))?;
+    let request: RouteRequest =
+        serde_json::from_slice(bytes).map_err(|error| malformed(error.to_string()))?;
     request.check_bounds()?;
     Ok(request)
 }
@@ -225,8 +254,9 @@ pub fn decode_request(bytes: &[u8]) -> Result<RouteRequest, SeamError> {
 pub fn encode_response(reply: &RouteReply) -> Result<Vec<u8>, SeamError> {
     match reply {
         RouteReply::Json(response) => {
-            let json = serde_json::to_vec(response)
-                .map_err(|error| SeamError::failed(format!("encoding a route response: {error}")))?;
+            let json = serde_json::to_vec(response).map_err(|error| {
+                SeamError::failed(format!("encoding a route response: {error}"))
+            })?;
             let mut framed = Vec::with_capacity(1 + json.len());
             framed.push(TAG_JSON);
             framed.extend_from_slice(&json);
@@ -336,7 +366,11 @@ mod tests {
         let bytes = encode_request(&original).expect("encodes");
         let back = decode_request(&bytes).expect("decodes");
         assert_eq!(back, original);
-        assert!(std::str::from_utf8(&bytes).expect("json").contains("\"op\":\"read_lines\""));
+        assert!(
+            std::str::from_utf8(&bytes)
+                .expect("json")
+                .contains("\"op\":\"read_lines\"")
+        );
     }
 
     #[test]
@@ -359,7 +393,9 @@ mod tests {
             (
                 "bound",
                 RouteRequest {
-                    visited: (0..=VISITED_MAX).map(|i| node(u8::try_from(i).expect("small"))).collect(),
+                    visited: (0..=VISITED_MAX)
+                        .map(|i| node(u8::try_from(i).expect("small")))
+                        .collect(),
                     ..request(RouteBody::ReadText { address: address() })
                 },
             ),
@@ -399,7 +435,10 @@ mod tests {
                 other => panic!("{name}: expected a refusal, got {other:?}"),
             }
         }
-        assert!(matches!(decode_request(b"{not json"), Err(SeamError::Refused(_))));
+        assert!(matches!(
+            decode_request(b"{not json"),
+            Err(SeamError::Refused(_))
+        ));
     }
 
     #[test]
@@ -415,7 +454,9 @@ mod tests {
 
     #[test]
     fn the_raw_bytes_tag_roundtrips_a_mebibyte() {
-        let body: Vec<u8> = (0..(1024u32 * 1024)).map(|i| u8::try_from(i % 251).expect("fits")).collect();
+        let body: Vec<u8> = (0..(1024u32 * 1024))
+            .map(|i| u8::try_from(i % 251).expect("fits"))
+            .collect();
         let bytes = encode_response(&RouteReply::Bytes(body.clone())).expect("encodes");
         assert_eq!(bytes[0], TAG_BYTES);
         assert_eq!(bytes.len(), body.len() + 1);

@@ -12,13 +12,13 @@
 //! spent, endpoint down) is what the run got, not what the transform means,
 //! and filing it would make the fallback permanent.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use inseam_kernel::address::ContentDigest;
 use inseam_kernel::fragment::Mimetype;
-use inseam_seams::transforms::{GrantedLlm, Registration, TransformOutput};
 use inseam_seams::SeamError;
+use inseam_seams::transforms::{GrantedLlm, Registration, TransformOutput};
 
 /// Whether a registration's outputs are worth caching: only LLM-hungry
 /// transforms are. Structural decomposition is cheap and its output is
@@ -163,14 +163,32 @@ mod tests {
         assert_ne!(key, cache_key(&digest, &markdown, false, &base));
         assert_ne!(
             key,
-            cache_key(&digest, &markdown, true, &registration("other", "summarizer-v1|target_chars=400|model=m", 500))
+            cache_key(
+                &digest,
+                &markdown,
+                true,
+                &registration("other", "summarizer-v1|target_chars=400|model=m", 500)
+            )
         );
         assert_ne!(
             key,
-            cache_key(&digest, &markdown, true, &registration("summarizer", "summarizer-v1|target_chars=200|model=m", 500))
+            cache_key(
+                &digest,
+                &markdown,
+                true,
+                &registration("summarizer", "summarizer-v1|target_chars=200|model=m", 500)
+            )
         );
         // Run-metering dials are not ingredients.
-        assert_eq!(key, cache_key(&digest, &markdown, true, &registration("summarizer", "summarizer-v1|target_chars=400|model=m", 1)));
+        assert_eq!(
+            key,
+            cache_key(
+                &digest,
+                &markdown,
+                true,
+                &registration("summarizer", "summarizer-v1|target_chars=400|model=m", 1)
+            )
+        );
     }
 
     #[test]

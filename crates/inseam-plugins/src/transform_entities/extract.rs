@@ -10,9 +10,9 @@ use std::str::FromStr;
 use serde::Deserialize;
 
 use inseam_kernel::fragment::{FragmentKey, Mimetype, RelationKind};
+use inseam_seams::SeamError;
 use inseam_seams::text::collapse_ws;
 use inseam_seams::transforms::GrantedLlm;
-use inseam_seams::SeamError;
 
 /// The mimetype of an entity fragment; under `text/x-inseam-` so the sweep
 /// treats it as derived understanding (never re-decomposed, never claimed).

@@ -31,26 +31,24 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
 use inseam_kernel::address::{HostId, Timestamp};
-use inseam_kernel::network::{
-    Endpoint, HostRecord, NodeId, NodeRecord, Record, StewardshipRecord,
-};
+use inseam_kernel::network::{Endpoint, HostRecord, NodeId, NodeRecord, Record, StewardshipRecord};
 use inseam_kernel::store::IndexStore;
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError,
-    PluginFactory, STORE,
-};
-use inseam_seams::connection::{Connections, ConnectionsChanged, CONNECTIONS};
-use inseam_seams::node::{Node, NODE};
-use inseam_seams::roster::{
-    HostStewards, Invitation, Roster, RosterChanged, INVITATIONS_OPEN_MAX, ROSTER,
-};
-use inseam_seams::transport::{
-    admission_as_effect, Admission, Admit, InvitationToken, Transport, TRANSPORT,
+    ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError, PluginFactory, STORE,
+    parse_config,
 };
 use inseam_seams::SeamError;
+use inseam_seams::connection::{CONNECTIONS, Connections, ConnectionsChanged};
+use inseam_seams::node::{NODE, Node};
+use inseam_seams::roster::{
+    HostStewards, INVITATIONS_OPEN_MAX, Invitation, ROSTER, Roster, RosterChanged,
+};
+use inseam_seams::transport::{
+    Admission, Admit, InvitationToken, TRANSPORT, Transport, admission_as_effect,
+};
 
 use invitations::OpenInvitations;
-use stewardships::{plan, Publication};
+use stewardships::{Publication, plan};
 
 pub use stewardships::HOSTS_PER_NODE_MAX;
 
@@ -65,7 +63,10 @@ const RECONCILE_TICKS_MAX: u64 = 1 << 40;
 /// yet. Each came through a redeemed token, and the record arrives in the
 /// first exchange, so the set stays small; a full set forgets the oldest.
 const INVITED_PENDING_MAX: usize = INVITATIONS_OPEN_MAX;
-const _: () = assert!(INVITED_PENDING_MAX > 0, "an invited peer must be remembered");
+const _: () = assert!(
+    INVITED_PENDING_MAX > 0,
+    "an invited peer must be remembered"
+);
 
 /// Fact keys the provider declares on the `roster` binding.
 pub mod facts {
@@ -185,7 +186,10 @@ fn keep_wakers(cx: &mut ApplyCx<'_>, inner: &Arc<Inner>) {
     let subscription = cx
         .bus()
         .on::<ConnectionsChanged>(move |_| on_connections.wake.notify_one());
-    cx.keep("wake the roster reconciler on connection changes", subscription);
+    cx.keep(
+        "wake the roster reconciler on connection changes",
+        subscription,
+    );
     let on_roster = Arc::clone(inner);
     let subscription = cx
         .bus()
@@ -206,7 +210,9 @@ async fn reconcile_loop(inner: Arc<Inner>, poll: Duration) {
             tracing::warn!("roster reconcile pass failed: {e}");
         }
     }
-    unreachable!("the roster reconciler runs for the node's lifetime; {RECONCILE_TICKS_MAX} passes is longer than any process");
+    unreachable!(
+        "the roster reconciler runs for the node's lifetime; {RECONCILE_TICKS_MAX} passes is longer than any process"
+    );
 }
 
 /// The seam provider and the admission policy, one object: the policy's
@@ -427,7 +433,11 @@ impl Admission for Service {
 #[async_trait::async_trait]
 impl Roster for Service {
     fn local(&self) -> NodeRecord {
-        let published = self.inner.published.read().unwrap_or_else(|e| e.into_inner());
+        let published = self
+            .inner
+            .published
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         published
             .node
             .clone()
@@ -470,7 +480,11 @@ impl Roster for Service {
 
     async fn invite(&self) -> Result<Invitation, SeamError> {
         let (token, expires) = {
-            let mut invitations = self.inner.invitations.lock().unwrap_or_else(|e| e.into_inner());
+            let mut invitations = self
+                .inner
+                .invitations
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             invitations.mint(now())?
         };
         let invitation = Invitation {
@@ -503,7 +517,10 @@ impl Roster for Service {
         self.inner.refresh_cache().await?;
         {
             let cache = self.inner.cache.read().unwrap_or_else(|e| e.into_inner());
-            assert!(cache.expelled.contains(node), "an expulsion just published is in the view");
+            assert!(
+                cache.expelled.contains(node),
+                "an expulsion just published is in the view"
+            );
             assert!(!cache.known.contains(node));
         }
         self.inner.bus.emit(&RosterChanged);

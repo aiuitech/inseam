@@ -14,11 +14,11 @@ use std::sync::Arc;
 use inseam_kernel::address::{Address, Envelope};
 use inseam_kernel::fragment::{FragmentKey, Mimetype, NewFragment, RelationKind, Sprout};
 use inseam_kernel::store::InventoryEntry;
-use inseam_kernel::substrate::{fnv1a, ApplyCx, PluginError, ServiceKey};
+use inseam_kernel::substrate::{ApplyCx, PluginError, ServiceKey, fnv1a};
 use serde::{Deserialize, Serialize};
 
-use crate::llm::LlmLane;
 use crate::SeamError;
+use crate::llm::LlmLane;
 
 pub const TRANSFORMS: ServiceKey<dyn Transforms> = ServiceKey::new("transforms");
 
@@ -282,7 +282,11 @@ mod tests {
         }
     }
 
-    fn registration(entry: &str, claims: &'static [&'static str], fingerprint: &str) -> Arc<Registration> {
+    fn registration(
+        entry: &str,
+        claims: &'static [&'static str],
+        fingerprint: &str,
+    ) -> Arc<Registration> {
         Arc::new(Registration {
             entry_id: entry.to_string(),
             name: entry.to_string(),
@@ -310,11 +314,11 @@ mod tests {
         let inv = inventory(&[("text/markdown", true)]);
 
         let before = shape_stamp(&participating(std::slice::from_ref(&markdown), &inv));
-        let after = shape_stamp(&participating(
-            &[markdown.clone(), video.clone()],
-            &inv,
-        ));
-        assert_eq!(before, after, "mounting a video transform must not dirty markdown");
+        let after = shape_stamp(&participating(&[markdown.clone(), video.clone()], &inv));
+        assert_eq!(
+            before, after,
+            "mounting a video transform must not dirty markdown"
+        );
 
         let image_inv = inventory(&[("video/mp4", true)]);
         let with_video = shape_stamp(&participating(&[markdown, video], &image_inv));

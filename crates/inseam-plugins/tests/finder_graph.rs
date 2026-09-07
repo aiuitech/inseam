@@ -63,7 +63,8 @@ async fn seed_source(
 ) -> (SourceId, FragmentId) {
     let a = addr(name);
     let sid = store
-        .upsert_source(&a, &envelope(name), 100).await
+        .upsert_source(&a, &envelope(name), 100)
+        .await
         .expect("upserts");
     let root = store
         .insert_fragment(
@@ -74,7 +75,8 @@ async fn seed_source(
                 extent: Some(Extent::lines(1, 10)),
                 content_address: None,
             },
-        ).await
+        )
+        .await
         .expect("root");
     store.set_root_fragment(sid, root).await.expect("sets root");
     let section = store
@@ -86,10 +88,12 @@ async fn seed_source(
                 extent: Some(Extent::lines(1, 10)),
                 content_address: None,
             },
-        ).await
+        )
+        .await
         .expect("section");
     store
-        .insert_relation(&Relation::new(root, RelationKind::contains(), section)).await
+        .insert_relation(&Relation::new(root, RelationKind::contains(), section))
+        .await
         .expect("relates");
     let vector = embedder.embed(&[body]).await.expect("embeds").remove(0);
     store
@@ -101,7 +105,10 @@ async fn seed_source(
         }])
         .await
         .expect("adds row");
-    store.mark_indexed(sid, Some(("test-stamp", &[]))).await.expect("marks");
+    store
+        .mark_indexed(sid, Some(("test-stamp", &[])))
+        .await
+        .expect("marks");
     (sid, section)
 }
 
@@ -110,7 +117,10 @@ async fn seed_source(
 async fn set_digest(store: &IndexStore, name: &str, digest: ContentDigest) {
     let mut env = envelope(name);
     env.content_digest = Some(digest);
-    store.upsert_source(&addr(name), &env, 100).await.expect("upserts");
+    store
+        .upsert_source(&addr(name), &env, 100)
+        .await
+        .expect("upserts");
 }
 
 #[tokio::test]
@@ -132,7 +142,11 @@ async fn merge_collapses_equal_digests_and_leaves_digestless_copies_apart() {
     store.rebuild_fts().await.expect("fts");
 
     let finder = FinderService::new(Arc::clone(&store), embedder, FinderConfig::default());
-    let results = finder.query("espresso descaling", 10).await.expect("queries").ranked;
+    let results = finder
+        .query("espresso descaling", 10)
+        .await
+        .expect("queries")
+        .ranked;
 
     let copies: Vec<_> = results
         .iter()
@@ -141,7 +155,11 @@ async fn merge_collapses_equal_digests_and_leaves_digestless_copies_apart() {
     assert_eq!(copies.len(), 1, "equal digests collapse into one result");
     let copy_addresses = [addr("local-copy.md"), addr("drive-copy.md")];
     assert!(copy_addresses.contains(&copies[0].source.address));
-    assert_eq!(copies[0].replicas.len(), 1, "the other copy rides as a replica");
+    assert_eq!(
+        copies[0].replicas.len(),
+        1,
+        "the other copy rides as a replica"
+    );
     assert!(copy_addresses.contains(&copies[0].replicas[0]));
     assert_ne!(copies[0].replicas[0], copies[0].source.address);
 
@@ -194,7 +212,8 @@ async fn relational_relevance_beats_flat_similarity() {
                 extent: None,
                 content_address: None,
             },
-        ).await
+        )
+        .await
         .expect("entity")
         .id();
     let entity_vec = embedder
@@ -212,15 +231,21 @@ async fn relational_relevance_beats_flat_similarity() {
         .await
         .expect("adds entity row");
     store
-        .insert_relation(&Relation::new(b_section, mentions(), entity)).await
+        .insert_relation(&Relation::new(b_section, mentions(), entity))
+        .await
         .expect("relates");
     store
-        .insert_relation(&Relation::new(a_section, mentions(), entity)).await
+        .insert_relation(&Relation::new(a_section, mentions(), entity))
+        .await
         .expect("relates");
     store.rebuild_fts().await.expect("fts");
 
     let finder = FinderService::new(Arc::clone(&store), embedder, FinderConfig::default());
-    let results = finder.query("kitchen renovation", 10).await.expect("queries").ranked;
+    let results = finder
+        .query("kitchen renovation", 10)
+        .await
+        .expect("queries")
+        .ranked;
     let order: Vec<SourceId> = results.iter().map(|r| r.source.id).collect();
 
     // B matched directly and must lead.
@@ -231,7 +256,10 @@ async fn relational_relevance_beats_flat_similarity() {
     assert!(a_pos.is_some(), "meeting note surfaced via mentions edges");
     // ...and it must outrank unrelated noise if that noise appears at all.
     if let Some(c_pos) = order.iter().position(|s| *s == c_sid) {
-        assert!(a_pos.expect("present") < c_pos, "relational beats unrelated");
+        assert!(
+            a_pos.expect("present") < c_pos,
+            "relational beats unrelated"
+        );
     }
 }
 
@@ -252,7 +280,11 @@ async fn boost_never_gates_relationless_matches() {
     store.rebuild_fts().await.expect("fts");
 
     let finder = FinderService::new(Arc::clone(&store), embedder, FinderConfig::default());
-    let results = finder.query("espresso descaling", 5).await.expect("queries").ranked;
+    let results = finder
+        .query("espresso descaling", 5)
+        .await
+        .expect("queries")
+        .ranked;
     assert_eq!(results.first().map(|r| r.source.id), Some(sid));
     assert!(results[0].score > 0.0);
 }

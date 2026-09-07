@@ -282,16 +282,23 @@ pub enum Record {
         raw_bytes: u64,
     },
     /// The origin no longer sees this source on its host.
-    SourceGone { address: Address },
+    SourceGone {
+        address: Address,
+    },
     Node(NodeRecord),
     Host(HostRecord),
     Stewardship(StewardshipRecord),
     /// The steward withdrew from the host; the host stays known.
-    StewardshipWithdrawn { node: NodeId, host: HostId },
+    StewardshipWithdrawn {
+        node: NodeId,
+        host: HostId,
+    },
     /// A node the owner expelled: every node stops admitting it and drops
     /// its logs. Authored by whichever node the owner ran the expulsion
     /// on — the one record kind an origin publishes about another node.
-    Expulsion { node: NodeId },
+    Expulsion {
+        node: NodeId,
+    },
 }
 
 impl Record {
@@ -476,9 +483,15 @@ mod tests {
     #[test]
     fn endpoint_is_bounded() {
         assert!(Endpoint::new("relay:https://relay.example").is_ok());
-        assert!(matches!(Endpoint::new(""), Err(NetworkError::InvalidEndpoint(_))));
+        assert!(matches!(
+            Endpoint::new(""),
+            Err(NetworkError::InvalidEndpoint(_))
+        ));
         let long = "x".repeat(ENDPOINT_CHARS_MAX + 1);
-        assert!(matches!(Endpoint::new(long), Err(NetworkError::InvalidEndpoint(_))));
+        assert!(matches!(
+            Endpoint::new(long),
+            Err(NetworkError::InvalidEndpoint(_))
+        ));
     }
 
     #[test]
@@ -586,11 +599,26 @@ mod tests {
         assert_eq!(vector.entries()[0].origin, node(1));
         assert_eq!(vector.position_of(&node(9)), Some((Epoch(1), Sequence(5))));
 
-        assert!(vector.lacks(&node(7), Epoch(1), Sequence(1)), "unknown origin");
-        assert!(vector.lacks(&node(9), Epoch(1), Sequence(6)), "past known seq");
-        assert!(!vector.lacks(&node(9), Epoch(1), Sequence(5)), "already seen");
-        assert!(!vector.lacks(&node(9), Epoch(1), Sequence(2)), "compacted away");
+        assert!(
+            vector.lacks(&node(7), Epoch(1), Sequence(1)),
+            "unknown origin"
+        );
+        assert!(
+            vector.lacks(&node(9), Epoch(1), Sequence(6)),
+            "past known seq"
+        );
+        assert!(
+            !vector.lacks(&node(9), Epoch(1), Sequence(5)),
+            "already seen"
+        );
+        assert!(
+            !vector.lacks(&node(9), Epoch(1), Sequence(2)),
+            "compacted away"
+        );
         assert!(vector.lacks(&node(9), Epoch(2), Sequence(1)), "newer epoch");
-        assert!(!vector.lacks(&node(9), Epoch(0), Sequence(99)), "older epoch");
+        assert!(
+            !vector.lacks(&node(9), Epoch(0), Sequence(99)),
+            "older epoch"
+        );
     }
 }

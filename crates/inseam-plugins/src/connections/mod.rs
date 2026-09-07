@@ -12,11 +12,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use inseam_kernel::address::HostId;
-use inseam_kernel::substrate::{
-    ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError,
-};
-use inseam_seams::connection::{Connections, ConnectionsChanged, Registration, CONNECTIONS};
+use inseam_kernel::substrate::{ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError};
 use inseam_seams::SeamError;
+use inseam_seams::connection::{CONNECTIONS, Connections, ConnectionsChanged, Registration};
 
 pub struct ConnectionsRegistry;
 
@@ -86,11 +84,12 @@ impl RegistryInner {
 impl Connections for Registry {
     /// One connection per host per node: a second registration for a host
     /// already stewarded here is refused with both entries named.
-    fn register(
-        &self,
-        registration: Registration,
-    ) -> Result<Box<dyn FnOnce() + Send>, SeamError> {
-        let mut entries = self.inner.entries.write().unwrap_or_else(|e| e.into_inner());
+    fn register(&self, registration: Registration) -> Result<Box<dyn FnOnce() + Send>, SeamError> {
+        let mut entries = self
+            .inner
+            .entries
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some((_, holder)) = entries
             .iter()
             .find(|(_, r)| r.host.id == registration.host.id)
@@ -191,8 +190,12 @@ mod tests {
     #[test]
     fn snapshot_orders_by_host_and_resolve_finds_the_steward() {
         let registry = Registry::new(EventBus::new());
-        let _keep_b = registry.register(registration("b", "host-b")).expect("registers");
-        let dispose_a = registry.register(registration("a", "host-a")).expect("registers");
+        let _keep_b = registry
+            .register(registration("b", "host-b"))
+            .expect("registers");
+        let dispose_a = registry
+            .register(registration("a", "host-a"))
+            .expect("registers");
         let ids: Vec<String> = registry
             .snapshot()
             .iter()
@@ -211,10 +214,16 @@ mod tests {
     #[test]
     fn refuses_a_second_connection_to_the_same_host() {
         let registry = Registry::new(EventBus::new());
-        let _keep = registry.register(registration("fs", "same")).expect("registers");
+        let _keep = registry
+            .register(registration("fs", "same"))
+            .expect("registers");
         let again = registry.register(registration("fs-two", "same"));
         assert!(matches!(again, Err(SeamError::Refused(_))));
-        assert_eq!(registry.snapshot().len(), 1, "the refused registration left no trace");
+        assert_eq!(
+            registry.snapshot().len(),
+            1,
+            "the refused registration left no trace"
+        );
     }
 
     #[test]
@@ -227,15 +236,29 @@ mod tests {
             counting.fetch_add(1, Ordering::SeqCst);
         });
 
-        let dispose = registry.register(registration("fs", "host-a")).expect("registers");
-        assert_eq!(changes.load(Ordering::SeqCst), 1, "registering announces once");
+        let dispose = registry
+            .register(registration("fs", "host-a"))
+            .expect("registers");
+        assert_eq!(
+            changes.load(Ordering::SeqCst),
+            1,
+            "registering announces once"
+        );
 
         let refused = registry.register(registration("fs-two", "host-a"));
         assert!(matches!(refused, Err(SeamError::Refused(_))));
-        assert_eq!(changes.load(Ordering::SeqCst), 1, "a refusal changes nothing");
+        assert_eq!(
+            changes.load(Ordering::SeqCst),
+            1,
+            "a refusal changes nothing"
+        );
 
         dispose();
-        assert_eq!(changes.load(Ordering::SeqCst), 2, "disposing announces once");
+        assert_eq!(
+            changes.load(Ordering::SeqCst),
+            2,
+            "disposing announces once"
+        );
         assert!(registry.snapshot().is_empty());
     }
 
@@ -254,7 +277,9 @@ mod tests {
             recording.store(count, Ordering::SeqCst);
         });
 
-        let dispose = registry.register(registration("fs", "host-a")).expect("registers");
+        let dispose = registry
+            .register(registration("fs", "host-a"))
+            .expect("registers");
         assert_eq!(seen.load(Ordering::SeqCst), 1);
         dispose();
         assert_eq!(seen.load(Ordering::SeqCst), 0);

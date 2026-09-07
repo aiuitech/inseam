@@ -10,17 +10,17 @@
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use futures_util::stream::{self, StreamExt};
 
 use inseam_kernel::address::{Address, ContentLength, Envelope, HostId, Locator, Timestamp};
 use inseam_kernel::fragment::Mimetype;
+use inseam_seams::SeamError;
 use inseam_seams::connection::{Connection, EnumeratedSource};
 use inseam_seams::text::slice_lines;
-use inseam_seams::SeamError;
 
-use super::api::{opt_str_field, str_field, GoogleApi, FETCH_CONCURRENCY};
+use super::api::{FETCH_CONCURRENCY, GoogleApi, opt_str_field, str_field};
 
 /// MIME parts one message walk will visit; real messages have a handful,
 /// and a pathological one is cut off rather than walked forever.
@@ -54,9 +54,13 @@ impl GmailConnection {
             )));
         }
         let id = address.locator.as_str();
-        let valid = id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        let valid = id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
         if !valid {
-            return Err(SeamError::Refused(format!("`{id}` is not a Gmail message id")));
+            return Err(SeamError::Refused(format!(
+                "`{id}` is not a Gmail message id"
+            )));
         }
         Ok(id)
     }
@@ -71,10 +75,15 @@ impl GmailConnection {
     }
 
     /// One listed message's envelope, from its metadata.
-    async fn source_of(&self, id: String, observed: Timestamp) -> Result<EnumeratedSource, SeamError> {
+    async fn source_of(
+        &self,
+        id: String,
+        observed: Timestamp,
+    ) -> Result<EnumeratedSource, SeamError> {
         let message = self.api.get_json(self.message_url(&id, "metadata")).await?;
-        let locator = Locator::new(id.clone())
-            .map_err(|e| SeamError::failed(format!("Gmail message id `{id}` is not addressable: {e}")))?;
+        let locator = Locator::new(id.clone()).map_err(|e| {
+            SeamError::failed(format!("Gmail message id `{id}` is not addressable: {e}"))
+        })?;
         let size: u64 = message
             .get("sizeEstimate")
             .and_then(|v| v.as_u64())
@@ -183,7 +192,18 @@ fn decode_base64url(data: &str) -> Option<String> {
 /// enough to index the words.
 pub fn strip_html(html: &str) -> String {
     const BLOCK_TAGS: [&str; 12] = [
-        "p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote",
+        "p",
+        "div",
+        "br",
+        "li",
+        "tr",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "blockquote",
     ];
     let mut text = String::with_capacity(html.len());
     let mut in_tag = false;
@@ -244,12 +264,16 @@ impl Connection for GmailConnection {
         let listed = self
             .api
             .list_pages(
-                self.api.api_url(&["gmail", "v1", "users", "me", "messages"], &params),
+                self.api
+                    .api_url(&["gmail", "v1", "users", "me", "messages"], &params),
                 "messages",
                 self.sources_max,
             )
             .await?;
-        let ids: Vec<String> = listed.iter().filter_map(|m| opt_str_field(m, "id")).collect();
+        let ids: Vec<String> = listed
+            .iter()
+            .filter_map(|m| opt_str_field(m, "id"))
+            .collect();
         // One metadata call per message, `FETCH_CONCURRENCY` in flight,
         // landed in list order so enumeration stays deterministic.
         let sources: Vec<Result<EnumeratedSource, SeamError>> = stream::iter(ids)
@@ -272,7 +296,12 @@ impl Connection for GmailConnection {
         Ok(render_message(&message))
     }
 
-    async fn read_lines(&self, address: &Address, start: u64, end: u64) -> Result<String, SeamError> {
+    async fn read_lines(
+        &self,
+        address: &Address,
+        start: u64,
+        end: u64,
+    ) -> Result<String, SeamError> {
         let text = self.read_text(address).await?;
         slice_lines(&text, start, end)
     }
@@ -347,7 +376,14 @@ mod tests {
         assert_eq!(sources[0].envelope.modified, Some(Timestamp(1_735_787_045)));
         assert_eq!(sources[0].raw_bytes, 1234);
         assert_eq!(sources[0].envelope.source_type, "email");
-        assert_eq!(gmail.enumerate("label:INBOX").await.expect("enumerates").len(), 1);
+        assert_eq!(
+            gmail
+                .enumerate("label:INBOX")
+                .await
+                .expect("enumerates")
+                .len(),
+            1
+        );
         assert_eq!(gmail.locator_prefix(""), Some(String::new()));
         assert_eq!(gmail.locator_prefix("label:INBOX"), None);
     }
@@ -362,9 +398,17 @@ mod tests {
             text,
             "From: a@example.com\nDate: Thu, 2 Jan 2025 03:04:05 +0000\nSubject: Hello m1\n\nHi there\n\nplain body\n"
         );
-        assert_eq!(gmail.read_lines(&address, 3, 3).await.expect("reads"), "Subject: Hello m1");
-        let bad: Address = "inseam://gmail-test/not%20an%20id".parse().expect("address");
-        assert!(matches!(gmail.read_text(&bad).await, Err(SeamError::Refused(_))));
+        assert_eq!(
+            gmail.read_lines(&address, 3, 3).await.expect("reads"),
+            "Subject: Hello m1"
+        );
+        let bad: Address = "inseam://gmail-test/not%20an%20id"
+            .parse()
+            .expect("address");
+        assert!(matches!(
+            gmail.read_text(&bad).await,
+            Err(SeamError::Refused(_))
+        ));
     }
 
     #[test]
@@ -376,7 +420,10 @@ mod tests {
                 ]}
             ]}
         });
-        assert_eq!(render_message(&message), "Subject: S\n\nHi you\nSecond & last\n");
+        assert_eq!(
+            render_message(&message),
+            "Subject: S\n\nHi you\nSecond & last\n"
+        );
         let empty = serde_json::json!({"snippet": "only a snippet"});
         assert_eq!(render_message(&empty), "\nonly a snippet\n");
     }

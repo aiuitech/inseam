@@ -7,7 +7,7 @@
 //! failure reads as "not ollama", and the OpenAI-compatible path stands.
 
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use inseam_seams::llm::{EmbeddingModel, ModelInfo};
 

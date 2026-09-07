@@ -13,7 +13,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::connection_fs::machine::MACHINE_IDENTITY_CHARS_MAX;
-use crate::connection_fs::{configured_roots, FsConnectionConfig, WalkConfig};
+use crate::connection_fs::{FsConnectionConfig, WalkConfig, configured_roots};
 use crate::connection_google::{GoogleConnection, GoogleConnectionConfig};
 use crate::embedder::{EmbedderConfig, Provider};
 use crate::finder::FinderConfig;
@@ -240,7 +240,9 @@ fn validate_oauth(config: &OAuthConfig) -> Result<(), SettingsError> {
     let value = toml::Value::try_from(config)
         .map_err(|error| format!("serialize `oauth` config: {error}"))?;
     let toml::Value::Table(table) = value else {
-        return Err(SettingsError::from("`oauth` config did not serialize as a table".to_string()));
+        return Err(SettingsError::from(
+            "`oauth` config did not serialize as a table".to_string(),
+        ));
     };
     OAuthPlugin::from_config(&table).map_err(|error| format!("oauth: {error}"))?;
     Ok(())
@@ -250,7 +252,9 @@ fn validate_google(config: &GoogleConnectionConfig) -> Result<(), SettingsError>
     let value = toml::Value::try_from(config)
         .map_err(|error| format!("serialize `google` config: {error}"))?;
     let toml::Value::Table(table) = value else {
-        return Err(SettingsError::from("`google` config did not serialize as a table".to_string()));
+        return Err(SettingsError::from(
+            "`google` config did not serialize as a table".to_string(),
+        ));
     };
     GoogleConnection::from_config(&table).map_err(|error| format!("google: {error}"))?;
     Ok(())
@@ -275,9 +279,14 @@ fn validate_source(config: &FsConnectionConfig) -> Result<(), SettingsError> {
     Ok(())
 }
 
-fn validate_models(llm: &LlmEndpointConfig, embedder: &EmbedderConfig) -> Result<(), SettingsError> {
+fn validate_models(
+    llm: &LlmEndpointConfig,
+    embedder: &EmbedderConfig,
+) -> Result<(), SettingsError> {
     if llm.base_url.trim().is_empty() {
-        return Err(SettingsError::from("llm.base_url must not be empty".to_string()));
+        return Err(SettingsError::from(
+            "llm.base_url must not be empty".to_string(),
+        ));
     }
     // An empty name is a keyless endpoint (a local ollama), not a bad name.
     if !llm.api_key_env.trim().is_empty() && !is_environment_name(llm.api_key_env.trim()) {
@@ -297,23 +306,33 @@ fn validate_models(llm: &LlmEndpointConfig, embedder: &EmbedderConfig) -> Result
 
 fn validate_transforms(settings: &SettingsDocument) -> Result<(), SettingsError> {
     if settings.chunker.config.target_chars == 0 {
-        return Err(SettingsError::from("chunker.target_chars must be greater than zero".to_string()));
+        return Err(SettingsError::from(
+            "chunker.target_chars must be greater than zero".to_string(),
+        ));
     }
     if settings.summarizer.config.target_chars == 0 {
-        return Err(SettingsError::from("summarizer.target_chars must be greater than zero".to_string()));
+        return Err(SettingsError::from(
+            "summarizer.target_chars must be greater than zero".to_string(),
+        ));
     }
     if settings.entities.config.max_per_source == 0 {
-        return Err(SettingsError::from("entities.max_per_source must be greater than zero".to_string()));
+        return Err(SettingsError::from(
+            "entities.max_per_source must be greater than zero".to_string(),
+        ));
     }
     Ok(())
 }
 
 fn validate_finder(config: &FinderConfig) -> Result<(), SettingsError> {
-    config.validate_query_bounds().map_err(SettingsError::from)?;
+    config
+        .validate_query_bounds()
+        .map_err(SettingsError::from)?;
     finite_positive("finder.rrf_k", config.rrf_k)?;
     finite_nonnegative("finder.damping", config.damping)?;
     if config.damping > 1.0 {
-        return Err(SettingsError::from("finder.damping must not exceed one".to_string()));
+        return Err(SettingsError::from(
+            "finder.damping must not exceed one".to_string(),
+        ));
     }
     finite_positive("finder.epsilon", config.epsilon)?;
     finite_nonnegative("finder.max_vector_distance", config.max_vector_distance)?;
@@ -326,13 +345,19 @@ fn validate_finder(config: &FinderConfig) -> Result<(), SettingsError> {
 
 fn validate_sweep(config: &SweepConfig) -> Result<(), SettingsError> {
     if config.max_fragments_per_source == 0 {
-        return Err(SettingsError::from("sweep.max_fragments_per_source must be greater than zero".to_string()));
+        return Err(SettingsError::from(
+            "sweep.max_fragments_per_source must be greater than zero".to_string(),
+        ));
     }
     if config.max_depth == 0 {
-        return Err(SettingsError::from("sweep.max_depth must be greater than zero".to_string()));
+        return Err(SettingsError::from(
+            "sweep.max_depth must be greater than zero".to_string(),
+        ));
     }
     if config.max_content_bytes == 0 {
-        return Err(SettingsError::from("sweep.max_content_bytes must be greater than zero".to_string()));
+        return Err(SettingsError::from(
+            "sweep.max_content_bytes must be greater than zero".to_string(),
+        ));
     }
     if let Some(date) = config
         .modified_after
@@ -377,14 +402,18 @@ fn config_table<T: Serialize>(id: &str, config: &T) -> Result<toml::Table, Setti
 
 fn finite_positive(name: &str, value: f64) -> Result<(), SettingsError> {
     if !value.is_finite() || value <= 0.0 {
-        return Err(SettingsError::from(format!("{name} must be a finite number greater than zero")));
+        return Err(SettingsError::from(format!(
+            "{name} must be a finite number greater than zero"
+        )));
     }
     Ok(())
 }
 
 fn finite_nonnegative(name: &str, value: f64) -> Result<(), SettingsError> {
     if !value.is_finite() || value < 0.0 {
-        return Err(SettingsError::from(format!("{name} must be a finite nonnegative number")));
+        return Err(SettingsError::from(format!(
+            "{name} must be a finite nonnegative number"
+        )));
     }
     Ok(())
 }
@@ -397,7 +426,6 @@ fn is_environment_name(name: &str) -> bool {
     let first_valid = first.is_ascii_alphabetic() || first == b'_';
     first_valid && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -449,7 +477,10 @@ mod tests {
     fn toggle_patches_carry_no_config() {
         let document = SettingsDocument::from_composition(&base()).unwrap();
         let patches = document.into_patches(WriteMode::PreserveEmbedder).unwrap();
-        let transforms = patches.iter().find(|patch| patch.id == "transforms").unwrap();
+        let transforms = patches
+            .iter()
+            .find(|patch| patch.id == "transforms")
+            .unwrap();
         assert!(transforms.config.is_empty());
         assert_eq!(transforms.disabled, Some(false));
         assert!(patches.iter().all(|patch| patch.id != "embedder"));
@@ -494,7 +525,10 @@ mod tests {
         edited.apply(&mut overlay, WriteMode::All).unwrap();
         let layered = base().layered(overlay).unwrap();
         let reread = SettingsDocument::from_composition(&layered).unwrap();
-        assert_eq!(reread.node.config.display_name.as_deref(), Some("Greg's mini"));
+        assert_eq!(
+            reread.node.config.display_name.as_deref(),
+            Some("Greg's mini")
+        );
         assert!(reread.node.config.always_on);
         assert_eq!(reread.transport.config.relay, "none");
         assert_eq!(reread.transport.config.bind_port, 4433);
@@ -508,13 +542,28 @@ mod tests {
     #[test]
     fn invalid_network_fields_are_refused_by_entry() {
         let cases: Vec<(&str, BadEdit)> = vec![
-            ("node", Box::new(|d| d.node.config.display_name = Some("   ".to_string()))),
-            ("transport", Box::new(|d| d.transport.config.relay = "ftp://relay".to_string())),
-            ("transport", Box::new(|d| d.transport.config.idle_timeout_secs = 1)),
-            ("roster", Box::new(|d| d.roster.config.endpoint_poll_secs = 0)),
+            (
+                "node",
+                Box::new(|d| d.node.config.display_name = Some("   ".to_string())),
+            ),
+            (
+                "transport",
+                Box::new(|d| d.transport.config.relay = "ftp://relay".to_string()),
+            ),
+            (
+                "transport",
+                Box::new(|d| d.transport.config.idle_timeout_secs = 1),
+            ),
+            (
+                "roster",
+                Box::new(|d| d.roster.config.endpoint_poll_secs = 0),
+            ),
             ("sync", Box::new(|d| d.sync.config.interval_secs = 0)),
             ("sync", Box::new(|d| d.sync.config.peers_per_round_max = 0)),
-            ("routing", Box::new(|d| d.routing.config.fan_out_timeout_ms = 0)),
+            (
+                "routing",
+                Box::new(|d| d.routing.config.fan_out_timeout_ms = 0),
+            ),
         ];
         for (entry, edit) in cases {
             let mut document = SettingsDocument::from_composition(&base()).unwrap();

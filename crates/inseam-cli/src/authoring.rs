@@ -20,14 +20,14 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 
 use inseam_kernel::fragment::Mimetype;
 use inseam_kernel::substrate::Kernel;
 use inseam_plugins::connection_fs::detect_mimetype;
 use inseam_seams::llm::{self, LLM};
 use inseam_seams::transforms::TRANSFORMS;
-use inseam_wasm_host::{try_artifact, TryInput, TryOutcome, TRANSFORM_WIT};
+use inseam_wasm_host::{TRANSFORM_WIT, TryInput, TryOutcome, try_artifact};
 
 /// Inputs longer than this are not inlined into a generated check — a
 /// golden check is a small, readable example, not a corpus.
@@ -44,13 +44,21 @@ pub fn seams(wit: bool) {
     }
     println!("Seams that accept loaded plugins (manifest `seam = ...`):\n");
     println!("  transform   WIT world `transform-plugin` (inseam:plugin@0.1.0)");
-    println!("              exports  claims() -> claim-spec; apply(env, mimetype, is-root, text) -> output");
+    println!(
+        "              exports  claims() -> claim-spec; apply(env, mimetype, is-root, text) -> output"
+    );
     println!("              imports  log                 always");
     println!("                       llm-complete        needs [capabilities] llm = true");
     println!("                       llm-describe-image  needs [capabilities] llm = true");
-    println!("                       source-bytes        needs [capabilities] source_bytes = true (root only)");
-    println!("              output   child fragments only (no keyed sprouts); parent indexes an EARLIER fragment;");
-    println!("                       relation: contains | derives (kernel) or your own kebab-case kind;");
+    println!(
+        "                       source-bytes        needs [capabilities] source_bytes = true (root only)"
+    );
+    println!(
+        "              output   child fragments only (no keyed sprouts); parent indexes an EARLIER fragment;"
+    );
+    println!(
+        "                       relation: contains | derives (kernel) or your own kebab-case kind;"
+    );
     println!("                       inseam-defined mimetypes (text/x-inseam-*) are refused");
     println!("              rules    degrade, never trap; fresh instance per call; fuel-metered");
     println!();
@@ -75,26 +83,44 @@ pub fn capabilities(kernel: &Kernel) {
                     .unwrap_or_else(|| "(unset)".into())
             };
             println!("  llm = true          GRANTABLE — llm seam bound");
-            println!("                      transform model  {}", fact(llm::facts::TRANSFORM_MODEL));
-            println!("                      agent model      {}", fact(llm::facts::AGENT_MODEL));
-            println!("                      grants llm-complete and llm-describe-image, metered per run");
+            println!(
+                "                      transform model  {}",
+                fact(llm::facts::TRANSFORM_MODEL)
+            );
+            println!(
+                "                      agent model      {}",
+                fact(llm::facts::AGENT_MODEL)
+            );
+            println!(
+                "                      grants llm-complete and llm-describe-image, metered per run"
+            );
         }
         Err(e) => {
             println!("  llm = true          NOT GRANTABLE on this node — {e}");
-            println!("                      a plugin requesting it mounts, but every call refuses;");
-            println!("                      it runs its degrade path here (what your starved check pins)");
+            println!(
+                "                      a plugin requesting it mounts, but every call refuses;"
+            );
+            println!(
+                "                      it runs its degrade path here (what your starved check pins)"
+            );
         }
     }
-    println!("  llm_call_budget     LLM calls per index run charged to the plugin (0 = unlimited by it;");
+    println!(
+        "  llm_call_budget     LLM calls per index run charged to the plugin (0 = unlimited by it;"
+    );
     println!("                      the node's own guards still apply). Inert without llm = true.");
     println!("  source_bytes = true GRANTABLE — the filesystem host serves raw bytes at the root");
     println!("                      (a fragment below the root never gets bytes)");
     match kernel.service(&TRANSFORMS) {
         Ok(registry) => {
             let count = registry.snapshot().len();
-            println!("\n  transforms seam     bound; {count} transform(s) registered — `inseam claims <mimetype>` lists who claims what");
+            println!(
+                "\n  transforms seam     bound; {count} transform(s) registered — `inseam claims <mimetype>` lists who claims what"
+            );
         }
-        Err(e) => println!("\n  transforms seam     not bound — {e}; a loaded transform cannot register"),
+        Err(e) => {
+            println!("\n  transforms seam     not bound — {e}; a loaded transform cannot register")
+        }
     }
 }
 
@@ -158,15 +184,20 @@ pub struct Scaffold<'a> {
 
 fn scaffold_validate(s: &Scaffold<'_>) -> anyhow::Result<()> {
     if s.seam != "transform" {
-        bail!("seam `{}` accepts no loaded plugins; `inseam seams` lists those that do", s.seam);
+        bail!(
+            "seam `{}` accepts no loaded plugins; `inseam seams` lists those that do",
+            s.seam
+        );
     }
     let name_ok = !s.name.is_empty()
-        && s
-            .name
+        && s.name
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
     if !name_ok {
-        bail!("plugin name `{}` must be lowercase ascii, digits, and dashes", s.name);
+        bail!(
+            "plugin name `{}` must be lowercase ascii, digits, and dashes",
+            s.name
+        );
     }
     if s.claims.is_empty() {
         bail!("pass at least one --claims mimetype (e.g. --claims image/png,image/jpeg)");
@@ -221,7 +252,10 @@ fn scaffold_manifest(s: &Scaffold<'_>) -> String {
 
 fn scaffold_checks(s: &Scaffold<'_>) -> String {
     let first = &s.claims[0];
-    let example_mimetype = first.strip_suffix("/*").map(|t| format!("{t}/example")).unwrap_or(first.clone());
+    let example_mimetype = first
+        .strip_suffix("/*")
+        .map(|t| format!("{t}/example"))
+        .unwrap_or(first.clone());
     let input = if claims_are_textual(s.claims) {
         "text = \"REPLACE WITH A SMALL EXAMPLE INPUT\"".to_string()
     } else {
@@ -357,8 +391,14 @@ pub fn plugin_new(s: &Scaffold<'_>) -> anyhow::Result<PathBuf> {
     std::fs::create_dir_all(root.join("wit"))?;
     std::fs::create_dir_all(root.join("fixtures"))?;
     let files: [(PathBuf, String); 7] = [
-        (root.join(format!("{}.manifest.toml", s.name)), scaffold_manifest(s)),
-        (root.join(format!("{}.checks.toml", s.name)), scaffold_checks(s)),
+        (
+            root.join(format!("{}.manifest.toml", s.name)),
+            scaffold_manifest(s),
+        ),
+        (
+            root.join(format!("{}.checks.toml", s.name)),
+            scaffold_checks(s),
+        ),
         (root.join("Cargo.toml"), scaffold_cargo_toml(s)),
         (root.join("src/lib.rs"), scaffold_lib_rs(s)),
         (root.join("wit/transform.wit"), TRANSFORM_WIT.to_string()),
@@ -378,9 +418,16 @@ pub fn print_scaffold_next_steps(root: &Path, name: &str) {
     println!("  2. edit {name}.manifest.toml: request only the capabilities you will call");
     println!("  3. rustup target add wasm32-wasip2   # once; then:");
     println!("     cd {name} && cargo build --release --target wasm32-wasip2 \\");
-    println!("       && cp target/wasm32-wasip2/release/{}.wasm {name}.wasm", name.replace('-', "_"));
-    println!("  4. inseam plugin check {name}.wasm      # red on your first check — that is the to-do");
-    println!("  5. implement src/lib.rs until it ends PASS; `inseam plugin try {name}.wasm <file>` shows output");
+    println!(
+        "       && cp target/wasm32-wasip2/release/{}.wasm {name}.wasm",
+        name.replace('-', "_")
+    );
+    println!(
+        "  4. inseam plugin check {name}.wasm      # red on your first check — that is the to-do"
+    );
+    println!(
+        "  5. implement src/lib.rs until it ends PASS; `inseam plugin try {name}.wasm <file>` shows output"
+    );
     println!("  6. inseam plugin mount $PWD/{name}.wasm && inseam plugins && inseam index <dir>");
 }
 
@@ -421,9 +468,16 @@ fn print_try_outcome(input: &TryInput, outcome: &TryOutcome) {
         "input   {}  root={}  text={}  bytes={}  llm={}",
         input.mimetype,
         input.is_root,
-        input.text.as_ref().map_or("none".to_string(), |t| format!("{} chars", t.chars().count())),
+        input.text.as_ref().map_or("none".to_string(), |t| format!(
+            "{} chars",
+            t.chars().count()
+        )),
         input.bytes.as_ref().map_or(0, Vec::len),
-        if input.llm_returns.is_some() { "canned" } else { "refuses" }
+        if input.llm_returns.is_some() {
+            "canned"
+        } else {
+            "refuses"
+        }
     );
     for note in &outcome.notes {
         println!("note    {note}");
@@ -434,7 +488,10 @@ fn print_try_outcome(input: &TryInput, outcome: &TryOutcome) {
     println!("output  {} fragment(s)", outcome.fragments.len());
     for (i, f) in outcome.fragments.iter().enumerate() {
         let parent = f.parent.map_or("source".to_string(), |p| format!("#{p}"));
-        println!("  #{i:<3} {:<28} {:<13} parent {parent}", f.mimetype, f.relation);
+        println!(
+            "  #{i:<3} {:<28} {:<13} parent {parent}",
+            f.mimetype, f.relation
+        );
         if let Some(text) = &f.text {
             for line in text.lines().take(8) {
                 println!("       │ {line}");
@@ -465,7 +522,10 @@ fn print_as_check(request: &TryRequest<'_>, input: &TryInput, outcome: &TryOutco
             request.file.display()
         ),
         None => {
-            let fixture = request.file.file_name().map(|n| n.to_string_lossy().into_owned());
+            let fixture = request
+                .file
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned());
             println!(
                 "bytes_file = \"fixtures/{}\"   # copy the file into fixtures/ (keep it tiny) and document it in fixtures/README.md",
                 fixture.unwrap_or_else(|| "example.bin".into())
@@ -486,7 +546,9 @@ fn print_as_check(request: &TryRequest<'_>, input: &TryInput, outcome: &TryOutco
             .as_deref()
             .and_then(|t| t.split_whitespace().find(|w| w.chars().count() >= 4))
         {
-            println!("fragment_contains = {word:?}   # REPLACE with the text that proves the claim");
+            println!(
+                "fragment_contains = {word:?}   # REPLACE with the text that proves the claim"
+            );
         }
     }
 }
@@ -516,7 +578,11 @@ pub async fn plugin_try(request: &TryRequest<'_>, as_check: bool) -> anyhow::Res
 // plugin mount
 // ---------------------------------------------------------------------------
 
-pub fn plugin_mount(artifact: &Path, id: Option<&str>, composition_path: &Path) -> anyhow::Result<()> {
+pub fn plugin_mount(
+    artifact: &Path,
+    id: Option<&str>,
+    composition_path: &Path,
+) -> anyhow::Result<()> {
     let artifact = artifact
         .canonicalize()
         .with_context(|| format!("{} does not exist", artifact.display()))?;
@@ -526,7 +592,11 @@ pub fn plugin_mount(artifact: &Path, id: Option<&str>, composition_path: &Path) 
         .context("artifact has no file name")?;
     let id = id.unwrap_or(&stem);
     crate::registry::mount(id, &artifact, composition_path)?;
-    println!("mounted `{id}` → {}\nin {}", artifact.display(), composition_path.display());
+    println!(
+        "mounted `{id}` → {}\nin {}",
+        artifact.display(),
+        composition_path.display()
+    );
     println!("next: `inseam plugins` (fiber `{id}` should be active), then `inseam index <dir>`");
     Ok(())
 }
@@ -580,14 +650,25 @@ mod tests {
             assert!(root.join(file).exists(), "{file}");
         }
         let checks = std::fs::read_to_string(root.join("demo-plugin.checks.toml")).expect("reads");
-        let parsed = inseam_conformance::ChecksFile::parse(&checks).expect("scaffolded checks parse");
-        assert!(parsed.required_coverage().is_ok(), "the scaffold ships the mandatory coverage shape");
-        assert!(checks.contains("text = \"REPLACE"), "textual claims get an inline text input");
-        let manifest: inseam_wasm_host::ArtifactManifest =
-            toml::from_str(&std::fs::read_to_string(root.join("demo-plugin.manifest.toml")).expect("reads"))
-                .expect("scaffolded manifest parses");
+        let parsed =
+            inseam_conformance::ChecksFile::parse(&checks).expect("scaffolded checks parse");
+        assert!(
+            parsed.required_coverage().is_ok(),
+            "the scaffold ships the mandatory coverage shape"
+        );
+        assert!(
+            checks.contains("text = \"REPLACE"),
+            "textual claims get an inline text input"
+        );
+        let manifest: inseam_wasm_host::ArtifactManifest = toml::from_str(
+            &std::fs::read_to_string(root.join("demo-plugin.manifest.toml")).expect("reads"),
+        )
+        .expect("scaffolded manifest parses");
         assert_eq!(manifest.claims, claims);
-        assert!(plugin_new(&scaffold(&claims, dir.path())).is_err(), "refuses to overwrite");
+        assert!(
+            plugin_new(&scaffold(&claims, dir.path())).is_err(),
+            "refuses to overwrite"
+        );
     }
 
     #[test]

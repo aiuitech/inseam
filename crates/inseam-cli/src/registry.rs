@@ -12,7 +12,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -113,7 +113,10 @@ pub async fn install(
     .context("registry.toml")?;
     let Some(entry) = index.plugin.iter().find(|p| p.name == name) else {
         let known: Vec<&str> = index.plugin.iter().map(|p| p.name.as_str()).collect();
-        bail!("no plugin `{name}` in the registry (available: {})", known.join(", "));
+        bail!(
+            "no plugin `{name}` in the registry (available: {})",
+            known.join(", ")
+        );
     };
     let advisories: Advisories = source
         .fetch_optional("advisories.toml")
@@ -127,20 +130,26 @@ pub async fn install(
     {
         bail!(
             "{} {} is yanked: {} — refusing to install",
-            entry.name, entry.version, advisory.reason
+            entry.name,
+            entry.version,
+            advisory.reason
         );
     }
 
     // Fetch and verify: the artifact must hash to what the reviewed index
     // says, no matter what actually got served.
-    println!("fetching {} {} — {}", entry.name, entry.version, entry.description);
+    println!(
+        "fetching {} {} — {}",
+        entry.name, entry.version, entry.description
+    );
     let artifact_bytes = source.fetch(&entry.artifact).await?;
     let digest = hex(&Sha256::digest(&artifact_bytes));
     if !digest.eq_ignore_ascii_case(&entry.sha256) {
         bail!(
             "sha256 mismatch for {}: registry index says {}, fetched bytes hash to {digest} — \
              refusing to install",
-            entry.artifact, entry.sha256
+            entry.artifact,
+            entry.sha256
         );
     }
     println!("sha256 verified: {digest}");
@@ -182,10 +191,9 @@ pub async fn install(
                 );
             }
             let fixture_rel = format!("{registry_dir}{}", fixture.display());
-            let bytes = source
-                .fetch(&fixture_rel)
-                .await
-                .with_context(|| format!("fixture {} referenced by {checks_rel}", fixture.display()))?;
+            let bytes = source.fetch(&fixture_rel).await.with_context(|| {
+                format!("fixture {} referenced by {checks_rel}", fixture.display())
+            })?;
             let local = install_dir.join(&fixture);
             if let Some(dir) = local.parent() {
                 std::fs::create_dir_all(dir)?;
@@ -200,7 +208,10 @@ pub async fn install(
     let report = inseam_wasm_host::check_artifact(&artifact_path).await;
     print!("{}", report.render());
     if !report.passed() {
-        bail!("{} failed its conformance checks; not mounting it", entry.name);
+        bail!(
+            "{} failed its conformance checks; not mounting it",
+            entry.name
+        );
     }
 
     mount(&entry.name, &artifact_path, composition_path)?;
@@ -275,8 +286,14 @@ mod tests {
 
     #[test]
     fn extension_replacement_keeps_registry_paths() {
-        assert_eq!(replace_extension("ocr/ocr.wasm", "manifest.toml"), "ocr/ocr.manifest.toml");
-        assert_eq!(replace_extension("flat.wasm", "checks.toml"), "flat.checks.toml");
+        assert_eq!(
+            replace_extension("ocr/ocr.wasm", "manifest.toml"),
+            "ocr/ocr.manifest.toml"
+        );
+        assert_eq!(
+            replace_extension("flat.wasm", "checks.toml"),
+            "flat.checks.toml"
+        );
     }
 
     #[test]

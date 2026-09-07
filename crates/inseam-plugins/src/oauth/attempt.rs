@@ -14,10 +14,10 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 
 use inseam_kernel::address::Timestamp;
-use inseam_seams::oauth::{AuthorizationCallback, GrantId};
 use inseam_seams::SeamError;
+use inseam_seams::oauth::{AuthorizationCallback, GrantId};
 
-use super::flow::{http_response, parse_callback, REQUEST_HEAD_BYTES_MAX};
+use super::flow::{REQUEST_HEAD_BYTES_MAX, http_response, parse_callback};
 use super::grant::GrantHandle;
 
 /// Authorizations one node keeps in flight at once: an owner signing in
@@ -164,14 +164,12 @@ pub async fn wait(
             }
         }
     };
-    tokio::time::timeout(timeout, settled)
-        .await
-        .map_err(|_| {
-            SeamError::failed(format!(
-                "no authorization redirect arrived within {} seconds",
-                timeout.as_secs()
-            ))
-        })?
+    tokio::time::timeout(timeout, settled).await.map_err(|_| {
+        SeamError::failed(format!(
+            "no authorization redirect arrived within {} seconds",
+            timeout.as_secs()
+        ))
+    })?
 }
 
 /// Run the loopback side of an attempt to its end: accept the redirect,
@@ -277,6 +275,8 @@ async fn read_request_head(stream: &mut TcpStream) -> Result<String, SeamError> 
 /// Best-effort answer to a loopback tab; a browser that hung up is not an
 /// error in the flow.
 async fn answer(stream: &mut TcpStream, status: u16, reason: &str, title: &str, body: &str) {
-    let _ = stream.write_all(&http_response(status, reason, title, body)).await;
+    let _ = stream
+        .write_all(&http_response(status, reason, title, body))
+        .await;
     let _ = stream.shutdown().await;
 }

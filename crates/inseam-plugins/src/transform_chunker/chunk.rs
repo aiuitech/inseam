@@ -13,11 +13,7 @@ pub fn chunk(mimetype: &Mimetype, text: &str) -> Vec<Sprout> {
     chunk_with_target(mimetype, text, TARGET_CHARS)
 }
 
-pub(crate) fn chunk_with_target(
-    mimetype: &Mimetype,
-    text: &str,
-    target: usize,
-) -> Vec<Sprout> {
+pub(crate) fn chunk_with_target(mimetype: &Mimetype, text: &str, target: usize) -> Vec<Sprout> {
     let lines: Vec<&str> = text.lines().collect();
     let mut sprouts = Vec::new();
     let mut start: Option<usize> = None; // 0-based first line of current chunk
@@ -39,7 +35,13 @@ pub(crate) fn chunk_with_target(
             chars = 0;
         }
     }
-    push_chunk(&mut sprouts, mimetype, &lines, start, lines.len().saturating_sub(1));
+    push_chunk(
+        &mut sprouts,
+        mimetype,
+        &lines,
+        start,
+        lines.len().saturating_sub(1),
+    );
     sprouts
 }
 

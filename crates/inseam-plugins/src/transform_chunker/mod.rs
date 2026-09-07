@@ -10,12 +10,12 @@ use std::sync::Arc;
 
 use inseam_kernel::fragment::Mimetype;
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory,
+    ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory, parse_config,
 };
-use inseam_seams::text::is_indexable_text;
 use inseam_seams::llm::LlmLane;
+use inseam_seams::text::is_indexable_text;
 use inseam_seams::transforms::{
-    register_as_effect, Registration, Transform, TransformCtx, TransformKind, TransformOutput,
+    Registration, Transform, TransformCtx, TransformKind, TransformOutput, register_as_effect,
 };
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -27,7 +27,9 @@ pub struct ChunkerConfig {
 
 impl Default for ChunkerConfig {
     fn default() -> Self {
-        Self { target_chars: 1_600 }
+        Self {
+            target_chars: 1_600,
+        }
     }
 }
 

@@ -10,9 +10,9 @@ mod common;
 
 use inseam_kernel::address::HostId;
 use inseam_plugins::connection_fs::FsHost;
-use inseam_seams::connection::{derive_host_id, HostKind, CONNECTIONS};
-use inseam_seams::operations::IndexRequest;
 use inseam_seams::SeamError;
+use inseam_seams::connection::{CONNECTIONS, HostKind, derive_host_id};
+use inseam_seams::operations::IndexRequest;
 
 fn corpus() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -37,7 +37,10 @@ machine_id = "two"
 /// The host ids the two entries derive, in the order the registry lists
 /// them (by id), each with the entry that stewards it.
 fn two_hosts_in_order() -> Vec<(HostId, &'static str)> {
-    let mut hosts = vec![(FsHost::derive_id("one"), "fs"), (FsHost::derive_id("two"), "fs-two")];
+    let mut hosts = vec![
+        (FsHost::derive_id("one"), "fs"),
+        (FsHost::derive_id("two"), "fs-two"),
+    ];
     hosts.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
     hosts
 }
@@ -52,10 +55,18 @@ async fn a_node_stewards_several_hosts_and_scopes_are_explicit() {
     let hosts = ops.hosts().await.expect("lists");
     let expected = two_hosts_in_order();
     let ids: Vec<&HostId> = hosts.iter().map(|h| &h.id).collect();
-    assert_eq!(ids, vec![&expected[0].0, &expected[1].0], "ordered by host id");
+    assert_eq!(
+        ids,
+        vec![&expected[0].0, &expected[1].0],
+        "ordered by host id"
+    );
     assert_eq!(hosts[0].entry, expected[0].1);
     assert_eq!(hosts[1].entry, expected[1].1);
-    assert!(hosts.iter().all(|h| h.capabilities.enumerates && !h.capabilities.writable));
+    assert!(
+        hosts
+            .iter()
+            .all(|h| h.capabilities.enumerates && !h.capabilities.writable)
+    );
 
     // Two hosts mounted: a scope without a host is refused by name.
     let ambiguous = ops
@@ -83,8 +94,23 @@ async fn a_node_stewards_several_hosts_and_scopes_are_explicit() {
     assert_eq!(report.indexed, 2, "the note and the folder holding it");
     let two = FsHost::derive_id("two");
     let one = FsHost::derive_id("one");
-    assert_eq!(kernel.store().sources_of_host(&two).await.expect("ok").len(), 2);
-    assert!(kernel.store().sources_of_host(&one).await.expect("ok").is_empty());
+    assert_eq!(
+        kernel
+            .store()
+            .sources_of_host(&two)
+            .await
+            .expect("ok")
+            .len(),
+        2
+    );
+    assert!(
+        kernel
+            .store()
+            .sources_of_host(&one)
+            .await
+            .expect("ok")
+            .is_empty()
+    );
 
     // A host nobody stewards is unknown, not a crash.
     let unknown = ops
@@ -125,10 +151,21 @@ machine_id = "shared"
         .fibers()
         .iter()
         .filter(|f| f.id == "fs" || f.id == "fs-dup")
-        .map(|f| (f.id.clone(), matches!(f.state, inseam_kernel::substrate::FiberState::Failed(_))))
+        .map(|f| {
+            (
+                f.id.clone(),
+                matches!(f.state, inseam_kernel::substrate::FiberState::Failed(_)),
+            )
+        })
         .collect();
-    assert!(states.contains(&("fs".to_string(), false)), "the first registration stands");
-    assert!(states.contains(&("fs-dup".to_string(), true)), "the duplicate fails alone");
+    assert!(
+        states.contains(&("fs".to_string(), false)),
+        "the first registration stands"
+    );
+    assert!(
+        states.contains(&("fs-dup".to_string(), true)),
+        "the duplicate fails alone"
+    );
     // Everything downstream of the registry still runs.
     let ops = common::ops(&kernel);
     assert_eq!(ops.hosts().await.expect("lists").len(), 1);
@@ -167,14 +204,22 @@ async fn the_filesystem_host_id_is_a_fingerprint_not_the_hostname() {
     assert_eq!(hosts.len(), 1);
     assert_eq!(hosts[0].kind, HostKind::filesystem());
     let id = hosts[0].id.as_str();
-    let digest = id.strip_prefix("fs-").expect("the kind prefixes the fingerprint");
+    let digest = id
+        .strip_prefix("fs-")
+        .expect("the kind prefixes the fingerprint");
     assert_eq!(digest.len(), 16, "{id}");
     assert!(digest.chars().all(|c| c.is_ascii_hexdigit()), "{id}");
 
     let hostname = gethostname::gethostname().to_string_lossy().to_lowercase();
     assert_ne!(id, format!("fs-{hostname}"), "never the hostname");
-    assert_ne!(hosts[0].id, derive_host_id(&HostKind::filesystem(), &hostname));
+    assert_ne!(
+        hosts[0].id,
+        derive_host_id(&HostKind::filesystem(), &hostname)
+    );
 
     let again = common::ops(&two).hosts().await.expect("lists");
-    assert_eq!(again[0].id, hosts[0].id, "two nodes on one machine, one host");
+    assert_eq!(
+        again[0].id, hosts[0].id,
+        "two nodes on one machine, one host"
+    );
 }

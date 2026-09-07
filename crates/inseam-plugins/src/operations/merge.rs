@@ -12,10 +12,10 @@ use std::collections::HashMap;
 
 use inseam_kernel::address::Address;
 use inseam_seams::operations::{FanOutSummary, QueryResult};
-use inseam_seams::routing::{FanOutReply, FAN_OUT_NODES_MAX};
+use inseam_seams::routing::{FAN_OUT_NODES_MAX, FanOutReply};
 
-use super::ladder::{round3, QUERY_LIMIT_MAX};
-use crate::finder::{collapse_by_digest_by, rrf_fuse, RRF_K_DEFAULT};
+use super::ladder::{QUERY_LIMIT_MAX, round3};
+use crate::finder::{RRF_K_DEFAULT, collapse_by_digest_by, rrf_fuse};
 
 /// Most ranked lists one merge fuses: the local list and one per fanned-out
 /// node. Bounds the interning below.
@@ -43,14 +43,24 @@ struct Candidate {
 /// no remote node answered with results — the local list stands
 /// untouched, scores and all, so a node with no network answers exactly as
 /// it always has.
-pub(crate) fn merge(mut local: Vec<QueryResult>, replies: Vec<FanOutReply>, limit: usize) -> Merged {
+pub(crate) fn merge(
+    mut local: Vec<QueryResult>,
+    replies: Vec<FanOutReply>,
+    limit: usize,
+) -> Merged {
     assert!(limit >= 1);
-    assert!(replies.len() <= FAN_OUT_NODES_MAX, "fan-out is bounded before the merge");
+    assert!(
+        replies.len() <= FAN_OUT_NODES_MAX,
+        "fan-out is bounded before the merge"
+    );
     let remote: Vec<FanOutSummary> = replies.iter().map(summary_of).collect();
     let any_remote_results = replies.iter().any(|reply| !reply.results.is_empty());
     if !any_remote_results {
         local.truncate(limit);
-        return Merged { results: local, remote };
+        return Merged {
+            results: local,
+            remote,
+        };
     }
     let mut candidates: Vec<Candidate> = Vec::new();
     let mut ids: HashMap<Address, i64> = HashMap::new();
@@ -64,7 +74,12 @@ pub(crate) fn merge(mut local: Vec<QueryResult>, replies: Vec<FanOutReply>, limi
         for result in &mut results {
             result.via = Some(reply.node);
         }
-        lists.push(intern_list(&mut candidates, &mut ids, results, Some(reply.node)));
+        lists.push(intern_list(
+            &mut candidates,
+            &mut ids,
+            results,
+            Some(reply.node),
+        ));
     }
     assert!(lists.len() <= LISTS_MAX);
     assert!(candidates.len() <= CANDIDATES_MAX);
@@ -153,7 +168,10 @@ fn fuse(candidates: Vec<Candidate>, lists: &[Vec<i64>]) -> Vec<QueryResult> {
         result.score = round3(score / top);
         ranked.push(result);
     }
-    assert!(slots.iter().all(Option::is_none), "every candidate was ranked once");
+    assert!(
+        slots.iter().all(Option::is_none),
+        "every candidate was ranked once"
+    );
     ranked
 }
 
@@ -218,11 +236,20 @@ mod tests {
 
     #[test]
     fn without_remote_results_the_local_list_stands_untouched() {
-        let mut local = vec![result("inseam://fs-a/one", None), result("inseam://fs-a/two", None)];
+        let mut local = vec![
+            result("inseam://fs-a/one", None),
+            result("inseam://fs-a/two", None),
+        ];
         local[1].score = 0.4;
         let merged = merge(local, vec![reply(2, Vec::new(), Some("timed out"))], 8);
-        assert_eq!(addresses(&merged.results), ["inseam://fs-a/one", "inseam://fs-a/two"]);
-        assert_eq!(merged.results[1].score, 0.4, "no fusion rescored the local list");
+        assert_eq!(
+            addresses(&merged.results),
+            ["inseam://fs-a/one", "inseam://fs-a/two"]
+        );
+        assert_eq!(
+            merged.results[1].score, 0.4,
+            "no fusion rescored the local list"
+        );
         assert_eq!(merged.remote.len(), 1);
         assert_eq!(merged.remote[0].error.as_deref(), Some("timed out"));
         assert_eq!(merged.remote[0].results, 0);
@@ -230,15 +257,28 @@ mod tests {
 
     #[test]
     fn rank_fusion_rewards_an_address_both_lists_rank() {
-        let local = vec![result("inseam://fs-a/only-local", None), result("inseam://fs-a/shared", None)];
-        let remote = vec![result("inseam://fs-a/shared", None), result("inseam://fs-b/only-remote", None)];
+        let local = vec![
+            result("inseam://fs-a/only-local", None),
+            result("inseam://fs-a/shared", None),
+        ];
+        let remote = vec![
+            result("inseam://fs-a/shared", None),
+            result("inseam://fs-b/only-remote", None),
+        ];
         let merged = merge(local, vec![reply(2, remote, None)], 8);
         assert_eq!(
             addresses(&merged.results),
-            ["inseam://fs-a/shared", "inseam://fs-a/only-local", "inseam://fs-b/only-remote"],
+            [
+                "inseam://fs-a/shared",
+                "inseam://fs-a/only-local",
+                "inseam://fs-b/only-remote"
+            ],
             "rank 2 + rank 1 beats a lone rank 1, and the local lone rank 1 beats the remote one by id"
         );
-        assert_eq!(merged.results[0].score, 1.0, "the top result is renormalized to 1.0");
+        assert_eq!(
+            merged.results[0].score, 1.0,
+            "the top result is renormalized to 1.0"
+        );
         assert!(merged.results[1].score < 1.0);
         assert_eq!(merged.remote[0].results, 2);
     }
@@ -265,7 +305,11 @@ mod tests {
         let merged = merge(
             local,
             vec![
-                reply(2, vec![result("inseam://fs-b/other", None), second_place], None),
+                reply(
+                    2,
+                    vec![result("inseam://fs-b/other", None), second_place],
+                    None,
+                ),
                 reply(3, vec![first_place], None),
             ],
             8,
@@ -292,7 +336,11 @@ mod tests {
             ["inseam://fs-a/notes.md", "inseam://drive-x/other.md"]
         );
         assert_eq!(
-            merged.results[0].replicas.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            merged.results[0]
+                .replicas
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
             ["inseam://drive-x/notes.md"]
         );
         assert!(merged.results[1].replicas.is_empty());
@@ -320,15 +368,24 @@ mod tests {
         assert_eq!(merged.results.len(), 2);
         assert_eq!(merged.remote.len(), 2);
         assert_eq!(merged.remote[0].node, node(2));
-        assert_eq!(merged.remote[0].error.as_deref(), Some("timed out after 3000 ms"));
+        assert_eq!(
+            merged.remote[0].error.as_deref(),
+            Some("timed out after 3000 ms")
+        );
         assert_eq!(merged.remote[1].results, 1);
         assert_eq!(merged.remote[1].error, None);
     }
 
     #[test]
     fn the_merge_is_truncated_to_the_limit() {
-        let local = vec![result("inseam://fs-a/a", None), result("inseam://fs-a/b", None)];
-        let remote = vec![result("inseam://fs-b/c", None), result("inseam://fs-b/d", None)];
+        let local = vec![
+            result("inseam://fs-a/a", None),
+            result("inseam://fs-a/b", None),
+        ];
+        let remote = vec![
+            result("inseam://fs-b/c", None),
+            result("inseam://fs-b/d", None),
+        ];
         let merged = merge(local, vec![reply(2, remote, None)], 3);
         assert_eq!(merged.results.len(), 3);
     }

@@ -13,7 +13,7 @@ use iroh::endpoint::Connection;
 
 use inseam_kernel::address::Timestamp;
 use inseam_kernel::network::NodeId;
-use inseam_seams::transport::{SessionDirection, SessionView, SESSIONS_MAX};
+use inseam_seams::transport::{SESSIONS_MAX, SessionDirection, SessionView};
 
 pub struct Session {
     pub connection: Connection,
@@ -79,7 +79,10 @@ impl SessionTable {
             displaced.extend(evicted);
         }
         self.sessions.insert(peer, session);
-        assert!(self.sessions.len() <= SESSIONS_MAX, "the session bound holds");
+        assert!(
+            self.sessions.len() <= SESSIONS_MAX,
+            "the session bound holds"
+        );
         assert!(displaced.len() <= 2);
         displaced
     }

@@ -34,27 +34,30 @@ use inseam_kernel::address::Timestamp;
 use inseam_kernel::network::NodeId;
 use inseam_kernel::store::IndexStore;
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError,
-    PluginFactory, STORE,
+    ApplyCx, EventBus, Facts, Inject, Manifest, Plugin, PluginError, PluginFactory, STORE,
+    parse_config,
 };
-use inseam_seams::roster::{Roster, ROSTER};
-use inseam_seams::sync::{PeerSyncView, SyncStatus, Synchronizer, PEERS_PER_ROUND_MAX, SYNC};
-use inseam_seams::transport::{register_as_effect, PeerAddress, Transport, TRANSPORT};
 use inseam_seams::SeamError;
+use inseam_seams::roster::{ROSTER, Roster};
+use inseam_seams::sync::{PEERS_PER_ROUND_MAX, PeerSyncView, SYNC, SyncStatus, Synchronizer};
+use inseam_seams::transport::{PeerAddress, TRANSPORT, Transport, register_as_effect};
 
-use exchange::{exchange, Handler};
+use exchange::{Handler, exchange};
 use peers::choose_peers;
 use views::PeerLedgers;
 
 pub use exchange::ROUNDS_MAX;
-pub use protocol::{protocol_name, SyncRequest, SyncResponse, PROTOCOL};
+pub use protocol::{PROTOCOL, SyncRequest, SyncResponse, protocol_name};
 pub use views::PEER_VIEWS_MAX;
 
 /// Exchanges one round runs at once; the rest wait their turn. Eight keeps
 /// a round short on a backbone with tens of peers without opening a
 /// session storm on a laptop.
 pub const CONCURRENT_PEERS_MAX: usize = 8;
-const _: () = assert!(CONCURRENT_PEERS_MAX > 0, "a round must run at least one exchange");
+const _: () = assert!(
+    CONCURRENT_PEERS_MAX > 0,
+    "a round must run at least one exchange"
+);
 const _: () = assert!(
     CONCURRENT_PEERS_MAX <= PEERS_PER_ROUND_MAX,
     "more concurrency than peers in a round is idle capacity"
@@ -209,7 +212,9 @@ async fn sync_loop(inner: Arc<Inner>, initial_delay: Duration, interval: Duratio
         }
         tokio::time::sleep(interval).await;
     }
-    unreachable!("the sync timer runs for the node's lifetime; {SYNC_TICKS_MAX} rounds is longer than any process");
+    unreachable!(
+        "the sync timer runs for the node's lifetime; {SYNC_TICKS_MAX} rounds is longer than any process"
+    );
 }
 
 pub struct Service {
@@ -283,7 +288,10 @@ impl Inner {
         let gate = Semaphore::new(CONCURRENT_PEERS_MAX);
         let exchanges = peers.iter().map(|peer| async {
             // The gate is never closed, so acquiring cannot fail.
-            let _permit = gate.acquire().await.expect("the concurrency gate stays open");
+            let _permit = gate
+                .acquire()
+                .await
+                .expect("the concurrency gate stays open");
             if let Err(e) = self.sync_with(peer).await {
                 tracing::debug!(peer = %peer.id.short(), "sync exchange failed: {e}");
             }

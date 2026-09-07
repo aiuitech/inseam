@@ -25,22 +25,22 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use reqwest::header::HeaderMap;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, SecretNeed,
+    ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, SecretNeed, parse_config,
 };
+use inseam_seams::SeamError;
 use inseam_seams::llm::{
-    self, ChatMessage, ChatRequest, EmbedRequest, EmbeddingModel, Llm, ModelInfo, VisionRequest,
-    LLM,
+    self, ChatMessage, ChatRequest, EmbedRequest, EmbeddingModel, LLM, Llm, ModelInfo,
+    VisionRequest,
 };
 use inseam_seams::text::truncate_chars;
-use inseam_seams::SeamError;
 
 use batch::{ChatBatcher, ChatBatching};
 use ollama::{EmbeddingModelVerdict, OllamaApi};
@@ -139,11 +139,19 @@ impl LlmEndpointConfig {
     /// The batch-API collection URL: configured, derived for OpenRouter, or
     /// none.
     fn batches_url(&self) -> Option<String> {
-        if let Some(url) = self.batches_url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+        if let Some(url) = self
+            .batches_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+        {
             return Some(url.trim_end_matches('/').to_string());
         }
         if endpoint_host(&self.base_url) == "openrouter.ai" {
-            return Some(format!("{}/api/beta/batches", endpoint_origin(&self.base_url)));
+            return Some(format!(
+                "{}/api/beta/batches",
+                endpoint_origin(&self.base_url)
+            ));
         }
         None
     }
@@ -151,7 +159,12 @@ impl LlmEndpointConfig {
     /// The batch lane's model: configured, or the transform model's `:batch`
     /// variant (itself, when it already is one).
     fn transform_batch_model(&self) -> String {
-        if let Some(model) = self.transform_batch_model.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
+        if let Some(model) = self
+            .transform_batch_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+        {
             return model.to_string();
         }
         match batch_base_model(&self.transform_model) {
@@ -362,7 +375,8 @@ impl Transport {
         body: Option<&Value>,
     ) -> Result<T, SeamError> {
         let url = format!("{}{path}", self.base_url);
-        self.request_url_json(method, &url, path, body, REQUEST_TIMEOUT).await
+        self.request_url_json(method, &url, path, body, REQUEST_TIMEOUT)
+            .await
     }
 
     /// One request with bounded retries on transport errors, 429, and 5xx.
@@ -378,7 +392,12 @@ impl Transport {
         let mut retry_delay = Duration::ZERO;
         for attempt in 0..RETRIES {
             if attempt > 0 {
-                tracing::warn!(attempt, retry_in_s = retry_delay.as_secs(), operation, "retrying llm request");
+                tracing::warn!(
+                    attempt,
+                    retry_in_s = retry_delay.as_secs(),
+                    operation,
+                    "retrying llm request"
+                );
                 tokio::time::sleep(retry_delay).await;
             }
             let mut req = self
@@ -447,8 +466,7 @@ fn response_retry_delay(
 }
 
 fn retry_backoff(attempt: u32) -> Duration {
-    Duration::from_secs(2u64.saturating_pow(attempt.saturating_add(1)))
-        .min(RETRY_DELAY_MAX)
+    Duration::from_secs(2u64.saturating_pow(attempt.saturating_add(1))).min(RETRY_DELAY_MAX)
 }
 
 fn header_u64(headers: &HeaderMap, name: &str) -> Option<u64> {
@@ -501,7 +519,8 @@ impl LlmClient {
             spent: Mutex::new(0.0),
             batch_jobs: AtomicU64::new(0),
         });
-        let batcher = batching.map(|tuning| Arc::new(ChatBatcher::new(Arc::clone(&transport), tuning)));
+        let batcher =
+            batching.map(|tuning| Arc::new(ChatBatcher::new(Arc::clone(&transport), tuning)));
         Self { transport, batcher }
     }
 
@@ -567,7 +586,8 @@ impl Llm for LlmClient {
     async fn chat(&self, request: &ChatRequest) -> Result<ChatMessage, SeamError> {
         // A `:batch` model on an endpoint without a batch lane goes out as
         // named: the endpoint decides whether it knows the variant.
-        if let (Some(batcher), Some(base_model)) = (&self.batcher, batch_base_model(&request.model)) {
+        if let (Some(batcher), Some(base_model)) = (&self.batcher, batch_base_model(&request.model))
+        {
             return self.chat_via_batch(batcher, request, base_model).await;
         }
         let body = self.chat_body(request)?;
@@ -681,7 +701,11 @@ impl Llm for LlmClient {
     }
 
     fn spent(&self) -> f64 {
-        *self.transport.spent.lock().unwrap_or_else(|e| e.into_inner())
+        *self
+            .transport
+            .spent
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     fn batch_jobs(&self) -> u64 {
@@ -886,7 +910,10 @@ mod tests {
             openrouter.batches_url().as_deref(),
             Some("https://openrouter.ai/api/beta/batches")
         );
-        assert_eq!(openrouter.transform_batch_model(), "google/gemini-2.5-flash-lite:batch");
+        assert_eq!(
+            openrouter.transform_batch_model(),
+            "google/gemini-2.5-flash-lite:batch"
+        );
         assert!(openrouter.batching().is_some());
 
         let ollama = LlmEndpointConfig {
@@ -903,8 +930,14 @@ mod tests {
             transform_model: "google/gemini-2.5-flash-lite:batch".to_string(),
             ..LlmEndpointConfig::default()
         };
-        assert_eq!(gateway.batches_url().as_deref(), Some("https://gateway.example/batches"));
-        assert_eq!(gateway.transform_batch_model(), "google/gemini-2.5-flash-lite:batch");
+        assert_eq!(
+            gateway.batches_url().as_deref(),
+            Some("https://gateway.example/batches")
+        );
+        assert_eq!(
+            gateway.transform_batch_model(),
+            "google/gemini-2.5-flash-lite:batch"
+        );
     }
 
     #[test]
@@ -940,7 +973,10 @@ mod tests {
 
     #[test]
     fn batch_base_model_strips_only_a_real_suffix() {
-        assert_eq!(batch_base_model("google/gemini-2.5-flash-lite:batch"), Some("google/gemini-2.5-flash-lite"));
+        assert_eq!(
+            batch_base_model("google/gemini-2.5-flash-lite:batch"),
+            Some("google/gemini-2.5-flash-lite")
+        );
         assert_eq!(batch_base_model("google/gemini-2.5-flash-lite"), None);
         assert_eq!(batch_base_model(":batch"), None);
     }

@@ -9,11 +9,11 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use inseam_kernel::address::{Address, HostId, Locator, Timestamp};
+use inseam_seams::SeamError;
 use inseam_seams::connection::{Connection, EnumeratedSource};
 use inseam_seams::text::slice_lines;
-use inseam_seams::SeamError;
 
-use super::api::{opt_str_field, rendered, split_locator, str_field, timestamp_field, GoogleApi};
+use super::api::{GoogleApi, opt_str_field, rendered, split_locator, str_field, timestamp_field};
 
 /// Tasks per page — the Tasks API's maximum.
 const PAGE_SIZE: &str = "100";
@@ -42,16 +42,26 @@ impl TasksConnection {
         let listed = self
             .api
             .list_pages(
-                self.api
-                    .api_url(&["tasks", "v1", "users", "@me", "lists"], &[("maxResults", PAGE_SIZE)]),
+                self.api.api_url(
+                    &["tasks", "v1", "users", "@me", "lists"],
+                    &[("maxResults", PAGE_SIZE)],
+                ),
                 "items",
                 self.sources_max,
             )
             .await?;
-        Ok(listed.iter().filter_map(|l| opt_str_field(l, "id")).collect())
+        Ok(listed
+            .iter()
+            .filter_map(|l| opt_str_field(l, "id"))
+            .collect())
     }
 
-    fn source_of(&self, list: &str, task: &serde_json::Value, observed: Timestamp) -> Option<EnumeratedSource> {
+    fn source_of(
+        &self,
+        list: &str,
+        task: &serde_json::Value,
+        observed: Timestamp,
+    ) -> Option<EnumeratedSource> {
         let id = opt_str_field(task, "id")?;
         let locator = Locator::new(format!("{list}/{id}")).ok()?;
         let text = render_task(task);
@@ -135,7 +145,11 @@ impl Connection for TasksConnection {
                     remaining,
                 )
                 .await?;
-            sources.extend(tasks.iter().filter_map(|t| self.source_of(&list, t, observed)));
+            sources.extend(
+                tasks
+                    .iter()
+                    .filter_map(|t| self.source_of(&list, t, observed)),
+            );
         }
         Ok(sources)
     }
@@ -148,12 +162,20 @@ impl Connection for TasksConnection {
         let (list, task) = self.task_of(address)?;
         let task = self
             .api
-            .get_json(self.api.api_url(&["tasks", "v1", "lists", list, "tasks", task], &[]))
+            .get_json(
+                self.api
+                    .api_url(&["tasks", "v1", "lists", list, "tasks", task], &[]),
+            )
             .await?;
         Ok(render_task(&task))
     }
 
-    async fn read_lines(&self, address: &Address, start: u64, end: u64) -> Result<String, SeamError> {
+    async fn read_lines(
+        &self,
+        address: &Address,
+        start: u64,
+        end: u64,
+    ) -> Result<String, SeamError> {
         let text = self.read_text(address).await?;
         slice_lines(&text, start, end)
     }
@@ -183,7 +205,9 @@ mod tests {
         axum::Router::new()
             .route(
                 "/tasks/v1/users/@me/lists",
-                get(|| async { axum::Json(serde_json::json!({"items": [{"id": "l1"}, {"id": "l2"}]})) }),
+                get(|| async {
+                    axum::Json(serde_json::json!({"items": [{"id": "l1"}, {"id": "l2"}]}))
+                }),
             )
             .route(
                 "/tasks/v1/lists/{list}/tasks",
@@ -198,7 +222,9 @@ mod tests {
             )
             .route(
                 "/tasks/v1/lists/{list}/tasks/{task}",
-                get(|Path((_, id)): Path<(String, String)>| async move { axum::Json(task(&id, "Renew passport")) }),
+                get(|Path((_, id)): Path<(String, String)>| async move {
+                    axum::Json(task(&id, "Renew passport"))
+                }),
             )
     }
 
@@ -229,6 +255,9 @@ mod tests {
             tasks.read_text(&address).await.expect("reads"),
             "Task: Renew passport\nStatus: pending\nDue: 2025-02-01T00:00:00.000Z\n\ncall the bank\n"
         );
-        assert_eq!(tasks.read_lines(&address, 2, 2).await.expect("reads"), "Status: pending");
+        assert_eq!(
+            tasks.read_lines(&address, 2, 2).await.expect("reads"),
+            "Status: pending"
+        );
     }
 }

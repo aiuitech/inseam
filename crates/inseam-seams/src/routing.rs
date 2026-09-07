@@ -21,9 +21,9 @@ use inseam_kernel::address::{Address, Envelope, HostId};
 use inseam_kernel::network::{NodeId, StewardshipRecord};
 use inseam_kernel::substrate::ServiceKey;
 
+use crate::SeamError;
 use crate::connection::Registration;
 use crate::operations::{ExpandResponse, QueryResult};
-use crate::SeamError;
 
 pub const ROUTING: ServiceKey<dyn Routing> = ServiceKey::new("routing");
 
@@ -31,11 +31,17 @@ pub const ROUTING: ServiceKey<dyn Routing> = ServiceKey::new("routing");
 /// included. Two is the design's A→B→C; four covers a chain of relays
 /// without letting a loop run long.
 pub const HOPS_MAX: u32 = 4;
-const _: () = assert!(HOPS_MAX >= 2, "reaching a host by way of one relay takes two hops");
+const _: () = assert!(
+    HOPS_MAX >= 2,
+    "reaching a host by way of one relay takes two hops"
+);
 /// Most nodes one query fans out to; more deep-index nodes than this and
 /// the closest by roster order win.
 pub const FAN_OUT_NODES_MAX: usize = 8;
-const _: () = assert!(FAN_OUT_NODES_MAX > 0, "a fan-out to no node is just the local query");
+const _: () = assert!(
+    FAN_OUT_NODES_MAX > 0,
+    "a fan-out to no node is just the local query"
+);
 /// How long a fan-out waits for the slowest node before answering with
 /// what it has; a query is interactive, a straggler is reported, not
 /// awaited.
@@ -88,8 +94,12 @@ pub trait Routing: Send + Sync {
     async fn read_text(&self, address: &Address) -> Result<String, SeamError>;
 
     /// Lines `start..=end` (1-based, inclusive) of a text source.
-    async fn read_lines(&self, address: &Address, start: u64, end: u64)
-    -> Result<String, SeamError>;
+    async fn read_lines(
+        &self,
+        address: &Address,
+        start: u64,
+        end: u64,
+    ) -> Result<String, SeamError>;
 
     /// Raw bytes of a source, bounded by the transport's message size.
     async fn read_bytes(&self, address: &Address) -> Result<Vec<u8>, SeamError>;

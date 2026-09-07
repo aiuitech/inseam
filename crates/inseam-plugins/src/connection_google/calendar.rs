@@ -8,11 +8,11 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use inseam_kernel::address::{Address, HostId, Locator, Timestamp};
+use inseam_seams::SeamError;
 use inseam_seams::connection::{Connection, EnumeratedSource};
 use inseam_seams::text::slice_lines;
-use inseam_seams::SeamError;
 
-use super::api::{opt_str_field, rendered, split_locator, str_field, timestamp_field, GoogleApi};
+use super::api::{GoogleApi, opt_str_field, rendered, split_locator, str_field, timestamp_field};
 
 /// Events per page — the Calendar API's maximum.
 const PAGE_SIZE: &str = "2500";
@@ -52,10 +52,18 @@ impl CalendarConnection {
                 self.sources_max,
             )
             .await?;
-        Ok(listed.iter().filter_map(|c| opt_str_field(c, "id")).collect())
+        Ok(listed
+            .iter()
+            .filter_map(|c| opt_str_field(c, "id"))
+            .collect())
     }
 
-    fn source_of(&self, calendar: &str, event: &serde_json::Value, observed: Timestamp) -> Option<EnumeratedSource> {
+    fn source_of(
+        &self,
+        calendar: &str,
+        event: &serde_json::Value,
+        observed: Timestamp,
+    ) -> Option<EnumeratedSource> {
         if str_field(event, "status") == "cancelled" {
             return None;
         }
@@ -183,7 +191,11 @@ impl Connection for CalendarConnection {
                     remaining,
                 )
                 .await?;
-            sources.extend(events.iter().filter_map(|e| self.source_of(&calendar, e, observed)));
+            sources.extend(
+                events
+                    .iter()
+                    .filter_map(|e| self.source_of(&calendar, e, observed)),
+            );
         }
         Ok(sources)
     }
@@ -196,15 +208,20 @@ impl Connection for CalendarConnection {
         let (calendar, event) = self.event_of(address)?;
         let event = self
             .api
-            .get_json(
-                self.api
-                    .api_url(&["calendar", "v3", "calendars", calendar, "events", event], &[]),
-            )
+            .get_json(self.api.api_url(
+                &["calendar", "v3", "calendars", calendar, "events", event],
+                &[],
+            ))
             .await?;
         Ok(render_event(&event))
     }
 
-    async fn read_lines(&self, address: &Address, start: u64, end: u64) -> Result<String, SeamError> {
+    async fn read_lines(
+        &self,
+        address: &Address,
+        start: u64,
+        end: u64,
+    ) -> Result<String, SeamError> {
         let text = self.read_text(address).await?;
         slice_lines(&text, start, end)
     }
@@ -267,14 +284,20 @@ mod tests {
         let calendar = CalendarConnection::new(Arc::new(api), host(), 100);
         let all = calendar.enumerate("").await.expect("enumerates");
         let locators: Vec<&str> = all.iter().map(|s| s.address.locator.as_str()).collect();
-        assert_eq!(locators, vec!["primary/e1", "team@group.calendar.google.com/e2"]);
+        assert_eq!(
+            locators,
+            vec!["primary/e1", "team@group.calendar.google.com/e2"]
+        );
         assert_eq!(all[0].envelope.hint.as_deref(), Some("Standup"));
         assert_eq!(all[0].envelope.modified, Some(Timestamp(1_735_787_045)));
         assert_eq!(all[0].envelope.source_type, "event");
         assert!(all[0].raw_bytes > 0);
         let one = calendar.enumerate("primary").await.expect("enumerates");
         assert_eq!(one.len(), 1);
-        assert_eq!(calendar.locator_prefix("primary"), Some("primary".to_string()));
+        assert_eq!(
+            calendar.locator_prefix("primary"),
+            Some("primary".to_string())
+        );
         assert_eq!(calendar.locator_prefix(""), Some(String::new()));
     }
 
@@ -282,19 +305,27 @@ mod tests {
     async fn reads_an_event_as_text() {
         let (api, _server) = fake_google(router()).await;
         let calendar = CalendarConnection::new(Arc::new(api), host(), 100);
-        let address: Address = "inseam://google-calendar-test/primary/e1".parse().expect("address");
+        let address: Address = "inseam://google-calendar-test/primary/e1"
+            .parse()
+            .expect("address");
         let text = calendar.read_text(&address).await.expect("reads");
         assert_eq!(
             text,
             "Event: Standup\nWhen: 2025-01-03T09:00:00-05:00 – 2025-01-03T10:00:00-05:00\nWhere: Room 4\nOrganizer: Olga <o@example.com>\nAttendees: a@example.com, Bea <b@example.com>\nLink: https://calendar.google.com/e/1\n\nbring notes\n"
         );
         let flat: Address = "inseam://google-calendar-test/e1".parse().expect("address");
-        assert!(matches!(calendar.read_text(&flat).await, Err(SeamError::Refused(_))));
+        assert!(matches!(
+            calendar.read_text(&flat).await,
+            Err(SeamError::Refused(_))
+        ));
     }
 
     #[test]
     fn all_day_events_render_their_date() {
         let e = serde_json::json!({"summary": "Holiday", "start": {"date": "2025-12-25"}, "end": {"date": "2025-12-26"}});
-        assert_eq!(render_event(&e), "Event: Holiday\nWhen: 2025-12-25 – 2025-12-26\n");
+        assert_eq!(
+            render_event(&e),
+            "Event: Holiday\nWhen: 2025-12-25 – 2025-12-26\n"
+        );
     }
 }

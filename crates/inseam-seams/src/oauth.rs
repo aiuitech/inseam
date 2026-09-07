@@ -311,10 +311,8 @@ pub trait OAuth: Send + Sync {
     /// provider). The handle is live at once — tokens already on file are
     /// loaded — and the disposer is the registering fiber's effect. One
     /// grant per id: a second registration for a known id is refused, named.
-    async fn register(
-        &self,
-        spec: GrantSpec,
-    ) -> Result<(Arc<dyn Grant>, GrantDisposer), SeamError>;
+    async fn register(&self, spec: GrantSpec)
+    -> Result<(Arc<dyn Grant>, GrantDisposer), SeamError>;
 
     /// Start the owner's authorization of a grant: the returned URL is what
     /// to send them to. For [`Redirect::Loopback`] the provider waits for
@@ -384,7 +382,10 @@ mod tests {
     #[test]
     fn grant_id_accepts_file_safe_names() {
         assert_eq!(GrantId::new("google").expect("valid").as_str(), "google");
-        assert_eq!(GrantId::new("slack_work-2").expect("valid").as_str(), "slack_work-2");
+        assert_eq!(
+            GrantId::new("slack_work-2").expect("valid").as_str(),
+            "slack_work-2"
+        );
     }
 
     #[test]
@@ -421,7 +422,10 @@ mod tests {
             authorization_params: BTreeMap::new(),
         };
         assert_eq!(spec.provider(), "accounts.google.com");
-        assert_eq!(url_host("https://user@host.example:8443/p"), Some("host.example".to_string()));
+        assert_eq!(
+            url_host("https://user@host.example:8443/p"),
+            Some("host.example".to_string())
+        );
         assert_eq!(url_host("not a url"), None);
     }
 

@@ -16,12 +16,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Deserialize;
-use serde_json::{json, Value};
-use tokio::sync::{oneshot, OwnedSemaphorePermit, Semaphore};
+use serde_json::{Value, json};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
 use tokio::time::Instant;
 
-use inseam_seams::llm::ChatMessage;
 use inseam_seams::SeamError;
+use inseam_seams::llm::ChatMessage;
 
 use super::{ChatResponse, Transport, Usage};
 
@@ -184,7 +184,11 @@ impl ChatBatcher {
         if !(full || quiet || old) {
             return Tick::Wait;
         }
-        let job = take_job(&mut state.pending, self.tuning.requests_max, self.tuning.bytes_max);
+        let job = take_job(
+            &mut state.pending,
+            self.tuning.requests_max,
+            self.tuning.bytes_max,
+        );
         state.pending_bytes = state.pending.iter().map(|p| p.bytes).sum();
         if state.pending.is_empty() {
             state.oldest_arrival = None;
@@ -211,7 +215,11 @@ impl ChatBatcher {
     }
 
     /// One job, start to finish, on its own task: create, poll, deliver.
-    async fn run_job(self: Arc<Self>, mut job: Vec<PendingBatchChat>, _permit: OwnedSemaphorePermit) {
+    async fn run_job(
+        self: Arc<Self>,
+        mut job: Vec<PendingBatchChat>,
+        _permit: OwnedSemaphorePermit,
+    ) {
         assert!(!job.is_empty());
         assert!(job.len() <= self.tuning.requests_max);
         let model = job[0].model.clone();
@@ -233,7 +241,9 @@ impl ChatBatcher {
                 elapsed_s = started.elapsed().as_secs(),
                 "llm batch job completed"
             ),
-            Err(error) => tracing::warn!(model, requests = job.len(), %error, "llm batch job failed"),
+            Err(error) => {
+                tracing::warn!(model, requests = job.len(), %error, "llm batch job failed")
+            }
         }
         deliver(job, outcome);
     }
@@ -264,7 +274,13 @@ impl ChatBatcher {
             )
             .await?;
         self.transport.record_batch_job();
-        tracing::info!(id = created.id, model, requests = expected_count, bytes, "llm batch job created");
+        tracing::info!(
+            id = created.id,
+            model,
+            requests = expected_count,
+            bytes,
+            "llm batch job created"
+        );
         let completed = self.poll(&created.id).await?;
         self.transport.record_cost(completed.usage.as_ref());
         let results = completed
@@ -284,7 +300,13 @@ impl ChatBatcher {
             tokio::time::sleep(cadence).await;
             let batch: OpenRouterBatch = self
                 .transport
-                .request_url_json(reqwest::Method::GET, &url, "polling llm batch job", None, self.tuning.create_timeout)
+                .request_url_json(
+                    reqwest::Method::GET,
+                    &url,
+                    "polling llm batch job",
+                    None,
+                    self.tuning.create_timeout,
+                )
                 .await?;
             tracing::debug!(id = batch_id, status = batch.status, "llm batch job polled");
             match batch.status.as_str() {
@@ -312,7 +334,11 @@ impl ChatBatcher {
 
 /// Take the job at the head of the queue: the longest same-model prefix
 /// within the request and byte caps, always at least one.
-fn take_job(pending: &mut VecDeque<PendingBatchChat>, requests_max: usize, bytes_max: usize) -> Vec<PendingBatchChat> {
+fn take_job(
+    pending: &mut VecDeque<PendingBatchChat>,
+    requests_max: usize,
+    bytes_max: usize,
+) -> Vec<PendingBatchChat> {
     let model = pending.front().map(|p| p.model.clone());
     let Some(model) = model else {
         return Vec::new();
@@ -340,7 +366,10 @@ fn custom_id(index: usize) -> String {
 
 /// Answer every caller of a job: its own result on success, the job's
 /// error on failure.
-fn deliver(job: Vec<PendingBatchChat>, outcome: Result<Vec<Result<ChatMessage, SeamError>>, SeamError>) {
+fn deliver(
+    job: Vec<PendingBatchChat>,
+    outcome: Result<Vec<Result<ChatMessage, SeamError>>, SeamError>,
+) {
     match outcome {
         Ok(results) => {
             assert_eq!(results.len(), job.len());
@@ -367,7 +396,10 @@ fn results_in_request_order(
         (0..expected_count).map(|_| None).collect();
     for result in results {
         let Some(index) = result_index(&result.custom_id, expected_count) else {
-            tracing::warn!(custom_id = result.custom_id, "llm batch job returned an unknown id");
+            tracing::warn!(
+                custom_id = result.custom_id,
+                "llm batch job returned an unknown id"
+            );
             continue;
         };
         if ordered[index].is_some() {
@@ -384,7 +416,10 @@ fn results_in_request_order(
         .enumerate()
         .map(|(index, result)| {
             result.unwrap_or_else(|| {
-                Err(SeamError::failed(format!("llm batch job omitted `{}`", custom_id(index))))
+                Err(SeamError::failed(format!(
+                    "llm batch job omitted `{}`",
+                    custom_id(index)
+                )))
             })
         })
         .collect()
@@ -410,7 +445,12 @@ fn result_message(result: OpenRouterBatchResult) -> Result<ChatMessage, SeamErro
         .into_iter()
         .next()
         .map(|choice| choice.message)
-        .ok_or_else(|| SeamError::failed(format!("llm batch item `{}` has no choices", result.custom_id)))
+        .ok_or_else(|| {
+            SeamError::failed(format!(
+                "llm batch item `{}` has no choices",
+                result.custom_id
+            ))
+        })
 }
 
 fn result_index(custom_id: &str, expected_count: usize) -> Option<usize> {
@@ -504,10 +544,24 @@ mod tests {
 
         let messages = results_in_request_order(results, 4);
 
-        assert_eq!(messages[0].as_ref().unwrap().content.as_deref(), Some("first"));
-        assert_eq!(messages[1].as_ref().unwrap().content.as_deref(), Some("second"));
-        assert!(messages[2].as_ref().is_err_and(|e| e.to_string().contains("rate limited")));
-        assert!(messages[3].as_ref().is_err_and(|e| e.to_string().contains("omitted")));
+        assert_eq!(
+            messages[0].as_ref().unwrap().content.as_deref(),
+            Some("first")
+        );
+        assert_eq!(
+            messages[1].as_ref().unwrap().content.as_deref(),
+            Some("second")
+        );
+        assert!(
+            messages[2]
+                .as_ref()
+                .is_err_and(|e| e.to_string().contains("rate limited"))
+        );
+        assert!(
+            messages[3]
+                .as_ref()
+                .is_err_and(|e| e.to_string().contains("omitted"))
+        );
     }
 
     /// A fake batch endpoint: records every created job, answers the first
@@ -554,7 +608,10 @@ mod tests {
         }
     }
 
-    async fn fake_lane(fail: Vec<String>, requests_max: usize) -> (Arc<ChatBatcher>, Arc<FakeBatches>) {
+    async fn fake_lane(
+        fail: Vec<String>,
+        requests_max: usize,
+    ) -> (Arc<ChatBatcher>, Arc<FakeBatches>) {
         use axum::extract::{Path, State};
         use axum::routing::{get, post};
         let fake = Arc::new(FakeBatches {
@@ -562,21 +619,29 @@ mod tests {
             polls: Mutex::new(Vec::new()),
             fail,
         });
-        let router = axum::Router::new()
-            .route(
-                "/batches",
-                post(|State(fake): State<Arc<FakeBatches>>, axum::Json(body): axum::Json<Value>| async move {
-                    axum::Json(fake.create(body))
-                }),
-            )
-            .route(
-                "/batches/{id}",
-                get(|State(fake): State<Arc<FakeBatches>>, Path(id): Path<String>| async move {
-                    axum::Json(fake.poll(&id))
-                }),
-            )
-            .with_state(Arc::clone(&fake));
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.expect("binds");
+        let router =
+            axum::Router::new()
+                .route(
+                    "/batches",
+                    post(
+                        |State(fake): State<Arc<FakeBatches>>,
+                         axum::Json(body): axum::Json<Value>| async move {
+                            axum::Json(fake.create(body))
+                        },
+                    ),
+                )
+                .route(
+                    "/batches/{id}",
+                    get(
+                        |State(fake): State<Arc<FakeBatches>>, Path(id): Path<String>| async move {
+                            axum::Json(fake.poll(&id))
+                        },
+                    ),
+                )
+                .with_state(Arc::clone(&fake));
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("binds");
         let base = format!("http://{}", listener.local_addr().expect("addr"));
         tokio::spawn(async move {
             axum::serve(listener, router).await.expect("serves");
@@ -618,25 +683,44 @@ mod tests {
     async fn concurrent_calls_share_one_job_and_get_their_own_answers() {
         let (lane, fake) = fake_lane(vec!["inseam-3".to_string()], 100).await;
         let receivers: Vec<_> = (0..8)
-            .map(|i| lane.submit("m", user_body(&format!("q{i}"))).expect("parks"))
+            .map(|i| {
+                lane.submit("m", user_body(&format!("q{i}")))
+                    .expect("parks")
+            })
             .collect();
         let mut answers = Vec::new();
         for receiver in receivers {
             answers.push(receiver.await.expect("the lane replies"));
         }
-        assert_eq!(fake.jobs.lock().unwrap().len(), 1, "one job carries every call");
+        assert_eq!(
+            fake.jobs.lock().unwrap().len(),
+            1,
+            "one job carries every call"
+        );
         let job = fake.jobs.lock().unwrap()[0].clone();
         assert_eq!(job["endpoint"], "/v1/chat/completions");
         assert_eq!(job["model"], "m");
         assert_eq!(job["requests"].as_array().unwrap().len(), 8);
         for (i, answer) in answers.iter().enumerate() {
             if i == 3 {
-                assert!(answer.as_ref().is_err_and(|e| e.to_string().contains("boom")));
+                assert!(
+                    answer
+                        .as_ref()
+                        .is_err_and(|e| e.to_string().contains("boom"))
+                );
             } else {
-                assert_eq!(answer.as_ref().unwrap().content.as_deref(), Some(format!("echo:q{i}").as_str()));
+                assert_eq!(
+                    answer.as_ref().unwrap().content.as_deref(),
+                    Some(format!("echo:q{i}").as_str())
+                );
             }
         }
-        assert_eq!(lane.transport.batch_jobs.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(
+            lane.transport
+                .batch_jobs
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
         assert!((*lane.transport.spent.lock().unwrap() - 0.5).abs() < 1e-9);
     }
 
@@ -645,7 +729,10 @@ mod tests {
         let (lane, fake) = fake_lane(Vec::new(), 3).await;
         let mut receivers = Vec::new();
         for i in 0..5 {
-            receivers.push(lane.submit("a", model_body("a", &format!("a{i}"))).expect("parks"));
+            receivers.push(
+                lane.submit("a", model_body("a", &format!("a{i}")))
+                    .expect("parks"),
+            );
         }
         receivers.push(lane.submit("b", model_body("b", "b0")).expect("parks"));
         for receiver in receivers {
@@ -653,7 +740,13 @@ mod tests {
         }
         let jobs = fake.jobs.lock().unwrap().clone();
         assert_eq!(jobs.len(), 3, "3 + 2 of model a, 1 of model b");
-        assert!(jobs.iter().all(|j| j["requests"].as_array().unwrap().iter().all(|r| r["body"]["model"] == j["model"])));
+        assert!(jobs.iter().all(|j| {
+            j["requests"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r["body"]["model"] == j["model"])
+        }));
     }
 
     #[tokio::test]
@@ -664,10 +757,24 @@ mod tests {
         let kept = lane.submit("m", user_body("kept")).expect("parks");
         let answer = kept.await.expect("replies").expect("answers");
         assert_eq!(answer.content.as_deref(), Some("echo:kept"));
-        assert_eq!(fake.jobs.lock().unwrap()[0]["requests"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            fake.jobs.lock().unwrap()[0]["requests"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
         // The leader retired; a later call starts a fresh one.
         let again = lane.submit("m", user_body("again")).expect("parks");
-        assert_eq!(again.await.expect("replies").expect("answers").content.as_deref(), Some("echo:again"));
+        assert_eq!(
+            again
+                .await
+                .expect("replies")
+                .expect("answers")
+                .content
+                .as_deref(),
+            Some("echo:again")
+        );
         assert_eq!(fake.jobs.lock().unwrap().len(), 2);
     }
 

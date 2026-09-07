@@ -420,7 +420,10 @@ struct SearchState {
 }
 
 pub struct IndexStore {
-    #[expect(dead_code, reason = "keeps the database handle alive for its connections")]
+    #[expect(
+        dead_code,
+        reason = "keeps the database handle alive for its connections"
+    )]
     db: libsql::Database,
     /// The database file; its size (with the WAL beside it) is the store's
     /// footprint on disk.
@@ -519,7 +522,10 @@ impl IndexStore {
     }
 
     fn surface(&self) -> Result<EmbeddingIdentity, StoreError> {
-        self.search().surface.clone().ok_or(StoreError::NoSearchSurface)
+        self.search()
+            .surface
+            .clone()
+            .ok_or(StoreError::NoSearchSurface)
     }
 
     // ------------------------------------------------------------------
@@ -585,9 +591,8 @@ impl IndexStore {
     ) -> Result<SourceId, StoreError> {
         let _write = self.write().await;
         let tx = self.catalog.transaction().await?;
-        let id =
-            replication::upsert_source_in(&tx, self.log_epoch, address, envelope, raw_bytes)
-                .await?;
+        let id = replication::upsert_source_in(&tx, self.log_epoch, address, envelope, raw_bytes)
+            .await?;
         tx.commit().await?;
         Ok(id)
     }
@@ -641,7 +646,10 @@ impl IndexStore {
     /// for its search rows ([`Self::land_search_rows`]), so a crash between
     /// the two leaves it dirty rather than half-searchable.
     pub async fn write_subtree(&self, plan: &SubtreePlan) -> Result<SubtreeWritten, StoreError> {
-        assert!(plan.is_well_ordered(), "a subtree plan names only earlier positions");
+        assert!(
+            plan.is_well_ordered(),
+            "a subtree plan names only earlier positions"
+        );
         let _write = self.write().await;
         let tx = self.catalog.transaction().await?;
         let source = replication::upsert_source_in(
@@ -675,8 +683,11 @@ impl IndexStore {
             let resolved = keyed_fragment_in(&tx, &planned.key, &planned.fragment).await?;
             for anchor in &planned.anchors {
                 let from = written.id_of(*anchor);
-                insert_relation_in(&tx, &Relation::new(from, planned.relation.clone(), resolved.id()))
-                    .await?;
+                insert_relation_in(
+                    &tx,
+                    &Relation::new(from, planned.relation.clone(), resolved.id()),
+                )
+                .await?;
             }
             written.keyed.push(resolved);
         }
@@ -831,10 +842,16 @@ async fn mark_indexed_in(
 
 /// Drop a source's fragments and their derived search rows (relations
 /// cascade). Keyed fragments survive — only their edges into this source go.
-async fn delete_fragments_of_in(conn: &libsql::Connection, source: SourceId) -> Result<(), StoreError> {
+async fn delete_fragments_of_in(
+    conn: &libsql::Connection,
+    source: SourceId,
+) -> Result<(), StoreError> {
     if search_tables_exist(conn).await? {
-        conn.execute("DELETE FROM search_rows WHERE source = ?1", params![source.0])
-            .await?;
+        conn.execute(
+            "DELETE FROM search_rows WHERE source = ?1",
+            params![source.0],
+        )
+        .await?;
     }
     conn.execute("DELETE FROM fragments WHERE source = ?1", params![source.0])
         .await?;
@@ -858,7 +875,10 @@ async fn insert_fragment_in(
     Ok(FragmentId(id))
 }
 
-async fn insert_relation_in(conn: &libsql::Connection, relation: &Relation) -> Result<(), StoreError> {
+async fn insert_relation_in(
+    conn: &libsql::Connection,
+    relation: &Relation,
+) -> Result<(), StoreError> {
     conn.execute(
         "INSERT OR IGNORE INTO relations (from_fragment, kind, to_fragment) VALUES (?1, ?2, ?3)",
         params![relation.from.0, relation.kind.as_str(), relation.to.0],
@@ -1158,7 +1178,10 @@ impl IndexStore {
     }
 
     /// Every relation with either endpoint in `ids`, each once.
-    pub async fn relations_touching(&self, ids: &[FragmentId]) -> Result<Vec<Relation>, StoreError> {
+    pub async fn relations_touching(
+        &self,
+        ids: &[FragmentId],
+    ) -> Result<Vec<Relation>, StoreError> {
         let mut out: Vec<Relation> = Vec::new();
         // A relation touching ids in two different chunks arrives twice.
         let mut seen: HashSet<Relation> = HashSet::new();
@@ -1208,7 +1231,9 @@ impl IndexStore {
             if remaining == 0 {
                 break;
             }
-            let level = self.relations_touching_limited(&frontier, remaining).await?;
+            let level = self
+                .relations_touching_limited(&frontier, remaining)
+                .await?;
             frontier = relation_frontier(&level, &mut visited, &mut seen, &mut out);
             if frontier.is_empty() {
                 break;
@@ -1229,14 +1254,17 @@ impl IndexStore {
                 break;
             }
             let list = id_list(chunk);
-            let mut rows = self.catalog.query(
-                &format!(
-                    "SELECT from_fragment, kind, to_fragment FROM relations
+            let mut rows = self
+                .catalog
+                .query(
+                    &format!(
+                        "SELECT from_fragment, kind, to_fragment FROM relations
                      WHERE from_fragment IN ({list}) OR to_fragment IN ({list})
                      ORDER BY from_fragment, kind, to_fragment LIMIT ?1"
-                ),
-                params![bounded_limit(remaining)],
-            ).await?;
+                    ),
+                    params![bounded_limit(remaining)],
+                )
+                .await?;
             while let Some(row) = rows.next().await? {
                 out.push(row_to_relation(&row)?);
             }
@@ -1299,7 +1327,10 @@ impl IndexStore {
     // ------------------------------------------------------------------
 
     /// The fragment stored under `key`, if any plugin has created it.
-    pub async fn fragment_by_key(&self, key: &FragmentKey) -> Result<Option<FragmentId>, StoreError> {
+    pub async fn fragment_by_key(
+        &self,
+        key: &FragmentKey,
+    ) -> Result<Option<FragmentId>, StoreError> {
         let row = self
             .first_row(
                 "SELECT fragment FROM keyed_fragments WHERE key = ?1",
@@ -1334,11 +1365,15 @@ impl IndexStore {
         Ok(StoreStats {
             sources: self.count_of("SELECT COUNT(*) FROM sources").await?,
             indexed_sources: self
-                .count_of(&format!("SELECT COUNT(*) FROM sources WHERE {DEEP_INDEXED}"))
+                .count_of(&format!(
+                    "SELECT COUNT(*) FROM sources WHERE {DEEP_INDEXED}"
+                ))
                 .await?,
             fragments: self.count_of("SELECT COUNT(*) FROM fragments").await?,
             relations: self.count_of("SELECT COUNT(*) FROM relations").await?,
-            keyed_fragments: self.count_of("SELECT COUNT(*) FROM keyed_fragments").await?,
+            keyed_fragments: self
+                .count_of("SELECT COUNT(*) FROM keyed_fragments")
+                .await?,
             store_bytes: database_bytes.saturating_add(wal_bytes),
             content_bytes: self
                 .count_of("SELECT COALESCE(SUM(raw_bytes), 0) FROM sources")
@@ -1454,7 +1489,10 @@ impl IndexStore {
         let _write = self.write().await;
         let surface = self.surface()?;
         self.catalog
-            .execute("INSERT INTO search_fts (search_fts) VALUES ('optimize')", ())
+            .execute(
+                "INSERT INTO search_fts (search_fts) VALUES ('optimize')",
+                (),
+            )
             .await?;
         repair_search_vector_index(&self.catalog, surface.dimensions, SearchIndexRepair::Ensure)
             .await?;
@@ -1568,9 +1606,10 @@ impl IndexStore {
             .catalog
             .query("SELECT COUNT(*) FROM search_rows", ())
             .await?;
-        let row = rows.next().await?.ok_or_else(|| {
-            StoreError::Corrupt(0, "COUNT(*) returned no row".into())
-        })?;
+        let row = rows
+            .next()
+            .await?
+            .ok_or_else(|| StoreError::Corrupt(0, "COUNT(*) returned no row".into()))?;
         let count: i64 = row.get(0)?;
         Ok(usize::try_from(count).expect("row counts are non-negative"))
     }
@@ -1772,7 +1811,9 @@ impl IndexStore {
     /// the pass.
     pub async fn finish_reembed(&self) -> Result<(), StoreError> {
         let _write = self.write().await;
-        let identity = self.embedding_identity().ok_or(StoreError::NoSearchSurface)?;
+        let identity = self
+            .embedding_identity()
+            .ok_or(StoreError::NoSearchSurface)?;
         set_embedding_meta(&self.catalog, &identity).await?;
         self.search().reembed_from = None;
         Ok(())
@@ -1814,7 +1855,11 @@ impl IndexStore {
         Ok(())
     }
 
-    pub(crate) async fn state_get(&self, ns: &str, key: &str) -> Result<Option<String>, StoreError> {
+    pub(crate) async fn state_get(
+        &self,
+        ns: &str,
+        key: &str,
+    ) -> Result<Option<String>, StoreError> {
         self.first_row(
             "SELECT value FROM plugin_state WHERE namespace = ?1 AND key = ?2",
             params![ns, key],
@@ -1824,7 +1869,12 @@ impl IndexStore {
         .transpose()
     }
 
-    pub(crate) async fn state_put(&self, ns: &str, key: &str, value: &str) -> Result<(), StoreError> {
+    pub(crate) async fn state_put(
+        &self,
+        ns: &str,
+        key: &str,
+        value: &str,
+    ) -> Result<(), StoreError> {
         let _write = self.write().await;
         self.catalog
             .execute(
@@ -2191,7 +2241,8 @@ async fn migrate_legacy_vectors(conn: &libsql::Connection) -> Result<u64, StoreE
         if changed == 0 {
             break;
         }
-        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").await?;
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .await?;
     }
     assert_eq!(migrated, converted);
     Ok(converted)
@@ -2207,8 +2258,10 @@ async fn migrate_legacy_vectors_batch(conn: &libsql::Connection) -> Result<u64, 
                WHERE ann_vector IS NULL AND vector IS NOT NULL
                ORDER BY id LIMIT ?1
              )",
-            params![i64::try_from(SEARCH_VECTOR_MIGRATION_BATCH_ROWS)
-                .expect("migration batch size fits i64")],
+            params![
+                i64::try_from(SEARCH_VECTOR_MIGRATION_BATCH_ROWS)
+                    .expect("migration batch size fits i64")
+            ],
         )
         .await?;
     Ok(changed)
@@ -2238,10 +2291,7 @@ async fn count_of_in(conn: &libsql::Connection, sql: &str) -> Result<u64, StoreE
     Ok(u64::try_from(count).expect("search row counts are non-negative"))
 }
 
-async fn search_column_exists(
-    conn: &libsql::Connection,
-    column: &str,
-) -> Result<bool, StoreError> {
+async fn search_column_exists(conn: &libsql::Connection, column: &str) -> Result<bool, StoreError> {
     let mut rows = conn.query("PRAGMA table_info(search_rows)", ()).await?;
     while let Some(row) = rows.next().await? {
         let name: String = row.get(1)?;
@@ -2305,7 +2355,10 @@ fn vector_from_blob(blob: &[u8]) -> Vec<f32> {
 /// are hex and pipe-joined identifiers with no quote in them; a quote is
 /// still escaped so a stray one can never break the statement.
 fn text_list(keys: &[String]) -> String {
-    assert!(keys.len() <= ID_LIST_CHUNK, "key lists are issued in chunks");
+    assert!(
+        keys.len() <= ID_LIST_CHUNK,
+        "key lists are issued in chunks"
+    );
     keys.iter()
         .map(|key| format!("'{}'", key.replace('\'', "''")))
         .collect::<Vec<_>>()
@@ -2355,7 +2408,10 @@ async fn collect_scored(
         let raw: f64 = row.get(1)?;
         // Scores narrow to f32 at the API boundary, as they always have;
         // callers only consume rank order and coarse magnitudes.
-        #[expect(clippy::cast_possible_truncation, reason = "deliberate score narrowing")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "deliberate score narrowing"
+        )]
         out.push((FragmentId(id), shape(raw) as f32));
     }
     Ok(out)
@@ -2377,8 +2433,7 @@ fn fts_match_expression(q: &str) -> String {
         .join(" OR ")
 }
 
-const SOURCE_COLUMNS: &str =
-    "id, host, locator, source_type, content_type, len_unit, len, created, modified, observed, \
+const SOURCE_COLUMNS: &str = "id, host, locator, source_type, content_type, len_unit, len, created, modified, observed, \
      hint, properties, root_fragment, digest, origin";
 
 /// A missing file is a zero-byte footprint: the WAL is absent between
@@ -2520,7 +2575,10 @@ const INSERT_FRAGMENT_SQL: &str =
 async fn drain_single_i64(mut rows: libsql::Rows) -> Result<Option<i64>, StoreError> {
     let mut value: Option<i64> = None;
     while let Some(row) = rows.next().await? {
-        assert!(value.is_none(), "single-row query returned more than one row");
+        assert!(
+            value.is_none(),
+            "single-row query returned more than one row"
+        );
         value = Some(row.get(0)?);
     }
     Ok(value)
@@ -2528,7 +2586,10 @@ async fn drain_single_i64(mut rows: libsql::Rows) -> Result<Option<i64>, StoreEr
 
 /// The bound parameters for [`INSERT_FRAGMENT_SQL`]; `source` is `None`
 /// only for keyed fragments.
-fn fragment_params(source: Option<SourceId>, fragment: &NewFragment) -> impl libsql::params::IntoParams {
+fn fragment_params(
+    source: Option<SourceId>,
+    fragment: &NewFragment,
+) -> impl libsql::params::IntoParams {
     let (unit, start, end) = extent_columns(fragment.extent);
     params![
         source.map(|s| s.0),
@@ -2548,7 +2609,11 @@ fn extent_columns(extent: Option<Extent>) -> (Option<&'static str>, Option<i64>,
         Some(Extent::Bytes { start, end }) => ("bytes", start, end),
         Some(Extent::Millis { start, end }) => ("millis", start, end),
     };
-    (Some(unit), Some(extent_bound(start)), Some(extent_bound(end)))
+    (
+        Some(unit),
+        Some(extent_bound(start)),
+        Some(extent_bound(end)),
+    )
 }
 
 /// An extent bound as the INTEGER column holds it; a bound past `i64::MAX`
@@ -2670,11 +2735,16 @@ mod tests {
             .await
             .expect("reads");
         assert_eq!(cached.get(&digest), Some(&vec![0.5; 8]));
-        assert!(!cached.contains_key(&missing), "rows without a vector file nothing");
+        assert!(
+            !cached.contains_key(&missing),
+            "rows without a vector file nothing"
+        );
         assert_eq!(s.cache_counts().await.expect("counts").embeddings, 1);
 
         // Another model's vectors are another identity's business.
-        s.declare_embedding(identity("other-model", 8)).await.expect("declares");
+        s.declare_embedding(identity("other-model", 8))
+            .await
+            .expect("declares");
         let other = s.cached_embeddings(&[digest]).await.expect("reads");
         assert!(other.is_empty());
     }
@@ -2693,7 +2763,10 @@ mod tests {
         s.begin_reembed().await.expect("begins");
         assert_eq!(s.search_rows_count().await.expect("counts"), 0);
         let digest = ContentDigest::of_bytes(b"kitchen").to_hex();
-        let cached = s.cached_embeddings(std::slice::from_ref(&digest)).await.expect("reads");
+        let cached = s
+            .cached_embeddings(std::slice::from_ref(&digest))
+            .await
+            .expect("reads");
         assert_eq!(cached.get(&digest), Some(&vec![0.25; 8]));
     }
 
@@ -2735,7 +2808,9 @@ mod tests {
         let a = addr("inseam://fs-test/tmp/note.md");
 
         // Pair assertion with the write below: absent stays absent.
-        s.upsert_source(&a, &envelope(1, 10), 10).await.expect("upserts");
+        s.upsert_source(&a, &envelope(1, 10), 10)
+            .await
+            .expect("upserts");
         let stored = s.source_by_address(&a).await.expect("ok").expect("present");
         assert_eq!(stored.envelope.content_digest, None);
 
@@ -2751,7 +2826,10 @@ mod tests {
     /// `derives` summary under it — the shape `folder_children` reads.
     async fn catalog_child(s: &IndexStore, address: &str, summary: Option<&str>) {
         let a = addr(address);
-        let sid = s.upsert_source(&a, &envelope(1, 10), 10).await.expect("upserts");
+        let sid = s
+            .upsert_source(&a, &envelope(1, 10), 10)
+            .await
+            .expect("upserts");
         let Some(summary) = summary else {
             return;
         };
@@ -2809,7 +2887,11 @@ mod tests {
             .collect();
         assert_eq!(
             seen,
-            vec![("a.md", None), ("b.md", Some("about b")), ("sub", Some("a subfolder"))]
+            vec![
+                ("a.md", None),
+                ("b.md", Some("about b")),
+                ("sub", Some("a subfolder"))
+            ]
         );
         assert_eq!(
             children[0].address,
@@ -2830,11 +2912,12 @@ mod tests {
             .await
             .expect("lists");
         assert_eq!(children.len(), 3);
-        assert!(s
-            .folder_children(&addr("inseam://fs-test/tmp/empty"), 3)
-            .await
-            .expect("lists")
-            .is_empty());
+        assert!(
+            s.folder_children(&addr("inseam://fs-test/tmp/empty"), 3)
+                .await
+                .expect("lists")
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -2850,7 +2933,9 @@ mod tests {
         assert_eq!(meta.content_digest, Some(digest));
         // Pair assertion: a source cataloged without one reads back none.
         let b = addr("inseam://fs-test/tmp/other");
-        s.upsert_source(&b, &envelope(1, 0), 0).await.expect("upserts");
+        s.upsert_source(&b, &envelope(1, 0), 0)
+            .await
+            .expect("upserts");
         let meta = s.index_meta(&b).await.expect("ok").expect("present");
         assert_eq!(meta.content_digest, None);
     }
@@ -2956,7 +3041,11 @@ mod tests {
         let stored = s.fragment(id).await.expect("ok").expect("present");
         assert_eq!(stored.content_address, Some(image.clone()));
         assert_eq!(stored.text, None);
-        let referencing = s.fragment_referencing(&image).await.expect("ok").expect("present");
+        let referencing = s
+            .fragment_referencing(&image)
+            .await
+            .expect("ok")
+            .expect("present");
         assert_eq!(referencing.id, id);
         let other = addr("inseam://fs-test/tmp/other.png");
         assert!(s.fragment_referencing(&other).await.expect("ok").is_none());
@@ -2998,7 +3087,10 @@ mod tests {
 
         let hits = s.search_fts("renovation", 10).await.expect("searches");
         let ids: Vec<FragmentId> = hits.iter().map(|(id, _)| *id).collect();
-        assert!(ids.contains(&FragmentId(1)) && ids.contains(&FragmentId(3)), "got {ids:?}");
+        assert!(
+            ids.contains(&FragmentId(1)) && ids.contains(&FragmentId(3)),
+            "got {ids:?}"
+        );
         assert!(!ids.contains(&FragmentId(2)));
 
         let near = s.search_vector(&unit(0), 2).await.expect("searches");
@@ -3049,13 +3141,22 @@ mod tests {
 
         drop(s);
         let s = store(dir.path()).await;
-        assert!(!s.search_vector_index_ready().await.expect("reads readiness"));
+        assert!(
+            !s.search_vector_index_ready()
+                .await
+                .expect("reads readiness")
+        );
         let legacy = s
             .first_row("SELECT vector FROM search_rows WHERE id = 41", ())
             .await
             .expect("reads")
             .expect("row exists");
-        assert!(legacy.get::<Option<Vec<u8>>>(0).expect("reads vector").is_some());
+        assert!(
+            legacy
+                .get::<Option<Vec<u8>>>(0)
+                .expect("reads vector")
+                .is_some()
+        );
         drop(legacy);
         let report = s
             .repair_search_index(SearchIndexRepair::Ensure)
@@ -3066,12 +3167,23 @@ mod tests {
         let hits = s.search_vector(&vector, 1).await.expect("searches");
         assert_eq!(hits.first().map(|(id, _)| *id), Some(FragmentId(41)));
         let row = s
-            .first_row("SELECT vector, ann_vector FROM search_rows WHERE id = 41", ())
+            .first_row(
+                "SELECT vector, ann_vector FROM search_rows WHERE id = 41",
+                (),
+            )
             .await
             .expect("reads")
             .expect("row exists");
-        assert!(row.get::<Option<Vec<u8>>>(0).expect("reads vector").is_none());
-        assert!(row.get::<Option<Vec<u8>>>(1).expect("reads ANN vector").is_some());
+        assert!(
+            row.get::<Option<Vec<u8>>>(0)
+                .expect("reads vector")
+                .is_none()
+        );
+        assert!(
+            row.get::<Option<Vec<u8>>>(1)
+                .expect("reads ANN vector")
+                .is_some()
+        );
         drop(row);
         let rebuilt = s
             .repair_search_index(SearchIndexRepair::Rebuild)
@@ -3085,7 +3197,11 @@ mod tests {
     async fn deferring_the_vector_index_drops_it_and_rebuild_restores_search() {
         let dir = tempfile::tempdir().expect("tempdir");
         let s = store(dir.path()).await;
-        assert!(!s.defer_search_vector_index().await.expect("nothing to defer"));
+        assert!(
+            !s.defer_search_vector_index()
+                .await
+                .expect("nothing to defer")
+        );
         let vector = vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         s.add_search_rows(&[SearchRow {
             fragment: FragmentId(7),
@@ -3095,7 +3211,9 @@ mod tests {
         }])
         .await
         .expect("adds");
-        s.repair_search_index(SearchIndexRepair::Ensure).await.expect("builds");
+        s.repair_search_index(SearchIndexRepair::Ensure)
+            .await
+            .expect("builds");
         assert!(s.search_vector_index_ready().await.expect("ready"));
         assert!(s.defer_search_vector_index().await.expect("defers"));
         assert!(!s.search_vector_index_ready().await.expect("dropped"));
@@ -3107,7 +3225,9 @@ mod tests {
         }])
         .await
         .expect("adds under no index");
-        s.rebuild_fts().await.expect("rebuilds the index at the end");
+        s.rebuild_fts()
+            .await
+            .expect("rebuilds the index at the end");
         assert!(s.search_vector_index_ready().await.expect("ready again"));
         let hits = s.search_vector(&vector, 1).await.expect("searches");
         assert_eq!(hits.first().map(|(id, _)| *id), Some(FragmentId(7)));
@@ -3266,7 +3386,11 @@ mod tests {
                 actual: 3
             })
         ));
-        assert_eq!(s.search_rows_count().await.expect("ok"), 0, "the batch rolled back");
+        assert_eq!(
+            s.search_rows_count().await.expect("ok"),
+            0,
+            "the batch rolled back"
+        );
         assert!(matches!(
             s.search_vector(&[0.0; 3], 5).await,
             Err(StoreError::DimensionMismatch {
@@ -3298,12 +3422,20 @@ mod tests {
         // `a` lands in the first chunk and `b` in the second: the one
         // relation touches both and must come back exactly once.
         let mut ids = vec![a];
-        ids.extend((0..ID_LIST_CHUNK).map(|n| FragmentId(1_000_000 + i64::try_from(n).expect("fits"))));
+        ids.extend(
+            (0..ID_LIST_CHUNK).map(|n| FragmentId(1_000_000 + i64::try_from(n).expect("fits"))),
+        );
         ids.push(b);
         let relations = s.relations_touching(&ids).await.expect("ok");
-        assert_eq!(relations, vec![Relation::new(a, RelationKind::contains(), b)]);
+        assert_eq!(
+            relations,
+            vec![Relation::new(a, RelationKind::contains(), b)]
+        );
         let fragments = s.fragments(&ids).await.expect("ok");
-        assert_eq!(fragments.iter().map(|f| f.id).collect::<Vec<_>>(), vec![a, b]);
+        assert_eq!(
+            fragments.iter().map(|f| f.id).collect::<Vec<_>>(),
+            vec![a, b]
+        );
         let owners = s.sources_of_fragments(&ids).await.expect("ok");
         assert_eq!(owners.len(), 2);
         assert_eq!(owners.get(&b), Some(&sid));
@@ -3519,15 +3651,25 @@ mod tests {
         let written = s.write_subtree(&plan).await.expect("writes");
         assert_eq!(written.fragments.len(), 2);
         let stored = s
-            .source(written.source).await
+            .source(written.source)
+            .await
             .expect("ok")
             .expect("present");
         assert_eq!(stored.root_fragment, Some(written.root));
-        let meta = s.index_meta(&plan.address).await.expect("ok").expect("present");
+        let meta = s
+            .index_meta(&plan.address)
+            .await
+            .expect("ok")
+            .expect("present");
         assert!(!meta.indexed, "indexed waits for the search rows to land");
-        let relations = s.relations_touching(&[written.fragments[1]]).await.expect("ok");
+        let relations = s
+            .relations_touching(&[written.fragments[1]])
+            .await
+            .expect("ok");
         assert!(
-            relations.iter().any(|r| r.from == written.fragments[0] && r.to == written.fragments[1]),
+            relations
+                .iter()
+                .any(|r| r.from == written.fragments[0] && r.to == written.fragments[1]),
             "plan positions resolve to the inserted ids: {relations:?}"
         );
 
@@ -3552,15 +3694,26 @@ mod tests {
         )
         .await
         .expect("lands");
-        let meta = s.index_meta(&plan.address).await.expect("ok").expect("present");
+        let meta = s
+            .index_meta(&plan.address)
+            .await
+            .expect("ok")
+            .expect("present");
         assert!(meta.indexed);
         assert_eq!(meta.shape_stamp.as_deref(), Some("stamp-plan"));
         assert_eq!(s.search_rows_count().await.expect("ok"), 2);
 
         // Rewriting the plan replaces the subtree: the old rows and fragments go.
-        let again = s.write_subtree(&plan_for("inseam://fs-test/tmp/plan.md", &["gamma"])).await.expect("rewrites");
+        let again = s
+            .write_subtree(&plan_for("inseam://fs-test/tmp/plan.md", &["gamma"]))
+            .await
+            .expect("rewrites");
         assert_eq!(again.source, written.source);
-        assert_eq!(s.fragments_of(written.source).await.expect("ok").len(), 2, "root + gamma");
+        assert_eq!(
+            s.fragments_of(written.source).await.expect("ok").len(),
+            2,
+            "root + gamma"
+        );
         assert_eq!(s.search_rows_count().await.expect("ok"), 0);
     }
 
@@ -3624,7 +3777,13 @@ mod tests {
         assert!(!seen_meta.indexed);
         let only_meta = s.index_meta(&only).await.expect("ok").expect("present");
         assert!(only_meta.indexed);
-        assert_eq!(only_meta.shape_stamp, None, "catalog-only rows carry no shape");
-        assert!(s.catalog_sources(&[]).await.is_ok(), "an empty batch is a no-op");
+        assert_eq!(
+            only_meta.shape_stamp, None,
+            "catalog-only rows carry no shape"
+        );
+        assert!(
+            s.catalog_sources(&[]).await.is_ok(),
+            "an empty batch is a no-op"
+        );
     }
 }

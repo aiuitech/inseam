@@ -16,18 +16,14 @@ use std::sync::Arc;
 
 use inseam_kernel::address::{Address, Locator};
 use inseam_kernel::fragment::{Mimetype, NewFragment, RelationKind, Sprout};
-use inseam_kernel::substrate::{
-    ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory,
-};
-use inseam_seams::connection::{Connections, CONNECTIONS};
-use inseam_seams::llm::LlmLane;
-use inseam_seams::operations::{
-    ExpandRequest, FetchBytesRequest, FetchRequest, IndexRequest,
-};
-use inseam_seams::transforms::{
-    register_as_effect, Registration, Transform, TransformCtx, TransformKind, TransformOutput,
-};
+use inseam_kernel::substrate::{ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory};
 use inseam_seams::SeamError;
+use inseam_seams::connection::{CONNECTIONS, Connections};
+use inseam_seams::llm::LlmLane;
+use inseam_seams::operations::{ExpandRequest, FetchBytesRequest, FetchRequest, IndexRequest};
+use inseam_seams::transforms::{
+    Registration, Transform, TransformCtx, TransformKind, TransformOutput, register_as_effect,
+};
 
 const PNG: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
 
@@ -131,7 +127,11 @@ impl Transform for Sniffer {
                 mimetype: Mimetype::parse("text/plain;via=sniff")
                     .expect("valid")
                     .with_param("of", ctx.mimetype.essence().replace('/', "-").as_str()),
-                text: Some(format!("sniffed {} bytes starting {}", bytes.len(), leading.join(""))),
+                text: Some(format!(
+                    "sniffed {} bytes starting {}",
+                    bytes.len(),
+                    leading.join("")
+                )),
                 extent: None,
                 content_address: None,
             },
@@ -163,7 +163,10 @@ impl PluginFactory for TestTransformsFactory {
 #[async_trait::async_trait]
 impl Plugin for TestTransformsPlugin {
     fn manifest(&self) -> Manifest {
-        static INJECT: &[Inject] = &[Inject::required("transforms"), Inject::required("connections")];
+        static INJECT: &[Inject] = &[
+            Inject::required("transforms"),
+            Inject::required("connections"),
+        ];
         Manifest {
             name: "test-reference-transforms",
             inject: INJECT,
@@ -251,7 +254,11 @@ async fn a_referenced_fragment_hands_its_bytes_to_non_root_claimants() {
     let corpus = tempfile::tempdir().expect("tempdir");
     let elsewhere = tempfile::tempdir().expect("tempdir");
     let data = tempfile::tempdir().expect("tempdir");
-    std::fs::write(corpus.path().join("note.txt"), "a note that embeds a diagram\n").expect("writes");
+    std::fs::write(
+        corpus.path().join("note.txt"),
+        "a note that embeds a diagram\n",
+    )
+    .expect("writes");
     // Outside the swept scope: the image is never a source of its own, so
     // everything the index knows about it comes through the reference.
     let target = elsewhere.path().join("diagram.png");
@@ -287,7 +294,11 @@ async fn a_referenced_fragment_hands_its_bytes_to_non_root_claimants() {
         "the sniffer saw the referenced bytes, not the note's"
     );
     assert!(sniffed.content_address.is_none());
-    let kinds: Vec<&str> = expansion.relations.iter().map(|r| r.kind.as_str()).collect();
+    let kinds: Vec<&str> = expansion
+        .relations
+        .iter()
+        .map(|r| r.kind.as_str())
+        .collect();
     assert!(kinds.contains(&"links-to"), "{kinds:?}");
     assert!(kinds.contains(&"transcribes"), "{kinds:?}");
 
@@ -316,7 +327,11 @@ async fn an_oversized_reference_stays_a_bare_reference() {
     let corpus = tempfile::tempdir().expect("tempdir");
     let elsewhere = tempfile::tempdir().expect("tempdir");
     let data = tempfile::tempdir().expect("tempdir");
-    std::fs::write(corpus.path().join("note.txt"), "a note that embeds a diagram\n").expect("writes");
+    std::fs::write(
+        corpus.path().join("note.txt"),
+        "a note that embeds a diagram\n",
+    )
+    .expect("writes");
     let target = elsewhere.path().join("diagram.png");
     std::fs::write(&target, PNG).expect("writes");
     let target = target.canonicalize().expect("canonical");
@@ -327,7 +342,10 @@ async fn an_oversized_reference_stays_a_bare_reference() {
     let note = common::address_of(&kernel, &corpus.path().join("note.txt"));
     let image = common::address_of(&kernel, &target);
 
-    let expansion = ops.expand(ExpandRequest { address: note }).await.expect("expands");
+    let expansion = ops
+        .expand(ExpandRequest { address: note })
+        .await
+        .expect("expands");
     let reference = expansion
         .fragments
         .iter()
@@ -335,7 +353,10 @@ async fn an_oversized_reference_stays_a_bare_reference() {
         .expect("the reference is planted regardless");
     assert_eq!(reference.content_address, Some(image));
     assert!(
-        !expansion.fragments.iter().any(|f| f.mimetype.starts_with("text/plain;via=sniff")),
+        !expansion
+            .fragments
+            .iter()
+            .any(|f| f.mimetype.starts_with("text/plain;via=sniff")),
         "bytes over the cap are withheld from claimants"
     );
 }
@@ -347,14 +368,28 @@ async fn sniffed_types(max_reference_hops: u32) -> (Vec<String>, usize) {
     let corpus = tempfile::tempdir().expect("tempdir");
     let elsewhere = tempfile::tempdir().expect("tempdir");
     let data = tempfile::tempdir().expect("tempdir");
-    std::fs::write(corpus.path().join("note.txt"), "a note that embeds a diagram\n").expect("writes");
+    std::fs::write(
+        corpus.path().join("note.txt"),
+        "a note that embeds a diagram\n",
+    )
+    .expect("writes");
     let target = elsewhere.path().join("diagram.png");
     std::fs::write(&target, PNG).expect("writes");
     let target = target.canonicalize().expect("canonical");
-    let kernel = index_with_reference(data.path(), corpus.path(), &target, 2_000_000, max_reference_hops).await;
+    let kernel = index_with_reference(
+        data.path(),
+        corpus.path(),
+        &target,
+        2_000_000,
+        max_reference_hops,
+    )
+    .await;
     let ops = common::ops(&kernel);
     let note = common::address_of(&kernel, &corpus.path().join("note.txt"));
-    let expansion = ops.expand(ExpandRequest { address: note }).await.expect("expands");
+    let expansion = ops
+        .expand(ExpandRequest { address: note })
+        .await
+        .expect("expands");
     let mut sniffed: Vec<String> = expansion
         .fragments
         .iter()
@@ -392,6 +427,9 @@ async fn the_crawl_depth_stops_a_chain_of_references_but_keeps_the_last_link() {
     );
 
     let (sniffed, references) = sniffed_types(0).await;
-    assert_eq!(references, 1, "at zero hops the first reference is stored, never followed");
+    assert_eq!(
+        references, 1,
+        "at zero hops the first reference is stored, never followed"
+    );
     assert!(sniffed.is_empty());
 }

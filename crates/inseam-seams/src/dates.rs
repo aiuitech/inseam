@@ -74,13 +74,20 @@ pub fn parse_rfc3339_epoch(s: &str) -> Result<i64, DateError> {
         return parse_ymd_epoch(s);
     };
     let date_epoch = parse_ymd_epoch(date)?;
-    let (clock, offset_secs) = split_offset(time).ok_or_else(|| DateError::Unparseable(s.to_string()))?;
+    let (clock, offset_secs) =
+        split_offset(time).ok_or_else(|| DateError::Unparseable(s.to_string()))?;
     let mut fields = clock.split(':');
     let (h, m, sec) = match (fields.next(), fields.next(), fields.next(), fields.next()) {
         (Some(h), Some(m), Some(sec), None) => (
-            h.parse::<i64>().map_err(|_| DateError::Unparseable(s.to_string()))?,
-            m.parse::<i64>().map_err(|_| DateError::Unparseable(s.to_string()))?,
-            sec.split('.').next().unwrap_or_default().parse::<i64>().map_err(|_| DateError::Unparseable(s.to_string()))?,
+            h.parse::<i64>()
+                .map_err(|_| DateError::Unparseable(s.to_string()))?,
+            m.parse::<i64>()
+                .map_err(|_| DateError::Unparseable(s.to_string()))?,
+            sec.split('.')
+                .next()
+                .unwrap_or_default()
+                .parse::<i64>()
+                .map_err(|_| DateError::Unparseable(s.to_string()))?,
         ),
         _ => return Err(DateError::Unparseable(s.to_string())),
     };
@@ -155,19 +162,47 @@ mod tests {
 
     #[test]
     fn rfc3339_applies_offsets_and_drops_fractions() {
-        assert_eq!(parse_rfc3339_epoch("2015-01-01T00:00:00Z"), Ok(1_420_070_400));
-        assert_eq!(parse_rfc3339_epoch("2015-01-01T00:00:00.123Z"), Ok(1_420_070_400));
-        assert_eq!(parse_rfc3339_epoch("2015-01-01T02:30:00+02:30"), Ok(1_420_070_400));
-        assert_eq!(parse_rfc3339_epoch("2014-12-31T19:00:00-05:00"), Ok(1_420_070_400));
-        assert_eq!(parse_rfc3339_epoch("2015-01-01"), Ok(1_420_070_400), "bare dates are midnight UTC");
+        assert_eq!(
+            parse_rfc3339_epoch("2015-01-01T00:00:00Z"),
+            Ok(1_420_070_400)
+        );
+        assert_eq!(
+            parse_rfc3339_epoch("2015-01-01T00:00:00.123Z"),
+            Ok(1_420_070_400)
+        );
+        assert_eq!(
+            parse_rfc3339_epoch("2015-01-01T02:30:00+02:30"),
+            Ok(1_420_070_400)
+        );
+        assert_eq!(
+            parse_rfc3339_epoch("2014-12-31T19:00:00-05:00"),
+            Ok(1_420_070_400)
+        );
+        assert_eq!(
+            parse_rfc3339_epoch("2015-01-01"),
+            Ok(1_420_070_400),
+            "bare dates are midnight UTC"
+        );
     }
 
     #[test]
     fn rfc3339_rejects_malformed_times() {
-        assert!(matches!(parse_rfc3339_epoch("2015-01-01T25:00:00Z"), Err(DateError::OutOfRange(_))));
-        assert!(matches!(parse_rfc3339_epoch("2015-01-01T00:00Z"), Err(DateError::Unparseable(_))));
-        assert!(matches!(parse_rfc3339_epoch("2015-01-01T00:00:00"), Err(DateError::Unparseable(_))));
-        assert!(matches!(parse_rfc3339_epoch("soon"), Err(DateError::Unparseable(_))));
+        assert!(matches!(
+            parse_rfc3339_epoch("2015-01-01T25:00:00Z"),
+            Err(DateError::OutOfRange(_))
+        ));
+        assert!(matches!(
+            parse_rfc3339_epoch("2015-01-01T00:00Z"),
+            Err(DateError::Unparseable(_))
+        ));
+        assert!(matches!(
+            parse_rfc3339_epoch("2015-01-01T00:00:00"),
+            Err(DateError::Unparseable(_))
+        ));
+        assert!(matches!(
+            parse_rfc3339_epoch("soon"),
+            Err(DateError::Unparseable(_))
+        ));
     }
 
     #[test]
@@ -180,6 +215,9 @@ mod tests {
             parse_ymd_epoch("2015-13-01"),
             Err(DateError::OutOfRange(_))
         ));
-        assert!(matches!(parse_ymd_epoch("2015"), Err(DateError::Unparseable(_))));
+        assert!(matches!(
+            parse_ymd_epoch("2015"),
+            Err(DateError::Unparseable(_))
+        ));
     }
 }

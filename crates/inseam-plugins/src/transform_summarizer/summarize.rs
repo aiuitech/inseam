@@ -77,7 +77,9 @@ pub fn extractive(text: &str, target_chars: usize) -> String {
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty()
-            || line.chars().all(|c| matches!(c, '-' | '=' | '#' | '*' | '`' | '~'))
+            || line
+                .chars()
+                .all(|c| matches!(c, '-' | '=' | '#' | '*' | '`' | '~'))
         {
             continue;
         }
@@ -103,9 +105,7 @@ pub fn envelope_summary(envelope: &Envelope) -> String {
         .unwrap_or_default();
     format!(
         "{name} — {} {} of {}{modified}. Content not indexed on this node; fetch to inspect.",
-        envelope.length,
-        envelope.source_type,
-        envelope.content_type
+        envelope.length, envelope.source_type, envelope.content_type
     )
 }
 
@@ -114,7 +114,9 @@ fn strip_links(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let mut rest = line;
     while let Some(open) = rest.find('[') {
-        let Some(close_rel) = rest[open..].find(']') else { break };
+        let Some(close_rel) = rest[open..].find(']') else {
+            break;
+        };
         let close = open + close_rel;
         let after = &rest[close + 1..];
         if let Some(paren_end) = after.strip_prefix('(').and_then(|a| a.find(')')) {

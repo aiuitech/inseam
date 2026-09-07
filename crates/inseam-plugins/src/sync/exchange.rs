@@ -8,23 +8,26 @@
 
 use std::sync::Arc;
 
-use inseam_kernel::network::{LogEntry, NodeId, VersionVector, LOG_ENTRIES_PER_BATCH_MAX};
+use inseam_kernel::network::{LOG_ENTRIES_PER_BATCH_MAX, LogEntry, NodeId, VersionVector};
+use inseam_seams::SeamError;
 use inseam_seams::roster::RosterChanged;
 use inseam_seams::transport::{PeerAddress, ProtocolName, RequestHandler};
-use inseam_seams::SeamError;
 
-use super::protocol::{
-    carries_roster_record, check_batch_bound, decode, encode, protocol_name, SyncRequest,
-    SyncResponse,
-};
 use super::Inner;
+use super::protocol::{
+    SyncRequest, SyncResponse, carries_roster_record, check_batch_bound, decode, encode,
+    protocol_name,
+};
 
 /// Rounds one exchange may take before it yields to the next scheduled
 /// one: at one batch per direction per round, this moves 128,000 entries
 /// each way, which a peer far behind covers over a few rounds of the
 /// timer rather than one exchange that never ends.
 pub const ROUNDS_MAX: u32 = 64;
-const _: () = assert!(ROUNDS_MAX > 1, "an exchange needs a second round to ship anything");
+const _: () = assert!(
+    ROUNDS_MAX > 1,
+    "an exchange needs a second round to ship anything"
+);
 const _: () = assert!(
     (ROUNDS_MAX as usize) * LOG_ENTRIES_PER_BATCH_MAX == 128_000,
     "the per-exchange ceiling is the product of the two bounds"
@@ -117,7 +120,10 @@ pub(super) async fn apply_batch(inner: &Inner, entries: &[LogEntry]) -> Result<u
     }
     let report = inner.store.apply_remote(&inner.local, entries).await?;
     if report.refused > 0 {
-        tracing::debug!(refused = report.refused, "sync batch carried entries the store refused");
+        tracing::debug!(
+            refused = report.refused,
+            "sync batch carried entries the store refused"
+        );
     }
     if report.applied > 0 && carries_roster_record(entries) {
         inner.bus.emit(&RosterChanged);
@@ -134,7 +140,10 @@ pub(super) struct Handler {
 #[async_trait::async_trait]
 impl RequestHandler for Handler {
     async fn handle(&self, peer: NodeId, body: Vec<u8>) -> Result<Vec<u8>, SeamError> {
-        assert_ne!(peer, self.inner.local, "the transport never hands a node its own request");
+        assert_ne!(
+            peer, self.inner.local,
+            "the transport never hands a node its own request"
+        );
         let request: SyncRequest = decode(&body, "sync request")?;
         check_batch_bound(request.entries.len())?;
         apply_batch(&self.inner, &request.entries).await?;
@@ -143,7 +152,11 @@ impl RequestHandler for Handler {
             entries: self
                 .inner
                 .store
-                .log_after(&self.inner.local, &request.vector, LOG_ENTRIES_PER_BATCH_MAX)
+                .log_after(
+                    &self.inner.local,
+                    &request.vector,
+                    LOG_ENTRIES_PER_BATCH_MAX,
+                )
                 .await?,
         };
         assert!(response.entries.len() <= LOG_ENTRIES_PER_BATCH_MAX);

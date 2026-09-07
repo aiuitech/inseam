@@ -12,11 +12,11 @@ use std::sync::Arc;
 
 use inseam_kernel::fragment::{Mimetype, NewFragment, RelationKind, Sprout};
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory,
+    ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory, parse_config,
 };
 use inseam_seams::llm::LlmLane;
 use inseam_seams::transforms::{
-    register_as_effect, Registration, Transform, TransformCtx, TransformKind, TransformOutput,
+    Registration, Transform, TransformCtx, TransformKind, TransformOutput, register_as_effect,
 };
 
 use summarize::SummaryKind;
@@ -117,7 +117,8 @@ impl Transform for SummarizerTransform {
         let hint = ctx.envelope.hint.as_deref();
         let (text, kind) = match ctx.text.filter(|t| !t.trim().is_empty()) {
             Some(content) => {
-                summarize::summarize_text(ctx.llm.as_deref(), hint, content, self.target_chars).await
+                summarize::summarize_text(ctx.llm.as_deref(), hint, content, self.target_chars)
+                    .await
             }
             None => (
                 summarize::envelope_summary(ctx.envelope),
@@ -148,7 +149,11 @@ mod tests {
 
     fn test_address() -> &'static Address {
         static ADDRESS: std::sync::OnceLock<Address> = std::sync::OnceLock::new();
-        ADDRESS.get_or_init(|| "inseam://fs-test/tmp/note.md".parse().expect("valid address"))
+        ADDRESS.get_or_init(|| {
+            "inseam://fs-test/tmp/note.md"
+                .parse()
+                .expect("valid address")
+        })
     }
 
     fn envelope(content_type: &str, hint: &str) -> Envelope {
@@ -193,12 +198,14 @@ mod tests {
         let sprout = &out.sprouts[0];
         assert_eq!(sprout.relation, RelationKind::derives());
         assert_eq!(sprout.fragment.mimetype.param("via"), Some("envelope"));
-        assert!(sprout
-            .fragment
-            .text
-            .as_deref()
-            .expect("has text")
-            .contains("IMG_2019.jpeg"));
+        assert!(
+            sprout
+                .fragment
+                .text
+                .as_deref()
+                .expect("has text")
+                .contains("IMG_2019.jpeg")
+        );
     }
 
     #[tokio::test]
@@ -206,8 +213,15 @@ mod tests {
         let envelope = envelope("text/markdown", "note.md");
         let m = envelope.content_type.clone();
         let out = SummarizerTransform { target_chars: 200 }
-            .apply(ctx(&envelope, &m, Some("# Reno\n\nBudget notes for the kitchen.")))
+            .apply(ctx(
+                &envelope,
+                &m,
+                Some("# Reno\n\nBudget notes for the kitchen."),
+            ))
             .await;
-        assert_eq!(out.sprouts[0].fragment.mimetype.param("via"), Some("extractive"));
+        assert_eq!(
+            out.sprouts[0].fragment.mimetype.param("via"),
+            Some("extractive")
+        );
     }
 }

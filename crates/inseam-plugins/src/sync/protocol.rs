@@ -9,9 +9,9 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use inseam_kernel::network::{LogEntry, Record, VersionVector, LOG_ENTRIES_PER_BATCH_MAX};
-use inseam_seams::transport::ProtocolName;
+use inseam_kernel::network::{LOG_ENTRIES_PER_BATCH_MAX, LogEntry, Record, VersionVector};
 use inseam_seams::SeamError;
+use inseam_seams::transport::ProtocolName;
 
 /// The protocol name registered with the transport; a breaking change to
 /// the messages is a new name.

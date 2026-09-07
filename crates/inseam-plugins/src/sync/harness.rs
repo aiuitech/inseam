@@ -14,16 +14,16 @@ use inseam_kernel::fragment::Mimetype;
 use inseam_kernel::network::{Endpoint, NodeId};
 use inseam_kernel::store::IndexStore;
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, Composition, EventBus, Inject, Kernel, Manifest, Plugin, PluginError,
-    PluginFactory, Subscription,
+    ApplyCx, Composition, EventBus, Inject, Kernel, Manifest, Plugin, PluginError, PluginFactory,
+    Subscription, parse_config,
 };
+use inseam_seams::SeamError;
 use inseam_seams::connection::{
     self, Capabilities, Connection, EnumeratedSource, HostDescription, HostKind, Registration,
 };
-use inseam_seams::roster::{Roster, RosterChanged, ROSTER};
-use inseam_seams::sync::{Synchronizer, SYNC};
-use inseam_seams::transport::{PeerAddress, Transport, TRANSPORT};
-use inseam_seams::SeamError;
+use inseam_seams::roster::{ROSTER, Roster, RosterChanged};
+use inseam_seams::sync::{SYNC, Synchronizer};
+use inseam_seams::transport::{PeerAddress, TRANSPORT, Transport};
 
 use super::fake_transport::{FakeNetwork, FakeNodeFactory, FakeTransportFactory};
 use crate::connections::ConnectionsRegistryFactory;

@@ -22,23 +22,23 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
+use axum::extract::Query;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::middleware;
+use axum::response::{Html, IntoResponse, Redirect as HttpRedirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use axum::extract::Query;
-use axum::response::{Html, IntoResponse, Redirect as HttpRedirect, Response};
 use inseam_kernel::address::{HostId, Timestamp};
 use inseam_kernel::network::NodeId;
+use inseam_seams::llm::LlmLane;
 use inseam_seams::oauth::{AuthorizationCallback, GrantId, Redirect};
 use inseam_seams::operations::{
     AuthorizeGrantRequest, CatalogRequest, CatalogResponse, ExpandRequest, ExpandResponse,
     ExpelRequest, FetchBytesRequest, FetchBytesResponse, FetchRequest, FetchResponse, GrantView,
-    HostView, IndexRequest, InstallPluginRequest, JoinRequest, NetworkView,
-    Operations, PluginView, QueryRequest, QueryResponse, RevokeGrantRequest, ScanRequest,
-    ScanResponse, Settings, StatusReport,
+    HostView, IndexRequest, InstallPluginRequest, JoinRequest, NetworkView, Operations, PluginView,
+    QueryRequest, QueryResponse, RevokeGrantRequest, ScanRequest, ScanResponse, Settings,
+    StatusReport,
 };
-use inseam_seams::llm::LlmLane;
 use inseam_seams::sweep::DeepBudget;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
@@ -48,9 +48,9 @@ use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
 pub use auth::CookieSecurity;
-pub use error::ConfigError;
 use auth::{Auth, login, logout, require_owner, session};
 use error::ApiError;
+pub use error::ConfigError;
 
 const BODY_BYTES_MAX: usize = 64 * 1024;
 /// The one route that carries files: a plugin upload, base64 in JSON, so
@@ -110,8 +110,8 @@ impl ServerConfig {
     pub fn oauth_callback_url(&self) -> Result<String, ConfigError> {
         let origin = match &self.public_url {
             Some(url) => {
-                let parsed = url::Url::parse(url)
-                    .map_err(|_| ConfigError::PublicUrlInvalid(url.clone()))?;
+                let parsed =
+                    url::Url::parse(url).map_err(|_| ConfigError::PublicUrlInvalid(url.clone()))?;
                 if parsed.scheme() != "https" && parsed.scheme() != "http" {
                     return Err(ConfigError::PublicUrlInvalid(url.clone()));
                 }
@@ -429,7 +429,11 @@ async fn oauth_callback(
     State(state): State<AppState>,
     Query(callback): Query<AuthorizationCallback>,
 ) -> Response {
-    let outcome = state.operations.get().complete_authorization(callback).await;
+    let outcome = state
+        .operations
+        .get()
+        .complete_authorization(callback)
+        .await;
     let (grant, message) = match &outcome {
         Ok(view) => (Some(view.id.to_string()), None),
         Err(error) => (None, Some(error.to_string())),
@@ -720,7 +724,6 @@ fn validate_web_dir(web_dir: &Path) -> Result<(), ConfigError> {
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -729,13 +732,13 @@ mod tests {
     use axum::body::{Body, to_bytes};
     use axum::http::header::{CONTENT_TYPE, COOKIE, SET_COOKIE};
     use axum::http::{Request, StatusCode};
+    use inseam_kernel::network::{HostRecord, NodeCapabilities, NodeRecord};
     use inseam_seams::SeamError;
     use inseam_seams::oauth::{AuthorizationStarted, GrantState};
-    use inseam_kernel::network::{HostRecord, NodeCapabilities, NodeRecord};
     use inseam_seams::operations::{
         AwaitAuthorizationRequest, ExpandResponse, FetchResponse, IndexRequest, LogSummary,
-        NetworkHostView, NetworkNodeView, PluginState, QueryMeta, QueryResponse, RepairOutcome,
-        RepairReport, RepairRequest, ScanResponse, PLUGIN_UPLOAD_BYTES_MAX,
+        NetworkHostView, NetworkNodeView, PLUGIN_UPLOAD_BYTES_MAX, PluginState, QueryMeta,
+        QueryResponse, RepairOutcome, RepairReport, RepairRequest, ScanResponse,
     };
     use inseam_seams::roster::Invitation;
     use inseam_seams::sweep::IndexReport;
@@ -923,13 +926,19 @@ mod tests {
             Ok(vec![grant_view(GrantState::Unauthorized)])
         }
 
-        async fn authorize_grant(&self, request: AuthorizeGrantRequest) -> Result<AuthorizationStarted, SeamError> {
+        async fn authorize_grant(
+            &self,
+            request: AuthorizeGrantRequest,
+        ) -> Result<AuthorizationStarted, SeamError> {
             let redirect_uri = match &request.redirect {
                 Redirect::External { redirect_uri } => redirect_uri.clone(),
                 Redirect::Loopback => "http://127.0.0.1:1/callback".to_string(),
             };
             let grant = request.grant.clone();
-            *self.authorized.lock().unwrap_or_else(|error| error.into_inner()) = Some(request);
+            *self
+                .authorized
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(request);
             Ok(AuthorizationStarted {
                 grant,
                 url: format!("https://accounts.example/auth?redirect_uri={redirect_uri}&state=st"),
@@ -938,15 +947,28 @@ mod tests {
             })
         }
 
-        async fn await_authorization(&self, _request: AwaitAuthorizationRequest) -> Result<GrantView, SeamError> {
+        async fn await_authorization(
+            &self,
+            _request: AwaitAuthorizationRequest,
+        ) -> Result<GrantView, SeamError> {
             Err(unused())
         }
 
-        async fn complete_authorization(&self, callback: AuthorizationCallback) -> Result<GrantView, SeamError> {
+        async fn complete_authorization(
+            &self,
+            callback: AuthorizationCallback,
+        ) -> Result<GrantView, SeamError> {
             let ok = callback.state.as_deref() == Some("st") && callback.code.is_some();
-            *self.completed.lock().unwrap_or_else(|error| error.into_inner()) = Some(callback);
+            *self
+                .completed
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(callback);
             if ok {
-                Ok(grant_view(GrantState::Authorized { expires_at: None, scopes: Vec::new(), account: Some("greg@example.com".into()) }))
+                Ok(grant_view(GrantState::Authorized {
+                    expires_at: None,
+                    scopes: Vec::new(),
+                    account: Some("greg@example.com".into()),
+                }))
             } else {
                 Err(SeamError::Refused("wrong state".to_string()))
             }
@@ -967,9 +989,15 @@ mod tests {
             }])
         }
 
-        async fn install_plugin(&self, request: InstallPluginRequest) -> Result<PluginView, SeamError> {
+        async fn install_plugin(
+            &self,
+            request: InstallPluginRequest,
+        ) -> Result<PluginView, SeamError> {
             let id = request.id.to_string();
-            *self.installed.lock().unwrap_or_else(|error| error.into_inner()) = Some(request);
+            *self
+                .installed
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(request);
             Ok(PluginView {
                 id,
                 plugin: "wasm:/data/plugins/demo/demo.wasm".to_string(),
@@ -987,8 +1015,10 @@ mod tests {
         }
 
         async fn configure(&self, settings: Settings) -> Result<Settings, SeamError> {
-            *self.configured.lock().unwrap_or_else(|error| error.into_inner()) =
-                Some(settings.clone());
+            *self
+                .configured
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(settings.clone());
             Ok(settings)
         }
 
@@ -1009,12 +1039,18 @@ mod tests {
             if !request.invitation.starts_with("inseam-invite:") {
                 return Err(SeamError::Refused("invitation: not one".to_string()));
             }
-            *self.joined.lock().unwrap_or_else(|error| error.into_inner()) = Some(request);
+            *self
+                .joined
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(request);
             Ok(network_view())
         }
 
         async fn expel(&self, request: ExpelRequest) -> Result<NetworkView, SeamError> {
-            *self.expelled.lock().unwrap_or_else(|error| error.into_inner()) = Some(request);
+            *self
+                .expelled
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(request);
             Ok(network_view())
         }
 
@@ -1066,11 +1102,17 @@ mod tests {
         let request = Request::put("/api/v1/owner/settings")
             .header(CONTENT_TYPE, "application/json")
             .header(COOKIE, cookie)
-            .body(Body::from(r#"{"sweep":{"enabled":false,"config":{"max_depth":2}}}"#))
+            .body(Body::from(
+                r#"{"sweep":{"enabled":false,"config":{"max_depth":2}}}"#,
+            ))
             .expect("valid request");
         let response = app.oneshot(request).await.expect("response");
         assert_eq!(response.status(), StatusCode::OK);
-        let configured = operations.configured.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let configured = operations
+            .configured
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let configured = configured.expect("the operation saw the document");
         assert_eq!(configured.0["sweep"]["enabled"], false);
     }
@@ -1090,8 +1132,20 @@ mod tests {
             .expect("valid request");
         let response = app.oneshot(request).await.expect("response");
         assert_eq!(response.status(), StatusCode::OK);
-        assert!(first.configured.lock().unwrap_or_else(|e| e.into_inner()).is_none());
-        assert!(second.configured.lock().unwrap_or_else(|e| e.into_inner()).is_some());
+        assert!(
+            first
+                .configured
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_none()
+        );
+        assert!(
+            second
+                .configured
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_some()
+        );
     }
 
     async fn login_cookie(app: &Router) -> String {
@@ -1124,29 +1178,40 @@ mod tests {
     async fn the_raw_route_serves_bytes_under_their_own_content_type() {
         let app = test_router(Arc::new(StubOperations::default()), Vec::new());
         let cookie = login_cookie(&app).await;
-        let request = Request::get("/api/v1/owner/raw?address=inseam%3A%2F%2Ffs-test%2Ftmp%2Flogo.png")
-            .header(COOKIE, &cookie)
-            .body(Body::empty())
-            .expect("valid request");
+        let request =
+            Request::get("/api/v1/owner/raw?address=inseam%3A%2F%2Ffs-test%2Ftmp%2Flogo.png")
+                .header(COOKIE, &cookie)
+                .body(Body::empty())
+                .expect("valid request");
         let response = app.clone().oneshot(request).await.expect("response");
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[CONTENT_TYPE], "image/png");
-        assert_eq!(response.headers()[axum::http::header::CONTENT_DISPOSITION], "inline");
+        assert_eq!(
+            response.headers()[axum::http::header::CONTENT_DISPOSITION],
+            "inline"
+        );
         assert_eq!(response.headers()["content-security-policy"], "sandbox");
-        assert_eq!(response.headers()[axum::http::header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+        assert_eq!(
+            response.headers()[axum::http::header::X_CONTENT_TYPE_OPTIONS],
+            "nosniff"
+        );
         let bytes = to_bytes(response.into_body(), 4096).await.expect("body");
         assert_eq!(bytes.as_ref(), PNG_BYTES);
 
         // Anything that can carry script is a sandboxed download, never
         // rendered on the owner origin.
-        let request = Request::get("/api/v1/owner/raw?address=inseam%3A%2F%2Ffs-test%2Ftmp%2Fdiagram.svg")
-            .header(COOKIE, &cookie)
-            .body(Body::empty())
-            .expect("valid request");
+        let request =
+            Request::get("/api/v1/owner/raw?address=inseam%3A%2F%2Ffs-test%2Ftmp%2Fdiagram.svg")
+                .header(COOKIE, &cookie)
+                .body(Body::empty())
+                .expect("valid request");
         let response = app.clone().oneshot(request).await.expect("response");
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[CONTENT_TYPE], "image/svg+xml");
-        assert_eq!(response.headers()[axum::http::header::CONTENT_DISPOSITION], "attachment");
+        assert_eq!(
+            response.headers()[axum::http::header::CONTENT_DISPOSITION],
+            "attachment"
+        );
         assert_eq!(response.headers()["content-security-policy"], "sandbox");
 
         // The JSON form of the same operation carries the bytes as base64.
@@ -1163,17 +1228,19 @@ mod tests {
         assert_eq!(body["bytes"], "iVBORw0KGgoAAA==");
 
         // An address the operation refuses is a JSON error, not a body.
-        let request = Request::get("/api/v1/owner/raw?address=inseam%3A%2F%2Ffs-test%2Ftmp%2Fnope.png")
-            .header(COOKIE, &cookie)
-            .body(Body::empty())
-            .expect("valid request");
+        let request =
+            Request::get("/api/v1/owner/raw?address=inseam%3A%2F%2Ffs-test%2Ftmp%2Fnope.png")
+                .header(COOKIE, &cookie)
+                .body(Body::empty())
+                .expect("valid request");
         let response = app.clone().oneshot(request).await.expect("response");
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
         // And no cookie, no bytes.
-        let request = Request::get("/api/v1/owner/raw?address=inseam%3A%2F%2Ffs-test%2Ftmp%2Flogo.png")
-            .body(Body::empty())
-            .expect("valid request");
+        let request =
+            Request::get("/api/v1/owner/raw?address=inseam%3A%2F%2Ffs-test%2Ftmp%2Flogo.png")
+                .body(Body::empty())
+                .expect("valid request");
         let response = app.oneshot(request).await.expect("response");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
@@ -1252,15 +1319,27 @@ mod tests {
     #[test]
     fn the_callback_url_follows_the_public_url_or_the_bind_address() {
         let local = test_config(Vec::new(), None);
-        assert_eq!(local.oauth_callback_url().expect("derives"), "http://127.0.0.1:7337/api/v1/oauth/callback");
+        assert_eq!(
+            local.oauth_callback_url().expect("derives"),
+            "http://127.0.0.1:7337/api/v1/oauth/callback"
+        );
         let mut secure = test_config(Vec::new(), None);
         secure.cookie_security = CookieSecurity::Secure;
-        assert_eq!(secure.oauth_callback_url().expect("derives"), "https://127.0.0.1:7337/api/v1/oauth/callback");
+        assert_eq!(
+            secure.oauth_callback_url().expect("derives"),
+            "https://127.0.0.1:7337/api/v1/oauth/callback"
+        );
         let mut public = test_config(Vec::new(), None);
         public.public_url = Some("https://node.example/some/path".to_string());
-        assert_eq!(public.oauth_callback_url().expect("derives"), "https://node.example/api/v1/oauth/callback");
+        assert_eq!(
+            public.oauth_callback_url().expect("derives"),
+            "https://node.example/api/v1/oauth/callback"
+        );
         public.public_url = Some("node.example".to_string());
-        assert!(matches!(public.oauth_callback_url(), Err(ConfigError::PublicUrlInvalid(_))));
+        assert!(matches!(
+            public.oauth_callback_url(),
+            Err(ConfigError::PublicUrlInvalid(_))
+        ));
     }
 
     #[tokio::test]
@@ -1277,12 +1356,21 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let bytes = to_bytes(response.into_body(), 4096).await.expect("body");
         let body: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON");
-        assert_eq!(body["redirect_uri"], "http://127.0.0.1:7337/api/v1/oauth/callback");
+        assert_eq!(
+            body["redirect_uri"],
+            "http://127.0.0.1:7337/api/v1/oauth/callback"
+        );
         assert_eq!(body["state"], "st");
-        let recorded = operations.authorized.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let recorded = operations
+            .authorized
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         assert_eq!(
             recorded.expect("recorded").redirect,
-            Redirect::External { redirect_uri: "http://127.0.0.1:7337/api/v1/oauth/callback".to_string() }
+            Redirect::External {
+                redirect_uri: "http://127.0.0.1:7337/api/v1/oauth/callback".to_string()
+            }
         );
 
         let request = Request::get("/api/v1/owner/grants")
@@ -1313,7 +1401,11 @@ mod tests {
         let response = app.clone().oneshot(request).await.expect("response");
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
         assert_eq!(response.headers()["location"], "/?authorized=google");
-        let completed = operations.completed.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let completed = operations
+            .completed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         assert_eq!(completed.expect("delivered").code.as_deref(), Some("abc"));
 
         let request = Request::get("/api/v1/oauth/callback?error=access_denied&state=nope")
@@ -1321,7 +1413,12 @@ mod tests {
             .expect("valid request");
         let response = app.oneshot(request).await.expect("response");
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
-        assert!(response.headers()["location"].to_str().expect("ascii").starts_with("/?authorization_error="));
+        assert!(
+            response.headers()["location"]
+                .to_str()
+                .expect("ascii")
+                .starts_with("/?authorization_error=")
+        );
 
         // Without a console to return to, the tab gets a page.
         let bare = test_router(Arc::new(StubOperations::default()), Vec::new());
@@ -1352,13 +1449,26 @@ mod tests {
         let operations = Arc::new(StubOperations::default());
         let app = test_router(Arc::clone(&operations), Vec::new());
         let cookie = login_cookie(&app).await;
-        assert_eq!(index_request(&app, &cookie, "/srv/notes").await, StatusCode::OK);
-        let indexed = operations.indexed.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        assert_eq!(
+            index_request(&app, &cookie, "/srv/notes").await,
+            StatusCode::OK
+        );
+        let indexed = operations
+            .indexed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         assert_eq!(indexed.expect("the operation ran").root, "/srv/notes");
         // A path the node never reported is still refused: the route
         // matches verbatim and invents nothing.
-        assert_eq!(index_request(&app, &cookie, "/srv").await, StatusCode::BAD_REQUEST);
-        assert_eq!(index_request(&app, &cookie, "/srv/notes/sub").await, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            index_request(&app, &cookie, "/srv").await,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            index_request(&app, &cookie, "/srv/notes/sub").await,
+            StatusCode::BAD_REQUEST
+        );
     }
 
     /// One owner request with an optional JSON body, answered as status
@@ -1383,7 +1493,9 @@ mod tests {
         .expect("valid request");
         let response = app.clone().oneshot(request).await.expect("response");
         let status = response.status();
-        let bytes = to_bytes(response.into_body(), 64 * 1024).await.expect("body");
+        let bytes = to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("body");
         let value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
         (status, value)
     }
@@ -1392,7 +1504,8 @@ mod tests {
     async fn the_network_route_serves_the_owner_view() {
         let app = test_router(Arc::new(StubOperations::default()), Vec::new());
         let cookie = login_cookie(&app).await;
-        let (status, body) = owner_json(&app, Some(&cookie), "GET", "/api/v1/owner/network", None).await;
+        let (status, body) =
+            owner_json(&app, Some(&cookie), "GET", "/api/v1/owner/network", None).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["local"]["display_name"], "mini");
         assert_eq!(body["nodes"][1]["last_error"], "dial failed");
@@ -1407,16 +1520,26 @@ mod tests {
     async fn the_invite_route_answers_with_the_text_the_owner_carries() {
         let app = test_router(Arc::new(StubOperations::default()), Vec::new());
         let cookie = login_cookie(&app).await;
-        let (status, body) =
-            owner_json(&app, Some(&cookie), "POST", "/api/v1/owner/network/invite", None).await;
+        let (status, body) = owner_json(
+            &app,
+            Some(&cookie),
+            "POST",
+            "/api/v1/owner/network/invite",
+            None,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         let text = body["invitation"].as_str().expect("the text form");
         let parsed: Invitation = text.parse().expect("the text parses back");
         assert_eq!(parsed.node, NodeId::from_bytes([1; 32]));
         assert_eq!(body["node"], "01".repeat(32));
         assert_eq!(body["expires"], 1_800_000_000);
-        assert!(body.get("token").is_none(), "the token travels only inside the text");
-        let (status, _) = owner_json(&app, None, "POST", "/api/v1/owner/network/invite", None).await;
+        assert!(
+            body.get("token").is_none(),
+            "the token travels only inside the text"
+        );
+        let (status, _) =
+            owner_json(&app, None, "POST", "/api/v1/owner/network/invite", None).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
@@ -1426,12 +1549,25 @@ mod tests {
         let app = test_router(Arc::clone(&operations), Vec::new());
         let cookie = login_cookie(&app).await;
         let request = r#"{"invitation":"inseam-invite:abc"}"#;
-        let (status, body) =
-            owner_json(&app, Some(&cookie), "POST", "/api/v1/owner/network/join", Some(request)).await;
+        let (status, body) = owner_json(
+            &app,
+            Some(&cookie),
+            "POST",
+            "/api/v1/owner/network/join",
+            Some(request),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["nodes"].as_array().map(Vec::len), Some(2));
-        let joined = operations.joined.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        assert_eq!(joined.expect("the operation ran").invitation, "inseam-invite:abc");
+        let joined = operations
+            .joined
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        assert_eq!(
+            joined.expect("the operation ran").invitation,
+            "inseam-invite:abc"
+        );
         // The operation's refusal is the owner's answer, not a 500.
         let (status, body) = owner_json(
             &app,
@@ -1443,7 +1579,14 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert_eq!(body["error"]["code"], "refused");
-        let (status, _) = owner_json(&app, None, "POST", "/api/v1/owner/network/join", Some(request)).await;
+        let (status, _) = owner_json(
+            &app,
+            None,
+            "POST",
+            "/api/v1/owner/network/join",
+            Some(request),
+        )
+        .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
@@ -1453,12 +1596,25 @@ mod tests {
         let app = test_router(Arc::clone(&operations), Vec::new());
         let cookie = login_cookie(&app).await;
         let request = format!(r#"{{"node":"{}"}}"#, "02".repeat(32));
-        let (status, body) =
-            owner_json(&app, Some(&cookie), "POST", "/api/v1/owner/network/expel", Some(&request)).await;
+        let (status, body) = owner_json(
+            &app,
+            Some(&cookie),
+            "POST",
+            "/api/v1/owner/network/expel",
+            Some(&request),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["local"]["id"], "01".repeat(32));
-        let expelled = operations.expelled.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        assert_eq!(expelled.expect("the operation ran").node, NodeId::from_bytes([2; 32]));
+        let expelled = operations
+            .expelled
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        assert_eq!(
+            expelled.expect("the operation ran").node,
+            NodeId::from_bytes([2; 32])
+        );
         // A malformed id never reaches the operation.
         let (status, _) = owner_json(
             &app,
@@ -1469,7 +1625,14 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-        let (status, _) = owner_json(&app, None, "POST", "/api/v1/owner/network/expel", Some(&request)).await;
+        let (status, _) = owner_json(
+            &app,
+            None,
+            "POST",
+            "/api/v1/owner/network/expel",
+            Some(&request),
+        )
+        .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
@@ -1478,14 +1641,30 @@ mod tests {
         let operations = Arc::new(StubOperations::default());
         let app = test_router(Arc::clone(&operations), Vec::new());
         let cookie = login_cookie(&app).await;
-        let (status, body) =
-            owner_json(&app, Some(&cookie), "POST", "/api/v1/owner/network/sync", None).await;
+        let (status, body) = owner_json(
+            &app,
+            Some(&cookie),
+            "POST",
+            "/api/v1/owner/network/sync",
+            None,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["log"]["origins"], 2);
-        assert_eq!(operations.sync_rounds.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            operations
+                .sync_rounds
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
         let (status, _) = owner_json(&app, None, "POST", "/api/v1/owner/network/sync", None).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
-        assert_eq!(operations.sync_rounds.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            operations
+                .sync_rounds
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
     }
 
     #[test]
@@ -1512,7 +1691,11 @@ mod tests {
             .expect("valid request");
         let response = app.clone().oneshot(request).await.expect("response");
         assert_eq!(response.status(), StatusCode::OK);
-        let installed = operations.installed.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let installed = operations
+            .installed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let installed = installed.expect("the operation saw the upload");
         assert_eq!(installed.id.as_str(), "demo");
         assert_eq!(installed.files.len(), 2);

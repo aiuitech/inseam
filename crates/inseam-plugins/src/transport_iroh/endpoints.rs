@@ -10,7 +10,7 @@ use std::net::{IpAddr, SocketAddr};
 
 use iroh::{EndpointAddr, RelayUrl, TransportAddr};
 
-use inseam_kernel::network::{Endpoint, ENDPOINTS_MAX};
+use inseam_kernel::network::{ENDPOINTS_MAX, Endpoint};
 
 /// The kind prefix of a relay hint: `relay:https://relay.example`.
 pub const RELAY_KIND: &str = "relay";
@@ -95,9 +95,7 @@ fn endpoint_of(text: String) -> Option<Endpoint> {
 fn is_routable(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => !v4.is_loopback() && !v4.is_link_local() && !v4.is_unspecified(),
-        IpAddr::V6(v6) => {
-            !v6.is_loopback() && !v6.is_unicast_link_local() && !v6.is_unspecified()
-        }
+        IpAddr::V6(v6) => !v6.is_loopback() && !v6.is_unicast_link_local() && !v6.is_unspecified(),
     }
 }
 

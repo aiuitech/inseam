@@ -26,39 +26,39 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use crate::settings::{SettingsDocument, WriteMode};
 use inseam_kernel::address::{HostId, Timestamp};
 use inseam_kernel::store::{
-    CatalogRow, CatalogSelection, IndexStore, SearchIndexRepair,
-    SearchIndexRepairOutcome, StoredSource, VectorScope,
+    CatalogRow, CatalogSelection, IndexStore, SearchIndexRepair, SearchIndexRepairOutcome,
+    StoredSource, VectorScope,
 };
 use inseam_kernel::substrate::{
-    ApplyCx, CompositionEdit, CompositionEditor, Entry, EventBus, Facts, Inject, Manifest,
-    Plugin, PluginError, SubstrateError, Verdict, COMPOSITION, STORE,
+    ApplyCx, COMPOSITION, CompositionEdit, CompositionEditor, Entry, EventBus, Facts, Inject,
+    Manifest, Plugin, PluginError, STORE, SubstrateError, Verdict,
 };
+use inseam_seams::SeamError;
 use inseam_seams::connection::{
-    resolve_default, Connections, Registration as ConnectionRegistration, CONNECTIONS,
+    CONNECTIONS, Connections, Registration as ConnectionRegistration, resolve_default,
 };
-use inseam_seams::finder::{Finder, QueryTrace, FINDER};
+use inseam_seams::dates::ymd;
+use inseam_seams::finder::{FINDER, Finder, QueryTrace};
 use inseam_seams::node::NODE;
 use inseam_seams::oauth::{
-    AuthorizationCallback, AuthorizationStarted, Grant, GrantId, OAuth, OAUTH,
+    AuthorizationCallback, AuthorizationStarted, Grant, GrantId, OAUTH, OAuth,
 };
 use inseam_seams::operations::{
     AuthorizeGrantRequest, AwaitAuthorizationRequest, CatalogFilter, CatalogRequest,
-    CatalogResponse, CatalogSourceView, ExpandRequest, ExpandResponse, ExpelRequest,
-    FanOutSummary, FetchBytesRequest, FetchBytesResponse, FetchRequest, FetchResponse,
-    GrantView, HostView, IndexRequest, InstallPluginRequest, JoinRequest, NetworkView,
-    OperationRequest, Operations, PluginView, QueryMeta, QueryRequest, QueryResponse,
-    QueryResult, RepairOutcome, RepairReport, RepairRequest, RevokeGrantRequest, ScanRequest,
-    ScanResponse, Settings, StatusReport, OPERATIONS,
+    CatalogResponse, CatalogSourceView, ExpandRequest, ExpandResponse, ExpelRequest, FanOutSummary,
+    FetchBytesRequest, FetchBytesResponse, FetchRequest, FetchResponse, GrantView, HostView,
+    IndexRequest, InstallPluginRequest, JoinRequest, NetworkView, OPERATIONS, OperationRequest,
+    Operations, PluginView, QueryMeta, QueryRequest, QueryResponse, QueryResult, RepairOutcome,
+    RepairReport, RepairRequest, RevokeGrantRequest, ScanRequest, ScanResponse, Settings,
+    StatusReport,
 };
 use inseam_seams::roster::{Invitation, ROSTER};
-use inseam_seams::routing::{FanOutReply, Routing, ROUTING};
+use inseam_seams::routing::{FanOutReply, ROUTING, Routing};
+use inseam_seams::sweep::{IndexMonitor, IndexReport, SWEEP, Sweep, SweepRequest};
 use inseam_seams::sync::SYNC;
-use crate::settings::{SettingsDocument, WriteMode};
-use inseam_seams::sweep::{IndexMonitor, IndexReport, Sweep, SweepRequest, SWEEP};
-use inseam_seams::dates::ymd;
-use inseam_seams::SeamError;
 
 use ladder::Reader;
 use network::NetworkOperations;
@@ -188,7 +188,10 @@ impl OperationsService {
 
     /// The host an index request means: the one it names, else the only
     /// one mounted.
-    fn host_for_index(&self, request: &IndexRequest) -> Result<Arc<ConnectionRegistration>, SeamError> {
+    fn host_for_index(
+        &self,
+        request: &IndexRequest,
+    ) -> Result<Arc<ConnectionRegistration>, SeamError> {
         let steward = match &request.host {
             Some(host) => self
                 .connections
@@ -324,7 +327,10 @@ impl Operations for OperationsService {
         ladder::fetch(&reader, source).await
     }
 
-    async fn fetch_bytes(&self, request: FetchBytesRequest) -> Result<FetchBytesResponse, SeamError> {
+    async fn fetch_bytes(
+        &self,
+        request: FetchBytesRequest,
+    ) -> Result<FetchBytesResponse, SeamError> {
         self.guard("fetch")?;
         let (content_type, known_bytes) = ladder::content_at(&self.store, &request.address).await?;
         // Refuse before reading when the catalog already knows the size;
@@ -395,16 +401,27 @@ impl Operations for OperationsService {
         Ok(views)
     }
 
-    async fn authorize_grant(&self, request: AuthorizeGrantRequest) -> Result<AuthorizationStarted, SeamError> {
-        self.oauth()?.authorize(&request.grant, request.redirect).await
+    async fn authorize_grant(
+        &self,
+        request: AuthorizeGrantRequest,
+    ) -> Result<AuthorizationStarted, SeamError> {
+        self.oauth()?
+            .authorize(&request.grant, request.redirect)
+            .await
     }
 
-    async fn await_authorization(&self, request: AwaitAuthorizationRequest) -> Result<GrantView, SeamError> {
+    async fn await_authorization(
+        &self,
+        request: AwaitAuthorizationRequest,
+    ) -> Result<GrantView, SeamError> {
         let id = self.oauth()?.await_authorization(&request.state).await?;
         Ok(grant_view(self.grant(&id)?.as_ref()).await)
     }
 
-    async fn complete_authorization(&self, callback: AuthorizationCallback) -> Result<GrantView, SeamError> {
+    async fn complete_authorization(
+        &self,
+        callback: AuthorizationCallback,
+    ) -> Result<GrantView, SeamError> {
         let id = self.oauth()?.complete_authorization(callback).await?;
         Ok(grant_view(self.grant(&id)?.as_ref()).await)
     }
@@ -482,9 +499,13 @@ impl Operations for OperationsService {
             )));
         }
         let artifact = install::write(&directory, &plan).map_err(|error| {
-            SeamError::failed(format!("writing plugin files under {}: {error}", directory.display()))
+            SeamError::failed(format!(
+                "writing plugin files under {}: {error}",
+                directory.display()
+            ))
         })?;
-        let entry = Entry::new(id.as_str(), &format!("wasm:{}", artifact.display())).with_config(config);
+        let entry =
+            Entry::new(id.as_str(), &format!("wasm:{}", artifact.display())).with_config(config);
         match self.composition.submit(CompositionEdit::Mount(entry)).await {
             Ok(snapshot) => snapshot
                 .fibers
@@ -492,7 +513,9 @@ impl Operations for OperationsService {
                 .find(|fiber| fiber.id == id.as_str())
                 .map(PluginView::from)
                 .ok_or_else(|| {
-                    SeamError::failed(format!("entry `{id}` was mounted but is missing from the snapshot"))
+                    SeamError::failed(format!(
+                        "entry `{id}` was mounted but is missing from the snapshot"
+                    ))
                 }),
             Err(error) => {
                 // The entry never took: the files we wrote are ours to remove.
@@ -510,7 +533,11 @@ impl Operations for OperationsService {
     async fn status(&self) -> Result<StatusReport, SeamError> {
         let stats = self.store.stats().await?;
         let search_rows = self.store.search_rows_count().await.unwrap_or(0);
-        let vector_index_ready = self.store.search_vector_index_ready().await.unwrap_or(false);
+        let vector_index_ready = self
+            .store
+            .search_vector_index_ready()
+            .await
+            .unwrap_or(false);
         let identity = self.store.embedding_identity();
         let caches = self.store.cache_counts().await?;
         Ok(StatusReport {
@@ -654,7 +681,12 @@ mod tests {
         async fn read_text(&self, address: &Address) -> Result<String, SeamError> {
             Err(SeamError::UnknownHost(address.host.clone()))
         }
-        async fn read_lines(&self, address: &Address, _s: u64, _e: u64) -> Result<String, SeamError> {
+        async fn read_lines(
+            &self,
+            address: &Address,
+            _s: u64,
+            _e: u64,
+        ) -> Result<String, SeamError> {
             Err(SeamError::UnknownHost(address.host.clone()))
         }
         async fn read_bytes(&self, address: &Address) -> Result<Vec<u8>, SeamError> {
@@ -676,12 +708,15 @@ mod tests {
         NodeId::from_bytes([byte; 32])
     }
 
-    async fn finder_with(sources: &[(&str, Option<&[u8]>)]) -> (Arc<StubFinder>, tempfile::TempDir) {
+    async fn finder_with(
+        sources: &[(&str, Option<&[u8]>)],
+    ) -> (Arc<StubFinder>, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("temp dir");
         let store = Arc::new(IndexStore::open(dir.path()).await.expect("opens"));
         let mut ranked = Vec::new();
         for (address, digest) in sources {
-            let source = TestSource::text(address, "one line").with_digest(digest.map(ContentDigest::of_bytes));
+            let source = TestSource::text(address, "one line")
+                .with_digest(digest.map(ContentDigest::of_bytes));
             ranked.push(source.catalog(&store).await);
         }
         (Arc::new(StubFinder::ranked(ranked)), dir)
@@ -751,17 +786,30 @@ mod tests {
             .expect("queries");
         assert_eq!(routing.fan_outs.load(Ordering::SeqCst), 1);
         let addresses: Vec<String> = results.iter().map(|r| r.address.to_string()).collect();
-        assert_eq!(addresses[0], "inseam://fs-a/shared.md", "ranked by both lists");
-        assert_eq!(results[0].via, None, "the local copy is kept");
-        assert_eq!(results[0].summary, None, "the local copy's summary, not the remote's");
         assert_eq!(
-            results[0].replicas.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            addresses[0], "inseam://fs-a/shared.md",
+            "ranked by both lists"
+        );
+        assert_eq!(results[0].via, None, "the local copy is kept");
+        assert_eq!(
+            results[0].summary, None,
+            "the local copy's summary, not the remote's"
+        );
+        assert_eq!(
+            results[0]
+                .replicas
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
             ["inseam://drive-b/twin.md"],
             "the digest-equal remote copy collapsed into a replica"
         );
         assert!(addresses.contains(&"inseam://fs-b/remote.md".to_string()));
         assert_eq!(
-            results.iter().find(|r| r.address.to_string() == "inseam://fs-b/remote.md").and_then(|r| r.via),
+            results
+                .iter()
+                .find(|r| r.address.to_string() == "inseam://fs-b/remote.md")
+                .and_then(|r| r.via),
             Some(node(2))
         );
         assert_eq!(remote.len(), 2);

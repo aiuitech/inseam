@@ -169,7 +169,10 @@ impl Kernel {
                 watched: patches.iter().map(|patch| patch.id.clone()).collect(),
             },
         };
-        match self.apply_overlay_change(base, overlay_path, &before, change).await {
+        match self
+            .apply_overlay_change(base, overlay_path, &before, change)
+            .await
+        {
             Ok(after) => Ok(self.snapshot(after)),
             Err((entries, reason)) => Err(match edit {
                 CompositionEdit::Mount(entry) => SubstrateError::MountFailed {
@@ -386,7 +389,10 @@ mod tests {
         assert_eq!(parsed.entries[0].id, "ocr");
         assert_eq!(parsed.entries[0].plugin.as_deref(), Some("wasm:ocr.wasm"));
         assert_eq!(parsed.entries[0].disabled, Some(true));
-        assert_eq!(parsed.entries[1].config["target_chars"].as_integer(), Some(9));
+        assert_eq!(
+            parsed.entries[1].config["target_chars"].as_integer(),
+            Some(9)
+        );
         assert!(configure_entries(None, Path::new("test"), &[]).is_err());
     }
 

@@ -13,16 +13,16 @@ use std::sync::Arc;
 use inseam_kernel::address::{Address, ContentLength};
 use inseam_kernel::fragment::Mimetype;
 use inseam_kernel::store::{IndexStore, SourceId, StoredFragment, StoredSource};
+use inseam_seams::SeamError;
 use inseam_seams::connection::Connection;
 use inseam_seams::dates::ymd;
 use inseam_seams::finder::{Finder, QueryTrace, RankedFragment, RankedSource};
 use inseam_seams::operations::{
-    EnvelopeView, ExpandResponse, FetchBytesResponse, FetchResponse, FileBytes, FragmentHint,
-    FragmentView, QueryResult, RelationView, ScanResponse, FETCH_BYTES_MAX, SCAN_LINES_MAX,
+    EnvelopeView, ExpandResponse, FETCH_BYTES_MAX, FetchBytesResponse, FetchResponse, FileBytes,
+    FragmentHint, FragmentView, QueryResult, RelationView, SCAN_LINES_MAX, ScanResponse,
 };
 use inseam_seams::routing::Routing;
 use inseam_seams::text::{check_line_range, count_lines, is_indexable_text, preview, slice_lines};
-use inseam_seams::SeamError;
 
 /// Characters of fragment text shown in hints and expand views.
 pub(crate) const PREVIEW_CHARS: usize = 280;
@@ -47,7 +47,12 @@ impl Reader {
         }
     }
 
-    async fn read_lines(&self, address: &Address, start: u64, end: u64) -> Result<String, SeamError> {
+    async fn read_lines(
+        &self,
+        address: &Address,
+        start: u64,
+        end: u64,
+    ) -> Result<String, SeamError> {
         match self {
             Self::Connection(connection) => connection.read_lines(address, start, end).await,
             Self::Routing(routing) => routing.read_lines(address, start, end).await,
@@ -63,7 +68,10 @@ impl Reader {
 }
 
 /// The catalog row an address names, or the typed refusal.
-pub(crate) async fn source_at(store: &IndexStore, address: &Address) -> Result<StoredSource, SeamError> {
+pub(crate) async fn source_at(
+    store: &IndexStore,
+    address: &Address,
+) -> Result<StoredSource, SeamError> {
     store
         .source_by_address(address)
         .await?
@@ -145,7 +153,12 @@ async fn neighbor_address(
     if let Some(address) = cache.get(&owner) {
         return Some(address.clone());
     }
-    let address = store.source(owner).await.ok().flatten().map(|s| s.address)?;
+    let address = store
+        .source(owner)
+        .await
+        .ok()
+        .flatten()
+        .map(|s| s.address)?;
     cache.insert(owner, address.clone());
     Some(address)
 }
@@ -246,8 +259,14 @@ pub(crate) fn check_text_fetch(source: &StoredSource) -> Result<(), SeamError> {
 
 /// Rung four: the whole source as text. The caller has already checked
 /// the content type is one `fetch` serves (pair assertion below).
-pub(crate) async fn fetch(reader: &Reader, source: StoredSource) -> Result<FetchResponse, SeamError> {
-    assert!(serves_text(&source.envelope.content_type), "checked before the read");
+pub(crate) async fn fetch(
+    reader: &Reader,
+    source: StoredSource,
+) -> Result<FetchResponse, SeamError> {
+    assert!(
+        serves_text(&source.envelope.content_type),
+        "checked before the read"
+    );
     let text = reader.read_text(&source.address).await?;
     Ok(FetchResponse {
         address: source.address,
@@ -280,7 +299,10 @@ pub(crate) async fn content_at(
 
 /// Refuse a byte fetch before reading when the catalog already knows the
 /// size is past the bound; the read itself is the paired check.
-pub(crate) fn check_bytes_bound(address: &Address, known_bytes: Option<u64>) -> Result<(), SeamError> {
+pub(crate) fn check_bytes_bound(
+    address: &Address,
+    known_bytes: Option<u64>,
+) -> Result<(), SeamError> {
     match known_bytes {
         Some(bytes) if bytes > FETCH_BYTES_MAX => Err(fetch_too_large(address, bytes)),
         Some(_) | None => Ok(()),
@@ -423,7 +445,13 @@ mod tests {
             Err(SeamError::ScanRange { start: 6, end: 5 })
         ));
         let window = scan_window(3, u64::MAX).expect("valid");
-        assert_eq!(window, ScanWindow { start: 3, end: 3 + SCAN_LINES_MAX - 1 });
+        assert_eq!(
+            window,
+            ScanWindow {
+                start: 3,
+                end: 3 + SCAN_LINES_MAX - 1
+            }
+        );
     }
 
     #[test]
@@ -444,15 +472,30 @@ mod tests {
             content_address: None,
         };
         let fragments = vec![
-            fragment(1, "text/x-inseam-summary", "a very long summary of the video"),
+            fragment(
+                1,
+                "text/x-inseam-summary",
+                "a very long summary of the video",
+            ),
             fragment(2, "text/plain", "short"),
             fragment(3, "text/plain", "the transcript, longest"),
-            fragment(4, "application/json", "{\"structured\": \"text counts too\"}"),
-            fragment(5, "image/png", "not text however long this reference text is"),
+            fragment(
+                4,
+                "application/json",
+                "{\"structured\": \"text counts too\"}",
+            ),
+            fragment(
+                5,
+                "image/png",
+                "not text however long this reference text is",
+            ),
         ];
         let (chosen, text) = scan_stand_in(&fragments).expect("a stand-in");
         assert_eq!(chosen.id, FragmentId(4));
         assert_eq!(text, "{\"structured\": \"text counts too\"}");
-        assert!(scan_stand_in(&fragments[..1]).is_none(), "summaries never stand in");
+        assert!(
+            scan_stand_in(&fragments[..1]).is_none(),
+            "summaries never stand in"
+        );
     }
 }

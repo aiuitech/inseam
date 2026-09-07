@@ -17,10 +17,27 @@ use inseam_seams::transforms::TRANSFORMS;
 /// that is the enrollment gate, not an oversight.
 fn conformance_config(name: &str) -> toml::Table {
     let raw = match name {
-        "connections" | "connection-fs" | "connection-google" | "connection-web" | "oauth"
-        | "llm-endpoint" | "transforms" | "transform-markdown" | "transform-directory" | "transform-chunker"
-        | "transform-summarizer" | "transform-entities" | "transform-links" | "finder" | "sweep"
-        | "operations" | "node" | "transport-iroh" | "roster" | "sync" | "routing" => "",
+        "connections"
+        | "connection-fs"
+        | "connection-google"
+        | "connection-web"
+        | "oauth"
+        | "llm-endpoint"
+        | "transforms"
+        | "transform-markdown"
+        | "transform-directory"
+        | "transform-chunker"
+        | "transform-summarizer"
+        | "transform-entities"
+        | "transform-links"
+        | "finder"
+        | "sweep"
+        | "operations"
+        | "node"
+        | "transport-iroh"
+        | "roster"
+        | "sync"
+        | "routing" => "",
         "embedder" => "provider = \"hashed\"\nmodel = \"hashed\"\ndimensions = 8",
         other => panic!(
             "linked plugin `{other}` is not enrolled in the conformance suite; add a minimal \
@@ -63,7 +80,10 @@ async fn linked_transforms_claim_deterministically_and_survive_hostile_inputs() 
         "[[entry]]\nid = \"entities\"\nplugin = \"transform-entities\"\n\n[[entry]]\nid = \"links\"\nplugin = \"transform-links\"\n",
     )
     .await;
-    let registrations = kernel.service(&TRANSFORMS).expect("transforms bound").snapshot();
+    let registrations = kernel
+        .service(&TRANSFORMS)
+        .expect("transforms bound")
+        .snapshot();
     assert!(
         registrations.len() >= 6,
         "markdown, directory, chunker, summarizer, entities, links all registered: {}",

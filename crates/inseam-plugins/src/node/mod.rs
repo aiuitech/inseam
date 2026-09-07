@@ -21,11 +21,11 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use inseam_kernel::network::{NodeCapabilities, NodeId, DISPLAY_NAME_CHARS_MAX};
+use inseam_kernel::network::{DISPLAY_NAME_CHARS_MAX, NodeCapabilities, NodeId};
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, PluginFactory,
+    ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, PluginFactory, parse_config,
 };
-use inseam_seams::node::{Node, SecretKeyBytes, NODE};
+use inseam_seams::node::{NODE, Node, SecretKeyBytes};
 
 /// The plugin's subdirectory of the node's data directory.
 pub const KEY_DIRNAME: &str = "node";
@@ -190,7 +190,11 @@ fn check_display_name(name: &str) -> Result<String, IdentityError> {
 /// the identity, the name is presentation only.
 fn hostname_display_name() -> String {
     let hostname = gethostname::gethostname().to_string_lossy().into_owned();
-    let truncated: String = hostname.trim().chars().take(DISPLAY_NAME_CHARS_MAX).collect();
+    let truncated: String = hostname
+        .trim()
+        .chars()
+        .take(DISPLAY_NAME_CHARS_MAX)
+        .collect();
     if truncated.is_empty() {
         return "inseam node".to_string();
     }
@@ -211,14 +215,20 @@ async fn load_or_mint_secret(path: &Path) -> Result<(SecretKeyBytes, KeySource),
             write_key_file(path, &secret).await?;
             // Read back what was written: the file is the identity from now
             // on, so the bytes on disk must parse to the bytes in memory.
-            let kept = tokio::fs::read(path).await.map_err(|source| IdentityError::Unreadable {
-                path: path.to_path_buf(),
-                source,
-            })?;
+            let kept = tokio::fs::read(path)
+                .await
+                .map_err(|source| IdentityError::Unreadable {
+                    path: path.to_path_buf(),
+                    source,
+                })?;
             let reread = parse_key_file(&kept).ok_or_else(|| IdentityError::Malformed {
                 path: path.to_path_buf(),
             })?;
-            assert_eq!(reread.as_bytes(), secret.as_bytes(), "the key file round-trips");
+            assert_eq!(
+                reread.as_bytes(),
+                secret.as_bytes(),
+                "the key file round-trips"
+            );
             Ok((secret, KeySource::Minted))
         }
         Err(source) => Err(IdentityError::Unreadable {
@@ -231,7 +241,10 @@ async fn load_or_mint_secret(path: &Path) -> Result<(SecretKeyBytes, KeySource),
 fn mint_secret() -> SecretKeyBytes {
     let mut bytes = [0u8; SECRET_BYTES];
     rand::rng().fill_bytes(&mut bytes);
-    assert!(bytes.iter().any(|b| *b != 0), "the generator produced no entropy");
+    assert!(
+        bytes.iter().any(|b| *b != 0),
+        "the generator produced no entropy"
+    );
     SecretKeyBytes::from_bytes(bytes)
 }
 
@@ -246,7 +259,10 @@ fn parse_key_file(raw: &[u8]) -> Option<SecretKeyBytes> {
     if payload.len() != SECRET_HEX_CHARS {
         return None;
     }
-    if !payload.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+    if !payload
+        .bytes()
+        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    {
         return None;
     }
     let mut bytes = [0u8; SECRET_BYTES];
@@ -257,7 +273,11 @@ fn parse_key_file(raw: &[u8]) -> Option<SecretKeyBytes> {
 }
 
 fn render_key_file(secret: &SecretKeyBytes) -> String {
-    let mut text: String = secret.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+    let mut text: String = secret
+        .as_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     assert_eq!(text.len(), SECRET_HEX_CHARS);
     text.push('\n');
     text
@@ -271,17 +291,21 @@ async fn write_key_file(path: &Path, secret: &SecretKeyBytes) -> Result<(), Iden
         path: path.to_path_buf(),
         source,
     };
-    let parent = path.parent().ok_or_else(|| {
-        unwritable(io::Error::other("key path has no parent directory"))
-    })?;
-    tokio::fs::create_dir_all(parent).await.map_err(unwritable)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| unwritable(io::Error::other("key path has no parent directory")))?;
+    tokio::fs::create_dir_all(parent)
+        .await
+        .map_err(unwritable)?;
     set_private(parent, 0o700).await.map_err(unwritable)?;
     let temporary = path.with_extension("key.tmp");
     tokio::fs::write(&temporary, render_key_file(secret))
         .await
         .map_err(unwritable)?;
     set_private(&temporary, 0o600).await.map_err(unwritable)?;
-    tokio::fs::rename(&temporary, path).await.map_err(unwritable)?;
+    tokio::fs::rename(&temporary, path)
+        .await
+        .map_err(unwritable)?;
     Ok(())
 }
 
@@ -375,10 +399,15 @@ mod tests {
         let config = NodeConfig::default();
         let first = Identity::load(dir.path(), &config).await.expect("mints");
         assert_eq!(first.source(), KeySource::Minted);
-        let second = Identity::load(dir.path(), &config).await.expect("reads back");
+        let second = Identity::load(dir.path(), &config)
+            .await
+            .expect("reads back");
         assert_eq!(second.source(), KeySource::Kept);
         assert_eq!(first.id(), second.id());
-        assert_eq!(first.secret_key().as_bytes(), second.secret_key().as_bytes());
+        assert_eq!(
+            first.secret_key().as_bytes(),
+            second.secret_key().as_bytes()
+        );
 
         let file = dir.path().join(KEY_FILENAME);
         let text = std::fs::read_to_string(&file).expect("key file");
@@ -390,7 +419,11 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             let mode = std::fs::metadata(&file).expect("meta").permissions().mode() & 0o777;
             assert_eq!(mode, 0o600, "the key file is owner-private");
-            let dir_mode = std::fs::metadata(dir.path()).expect("meta").permissions().mode() & 0o777;
+            let dir_mode = std::fs::metadata(dir.path())
+                .expect("meta")
+                .permissions()
+                .mode()
+                & 0o777;
             assert_eq!(dir_mode, 0o700, "the key directory is owner-private");
         }
     }
@@ -409,13 +442,7 @@ mod tests {
     async fn a_corrupt_key_file_is_refused_by_name() {
         let dir = tempfile::tempdir().expect("tempdir");
         let file = dir.path().join(KEY_FILENAME);
-        let cases: [&[u8]; 5] = [
-            b"not a key\n",
-            b"",
-            &[b'a'; 63],
-            &[b'A'; 64],
-            &[0xff; 64],
-        ];
+        let cases: [&[u8]; 5] = [b"not a key\n", b"", &[b'a'; 63], &[b'A'; 64], &[0xff; 64]];
         for raw in cases {
             std::fs::write(&file, raw).expect("write");
             let refused = Identity::load(dir.path(), &NodeConfig::default()).await;
@@ -423,7 +450,11 @@ mod tests {
                 Err(IdentityError::Malformed { path }) => assert_eq!(path, file),
                 other => panic!("{raw:?} should be refused as malformed, got {other:?}"),
             }
-            assert_eq!(std::fs::read(&file).expect("read"), raw, "a corrupt key is never replaced");
+            assert_eq!(
+                std::fs::read(&file).expect("read"),
+                raw,
+                "a corrupt key is never replaced"
+            );
         }
     }
 
@@ -432,7 +463,9 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let file = dir.path().join(KEY_FILENAME);
         std::fs::write(&file, "ab".repeat(32)).expect("write");
-        let identity = Identity::load(dir.path(), &NodeConfig::default()).await.expect("parses");
+        let identity = Identity::load(dir.path(), &NodeConfig::default())
+            .await
+            .expect("parses");
         assert_eq!(identity.secret_key().as_bytes(), &[0xab; 32]);
         assert_eq!(identity.source(), KeySource::Kept);
     }
@@ -440,12 +473,25 @@ mod tests {
     #[tokio::test]
     async fn the_id_is_irohs_public_key_for_the_same_bytes() {
         let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::write(dir.path().join(KEY_FILENAME), format!("{}\n", "07".repeat(32))).expect("write");
-        let identity = Identity::load(dir.path(), &NodeConfig::default()).await.expect("loads");
+        std::fs::write(
+            dir.path().join(KEY_FILENAME),
+            format!("{}\n", "07".repeat(32)),
+        )
+        .expect("write");
+        let identity = Identity::load(dir.path(), &NodeConfig::default())
+            .await
+            .expect("loads");
         let expected = iroh::SecretKey::from_bytes(&[0x07; 32]).public();
         assert_eq!(identity.id().as_bytes(), expected.as_bytes());
-        assert_eq!(identity.id().to_hex(), expected.to_string(), "iroh renders the same hex");
-        assert_eq!(node_id_of(&SecretKeyBytes::from_bytes([0x07; 32])), identity.id());
+        assert_eq!(
+            identity.id().to_hex(),
+            expected.to_string(),
+            "iroh renders the same hex"
+        );
+        assert_eq!(
+            node_id_of(&SecretKeyBytes::from_bytes([0x07; 32])),
+            identity.id()
+        );
     }
 
     #[tokio::test]
@@ -471,7 +517,9 @@ mod tests {
         assert_eq!(record.id, identity.id());
         assert_eq!(record.check_bounds(), Ok(()));
 
-        let unnamed = Identity::load(dir.path(), &NodeConfig::default()).await.expect("loads");
+        let unnamed = Identity::load(dir.path(), &NodeConfig::default())
+            .await
+            .expect("loads");
         assert!(!unnamed.display_name().is_empty());
         assert!(unnamed.display_name().chars().count() <= DISPLAY_NAME_CHARS_MAX);
         assert!(unnamed.capabilities().deep_index);
@@ -483,10 +531,18 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let hex = "07".repeat(32);
         std::fs::write(dir.path().join(KEY_FILENAME), format!("{hex}\n")).expect("write");
-        let identity = Identity::load(dir.path(), &NodeConfig::default()).await.expect("loads");
+        let identity = Identity::load(dir.path(), &NodeConfig::default())
+            .await
+            .expect("loads");
         let rendered = format!("{identity:?}");
-        assert!(rendered.contains("<redacted>"), "the secret is redacted: {rendered}");
-        assert!(!rendered.contains(&hex), "the secret never prints: {rendered}");
+        assert!(
+            rendered.contains("<redacted>"),
+            "the secret is redacted: {rendered}"
+        );
+        assert!(
+            !rendered.contains(&hex),
+            "the secret never prints: {rendered}"
+        );
         assert!(rendered.contains(&identity.display_name()));
     }
 
@@ -494,9 +550,11 @@ mod tests {
     fn the_factory_refuses_bad_display_names_and_unknown_fields() {
         let empty: toml::Table = toml::from_str("display_name = \"  \"").expect("toml");
         assert!(NodeFactory.build(&empty).is_err());
-        let long: toml::Table =
-            toml::from_str(&format!("display_name = \"{}\"", "n".repeat(DISPLAY_NAME_CHARS_MAX + 1)))
-                .expect("toml");
+        let long: toml::Table = toml::from_str(&format!(
+            "display_name = \"{}\"",
+            "n".repeat(DISPLAY_NAME_CHARS_MAX + 1)
+        ))
+        .expect("toml");
         assert!(NodeFactory.build(&long).is_err());
         let unknown: toml::Table = toml::from_str("hostname = \"x\"").expect("toml");
         assert!(NodeFactory.build(&unknown).is_err());
@@ -507,10 +565,15 @@ mod tests {
 
     #[test]
     fn key_files_round_trip_through_render_and_parse() {
-        let secret = SecretKeyBytes::from_bytes(std::array::from_fn(|i| u8::try_from(i * 7 % 256).expect("fits")));
+        let secret = SecretKeyBytes::from_bytes(std::array::from_fn(|i| {
+            u8::try_from(i * 7 % 256).expect("fits")
+        }));
         let rendered = render_key_file(&secret);
         let parsed = parse_key_file(rendered.as_bytes()).expect("parses");
         assert_eq!(parsed.as_bytes(), secret.as_bytes());
-        assert!(parse_key_file(&[b'0'; KEY_FILE_BYTES_MAX + 1]).is_none(), "oversized files are not read");
+        assert!(
+            parse_key_file(&[b'0'; KEY_FILE_BYTES_MAX + 1]).is_none(),
+            "oversized files are not read"
+        );
     }
 }

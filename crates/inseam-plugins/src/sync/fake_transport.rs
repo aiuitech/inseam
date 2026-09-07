@@ -15,12 +15,12 @@ use inseam_kernel::network::{Endpoint, NodeCapabilities, NodeId};
 use inseam_kernel::substrate::{
     ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, PluginFactory,
 };
-use inseam_seams::node::{Node, SecretKeyBytes, NODE};
+use inseam_seams::SeamError;
+use inseam_seams::node::{NODE, Node, SecretKeyBytes};
 use inseam_seams::transport::{
     Admission, Admit, Disposer, PeerAddress, ProtocolName, RequestHandler, SessionDirection,
-    SessionView, Transport, TRANSPORT,
+    SessionView, TRANSPORT, Transport,
 };
-use inseam_seams::SeamError;
 
 #[derive(Default)]
 struct FakeNodeState {
@@ -89,9 +89,9 @@ impl FakeNetwork {
         protocol: &ProtocolName,
     ) -> Result<Arc<dyn RequestHandler>, SeamError> {
         let mut nodes = self.nodes.lock().unwrap_or_else(|e| e.into_inner());
-        let target = nodes
-            .get(&to.id)
-            .ok_or_else(|| SeamError::failed(format!("node {} is not on the network", to.id.short())))?;
+        let target = nodes.get(&to.id).ok_or_else(|| {
+            SeamError::failed(format!("node {} is not on the network", to.id.short()))
+        })?;
         let session_open = target.sessions.iter().any(|(peer, _)| *peer == from);
         if !session_open {
             let reachable = to
@@ -142,7 +142,8 @@ impl Transport for FakeTransport {
     }
 
     fn endpoints(&self) -> Vec<Endpoint> {
-        self.network.with_state(self.id, |state| state.endpoints.clone())
+        self.network
+            .with_state(self.id, |state| state.endpoints.clone())
     }
 
     fn register(
@@ -270,7 +271,11 @@ impl Plugin for FakeTransportPlugin {
             network: Arc::clone(&self.network),
             id: self.id,
         };
-        cx.provide(&TRANSPORT, Arc::new(transport) as Arc<dyn Transport>, Facts::new())?;
+        cx.provide(
+            &TRANSPORT,
+            Arc::new(transport) as Arc<dyn Transport>,
+            Facts::new(),
+        )?;
         Ok(())
     }
 }

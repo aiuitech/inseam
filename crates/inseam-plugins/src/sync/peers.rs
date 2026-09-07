@@ -19,7 +19,10 @@ pub(super) fn choose_peers(
     expelled: &HashSet<NodeId>,
     limit: usize,
 ) -> Vec<PeerAddress> {
-    assert!(limit > 0, "a round with no peers is a round nobody asked for");
+    assert!(
+        limit > 0,
+        "a round with no peers is a round nobody asked for"
+    );
     assert!(limit <= PEERS_PER_ROUND_MAX);
     let mut chosen: Vec<(bool, PeerAddress)> = Vec::new();
     for record in nodes {
@@ -114,11 +117,24 @@ mod tests {
         let local = node(1);
         let nodes = vec![record(node(2), 0, false), record(node(3), 1, false)];
         let sessions = vec![session(node(2)), session(node(2)), session(node(3))];
-        let peers = choose_peers(local, &nodes, &sessions, &HashSet::new(), PEERS_PER_ROUND_MAX);
+        let peers = choose_peers(
+            local,
+            &nodes,
+            &sessions,
+            &HashSet::new(),
+            PEERS_PER_ROUND_MAX,
+        );
         let ids: Vec<NodeId> = peers.iter().map(|p| p.id).collect();
         assert_eq!(ids, vec![node(3), node(2)]);
-        assert!(peers[1].endpoints.is_empty(), "the session, not a dial, reaches it");
-        assert_eq!(peers[0].endpoints.len(), 1, "a roster peer keeps its endpoints");
+        assert!(
+            peers[1].endpoints.is_empty(),
+            "the session, not a dial, reaches it"
+        );
+        assert_eq!(
+            peers[0].endpoints.len(),
+            1,
+            "a roster peer keeps its endpoints"
+        );
     }
 
     #[test]

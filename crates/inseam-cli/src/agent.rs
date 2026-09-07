@@ -6,12 +6,12 @@
 use serde_json::json;
 use thiserror::Error;
 
-use inseam_seams::text::truncate_chars;
+use inseam_seams::SeamError;
 use inseam_seams::llm::{ChatMessage, ChatRequest, Llm, Tool, ToolCall};
 use inseam_seams::operations::{
     ExpandRequest, FetchRequest, Operations, QueryRequest, ScanRequest,
 };
-use inseam_seams::SeamError;
+use inseam_seams::text::truncate_chars;
 
 /// Characters of tool output returned to the model per call.
 const TOOL_RESULT_CHARS: usize = 9_000;
@@ -95,19 +95,35 @@ async fn execute(operations: &dyn Operations, call: &ToolCall) -> String {
     let args = &call.function.arguments;
     let outcome: Result<String, String> = match call.function.name.as_str() {
         "query" => match parse::<QueryRequest>(args) {
-            Ok(r) => operations.query(r).await.map(|v| to_json(&v)).map_err(stringify),
+            Ok(r) => operations
+                .query(r)
+                .await
+                .map(|v| to_json(&v))
+                .map_err(stringify),
             Err(e) => Err(e),
         },
         "expand" => match parse::<ExpandRequest>(args) {
-            Ok(r) => operations.expand(r).await.map(|v| to_json(&v)).map_err(stringify),
+            Ok(r) => operations
+                .expand(r)
+                .await
+                .map(|v| to_json(&v))
+                .map_err(stringify),
             Err(e) => Err(e),
         },
         "scan" => match parse::<ScanRequest>(args) {
-            Ok(r) => operations.scan(r).await.map(|v| to_json(&v)).map_err(stringify),
+            Ok(r) => operations
+                .scan(r)
+                .await
+                .map(|v| to_json(&v))
+                .map_err(stringify),
             Err(e) => Err(e),
         },
         "fetch" => match parse::<FetchRequest>(args) {
-            Ok(r) => operations.fetch(r).await.map(|v| to_json(&v)).map_err(stringify),
+            Ok(r) => operations
+                .fetch(r)
+                .await
+                .map(|v| to_json(&v))
+                .map_err(stringify),
             Err(e) => Err(e),
         },
         other => Err(format!("unknown tool `{other}`")),

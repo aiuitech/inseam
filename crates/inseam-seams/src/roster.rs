@@ -23,12 +23,12 @@ use thiserror::Error;
 
 use inseam_kernel::address::{HostId, Timestamp};
 use inseam_kernel::network::{
-    Endpoint, HostRecord, NodeId, NodeRecord, StewardshipRecord, ENDPOINTS_MAX,
+    ENDPOINTS_MAX, Endpoint, HostRecord, NodeId, NodeRecord, StewardshipRecord,
 };
 use inseam_kernel::substrate::{Notify, ServiceKey};
 
-use crate::transport::{InvitationToken, PeerAddress};
 use crate::SeamError;
+use crate::transport::{InvitationToken, PeerAddress};
 
 pub const ROSTER: ServiceKey<dyn Roster> = ServiceKey::new("roster");
 
@@ -191,8 +191,8 @@ pub trait Roster: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use inseam_kernel::network::ENDPOINT_CHARS_MAX;
     use crate::transport::INVITATION_TOKEN_CHARS_MAX;
+    use inseam_kernel::network::ENDPOINT_CHARS_MAX;
 
     fn invitation(endpoints: usize) -> Invitation {
         Invitation {
@@ -210,7 +210,10 @@ mod tests {
         let invitation = invitation(2);
         let text = invitation.to_string();
         assert!(text.starts_with(INVITATION_PREFIX));
-        assert!(!text.contains("one-time-token"), "the text is encoded, not plain");
+        assert!(
+            !text.contains("one-time-token"),
+            "the text is encoded, not plain"
+        );
         let back: Invitation = text.parse().expect("parses");
         assert_eq!(back, invitation);
         let padded: Invitation = format!("  {text}\n").parse().expect("trims");
@@ -232,14 +235,23 @@ mod tests {
             format!("{INVITATION_PREFIX}{json}").parse::<Invitation>(),
             Err(InvitationError::Malformed(_))
         ));
-        let long = format!("{INVITATION_PREFIX}{}", "a".repeat(INVITATION_TEXT_CHARS_MAX));
-        assert!(matches!(long.parse::<Invitation>(), Err(InvitationError::TooLong(_))));
+        let long = format!(
+            "{INVITATION_PREFIX}{}",
+            "a".repeat(INVITATION_TEXT_CHARS_MAX)
+        );
+        assert!(matches!(
+            long.parse::<Invitation>(),
+            Err(InvitationError::TooLong(_))
+        ));
     }
 
     #[test]
     fn invitation_bounds_its_endpoints_on_both_sides() {
         let crowded = invitation(ENDPOINTS_MAX + 1);
-        assert_eq!(crowded.check_bounds(), Err(InvitationError::TooManyEndpoints));
+        assert_eq!(
+            crowded.check_bounds(),
+            Err(InvitationError::TooManyEndpoints)
+        );
         assert_eq!(
             crowded.to_string().parse::<Invitation>(),
             Err(InvitationError::TooManyEndpoints)
@@ -258,7 +270,11 @@ mod tests {
             expires: Timestamp(i64::MAX),
         };
         let text = maximal.to_string();
-        assert!(text.len() <= INVITATION_TEXT_CHARS_MAX, "{} chars", text.len());
+        assert!(
+            text.len() <= INVITATION_TEXT_CHARS_MAX,
+            "{} chars",
+            text.len()
+        );
         assert_eq!(text.parse::<Invitation>().expect("parses"), maximal);
     }
 

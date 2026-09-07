@@ -184,7 +184,10 @@ async fn the_incremental_discovery_ladder_works_offline() {
         "scanned the right lines: {}",
         scan.text
     );
-    assert!(scan.served_from_fragment.is_none(), "text scans read the source");
+    assert!(
+        scan.served_from_fragment.is_none(),
+        "text scans read the source"
+    );
     assert_eq!(scan.start, start);
     assert_eq!(scan.end, end);
     assert_eq!(scan.lines_total, Some(kitchen_lines));
@@ -223,7 +226,10 @@ async fn the_incremental_discovery_ladder_works_offline() {
             end: 2,
         })
         .await;
-    assert!(matches!(backwards, Err(inseam_seams::SeamError::ScanRange { start: 3, end: 2 })));
+    assert!(matches!(
+        backwards,
+        Err(inseam_seams::SeamError::ScanRange { start: 3, end: 2 })
+    ));
     let zero = ops
         .scan(ScanRequest {
             address: top.address.clone(),
@@ -231,7 +237,10 @@ async fn the_incremental_discovery_ladder_works_offline() {
             end: 2,
         })
         .await;
-    assert!(matches!(zero, Err(inseam_seams::SeamError::ScanRange { start: 0, end: 2 })));
+    assert!(matches!(
+        zero,
+        Err(inseam_seams::SeamError::ScanRange { start: 0, end: 2 })
+    ));
 
     // --- rung 4: fetch ---
     let fetched = ops
@@ -337,7 +346,10 @@ async fn changed_sources_have_their_subtree_replaced() {
     // The note's new summary changes its folder's listing, so both re-index.
     assert_eq!(report.indexed, 2, "mtime/size change re-indexes: {report}");
 
-    assert_eq!(common::hits(ops.as_ref(), "ferns").await, 0, "stale fragments gone");
+    assert_eq!(
+        common::hits(ops.as_ref(), "ferns").await,
+        0,
+        "stale fragments gone"
+    );
     assert_eq!(common::hits(ops.as_ref(), "orchids").await, 1);
 }
-

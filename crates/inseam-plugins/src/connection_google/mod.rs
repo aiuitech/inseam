@@ -27,18 +27,16 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, Inject, Manifest, Plugin, PluginError, SecretNeed,
+    ApplyCx, Inject, Manifest, Plugin, PluginError, SecretNeed, parse_config,
 };
 use inseam_seams::connection::{
-    derive_host_id, Capabilities, Connection, Connections, HostDescription, Registration,
-    CONNECTIONS,
+    CONNECTIONS, Capabilities, Connection, Connections, HostDescription, Registration,
+    derive_host_id,
 };
-use inseam_seams::oauth::{
-    register_as_effect, GrantChanged, GrantId, GrantSpec, GrantState,
-};
+use inseam_seams::oauth::{GrantChanged, GrantId, GrantSpec, GrantState, register_as_effect};
 
 pub use api::Bases;
-pub use services::{scopes_for, GoogleService, IDENTITY_SCOPES};
+pub use services::{GoogleService, IDENTITY_SCOPES, scopes_for};
 
 pub const AUTHORIZATION_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 pub const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
@@ -111,13 +109,17 @@ impl GoogleConnectionConfig {
         }
         let distinct: BTreeSet<GoogleService> = self.services.iter().copied().collect();
         if distinct.len() != self.services.len() {
-            return Err(PluginError("config: `services` lists a service twice".to_string()));
+            return Err(PluginError(
+                "config: `services` lists a service twice".to_string(),
+            ));
         }
         if self.client_id_env.trim().is_empty() {
             return Err(PluginError("config: `client_id_env` is empty".to_string()));
         }
         if self.sources_max == 0 {
-            return Err(PluginError("config: `sources_max` must be greater than zero".to_string()));
+            return Err(PluginError(
+                "config: `sources_max` must be greater than zero".to_string(),
+            ));
         }
         Ok(())
     }
@@ -181,7 +183,11 @@ impl Plugin for GoogleConnection {
             services: self.config.services.clone(),
             sources_max: usize::try_from(self.config.sources_max).unwrap_or(usize::MAX),
             connections,
-            api: Arc::new(api::GoogleApi::new(http, Arc::clone(&grant), self.bases.clone())),
+            api: Arc::new(api::GoogleApi::new(
+                http,
+                Arc::clone(&grant),
+                self.bases.clone(),
+            )),
             registered: Mutex::new(Registered::default()),
         });
         // Tokens already on file: steward the hosts now, loudly if that
@@ -193,7 +199,9 @@ impl Plugin for GoogleConnection {
         // Later authorizations and revocations arrive as events; the
         // subscription and the hosts both unwind with the fiber.
         let listening = Arc::clone(&hosts);
-        let subscription = cx.bus().on::<GrantChanged>(move |event| listening.on_grant_changed(event));
+        let subscription = cx
+            .bus()
+            .on::<GrantChanged>(move |event| listening.on_grant_changed(event));
         cx.keep("follow the google grant", subscription);
         cx.effect("unregister the google hosts", move || hosts.close());
         Ok(())
@@ -203,7 +211,10 @@ impl Plugin for GoogleConnection {
         // The same prose the oauth entry would give for a configured grant;
         // the callback port there is the default, which is what the
         // console instructions in docs use.
-        crate::oauth::secret_needs(&self.config.grant_spec(), crate::oauth::OAuthConfig::default().callback_port)
+        crate::oauth::secret_needs(
+            &self.config.grant_spec(),
+            crate::oauth::OAuthConfig::default().callback_port,
+        )
     }
 }
 
@@ -234,7 +245,10 @@ impl Hosts {
             return;
         }
         match &event.state {
-            GrantState::Authorized { account: Some(account), .. } => {
+            GrantState::Authorized {
+                account: Some(account),
+                ..
+            } => {
                 if let Err(e) = self.register(account) {
                     tracing::warn!(entry = %self.entry_id, "google hosts not registered: {e}");
                 }
@@ -289,14 +303,32 @@ impl Hosts {
         Ok(())
     }
 
-    fn connection_for(&self, service: GoogleService, host: inseam_kernel::address::HostId) -> Arc<dyn Connection> {
+    fn connection_for(
+        &self,
+        service: GoogleService,
+        host: inseam_kernel::address::HostId,
+    ) -> Arc<dyn Connection> {
         let api = Arc::clone(&self.api);
         match service {
-            GoogleService::Gmail => Arc::new(gmail::GmailConnection::new(api, host, self.sources_max)),
-            GoogleService::Drive => Arc::new(drive::DriveConnection::new(api, host, self.sources_max)),
-            GoogleService::Calendar => Arc::new(calendar::CalendarConnection::new(api, host, self.sources_max)),
-            GoogleService::Contacts => Arc::new(contacts::ContactsConnection::new(api, host, self.sources_max)),
-            GoogleService::Tasks => Arc::new(tasks::TasksConnection::new(api, host, self.sources_max)),
+            GoogleService::Gmail => {
+                Arc::new(gmail::GmailConnection::new(api, host, self.sources_max))
+            }
+            GoogleService::Drive => {
+                Arc::new(drive::DriveConnection::new(api, host, self.sources_max))
+            }
+            GoogleService::Calendar => Arc::new(calendar::CalendarConnection::new(
+                api,
+                host,
+                self.sources_max,
+            )),
+            GoogleService::Contacts => Arc::new(contacts::ContactsConnection::new(
+                api,
+                host,
+                self.sources_max,
+            )),
+            GoogleService::Tasks => {
+                Arc::new(tasks::TasksConnection::new(api, host, self.sources_max))
+            }
         }
     }
 
@@ -330,18 +362,27 @@ mod tests {
         assert_eq!(spec.id.as_str(), "google");
         assert_eq!(spec.authorization_url, AUTHORIZATION_URL);
         assert_eq!(spec.scopes[0], "openid");
-        assert_eq!(spec.scopes.len(), IDENTITY_SCOPES.len() + GoogleService::ALL.len());
+        assert_eq!(
+            spec.scopes.len(),
+            IDENTITY_SCOPES.len() + GoogleService::ALL.len()
+        );
         assert_eq!(spec.authorization_params["access_type"], "offline");
         assert_eq!(spec.authorization_params["prompt"], "consent");
         assert_eq!(spec.client_id_env, "GOOGLE_CLIENT_ID");
-        assert_eq!(spec.client_secret_env.as_deref(), Some("GOOGLE_CLIENT_SECRET"));
+        assert_eq!(
+            spec.client_secret_env.as_deref(),
+            Some("GOOGLE_CLIENT_SECRET")
+        );
     }
 
     #[test]
     fn config_parses_services_and_refuses_empty_or_duplicate_lists() {
         let some: toml::Table = toml::from_str(r#"services = ["gmail", "drive"]"#).expect("toml");
         let plugin = GoogleConnection::from_config(&some).expect("builds");
-        assert_eq!(plugin.config.services, vec![GoogleService::Gmail, GoogleService::Drive]);
+        assert_eq!(
+            plugin.config.services,
+            vec![GoogleService::Gmail, GoogleService::Drive]
+        );
         assert_eq!(plugin.config.grant_spec().scopes.len(), 4);
 
         let none: toml::Table = toml::from_str("services = []").expect("toml");
@@ -356,7 +397,11 @@ mod tests {
         assert!(GoogleConnection::from_config(&stray).is_err());
         let public: toml::Table = toml::from_str("client_secret_env = \"\"").expect("toml");
         let plugin = GoogleConnection::from_config(&public).expect("builds");
-        assert_eq!(plugin.config.grant_spec().client_secret_env, None, "an empty name is no secret");
+        assert_eq!(
+            plugin.config.grant_spec().client_secret_env,
+            None,
+            "an empty name is no secret"
+        );
     }
 
     #[test]

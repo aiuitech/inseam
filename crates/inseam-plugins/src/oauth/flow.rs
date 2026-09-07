@@ -9,13 +9,13 @@
 
 use std::collections::BTreeMap;
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use url::form_urlencoded;
 use url::Url;
+use url::form_urlencoded;
 
 use inseam_seams::SeamError;
 
@@ -113,7 +113,9 @@ pub fn parse_callback(request_head: &str) -> Result<Callback, SeamError> {
     let method = parts.next().unwrap_or_default();
     let target = parts.next().unwrap_or_default();
     if method != "GET" || target.is_empty() {
-        return Err(SeamError::failed(format!("not a callback request: `{line}`")));
+        return Err(SeamError::failed(format!(
+            "not a callback request: `{line}`"
+        )));
     }
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
     let mut callback = Callback {
@@ -212,7 +214,10 @@ pub fn parse_token_response(
     }
     let expires_at = body
         .get("expires_in")
-        .and_then(|e| e.as_i64().or_else(|| e.as_str().and_then(|s| s.parse().ok())))
+        .and_then(|e| {
+            e.as_i64()
+                .or_else(|| e.as_str().and_then(|s| s.parse().ok()))
+        })
         .map(|seconds| now_epoch.saturating_add(seconds));
     let refresh_token = body
         .get("refresh_token")
@@ -249,9 +254,7 @@ pub fn parse_token_response(
 /// anything.
 pub fn id_token_email(id_token: &str) -> Option<String> {
     let payload = id_token.split('.').nth(1)?;
-    let bytes = URL_SAFE_NO_PAD
-        .decode(payload.trim_end_matches('='))
-        .ok()?;
+    let bytes = URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).ok()?;
     let claims: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     claims
         .get("email")
@@ -280,7 +283,10 @@ mod tests {
         let b = random_token();
         assert_eq!(a.len(), 43, "32 bytes base64url without padding");
         assert_ne!(a, b);
-        assert!(a.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+        assert!(
+            a.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        );
     }
 
     #[test]
@@ -378,7 +384,11 @@ mod tests {
         assert_eq!(tokens.refresh_token.as_deref(), Some("rt-old"));
         assert_eq!(tokens.expires_at, Some(4_600));
         assert_eq!(tokens.scopes, vec!["s".to_string()]);
-        assert_eq!(tokens.account.as_deref(), Some("greg@example.com"), "account survives a refresh");
+        assert_eq!(
+            tokens.account.as_deref(),
+            Some("greg@example.com"),
+            "account survives a refresh"
+        );
 
         let rotated = serde_json::json!({
             "access_token": "at2", "refresh_token": "rt-new", "scope": "x y"
@@ -406,7 +416,10 @@ mod tests {
         let tokens = parse_token_response(&body, 0, None, &[]).expect("parses");
         assert_eq!(tokens.account.as_deref(), Some("Greg@Example.com"));
         assert_eq!(id_token_email("not.a-token"), None);
-        assert_eq!(id_token_email(&fake_id_token(serde_json::json!({"sub": "1"}))), None);
+        assert_eq!(
+            id_token_email(&fake_id_token(serde_json::json!({"sub": "1"}))),
+            None
+        );
         let none = parse_token_response(&serde_json::json!({"access_token": "at"}), 0, None, &[])
             .expect("parses");
         assert_eq!(none.account, None);

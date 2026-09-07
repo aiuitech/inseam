@@ -7,17 +7,19 @@ use std::sync::Arc;
 use inseam_kernel::address::{Address, ContentLength, Envelope, HostId, Timestamp};
 use inseam_kernel::fragment::{Extent, FragmentId, Mimetype};
 use inseam_kernel::store::StoredFragment;
-use inseam_seams::connection::{Connection, EnumeratedSource};
-use inseam_seams::routing::{Location, Routing, HOPS_MAX};
-use inseam_seams::transport::Transport;
 use inseam_seams::SeamError;
+use inseam_seams::connection::{Connection, EnumeratedSource};
+use inseam_seams::routing::{HOPS_MAX, Location, Routing};
+use inseam_seams::transport::Transport;
 
-use super::fake::{host_id, node_id, FakeNetwork, NodeSpec, RosterRecords, StubFinder, TestNode, TestSource};
-use super::protocol::{
-    decode_response, encode_request, route_protocol, RouteBody, RouteReply, RouteRequest,
-    RouteResponse, VISITED_MAX,
-};
 use super::RoutingConfig;
+use super::fake::{
+    FakeNetwork, NodeSpec, RosterRecords, StubFinder, TestNode, TestSource, host_id, node_id,
+};
+use super::protocol::{
+    RouteBody, RouteReply, RouteRequest, RouteResponse, VISITED_MAX, decode_response,
+    encode_request, route_protocol,
+};
 use crate::connection_fs::{FsHost, WalkConfig};
 
 const FILE_TEXT: &str = "first line\nsecond line\nthird line\n";
@@ -115,7 +117,10 @@ fn error_kind(reply: &RouteReply) -> (String, String) {
 #[tokio::test]
 async fn locate_answers_local_remote_and_unknown() {
     let (a, b, file, _network) = a_and_b().await;
-    assert!(matches!(a.service.locate(&file.host).await.expect("locates"), Location::Local(_)));
+    assert!(matches!(
+        a.service.locate(&file.host).await.expect("locates"),
+        Location::Local(_)
+    ));
     match b.service.locate(&file.host).await.expect("locates") {
         Location::Remote(stewards) => {
             assert_eq!(stewards.len(), 1);
@@ -124,7 +129,10 @@ async fn locate_answers_local_remote_and_unknown() {
         other => panic!("expected Remote, got {other:?}"),
     }
     assert!(matches!(
-        b.service.locate(&host_id("fs-nobody")).await.expect("locates"),
+        b.service
+            .locate(&host_id("fs-nobody"))
+            .await
+            .expect("locates"),
         Location::Unknown
     ));
 }
@@ -136,7 +144,10 @@ async fn a_stale_claim_by_this_node_is_not_a_remote_steward() {
     let a = TestNode::build(NodeSpec::new(1), &records, &network, StubFinder::empty()).await;
     a.claim(&host_id("fs-gone"));
     assert!(matches!(
-        a.service.locate(&host_id("fs-gone")).await.expect("locates"),
+        a.service
+            .locate(&host_id("fs-gone"))
+            .await
+            .expect("locates"),
         Location::Unknown
     ));
 }
@@ -146,11 +157,23 @@ async fn a_peer_reads_a_stewarded_file_through_its_steward() {
     let (a, b, file, network) = a_and_b().await;
     let text = b.service.read_text(&file.address).await.expect("reads");
     assert_eq!(text, FILE_TEXT);
-    let lines = b.service.read_lines(&file.address, 2, 3).await.expect("reads lines");
+    let lines = b
+        .service
+        .read_lines(&file.address, 2, 3)
+        .await
+        .expect("reads lines");
     assert_eq!(lines, "second line\nthird line");
-    let bytes = b.service.read_bytes(&file.address).await.expect("reads bytes");
+    let bytes = b
+        .service
+        .read_bytes(&file.address)
+        .await
+        .expect("reads bytes");
     assert_eq!(bytes, FILE_TEXT.as_bytes());
-    assert_eq!(network.requests_to(a.id), 3, "each read is one exchange with the steward");
+    assert_eq!(
+        network.requests_to(a.id),
+        3,
+        "each read is one exchange with the steward"
+    );
     // Served locally on A without touching the network.
     let local = a.service.read_text(&file.address).await.expect("reads");
     assert_eq!(local, FILE_TEXT);
@@ -198,7 +221,12 @@ async fn describe_is_answered_by_the_stewards_connection() {
     let host = host_id("mail-a");
     let a = TestNode::build(NodeSpec::new(1), &records, &network, StubFinder::empty()).await;
     let b = TestNode::build(NodeSpec::new(2), &records, &network, StubFinder::empty()).await;
-    a.steward(&host, Arc::new(DescribingConnection { envelope: envelope.clone() }));
+    a.steward(
+        &host,
+        Arc::new(DescribingConnection {
+            envelope: envelope.clone(),
+        }),
+    );
     network.link(b.id, a.id);
     let address: Address = format!("inseam://{host}/msg-1").parse().expect("valid");
     let described = b.service.describe(&address).await.expect("describes");
@@ -230,8 +258,18 @@ async fn expand_and_scan_are_served_from_the_stewards_index() {
     assert_eq!(expansion.address, file.address);
     assert_eq!(expansion.fragments.len(), 1);
     assert_eq!(expansion.fragments[0].text.as_deref(), Some("first line"));
-    assert_eq!(a.finder.expansions.load(std::sync::atomic::Ordering::SeqCst), 1);
-    assert_eq!(b.finder.expansions.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(
+        a.finder
+            .expansions
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    assert_eq!(
+        b.finder
+            .expansions
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
 
     let request = RouteRequest {
         hops_remaining: HOPS_MAX,
@@ -262,7 +300,9 @@ async fn a_query_is_answered_by_the_node_it_lands_on_and_never_forwarded() {
     let file = stewarded_file();
     let a = TestNode::build(NodeSpec::new(1), &records, &network, StubFinder::empty()).await;
     let b = TestNode::build(NodeSpec::new(2), &records, &network, StubFinder::empty()).await;
-    let b_result = TestSource::text("inseam://fs-b/own.md", "b's own").catalog(&b.store).await;
+    let b_result = TestSource::text("inseam://fs-b/own.md", "b's own")
+        .catalog(&b.store)
+        .await;
     b.finder.set_ranked(vec![b_result]);
     let c = TestNode::build(NodeSpec::new(3), &records, &network, StubFinder::empty()).await;
     a.steward(&file.host, file.connection.clone() as Arc<dyn Connection>);
@@ -280,12 +320,21 @@ async fn a_query_is_answered_by_the_node_it_lands_on_and_never_forwarded() {
         RouteReply::Json(RouteResponse::Query(results)) => {
             assert_eq!(results.len(), 1);
             assert_eq!(results[0].address.to_string(), "inseam://fs-b/own.md");
-            assert_eq!(results[0].via, None, "the wire carries no provenance; the requester stamps it");
+            assert_eq!(
+                results[0].via, None,
+                "the wire carries no provenance; the requester stamps it"
+            );
         }
         other => panic!("expected results, got {other:?}"),
     }
-    assert_eq!(b.finder.queries.load(std::sync::atomic::Ordering::SeqCst), 1);
-    assert_eq!(a.finder.queries.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(
+        b.finder.queries.load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    assert_eq!(
+        a.finder.queries.load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
     assert_eq!(network.requests_to(a.id), 0, "a query is never forwarded");
 }
 
@@ -353,7 +402,11 @@ async fn a_node_that_does_not_relay_says_so() {
         Err(SeamError::Unreachable { tried, .. }) => assert_eq!(tried, vec![a.id, b.id]),
         other => panic!("expected Unreachable, got {other:?}"),
     }
-    assert_eq!(network.requests_from(b.id), 0, "a non-relay forwards nothing");
+    assert_eq!(
+        network.requests_from(b.id),
+        0,
+        "a non-relay forwards nothing"
+    );
 }
 
 #[tokio::test]
@@ -424,7 +477,10 @@ async fn visited_grows_by_one_per_hop_and_a_loop_is_refused() {
             address: file.address.clone(),
         },
     };
-    assert!(matches!(encode_request(&malformed), Err(SeamError::Refused(_))));
+    assert!(matches!(
+        encode_request(&malformed),
+        Err(SeamError::Refused(_))
+    ));
     assert_eq!(network.requests_from(b.id), 0);
 }
 
@@ -444,9 +500,16 @@ async fn a_relay_skips_a_steward_that_cannot_reach_the_host_either() {
     network.session(c.id, b.id);
     network.session(b.id, d.id);
     network.session(b.id, a.id);
-    let text = c.service.read_text(&file.address).await.expect("relayed past D");
+    let text = c
+        .service
+        .read_text(&file.address)
+        .await
+        .expect("relayed past D");
     assert_eq!(text, FILE_TEXT);
-    assert!(network.requests_to(d.id) >= 1, "D was asked and could not serve");
+    assert!(
+        network.requests_to(d.id) >= 1,
+        "D was asked and could not serve"
+    );
 }
 
 #[tokio::test]
@@ -455,7 +518,9 @@ async fn fan_out_asks_deep_index_nodes_and_reports_a_node_that_never_answers() {
     let network = FakeNetwork::shared();
     let a = TestNode::build(NodeSpec::new(1), &records, &network, StubFinder::empty()).await;
     let b = TestNode::build(NodeSpec::new(2), &records, &network, StubFinder::empty()).await;
-    let b_result = TestSource::text("inseam://fs-b/doc.md", "on b").catalog(&b.store).await;
+    let b_result = TestSource::text("inseam://fs-b/doc.md", "on b")
+        .catalog(&b.store)
+        .await;
     b.finder.set_ranked(vec![b_result]);
     let c = TestNode::build(NodeSpec::new(3), &records, &network, StubFinder::empty()).await;
     let mut shallow = NodeSpec::new(4);
@@ -466,16 +531,40 @@ async fn fan_out_asks_deep_index_nodes_and_reports_a_node_that_never_answers() {
     network.link(c.id, d.id);
     network.black_hole(a.id);
     let replies = c.service.fan_out("doc", 5).await.expect("fans out");
-    assert_eq!(replies.len(), 2, "A and B advertise a deep index; D does not");
-    let to_a = replies.iter().find(|r| r.node == a.id).expect("A was asked");
+    assert_eq!(
+        replies.len(),
+        2,
+        "A and B advertise a deep index; D does not"
+    );
+    let to_a = replies
+        .iter()
+        .find(|r| r.node == a.id)
+        .expect("A was asked");
     assert!(to_a.results.is_empty());
-    assert!(to_a.error.as_deref().is_some_and(|e| e.contains("timed out")), "{:?}", to_a.error);
-    let to_b = replies.iter().find(|r| r.node == b.id).expect("B was asked");
+    assert!(
+        to_a.error
+            .as_deref()
+            .is_some_and(|e| e.contains("timed out")),
+        "{:?}",
+        to_a.error
+    );
+    let to_b = replies
+        .iter()
+        .find(|r| r.node == b.id)
+        .expect("B was asked");
     assert_eq!(to_b.error, None);
     assert_eq!(to_b.results.len(), 1);
-    assert_eq!(to_b.results[0].via, Some(b.id), "the requester stamps provenance");
+    assert_eq!(
+        to_b.results[0].via,
+        Some(b.id),
+        "the requester stamps provenance"
+    );
     assert_eq!(network.requests_to(d.id), 0);
-    assert_eq!(c.finder.queries.load(std::sync::atomic::Ordering::SeqCst), 0, "fan-out never queries the local index");
+    assert_eq!(
+        c.finder.queries.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "fan-out never queries the local index"
+    );
 }
 
 #[tokio::test]
@@ -490,17 +579,30 @@ async fn fan_out_prefers_live_sessions_then_always_on_nodes_within_its_bound() {
         fan_out_nodes_max: 1,
         ..RoutingConfig::default()
     };
-    let c = TestNode::build_with(NodeSpec::new(3), &records, &network, StubFinder::empty(), &one).await;
+    let c = TestNode::build_with(
+        NodeSpec::new(3),
+        &records,
+        &network,
+        StubFinder::empty(),
+        &one,
+    )
+    .await;
     network.link(c.id, a.id);
     network.session(c.id, b.id);
     let replies = c.service.fan_out("x", 5).await.expect("fans out");
     assert_eq!(replies.len(), 1);
-    assert_eq!(replies[0].node, b.id, "a live session outranks an always-on node");
+    assert_eq!(
+        replies[0].node, b.id,
+        "a live session outranks an always-on node"
+    );
     network.disconnect_all();
     network.link(c.id, a.id);
     network.link(c.id, b.id);
     let replies = c.service.fan_out("x", 5).await.expect("fans out");
-    assert_eq!(replies[0].node, a.id, "with no session, the always-on node comes first");
+    assert_eq!(
+        replies[0].node, a.id,
+        "with no session, the always-on node comes first"
+    );
 }
 
 #[tokio::test]
@@ -512,7 +614,14 @@ async fn fan_out_is_skipped_when_disabled() {
         fan_out: false,
         ..RoutingConfig::default()
     };
-    let c = TestNode::build_with(NodeSpec::new(3), &records, &network, StubFinder::empty(), &off).await;
+    let c = TestNode::build_with(
+        NodeSpec::new(3),
+        &records,
+        &network,
+        StubFinder::empty(),
+        &off,
+    )
+    .await;
     network.link(c.id, a.id);
     let replies = c.service.fan_out("x", 5).await.expect("fans out");
     assert!(replies.is_empty());
@@ -523,21 +632,27 @@ async fn fan_out_is_skipped_when_disabled() {
 fn the_config_refuses_zero_timeouts_and_clamps_the_fan_out_count() {
     use super::Limits;
     use inseam_seams::routing::FAN_OUT_NODES_MAX;
-    assert!(Limits::from_config(&RoutingConfig {
-        request_timeout_secs: 0,
-        ..RoutingConfig::default()
-    })
-    .is_err());
-    assert!(Limits::from_config(&RoutingConfig {
-        fan_out_timeout_ms: 0,
-        ..RoutingConfig::default()
-    })
-    .is_err());
-    assert!(Limits::from_config(&RoutingConfig {
-        fan_out_nodes_max: 0,
-        ..RoutingConfig::default()
-    })
-    .is_err());
+    assert!(
+        Limits::from_config(&RoutingConfig {
+            request_timeout_secs: 0,
+            ..RoutingConfig::default()
+        })
+        .is_err()
+    );
+    assert!(
+        Limits::from_config(&RoutingConfig {
+            fan_out_timeout_ms: 0,
+            ..RoutingConfig::default()
+        })
+        .is_err()
+    );
+    assert!(
+        Limits::from_config(&RoutingConfig {
+            fan_out_nodes_max: 0,
+            ..RoutingConfig::default()
+        })
+        .is_err()
+    );
     let clamped = Limits::from_config(&RoutingConfig {
         fan_out_nodes_max: 1_000,
         ..RoutingConfig::default()

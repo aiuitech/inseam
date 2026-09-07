@@ -19,13 +19,13 @@ use std::time::Duration;
 use inseam_kernel::address::Address;
 use inseam_kernel::network::NodeId;
 use inseam_kernel::substrate::Kernel;
+use inseam_seams::SeamError;
 use inseam_seams::operations::{
     CatalogFilter, CatalogRequest, ExpandRequest, ExpelRequest, FetchRequest, IndexRequest,
     JoinRequest, NetworkView, Operations, QueryRequest, ScanRequest,
 };
 use inseam_seams::roster::Invitation;
 use inseam_seams::transport::InvitationToken;
-use inseam_seams::SeamError;
 
 /// Attempts a wait makes before the test fails: with the interval below,
 /// five seconds — far past the roster's one-second endpoint poll.
@@ -120,7 +120,10 @@ async fn network_when(
         }
         tokio::time::sleep(POLL_INTERVAL).await;
     }
-    panic!("{what} did not happen within {:?}", POLL_INTERVAL * POLL_ATTEMPTS_MAX);
+    panic!(
+        "{what} did not happen within {:?}",
+        POLL_INTERVAL * POLL_ATTEMPTS_MAX
+    );
 }
 
 fn corpus() -> tempfile::TempDir {
@@ -203,12 +206,21 @@ async fn two_nodes_share_a_catalog_and_serve_each_other() {
         .expect("joins");
     assert_b_sees_a(&joined, &a, &a_host);
     let on_a = a.ops.network().await.expect("view");
-    assert!(on_a.nodes.iter().any(|node| node.record.id == b.id), "A admitted B");
+    assert!(
+        on_a.nodes.iter().any(|node| node.record.id == b.id),
+        "A admitted B"
+    );
     assert!(on_a.log.origins >= 2, "A holds B's log beside its own");
 
     let cataloged = catalog(&b).await;
-    assert!(cataloged.contains(&(alpha.clone(), Some(a.id))), "{cataloged:?}");
-    assert!(cataloged.contains(&(beta.clone(), Some(a.id))), "{cataloged:?}");
+    assert!(
+        cataloged.contains(&(alpha.clone(), Some(a.id))),
+        "{cataloged:?}"
+    );
+    assert!(
+        cataloged.contains(&(beta.clone(), Some(a.id))),
+        "{cataloged:?}"
+    );
     let remote = b.ops.status().await.expect("status").remote_sources;
     assert_eq!(remote, 3, "the two notes and their folder, all from A");
 
@@ -278,13 +290,19 @@ async fn assert_b_reads_through_a(b: &Node, a: &Node, alpha: &Address) {
         .await
         .expect("expands from A's index");
     assert_eq!(expanded.address, *alpha);
-    assert!(!expanded.fragments.is_empty(), "A's index has the fragments");
+    assert!(
+        !expanded.fragments.is_empty(),
+        "A's index has the fragments"
+    );
     let texts: Vec<&str> = expanded
         .fragments
         .iter()
         .filter_map(|fragment| fragment.text.as_deref())
         .collect();
-    assert!(texts.iter().any(|text| text.contains("zebras")), "{texts:?}");
+    assert!(
+        texts.iter().any(|text| text.contains("zebras")),
+        "{texts:?}"
+    );
 
     let response = b
         .ops
@@ -299,7 +317,11 @@ async fn assert_b_reads_through_a(b: &Node, a: &Node, alpha: &Address) {
         .iter()
         .find(|result| result.address == *alpha)
         .expect("A's note ranks on B");
-    assert_eq!(hit.via, Some(a.id), "the result names the node whose index produced it");
+    assert_eq!(
+        hit.via,
+        Some(a.id),
+        "the result names the node whose index produced it"
+    );
     assert_eq!(response.meta.remote.len(), 1, "one node was fanned out to");
     assert_eq!(response.meta.remote[0].node, a.id);
     assert_eq!(response.meta.remote[0].error, None);
@@ -320,7 +342,10 @@ async fn assert_spent_and_forged_invitations_are_refused(
             invitation: text.to_string(),
         })
         .await;
-    assert!(matches!(spent, Err(SeamError::NotAdmitted(node)) if node == a.id), "{spent:?}");
+    assert!(
+        matches!(spent, Err(SeamError::NotAdmitted(node)) if node == a.id),
+        "{spent:?}"
+    );
 
     let forged = Invitation {
         node: a.id,
@@ -334,10 +359,16 @@ async fn assert_spent_and_forged_invitations_are_refused(
             invitation: forged.to_string(),
         })
         .await;
-    assert!(matches!(stranger, Err(SeamError::NotAdmitted(node)) if node == a.id), "{stranger:?}");
+    assert!(
+        matches!(stranger, Err(SeamError::NotAdmitted(node)) if node == a.id),
+        "{stranger:?}"
+    );
 
     let on_a = a.ops.network().await.expect("view");
-    assert!(!on_a.nodes.iter().any(|node| node.record.id == c.id), "C never entered A's roster");
+    assert!(
+        !on_a.nodes.iter().any(|node| node.record.id == c.id),
+        "C never entered A's roster"
+    );
     let on_c = c.ops.network().await.expect("view");
     assert_eq!(on_c.nodes.len(), 1, "C learned nothing from A");
 }
@@ -364,7 +395,10 @@ async fn assert_removal_reaches_b(
     assert_eq!(with_a.last_error, None);
     let cataloged = catalog(b).await;
     assert!(cataloged.contains(&(alpha.clone(), Some(a.id))));
-    assert!(!cataloged.iter().any(|(address, _)| address == beta), "{cataloged:?}");
+    assert!(
+        !cataloged.iter().any(|(address, _)| address == beta),
+        "{cataloged:?}"
+    );
 }
 
 /// Expelling B disconnects it now and refuses it from then on: B's next
@@ -375,10 +409,23 @@ async fn assert_expulsion_cuts_b_off(a: &Node, b: &Node) {
         .expel(ExpelRequest { node: b.id })
         .await
         .expect("expels");
-    assert!(!after.nodes.iter().any(|node| node.record.id == b.id), "B left A's roster");
-    assert!(after.hosts.iter().all(|host| !host.stewards.contains(&b.id)), "B stewards nothing A knows");
+    assert!(
+        !after.nodes.iter().any(|node| node.record.id == b.id),
+        "B left A's roster"
+    );
+    assert!(
+        after
+            .hosts
+            .iter()
+            .all(|host| !host.stewards.contains(&b.id)),
+        "B stewards nothing A knows"
+    );
 
-    let synced = b.ops.sync_now().await.expect("the round runs; failures land on the peer");
+    let synced = b
+        .ops
+        .sync_now()
+        .await
+        .expect("the round runs; failures land on the peer");
     let with_a = synced
         .nodes
         .iter()

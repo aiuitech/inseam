@@ -16,17 +16,17 @@ use std::sync::Arc;
 
 use inseam_kernel::address::HostId;
 use inseam_kernel::network::{NodeId, StewardshipRecord};
+use inseam_seams::SeamError;
 use inseam_seams::connection::Connection;
 use inseam_seams::text::check_line_range;
 use inseam_seams::transport::{PeerAddress, RequestHandler};
-use inseam_seams::SeamError;
 
 use super::protocol::{
+    ERROR_KIND_UNREACHABLE, RouteBody, RouteReply, RouteRequest, RouteResponse, VISITED_MAX,
     decode_request, decode_response, encode_request, encode_response, error_response,
-    route_protocol, RouteBody, RouteReply, RouteRequest, RouteResponse, ERROR_KIND_UNREACHABLE,
-    VISITED_MAX,
+    route_protocol,
 };
-use super::{RoutingService, RELAY_PEERS_MAX, STEWARDS_TRIED_MAX};
+use super::{RELAY_PEERS_MAX, RoutingService, STEWARDS_TRIED_MAX};
 use crate::operations::ladder::{self, Reader};
 
 /// Serves the protocol on the transport for one [`RoutingService`].
@@ -104,7 +104,11 @@ impl RoutingService {
             RouteBody::ReadText { address } => {
                 RouteResponse::Text(connection.read_text(&address).await?)
             }
-            RouteBody::ReadLines { address, start, end } => {
+            RouteBody::ReadLines {
+                address,
+                start,
+                end,
+            } => {
                 // Checked by the requester too; the steward never trusts it.
                 check_line_range(start, end)?;
                 RouteResponse::Text(connection.read_lines(&address, start, end).await?)
@@ -119,9 +123,15 @@ impl RoutingService {
             }
             RouteBody::Expand { address } => {
                 let source = ladder::source_at(&self.store, &address).await?;
-                RouteResponse::Expand(ladder::expand(&self.store, self.finder.as_ref(), &source).await?)
+                RouteResponse::Expand(
+                    ladder::expand(&self.store, self.finder.as_ref(), &source).await?,
+                )
             }
-            RouteBody::Scan { address, start, end } => {
+            RouteBody::Scan {
+                address,
+                start,
+                end,
+            } => {
                 let source = ladder::source_at(&self.store, &address).await?;
                 let window = ladder::scan_window(start, end)?;
                 let reader = Ok(Reader::Connection(connection));
@@ -152,7 +162,10 @@ impl RoutingService {
         }
         let mut visited = request.visited;
         visited.push(me);
-        assert!(visited.len() <= VISITED_MAX, "one node per hop keeps visited within its bound");
+        assert!(
+            visited.len() <= VISITED_MAX,
+            "one node per hop keeps visited within its bound"
+        );
         let next = RouteRequest {
             hops_remaining: request.hops_remaining - 1,
             visited,
@@ -161,7 +174,12 @@ impl RoutingService {
         let stewards = self.roster.stewards_of(host).await?;
         match self.forward_to(&stewards, &next).await {
             Ok(reply) => Ok(reply),
-            Err(tried) => Ok(unreachable_reply(me, host, &tried, "no steward or relay answered")),
+            Err(tried) => Ok(unreachable_reply(
+                me,
+                host,
+                &tried,
+                "no steward or relay answered",
+            )),
         }
     }
 
@@ -269,7 +287,11 @@ fn unreachable_reply(me: NodeId, host: &HostId, tried: &[NodeId], why: &str) -> 
     let tried_list = if tried.is_empty() {
         "nobody".to_string()
     } else {
-        tried.iter().map(NodeId::short).collect::<Vec<_>>().join(", ")
+        tried
+            .iter()
+            .map(NodeId::short)
+            .collect::<Vec<_>>()
+            .join(", ")
     };
     RouteReply::Json(RouteResponse::Error {
         kind: ERROR_KIND_UNREACHABLE.to_string(),

@@ -28,8 +28,8 @@ use inseam_kernel::address::Timestamp;
 use inseam_kernel::network::{Endpoint, NodeId, NodeRecord};
 use inseam_kernel::substrate::{ApplyCx, PluginError, ServiceKey};
 
-use crate::operations::FETCH_BYTES_MAX;
 use crate::SeamError;
+use crate::operations::FETCH_BYTES_MAX;
 
 pub const TRANSPORT: ServiceKey<dyn Transport> = ServiceKey::new("transport");
 
@@ -65,7 +65,10 @@ const _: () = assert!(
 /// personal network is tens of nodes, and a 257th session is a bug or an
 /// attack, not a bigger network.
 pub const SESSIONS_MAX: usize = 256;
-const _: () = assert!(SESSIONS_MAX > 0, "a node with no sessions could reach nothing");
+const _: () = assert!(
+    SESSIONS_MAX > 0,
+    "a node with no sessions could reach nothing"
+);
 
 /// The undo a registration returns; calling it withdraws what was
 /// registered.
@@ -161,9 +164,7 @@ impl InvitationToken {
         if token.chars().count() > INVITATION_TOKEN_CHARS_MAX {
             return Err(InvitationTokenError::TooLong);
         }
-        let plain = token
-            .chars()
-            .all(|c| !c.is_whitespace() && !c.is_control());
+        let plain = token.chars().all(|c| !c.is_whitespace() && !c.is_control());
         if !plain {
             return Err(InvitationTokenError::InvalidCharacters);
         }
@@ -382,7 +383,10 @@ mod tests {
             );
         }
         let long = "p".repeat(PROTOCOL_NAME_CHARS_MAX + 1);
-        assert!(matches!(ProtocolName::new(long), Err(ProtocolNameError::TooLong(_))));
+        assert!(matches!(
+            ProtocolName::new(long),
+            Err(ProtocolNameError::TooLong(_))
+        ));
         let longest = "p".repeat(PROTOCOL_NAME_CHARS_MAX);
         assert!(ProtocolName::new(longest).is_ok());
     }
@@ -412,7 +416,10 @@ mod tests {
             Err(InvitationTokenError::InvalidCharacters)
         );
         let long = "t".repeat(INVITATION_TOKEN_CHARS_MAX + 1);
-        assert_eq!(InvitationToken::new(long), Err(InvitationTokenError::TooLong));
+        assert_eq!(
+            InvitationToken::new(long),
+            Err(InvitationTokenError::TooLong)
+        );
     }
 
     #[test]
@@ -443,6 +450,9 @@ mod tests {
         assert_eq!(address.endpoints, record.endpoints);
         assert_eq!(address.invitation, None);
         let json = serde_json::to_value(&address).expect("serializes");
-        assert!(json.get("invitation").is_none(), "absent tokens are not written");
+        assert!(
+            json.get("invitation").is_none(),
+            "absent tokens are not written"
+        );
     }
 }

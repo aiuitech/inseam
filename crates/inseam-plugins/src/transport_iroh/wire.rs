@@ -12,7 +12,7 @@ use iroh::endpoint::{ReadExactError, RecvStream, SendStream};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use inseam_seams::transport::{InvitationToken, ProtocolName, MESSAGE_BYTES_MAX};
+use inseam_seams::transport::{InvitationToken, MESSAGE_BYTES_MAX, ProtocolName};
 
 /// The one ALPN every inseam protocol shares; the protocol name inside the
 /// header is the routing key.
@@ -96,15 +96,22 @@ pub async fn write_request(
         protocol: protocol.clone(),
     })
     .map_err(|e| WireError::HeaderInvalid(e.to_string()))?;
-    assert!(header.len() < HEADER_BYTES_MAX, "a bounded name renders to a bounded header");
-    assert!(!header.contains(&b'\n'), "JSON escapes newlines; the line terminator is unique");
+    assert!(
+        header.len() < HEADER_BYTES_MAX,
+        "a bounded name renders to a bounded header"
+    );
+    assert!(
+        !header.contains(&b'\n'),
+        "JSON escapes newlines; the line terminator is unique"
+    );
     let mut frame = Vec::with_capacity(header.len() + 1 + LENGTH_BYTES);
     frame.extend_from_slice(&header);
     frame.push(b'\n');
     frame.extend_from_slice(&length.to_be_bytes());
     write_all(send, &frame).await?;
     write_all(send, body).await?;
-    send.finish().map_err(|e| WireError::Stream(e.to_string()))?;
+    send.finish()
+        .map_err(|e| WireError::Stream(e.to_string()))?;
     Ok(())
 }
 
@@ -130,7 +137,8 @@ pub async fn write_response(
     frame.extend_from_slice(&length.to_be_bytes());
     write_all(send, &frame).await?;
     write_all(send, bytes).await?;
-    send.finish().map_err(|e| WireError::Stream(e.to_string()))?;
+    send.finish()
+        .map_err(|e| WireError::Stream(e.to_string()))?;
     Ok(())
 }
 
@@ -205,7 +213,10 @@ mod tests {
     fn the_body_bound_is_enforced_before_any_allocation() {
         assert_eq!(check_body_bound(0).expect("zero"), 0);
         let limit = usize::try_from(MESSAGE_BYTES_MAX).expect("fits");
-        assert_eq!(u64::from(check_body_bound(limit).expect("at the bound")), MESSAGE_BYTES_MAX);
+        assert_eq!(
+            u64::from(check_body_bound(limit).expect("at the bound")),
+            MESSAGE_BYTES_MAX
+        );
         assert!(matches!(
             check_body_bound(limit + 1),
             Err(WireError::TooLarge { bytes, limit: l }) if bytes == MESSAGE_BYTES_MAX + 1 && l == MESSAGE_BYTES_MAX

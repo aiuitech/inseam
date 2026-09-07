@@ -54,7 +54,13 @@ pub(super) struct PeerLedgers {
 }
 
 impl PeerLedgers {
-    pub(super) fn record_success(&mut self, node: NodeId, now: Timestamp, received: u64, sent: u64) {
+    pub(super) fn record_success(
+        &mut self,
+        node: NodeId,
+        now: Timestamp,
+        received: u64,
+        sent: u64,
+    ) {
         let ledger = self.ledger_mut(node, now);
         ledger.last_ok = true;
         ledger.last_success = Some(now);

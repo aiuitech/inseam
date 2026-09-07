@@ -1,18 +1,22 @@
 //! The roster plugin observed through the seam, on real kernels over the
 //! fake network: what it publishes, what it withdraws, and whom it lets in.
 
-use inseam_kernel::network::{Record, VersionVector, LOG_ENTRIES_PER_BATCH_MAX};
-use inseam_seams::transport::{InvitationToken, PeerAddress};
+use inseam_kernel::network::{LOG_ENTRIES_PER_BATCH_MAX, Record, VersionVector};
 use inseam_seams::SeamError;
+use inseam_seams::transport::{InvitationToken, PeerAddress};
 
 use crate::sync::fake_transport::FakeNetwork;
-use crate::sync::harness::{endpoint, TestNode};
+use crate::sync::harness::{TestNode, endpoint};
 
 /// The latest entry per key in a node's store, as a peer with an empty
 /// vector would receive it.
 async fn whole_log(node: &TestNode) -> Vec<Record> {
     node.store()
-        .log_after(&node.id, &VersionVector::default(), LOG_ENTRIES_PER_BATCH_MAX)
+        .log_after(
+            &node.id,
+            &VersionVector::default(),
+            LOG_ENTRIES_PER_BATCH_MAX,
+        )
         .await
         .expect("lists")
         .into_iter()
@@ -67,7 +71,8 @@ async fn a_vanished_registration_publishes_a_withdrawal() {
         .count();
     assert_eq!(withdrawn, 1);
     assert!(
-        !log.iter().any(|record| matches!(record, Record::Stewardship(_))),
+        !log.iter()
+            .any(|record| matches!(record, Record::Stewardship(_))),
         "the withdrawal compacted the claim away"
     );
 }
@@ -121,7 +126,10 @@ async fn invite_then_redeem_admits_once() {
     assert_eq!(invitation.node, a.id);
     assert_eq!(invitation.endpoints, vec![endpoint("ip:10.0.0.1:1")]);
     assert!(roster.redeem(&peer, &invitation.token));
-    assert!(!roster.redeem(&peer, &invitation.token), "spent on first redeem");
+    assert!(
+        !roster.redeem(&peer, &invitation.token),
+        "spent on first redeem"
+    );
     let forged = InvitationToken::new("forged").expect("valid");
     assert!(!roster.redeem(&peer, &forged));
 }
@@ -141,12 +149,12 @@ async fn an_invitation_admits_over_the_transport_once_and_only_once() {
         .expect("the invited node joins");
     assert!(joined.live);
     assert!(network.has_session(a.id, b.id));
-    assert!(a.roster().is_admitted(&b.id).await.expect("reads"), "b's record arrived");
+    assert!(
+        a.roster().is_admitted(&b.id).await.expect("reads"),
+        "b's record arrived"
+    );
 
-    let reused = c
-        .sync()
-        .sync_with(&PeerAddress::from(invitation))
-        .await;
+    let reused = c.sync().sync_with(&PeerAddress::from(invitation)).await;
     assert!(matches!(reused, Err(SeamError::NotAdmitted(id)) if id == c.id));
     assert!(!network.has_session(a.id, c.id));
     assert!(!a.roster().is_admitted(&c.id).await.expect("reads"));
@@ -186,7 +194,14 @@ async fn an_expelled_peer_is_refused_and_disconnected() {
     assert_eq!(network.disconnected_by(a.id), vec![b.id]);
     assert!(!network.has_session(a.id, b.id));
     assert!(!a.roster().is_admitted(&b.id).await.expect("reads"));
-    assert!(!a.roster().nodes().await.expect("reads").iter().any(|n| n.id == b.id));
+    assert!(
+        !a.roster()
+            .nodes()
+            .await
+            .expect("reads")
+            .iter()
+            .any(|n| n.id == b.id)
+    );
     let again = b.sync().sync_with(&a.address()).await;
     assert!(matches!(again, Err(SeamError::NotAdmitted(id)) if id == b.id));
 }
@@ -212,14 +227,22 @@ async fn republish_carries_the_rotated_endpoints() {
 
     assert_eq!(record.endpoints, vec![endpoint("ip:10.0.0.9:1")]);
     assert_eq!(a.roster().local(), record);
-    let stored = a.roster().node(&a.id).await.expect("reads").expect("present");
+    let stored = a
+        .roster()
+        .node(&a.id)
+        .await
+        .expect("reads")
+        .expect("present");
     assert_eq!(stored.endpoints, record.endpoints);
     let log = whole_log(&a).await;
     let node_records = log
         .iter()
         .filter(|record| matches!(record, Record::Node(_)))
         .count();
-    assert_eq!(node_records, 1, "the log compacts to the latest node record");
+    assert_eq!(
+        node_records, 1,
+        "the log compacts to the latest node record"
+    );
 }
 
 #[tokio::test]
@@ -238,6 +261,17 @@ async fn hosts_join_every_steward_across_nodes() {
     assert_eq!(ids, vec!["fs-b", "fs-shared"]);
     let shared = &hosts[1];
     let stewards: Vec<_> = shared.stewards.iter().map(|s| s.node).collect();
-    assert_eq!(stewards, vec![a.id, b.id], "two stewards of one host, by node");
-    assert_eq!(b.roster().stewards_of(&hosts[0].host.id).await.expect("reads").len(), 1);
+    assert_eq!(
+        stewards,
+        vec![a.id, b.id],
+        "two stewards of one host, by node"
+    );
+    assert_eq!(
+        b.roster()
+            .stewards_of(&hosts[0].host.id)
+            .await
+            .expect("reads")
+            .len(),
+        1
+    );
 }

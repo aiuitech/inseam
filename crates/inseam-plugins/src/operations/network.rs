@@ -11,6 +11,7 @@ use std::sync::Arc;
 use inseam_kernel::address::{HostId, Timestamp};
 use inseam_kernel::network::{NodeId, NodeRecord};
 use inseam_kernel::store::{IndexStore, LogCount};
+use inseam_seams::SeamError;
 use inseam_seams::dates::ymd;
 use inseam_seams::node::Node;
 use inseam_seams::operations::{
@@ -20,7 +21,6 @@ use inseam_seams::roster::{HostStewards, Invitation, Roster};
 use inseam_seams::routing::Routing;
 use inseam_seams::sync::{PeerSyncView, SyncStatus, Synchronizer};
 use inseam_seams::transport::PeerAddress;
-use inseam_seams::SeamError;
 
 /// The network seams as the operations plugin injected them: any may be
 /// absent on a node composed without them.
@@ -65,7 +65,14 @@ impl NetworkOperations {
         let hosts = roster.hosts().await?;
         let status = sync.status().await?;
         let counts = store.log_counts(&node.id()).await?;
-        Ok(network_view(roster.local(), node.id(), nodes, hosts, &status, &counts))
+        Ok(network_view(
+            roster.local(),
+            node.id(),
+            nodes,
+            hosts,
+            &status,
+            &counts,
+        ))
     }
 
     pub(crate) async fn invite(&self) -> Result<Invitation, SeamError> {
@@ -105,7 +112,11 @@ impl NetworkOperations {
         self.network(store).await
     }
 
-    pub(crate) async fn expel(&self, store: &IndexStore, request: ExpelRequest) -> Result<NetworkView, SeamError> {
+    pub(crate) async fn expel(
+        &self,
+        store: &IndexStore,
+        request: ExpelRequest,
+    ) -> Result<NetworkView, SeamError> {
         self.roster()?.expel(&request.node).await?;
         self.network(store).await
     }
@@ -223,7 +234,8 @@ mod tests {
     #[async_trait::async_trait]
     impl Synchronizer for FakeSynchronizer {
         async fn sync_now(&self) -> Result<SyncStatus, SeamError> {
-            self.rounds.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.rounds
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(self.status.clone())
         }
 
@@ -311,14 +323,20 @@ mod tests {
         let outcomes: Vec<(&str, Result<(), SeamError>)> = vec![
             ("network", none.network(&store).await.map(drop)),
             ("invite", none.invite().await.map(drop)),
-            ("join", none.join(&store, join, Timestamp(0)).await.map(drop)),
+            (
+                "join",
+                none.join(&store, join, Timestamp(0)).await.map(drop),
+            ),
             ("expel", none.expel(&store, expel).await.map(drop)),
             ("sync_now", none.sync_now(&store).await.map(drop)),
         ];
         for (operation, outcome) in outcomes {
             match outcome {
                 Err(SeamError::Unavailable(message)) => {
-                    assert!(message.contains("entry is not mounted"), "{operation}: {message}");
+                    assert!(
+                        message.contains("entry is not mounted"),
+                        "{operation}: {message}"
+                    );
                 }
                 other => panic!("{operation} should be unavailable, got {other:?}"),
             }
@@ -344,7 +362,11 @@ mod tests {
         assert_eq!(peer.hosts, vec![host("fs-two")]);
         assert_eq!(view.hosts.len(), 1);
         assert_eq!(view.hosts[0].stewards, vec![node(2)]);
-        assert_eq!(view.log, LogSummary::default(), "an empty store holds no log");
+        assert_eq!(
+            view.log,
+            LogSummary::default(),
+            "an empty store holds no log"
+        );
     }
 
     #[tokio::test]
@@ -392,11 +414,16 @@ mod tests {
             invitation: "not-an-invitation".to_string(),
         };
         match operations.join(&store, malformed, Timestamp(0)).await {
-            Err(SeamError::Refused(message)) => assert!(message.contains("invitation"), "{message}"),
+            Err(SeamError::Refused(message)) => {
+                assert!(message.contains("invitation"), "{message}")
+            }
             other => panic!("expected a refusal, got {other:?}"),
         }
         assert!(
-            sync.synced_with.lock().unwrap_or_else(|e| e.into_inner()).is_empty(),
+            sync.synced_with
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_empty(),
             "nothing was dialed"
         );
     }

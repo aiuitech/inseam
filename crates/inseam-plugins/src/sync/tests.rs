@@ -2,21 +2,21 @@
 //! the fake network: convergence, tombstones, transitive spread, epoch
 //! supersession, the batch bound, peer choice, and the change event.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use inseam_kernel::network::{
-    Endpoint, Epoch, LogEntry, NodeCapabilities, NodeRecord, Record, Sequence, VersionVector,
-    LOG_ENTRIES_PER_BATCH_MAX,
+    Endpoint, Epoch, LOG_ENTRIES_PER_BATCH_MAX, LogEntry, NodeCapabilities, NodeRecord, Record,
+    Sequence, VersionVector,
 };
+use inseam_seams::SeamError;
 use inseam_seams::roster::RosterChanged;
 use inseam_seams::transport::PeerAddress;
-use inseam_seams::SeamError;
 
 use super::fake_transport::FakeNetwork;
-use super::harness::{address, envelope, node_id, TestNode};
-use super::{protocol_name, SyncRequest};
+use super::harness::{TestNode, address, envelope, node_id};
+use super::{SyncRequest, protocol_name};
 
 /// Join `joiner` to `inviter` with a fresh invitation.
 async fn join(inviter: &TestNode, joiner: &TestNode) {
@@ -28,7 +28,11 @@ async fn join(inviter: &TestNode, joiner: &TestNode) {
         .expect("joins");
 }
 
-fn node_record(id: inseam_kernel::network::NodeId, name: &str, endpoints: Vec<Endpoint>) -> NodeRecord {
+fn node_record(
+    id: inseam_kernel::network::NodeId,
+    name: &str,
+    endpoints: Vec<Endpoint>,
+) -> NodeRecord {
     NodeRecord {
         id,
         display_name: name.to_string(),
@@ -48,18 +52,50 @@ async fn two_nodes_converge_on_each_others_catalogs() {
     let b = TestNode::boot(&network, 0x0b, &["ip:10.0.0.2:1"], &["fs-b"]).await;
     let a_note = address("inseam://fs-a/notes/a.md");
     let b_note = address("inseam://fs-b/notes/b.md");
-    a.store().upsert_source(&a_note, &envelope(1), 10).await.expect("catalogs");
-    b.store().upsert_source(&b_note, &envelope(2), 20).await.expect("catalogs");
+    a.store()
+        .upsert_source(&a_note, &envelope(1), 10)
+        .await
+        .expect("catalogs");
+    b.store()
+        .upsert_source(&b_note, &envelope(2), 20)
+        .await
+        .expect("catalogs");
 
     join(&a, &b).await;
 
-    let learned = b.store().source_by_address(&a_note).await.expect("reads").expect("b learned a's note");
+    let learned = b
+        .store()
+        .source_by_address(&a_note)
+        .await
+        .expect("reads")
+        .expect("b learned a's note");
     assert_eq!(learned.origin, Some(a.id));
     assert_eq!(learned.envelope, envelope(1));
-    let learned = a.store().source_by_address(&b_note).await.expect("reads").expect("a learned b's note");
+    let learned = a
+        .store()
+        .source_by_address(&b_note)
+        .await
+        .expect("reads")
+        .expect("a learned b's note");
     assert_eq!(learned.origin, Some(b.id));
-    assert_eq!(a.roster().node(&b.id).await.expect("reads").expect("a knows b").display_name, "node-0b");
-    assert_eq!(b.roster().node(&a.id).await.expect("reads").expect("b knows a").display_name, "node-0a");
+    assert_eq!(
+        a.roster()
+            .node(&b.id)
+            .await
+            .expect("reads")
+            .expect("a knows b")
+            .display_name,
+        "node-0b"
+    );
+    assert_eq!(
+        b.roster()
+            .node(&a.id)
+            .await
+            .expect("reads")
+            .expect("b knows a")
+            .display_name,
+        "node-0a"
+    );
     assert_eq!(
         a.store().version_vector(&a.id).await.expect("reads"),
         b.store().version_vector(&b.id).await.expect("reads"),
@@ -69,8 +105,14 @@ async fn two_nodes_converge_on_each_others_catalogs() {
     assert_eq!(status.peers.len(), 1);
     assert_eq!(status.peers[0].node, a.id);
     assert!(status.peers[0].live);
-    assert!(status.peers[0].entries_received >= 4, "a's node, host, claim, and note");
-    assert!(status.peers[0].entries_sent >= 4, "b's node, host, claim, and note");
+    assert!(
+        status.peers[0].entries_received >= 4,
+        "a's node, host, claim, and note"
+    );
+    assert!(
+        status.peers[0].entries_sent >= 4,
+        "b's node, host, claim, and note"
+    );
 }
 
 #[tokio::test]
@@ -79,14 +121,31 @@ async fn tombstones_propagate() {
     let a = TestNode::boot(&network, 0x0a, &["ip:10.0.0.1:1"], &["fs-a"]).await;
     let b = TestNode::boot(&network, 0x0b, &[], &[]).await;
     let a_note = address("inseam://fs-a/notes/a.md");
-    let id = a.store().upsert_source(&a_note, &envelope(1), 10).await.expect("catalogs");
+    let id = a
+        .store()
+        .upsert_source(&a_note, &envelope(1), 10)
+        .await
+        .expect("catalogs");
     join(&a, &b).await;
-    assert!(b.store().source_by_address(&a_note).await.expect("reads").is_some());
+    assert!(
+        b.store()
+            .source_by_address(&a_note)
+            .await
+            .expect("reads")
+            .is_some()
+    );
 
     a.store().delete_source(id).await.expect("deletes");
     b.sync().sync_with(&a.address()).await.expect("syncs again");
 
-    assert!(b.store().source_by_address(&a_note).await.expect("reads").is_none(), "b forgot it");
+    assert!(
+        b.store()
+            .source_by_address(&a_note)
+            .await
+            .expect("reads")
+            .is_none(),
+        "b forgot it"
+    );
 }
 
 #[tokio::test]
@@ -96,13 +155,25 @@ async fn records_propagate_transitively_with_their_origin() {
     let b = TestNode::boot(&network, 0x0b, &["ip:10.0.0.2:1"], &[]).await;
     let c = TestNode::boot(&network, 0x0c, &[], &[]).await;
     let a_note = address("inseam://fs-a/notes/a.md");
-    a.store().upsert_source(&a_note, &envelope(1), 10).await.expect("catalogs");
+    a.store()
+        .upsert_source(&a_note, &envelope(1), 10)
+        .await
+        .expect("catalogs");
     join(&a, &b).await;
 
     join(&b, &c).await;
 
-    let learned = c.store().source_by_address(&a_note).await.expect("reads").expect("c learned a's note");
-    assert_eq!(learned.origin, Some(a.id), "the origin is a, not the relay b");
+    let learned = c
+        .store()
+        .source_by_address(&a_note)
+        .await
+        .expect("reads")
+        .expect("c learned a's note");
+    assert_eq!(
+        learned.origin,
+        Some(a.id),
+        "the origin is a, not the relay b"
+    );
     assert!(c.roster().node(&a.id).await.expect("reads").is_some());
     assert!(!network.has_session(a.id, c.id), "a and c never met");
     let stewards = c.roster().stewards_of(&a_note.host).await.expect("reads");
@@ -135,16 +206,40 @@ async fn a_newer_epoch_replaces_a_stale_copy_of_a_log() {
             },
         },
     ];
-    b.store().apply_remote(&b.id, &stale).await.expect("applies");
-    assert!(b.store().source_by_address(&stale_note).await.expect("reads").is_some());
+    b.store()
+        .apply_remote(&b.id, &stale)
+        .await
+        .expect("applies");
+    assert!(
+        b.store()
+            .source_by_address(&stale_note)
+            .await
+            .expect("reads")
+            .is_some()
+    );
 
     join(&a, &b).await;
 
-    assert!(b.store().source_by_address(&stale_note).await.expect("reads").is_none(), "the old epoch was purged");
-    let current = b.roster().node(&a.id).await.expect("reads").expect("a is known");
+    assert!(
+        b.store()
+            .source_by_address(&stale_note)
+            .await
+            .expect("reads")
+            .is_none(),
+        "the old epoch was purged"
+    );
+    let current = b
+        .roster()
+        .node(&a.id)
+        .await
+        .expect("reads")
+        .expect("a is known");
     assert_eq!(current.display_name, "node-0a");
     let held = b.store().version_vector(&b.id).await.expect("reads");
-    assert_eq!(held.position_of(&a.id).map(|(epoch, _)| epoch), Some(a.store().log_epoch()));
+    assert_eq!(
+        held.position_of(&a.id).map(|(epoch, _)| epoch),
+        Some(a.store().log_epoch())
+    );
 }
 
 #[tokio::test]
@@ -158,7 +253,9 @@ async fn a_batch_beyond_the_bound_is_refused_by_the_handler() {
             origin: b.id,
             epoch: Epoch(1),
             seq: Sequence(u64::try_from(seq).expect("fits")),
-            record: Record::Expulsion { node: node_id(0xee) },
+            record: Record::Expulsion {
+                node: node_id(0xee),
+            },
         })
         .collect();
     let body = serde_json::to_vec(&SyncRequest {
@@ -173,7 +270,10 @@ async fn a_batch_beyond_the_bound_is_refused_by_the_handler() {
         .await;
 
     assert!(matches!(refused, Err(SeamError::Refused(_))), "{refused:?}");
-    assert!(a.store().expelled().await.expect("reads").is_empty(), "nothing was applied");
+    assert!(
+        a.store().expelled().await.expect("reads").is_empty(),
+        "nothing was applied"
+    );
 }
 
 #[tokio::test]
@@ -200,7 +300,11 @@ async fn sync_now_skips_self_and_undialable_nodes() {
     let status = a.sync().sync_now().await.expect("rounds");
 
     let tried: Vec<_> = status.peers.iter().map(|p| p.node).collect();
-    assert_eq!(tried, vec![b.id], "b through its session; not a itself, not c");
+    assert_eq!(
+        tried,
+        vec![b.id],
+        "b through its session; not a itself, not c"
+    );
     assert!(status.peers[0].live);
     assert!(status.peers[0].last_success.is_some());
 }
@@ -223,12 +327,21 @@ async fn sync_now_dials_always_on_nodes_and_records_failures() {
     views.sort_by_key(|view| view.node);
     let tried: Vec<_> = views.iter().map(|view| view.node).collect();
     assert_eq!(tried, vec![b.id, c.id]);
-    let b_view = views.iter().find(|view| view.node == b.id).expect("tried b");
+    let b_view = views
+        .iter()
+        .find(|view| view.node == b.id)
+        .expect("tried b");
     assert!(b_view.live);
-    let c_view = views.iter().find(|view| view.node == c.id).expect("tried c");
+    let c_view = views
+        .iter()
+        .find(|view| view.node == c.id)
+        .expect("tried c");
     assert!(!c_view.live, "c does not know a and refused the dial");
     assert!(c_view.last_error.is_some());
-    assert!(a.roster().node(&c.id).await.expect("reads").is_some(), "a still knows c through b");
+    assert!(
+        a.roster().node(&c.id).await.expect("reads").is_some(),
+        "a still knows c through b"
+    );
 }
 
 #[tokio::test]
@@ -246,12 +359,23 @@ async fn roster_changed_fires_after_applying_a_roster_record() {
     assert_eq!(fired.load(Ordering::SeqCst), 1, "a's node record arrived");
 
     b.sync().sync_with(&a.address()).await.expect("syncs again");
-    assert_eq!(fired.load(Ordering::SeqCst), 1, "nothing new applied, nothing announced");
+    assert_eq!(
+        fired.load(Ordering::SeqCst),
+        1,
+        "nothing new applied, nothing announced"
+    );
 
     let note = address("inseam://fs-a/notes/a.md");
-    a.store().upsert_source(&note, &envelope(1), 10).await.expect("catalogs");
+    a.store()
+        .upsert_source(&note, &envelope(1), 10)
+        .await
+        .expect("catalogs");
     b.sync().sync_with(&a.address()).await.expect("syncs again");
-    assert_eq!(fired.load(Ordering::SeqCst), 1, "a catalog entry is not a roster change");
+    assert_eq!(
+        fired.load(Ordering::SeqCst),
+        1,
+        "a catalog entry is not a roster change"
+    );
 }
 
 #[tokio::test]

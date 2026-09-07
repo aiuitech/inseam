@@ -43,10 +43,7 @@ pub fn decompose(text: &str) -> Vec<Sprout> {
             },
         );
     }
-    let mut sprouts: Vec<Sprout> = sections
-        .iter()
-        .map(|s| s.to_sprout(text, &lines))
-        .collect();
+    let mut sprouts: Vec<Sprout> = sections.iter().map(|s| s.to_sprout(text, &lines)).collect();
 
     for (byte, url) in &outline.links {
         let line = lines.line_of(*byte);
@@ -98,9 +95,10 @@ fn scan(text: &str) -> Outline {
                 start: range.start,
             }),
             Event::Start(Tag::Link { dest_url, .. })
-                if (dest_url.starts_with("http://") || dest_url.starts_with("https://")) => {
-                    links.push((range.start, dest_url.into_string()));
-                }
+                if (dest_url.starts_with("http://") || dest_url.starts_with("https://")) =>
+            {
+                links.push((range.start, dest_url.into_string()));
+            }
             _ => {}
         }
     }
@@ -277,12 +275,14 @@ Fence and beds.
             .filter(|c| c.fragment.mimetype.essence() == "text/markdown")
             .collect();
         assert_eq!(subsections.len(), 2);
-        assert!(subsections[0]
-            .fragment
-            .text
-            .as_deref()
-            .expect("text")
-            .starts_with("## Budget"));
+        assert!(
+            subsections[0]
+                .fragment
+                .text
+                .as_deref()
+                .expect("text")
+                .starts_with("## Budget")
+        );
     }
 
     #[test]
@@ -325,9 +325,11 @@ Fence and beds.
         let doc = "just a paragraph\n\nand [a link](https://example.com/x) in another\n";
         let sprouts = decompose(doc);
         assert!(!sprouts.is_empty());
-        assert!(sprouts
-            .iter()
-            .all(|s| s.fragment.mimetype.essence() == "text/markdown"));
+        assert!(
+            sprouts
+                .iter()
+                .all(|s| s.fragment.mimetype.essence() == "text/markdown")
+        );
         let links: usize = sprouts.iter().map(|s| s.children.len()).sum();
         assert_eq!(links, 1);
     }

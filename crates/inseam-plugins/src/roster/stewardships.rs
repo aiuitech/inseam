@@ -101,10 +101,10 @@ pub(crate) fn plan(
 mod tests {
     use super::*;
     use inseam_kernel::address::Address;
+    use inseam_seams::SeamError;
     use inseam_seams::connection::{
         Capabilities, Connection, EnumeratedSource, HostDescription, HostKind,
     };
-    use inseam_seams::SeamError;
 
     struct Stub;
 

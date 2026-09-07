@@ -68,7 +68,10 @@ pub enum SubstrateError {
     #[error("configuring {entries} was rolled back: {reason}")]
     ConfigureFailed { entries: String, reason: String },
     #[error("could not write composition overlay `{path}`: {source}")]
-    OverlayIo { path: String, source: std::io::Error },
+    OverlayIo {
+        path: String,
+        source: std::io::Error,
+    },
     #[error(
         "this node's runtime did not apply the composition edit; only a running node          (`inseam serve`) applies edits — a one-shot command edits the file directly"
     )]

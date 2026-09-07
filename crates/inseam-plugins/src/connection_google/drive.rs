@@ -11,11 +11,11 @@ use std::time::SystemTime;
 
 use inseam_kernel::address::{Address, ContentLength, Envelope, HostId, Locator, Timestamp};
 use inseam_kernel::fragment::Mimetype;
+use inseam_seams::SeamError;
 use inseam_seams::connection::{Connection, EnumeratedSource};
 use inseam_seams::text::slice_lines;
-use inseam_seams::SeamError;
 
-use super::api::{opt_str_field, str_field, timestamp_field, GoogleApi};
+use super::api::{GoogleApi, opt_str_field, str_field, timestamp_field};
 
 /// Folders one scoped enumeration will descend into; a personal tree is
 /// dozens, a shared drive hundreds, never unbounded.
@@ -72,8 +72,9 @@ impl DriveConnection {
     }
 
     fn address(&self, id: &str) -> Result<Address, SeamError> {
-        let locator = Locator::new(id)
-            .map_err(|e| SeamError::failed(format!("Drive file id `{id}` is not addressable: {e}")))?;
+        let locator = Locator::new(id).map_err(|e| {
+            SeamError::failed(format!("Drive file id `{id}` is not addressable: {e}"))
+        })?;
         Ok(Address::new(self.host.clone(), locator))
     }
 
@@ -112,7 +113,9 @@ impl DriveConnection {
         let address = self.address(&id).ok()?;
         let size: u64 = str_field(file, "size").parse().unwrap_or(0);
         let content_type = Mimetype::parse(native_export(mimetype).unwrap_or(mimetype))
-            .unwrap_or_else(|_| Mimetype::parse("application/octet-stream").expect("literal mimetype is valid"));
+            .unwrap_or_else(|_| {
+                Mimetype::parse("application/octet-stream").expect("literal mimetype is valid")
+            });
         Some(EnumeratedSource {
             address,
             envelope: Envelope {
@@ -146,12 +149,18 @@ impl DriveConnection {
         let mut visited: u32 = 0;
         while let Some(folder) = queue.pop_front() {
             if visited >= FOLDERS_MAX {
-                tracing::warn!(folder, "Drive scope has more than {FOLDERS_MAX} folders; the rest are not enumerated");
+                tracing::warn!(
+                    folder,
+                    "Drive scope has more than {FOLDERS_MAX} folders; the rest are not enumerated"
+                );
                 break;
             }
             visited += 1;
             let q = format!("'{folder}' in parents and trashed = false");
-            let files = self.api.list_pages(self.list_url(&q), "files", self.sources_max).await?;
+            let files = self
+                .api
+                .list_pages(self.list_url(&q), "files", self.sources_max)
+                .await?;
             for file in &files {
                 if str_field(file, "mimeType") == FOLDER_MIMETYPE {
                     if let Some(id) = opt_str_field(file, "id") {
@@ -179,7 +188,9 @@ fn validate_id(id: &str) -> Result<(), SeamError> {
     if valid {
         Ok(())
     } else {
-        Err(SeamError::Refused(format!("`{id}` is not a Drive file or folder id")))
+        Err(SeamError::Refused(format!(
+            "`{id}` is not a Drive file or folder id"
+        )))
     }
 }
 
@@ -211,7 +222,12 @@ impl Connection for DriveConnection {
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
-    async fn read_lines(&self, address: &Address, start: u64, end: u64) -> Result<String, SeamError> {
+    async fn read_lines(
+        &self,
+        address: &Address,
+        start: u64,
+        end: u64,
+    ) -> Result<String, SeamError> {
         let text = self.read_text(address).await?;
         slice_lines(&text, start, end)
     }
@@ -227,13 +243,14 @@ impl Connection for DriveConnection {
             .await?;
         let mimetype = str_field(&metadata, "mimeType");
         let url = match native_export(mimetype) {
-            Some(export) => self
-                .api
-                .api_url(&["drive", "v3", "files", id, "export"], &[("mimeType", export)]),
+            Some(export) => self.api.api_url(
+                &["drive", "v3", "files", id, "export"],
+                &[("mimeType", export)],
+            ),
             None if mimetype.starts_with("application/vnd.google-apps.") => {
                 return Err(SeamError::Refused(format!(
                     "{address} is a {mimetype}, which Drive cannot export as text"
-                )))
+                )));
             }
             None => self.api.api_url(
                 &["drive", "v3", "files", id],
@@ -312,7 +329,11 @@ mod tests {
         let drive = DriveConnection::new(Arc::new(api), host(), 100);
         let sources = drive.enumerate("").await.expect("enumerates");
         let ids: Vec<&str> = sources.iter().map(|s| s.address.locator.as_str()).collect();
-        assert_eq!(ids, vec!["doc1", "bin1"], "folders and forms are not sources");
+        assert_eq!(
+            ids,
+            vec!["doc1", "bin1"],
+            "folders and forms are not sources"
+        );
         assert_eq!(sources[0].envelope.content_type.essence(), "text/plain");
         assert_eq!(sources[0].envelope.modified, Some(Timestamp(1_735_787_045)));
         assert_eq!(sources[0].envelope.hint.as_deref(), Some("Plan.gdoc"));
@@ -331,7 +352,10 @@ mod tests {
         assert_eq!(ids, vec!["inner", "deep"]);
         let capped = DriveConnection::new(Arc::new(fake_google(files_router()).await.0), host(), 1);
         assert_eq!(capped.enumerate("fold").await.expect("enumerates").len(), 1);
-        assert!(matches!(drive.enumerate("bad id").await, Err(SeamError::Refused(_))));
+        assert!(matches!(
+            drive.enumerate("bad id").await,
+            Err(SeamError::Refused(_))
+        ));
     }
 
     #[tokio::test]
@@ -339,17 +363,29 @@ mod tests {
         let (api, _server) = fake_google(files_router()).await;
         let drive = DriveConnection::new(Arc::new(api), host(), 100);
         let regular: Address = "inseam://google-drive-test/bin1".parse().expect("address");
-        assert_eq!(drive.read_text(&regular).await.expect("reads"), "bytes of bin1");
+        assert_eq!(
+            drive.read_text(&regular).await.expect("reads"),
+            "bytes of bin1"
+        );
         let native: Address = "inseam://google-drive-test/doc1".parse().expect("address");
-        assert_eq!(drive.read_text(&native).await.expect("reads"), "export of doc1 as text/plain");
-        assert_eq!(drive.read_lines(&native, 1, 1).await.expect("reads"), "export of doc1 as text/plain");
+        assert_eq!(
+            drive.read_text(&native).await.expect("reads"),
+            "export of doc1 as text/plain"
+        );
+        assert_eq!(
+            drive.read_lines(&native, 1, 1).await.expect("reads"),
+            "export of doc1 as text/plain"
+        );
         let foreign: Address = "inseam://elsewhere/bin1".parse().expect("address");
         assert!(drive.read_text(&foreign).await.is_err());
     }
 
     #[test]
     fn native_kinds_are_classified() {
-        assert_eq!(native_export("application/vnd.google-apps.spreadsheet"), Some("text/csv"));
+        assert_eq!(
+            native_export("application/vnd.google-apps.spreadsheet"),
+            Some("text/csv")
+        );
         assert!(is_source("image/png"));
         assert!(!is_source(FOLDER_MIMETYPE));
         assert!(!is_source("application/vnd.google-apps.shortcut"));

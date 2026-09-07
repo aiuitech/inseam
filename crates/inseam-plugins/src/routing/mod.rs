@@ -36,33 +36,36 @@ use inseam_kernel::address::{Address, Envelope, HostId};
 use inseam_kernel::network::{NodeId, NodeRecord};
 use inseam_kernel::store::IndexStore;
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, STORE,
+    ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, STORE, parse_config,
 };
-use inseam_seams::connection::{Connections, CONNECTIONS};
-use inseam_seams::finder::{Finder, FINDER};
-use inseam_seams::node::{Node, NODE};
+use inseam_seams::SeamError;
+use inseam_seams::connection::{CONNECTIONS, Connections};
+use inseam_seams::finder::{FINDER, Finder};
+use inseam_seams::node::{NODE, Node};
 use inseam_seams::operations::{ExpandResponse, QueryResult};
-use inseam_seams::roster::{Roster, ROSTER};
+use inseam_seams::roster::{ROSTER, Roster};
 use inseam_seams::routing::{
-    FanOutReply, Location, Routing, FAN_OUT_NODES_MAX, FAN_OUT_TIMEOUT_DEFAULT, HOPS_MAX, ROUTING,
+    FAN_OUT_NODES_MAX, FAN_OUT_TIMEOUT_DEFAULT, FanOutReply, HOPS_MAX, Location, ROUTING, Routing,
 };
 use inseam_seams::text::check_line_range;
 use inseam_seams::transport::{
-    register_as_effect, PeerAddress, Transport, REQUEST_TIMEOUT_DEFAULT, TRANSPORT,
+    PeerAddress, REQUEST_TIMEOUT_DEFAULT, TRANSPORT, Transport, register_as_effect,
 };
-use inseam_seams::SeamError;
 
 use crate::operations::ladder::QUERY_LIMIT_MAX;
 use protocol::{
-    encode_request, error_from_wire, route_protocol, RouteBody, RouteReply, RouteRequest,
-    RouteResponse,
+    RouteBody, RouteReply, RouteRequest, RouteResponse, encode_request, error_from_wire,
+    route_protocol,
 };
 
 /// Most roster stewards of one host dialed directly for one request; a
 /// host with more stewards than this is reached through the first four
 /// or through a relay.
 pub const STEWARDS_TRIED_MAX: usize = 4;
-const _: () = assert!(STEWARDS_TRIED_MAX >= 1, "at least one steward is always tried");
+const _: () = assert!(
+    STEWARDS_TRIED_MAX >= 1,
+    "at least one steward is always tried"
+);
 /// Most session peers asked to relay one request after every steward
 /// failed; a relay fans the request no further than this either.
 pub const RELAY_PEERS_MAX: usize = 4;
@@ -91,7 +94,8 @@ impl Default for RoutingConfig {
             fan_out: true,
             fan_out_timeout_ms: u32::try_from(FAN_OUT_TIMEOUT_DEFAULT.as_millis())
                 .expect("the default fan-out timeout is milliseconds, not days"),
-            fan_out_nodes_max: u32::try_from(FAN_OUT_NODES_MAX).expect("the fan-out bound fits u32"),
+            fan_out_nodes_max: u32::try_from(FAN_OUT_NODES_MAX)
+                .expect("the fan-out bound fits u32"),
         }
     }
 }
@@ -193,7 +197,11 @@ impl Plugin for RoutingPlugin {
         );
         // The handler is registered before the seam is provided, so no
         // consumer can route through a node that is not yet serving.
-        register_as_effect(cx, route_protocol(), serve::RouteHandler::serving(Arc::clone(&service)))?;
+        register_as_effect(
+            cx,
+            route_protocol(),
+            serve::RouteHandler::serving(Arc::clone(&service)),
+        )?;
         cx.provide(&ROUTING, service as Arc<dyn Routing>, Facts::new())?;
         Ok(())
     }
@@ -327,7 +335,9 @@ impl RoutingService {
                 Ok(RouteReply::Json(RouteResponse::Error { kind, message })) => {
                     reply.error = Some(format!("{kind}: {message}"));
                 }
-                Ok(_other) => reply.error = Some("answered with something other than results".to_string()),
+                Ok(_other) => {
+                    reply.error = Some("answered with something other than results".to_string())
+                }
                 Err(error) => reply.error = Some(error.to_string()),
             },
         }
@@ -368,7 +378,12 @@ impl Routing for RoutingService {
         }
     }
 
-    async fn read_lines(&self, address: &Address, start: u64, end: u64) -> Result<String, SeamError> {
+    async fn read_lines(
+        &self,
+        address: &Address,
+        start: u64,
+        end: u64,
+    ) -> Result<String, SeamError> {
         // Checked here and again by the steward: a bad range never
         // crosses the wire.
         check_line_range(start, end)?;
@@ -421,7 +436,8 @@ impl Routing for RoutingService {
         if targets.is_empty() {
             return Ok(Vec::new());
         }
-        let limit = u32::try_from(limit.clamp(1, QUERY_LIMIT_MAX)).expect("the clamped limit fits u32");
+        let limit =
+            u32::try_from(limit.clamp(1, QUERY_LIMIT_MAX)).expect("the clamped limit fits u32");
         // Hops are zero because a query is never forwarded: the target
         // answers from its own index or not at all.
         let body = encode_request(&RouteRequest {
@@ -436,7 +452,11 @@ impl Routing for RoutingService {
             .iter()
             .map(|record| self.fan_out_one(record, body.clone()));
         let replies = join_all(calls).await;
-        assert_eq!(replies.len(), targets.len(), "one reply per target, error or results");
+        assert_eq!(
+            replies.len(),
+            targets.len(),
+            "one reply per target, error or results"
+        );
         Ok(replies)
     }
 }

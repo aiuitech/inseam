@@ -16,14 +16,12 @@ use tokio::sync::Mutex;
 
 use inseam_kernel::address::Timestamp;
 use inseam_kernel::substrate::EventBus;
-use inseam_seams::oauth::{
-    AccessToken, Grant, GrantChanged, GrantId, GrantSpec, GrantState,
-};
 use inseam_seams::SeamError;
+use inseam_seams::oauth::{AccessToken, Grant, GrantChanged, GrantId, GrantSpec, GrantState};
 
 use super::flow::{
-    self, authorization_url, parse_token_response, AuthorizationParams, StoredTokens,
-    TOKENS_VERSION,
+    self, AuthorizationParams, StoredTokens, TOKENS_VERSION, authorization_url,
+    parse_token_response,
 };
 
 /// Access tokens are refreshed this many seconds before they expire, so a
@@ -56,13 +54,8 @@ pub struct Settings {
 /// The client's own credentials, read from the environment the spec
 /// names — or the name of what is missing, so the grant can say so.
 pub enum ClientCredentials {
-    Ready {
-        id: String,
-        secret: Option<String>,
-    },
-    Missing {
-        env: String,
-    },
+    Ready { id: String, secret: Option<String> },
+    Missing { env: String },
 }
 
 impl ClientCredentials {
@@ -261,7 +254,7 @@ impl Grant for GrantHandle {
                 return Err(SeamError::failed(format!(
                     "cannot remove {}: {e}",
                     self.inner.path.display()
-                )))
+                )));
             }
         }
         let was_authorized = guard.take().is_some();
@@ -284,12 +277,17 @@ impl GrantInner {
             .settings
             .http
             .post(&self.spec.token_url)
-            .header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            )
             .header(reqwest::header::ACCEPT, "application/json")
             .body(flow::form_body(fields))
             .send()
             .await
-            .map_err(|e| SeamError::failed(format!("token endpoint {}: {e}", self.spec.token_url)))?;
+            .map_err(|e| {
+                SeamError::failed(format!("token endpoint {}: {e}", self.spec.token_url))
+            })?;
         let status = response.status();
         let body: serde_json::Value = response.json().await.map_err(|e| {
             SeamError::failed(format!(

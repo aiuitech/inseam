@@ -21,12 +21,12 @@ use url::Url;
 use inseam_kernel::address::{Address, ContentLength};
 use inseam_kernel::fragment::{Extent, Mimetype, NewFragment, RelationKind, Sprout};
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory,
+    ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory, parse_config,
 };
-use inseam_seams::connection::{Connections, CONNECTIONS};
+use inseam_seams::connection::{CONNECTIONS, Connections};
 use inseam_seams::llm::LlmLane;
 use inseam_seams::transforms::{
-    register_as_effect, Registration, Transform, TransformCtx, TransformKind, TransformOutput,
+    Registration, Transform, TransformCtx, TransformKind, TransformOutput, register_as_effect,
 };
 
 use crate::connection_web::{web_address, web_host_id};
@@ -84,7 +84,10 @@ impl PluginFactory for LinksFactory {
 #[async_trait::async_trait]
 impl Plugin for LinksPlugin {
     fn manifest(&self) -> Manifest {
-        static INJECT: &[Inject] = &[Inject::required("transforms"), Inject::required("connections")];
+        static INJECT: &[Inject] = &[
+            Inject::required("transforms"),
+            Inject::required("connections"),
+        ];
         Manifest {
             name: "transform-links",
             inject: INJECT,
@@ -139,10 +142,14 @@ impl MimetypePattern {
             Some((family, "*")) if !family.is_empty() && !family.contains('*') => {
                 Ok(Self::Family(family.to_string()))
             }
-            Some((family, subtype)) if !family.is_empty() && !subtype.is_empty() && !subtype.contains('*') => {
+            Some((family, subtype))
+                if !family.is_empty() && !subtype.is_empty() && !subtype.contains('*') =>
+            {
                 Ok(Self::Essence(pattern))
             }
-            _ => Err(format!("`{pattern}` is not a `type/subtype` or `type/*` follow pattern")),
+            _ => Err(format!(
+                "`{pattern}` is not a `type/subtype` or `type/*` follow pattern"
+            )),
         }
     }
 
@@ -221,7 +228,11 @@ impl LinksTransform {
         };
         let resolved = match probed.or(guessed.map(|m| (m, None))) {
             Some((mimetype, length)) if self.follow.iter().any(|p| p.matches(&mimetype)) => {
-                Some(Resolved { mimetype, address, length })
+                Some(Resolved {
+                    mimetype,
+                    address,
+                    length,
+                })
             }
             _ => None,
         };
@@ -314,7 +325,10 @@ mod tests {
     #[test]
     fn extensions_type_urls_and_queries_do_not_confuse_them() {
         let url = Url::parse("https://example.com/dir/photo.JPG?size=large").expect("url");
-        assert_eq!(mimetype_by_extension(&url).expect("typed").essence(), "image/jpeg");
+        assert_eq!(
+            mimetype_by_extension(&url).expect("typed").essence(),
+            "image/jpeg"
+        );
         let bare = Url::parse("https://example.com/image?id=3").expect("url");
         assert!(mimetype_by_extension(&bare).is_none());
     }
@@ -328,7 +342,10 @@ mod tests {
         assert!(essence.matches(&Mimetype::parse("application/pdf").expect("valid")));
         assert!(!essence.matches(&Mimetype::parse("application/json").expect("valid")));
         for bad in ["image", "*/*", "image/p*", "/png", ""] {
-            assert!(MimetypePattern::parse(bad).is_err(), "{bad:?} must be rejected");
+            assert!(
+                MimetypePattern::parse(bad).is_err(),
+                "{bad:?} must be rejected"
+            );
         }
     }
 }

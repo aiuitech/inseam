@@ -323,12 +323,10 @@ mod tests {
 
     #[test]
     fn chat_request_serializes_wire_shape() {
-        let req = ChatRequest::new("openai/gpt-5-mini", vec![ChatMessage::user("hi")])
-            .with_tools(vec![Tool::function(
-                "query",
-                "search",
-                serde_json::json!({"type": "object"}),
-            )]);
+        let req =
+            ChatRequest::new("openai/gpt-5-mini", vec![ChatMessage::user("hi")]).with_tools(vec![
+                Tool::function("query", "search", serde_json::json!({"type": "object"})),
+            ]);
         let v = serde_json::to_value(&req).expect("serializes");
         assert_eq!(v["messages"][0]["role"], "user");
         assert_eq!(v["tools"][0]["type"], "function");

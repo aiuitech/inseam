@@ -22,6 +22,7 @@ use inseam_kernel::network::{
     StewardshipRecord,
 };
 use inseam_kernel::store::{IndexStore, StoredFragment, StoredSource};
+use inseam_seams::SeamError;
 use inseam_seams::connection::{
     Capabilities, Connection, Connections, HostDescription, HostKind, Registration,
 };
@@ -33,7 +34,6 @@ use inseam_seams::transport::{
     Admission, Disposer, InvitationToken, PeerAddress, ProtocolName, RequestHandler,
     SessionDirection, SessionView, Transport,
 };
-use inseam_seams::SeamError;
 
 use super::protocol::route_protocol;
 use super::serve::RouteHandler;
@@ -48,7 +48,9 @@ pub(crate) fn host_id(name: &str) -> HostId {
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 // ----------------------------------------------------------------------
@@ -118,9 +120,15 @@ impl RosterRecords {
 
     pub(crate) fn add_stewardship(&self, record: StewardshipRecord) {
         let mut stewardships = lock(&self.stewardships);
-        stewardships.retain(|existing| (existing.node, &existing.host) != (record.node, &record.host));
+        stewardships
+            .retain(|existing| (existing.node, &existing.host) != (record.node, &record.host));
         stewardships.push(record);
-        stewardships.sort_by(|a, b| a.host.as_str().cmp(b.host.as_str()).then(a.node.cmp(&b.node)));
+        stewardships.sort_by(|a, b| {
+            a.host
+                .as_str()
+                .cmp(b.host.as_str())
+                .then(a.node.cmp(&b.node))
+        });
     }
 }
 
@@ -151,7 +159,11 @@ impl Roster for FakeRoster {
     }
 
     async fn node(&self, id: &NodeId) -> Result<Option<NodeRecord>, SeamError> {
-        Ok(self.nodes().await?.into_iter().find(|record| record.id == *id))
+        Ok(self
+            .nodes()
+            .await?
+            .into_iter()
+            .find(|record| record.id == *id))
     }
 
     async fn hosts(&self) -> Result<Vec<HostStewards>, SeamError> {
@@ -313,7 +325,10 @@ impl FakeNetwork {
         let mut state = lock(&self.state);
         state.requests.push((from, to));
         if state.black_holes.contains(&to) {
-            return Err(SeamError::failed(format!("request to {} timed out", to.short())));
+            return Err(SeamError::failed(format!(
+                "request to {} timed out",
+                to.short()
+            )));
         }
         let reachable = state.links.contains(&(from, to))
             || state.sessions.contains(&(from, to))
@@ -344,11 +359,17 @@ impl Transport for FakeTransport {
         Vec::new()
     }
 
-    fn register(&self, protocol: ProtocolName, handler: Arc<dyn RequestHandler>) -> Result<Disposer, SeamError> {
+    fn register(
+        &self,
+        protocol: ProtocolName,
+        handler: Arc<dyn RequestHandler>,
+    ) -> Result<Disposer, SeamError> {
         let key = (self.id, protocol.clone());
         let mut state = lock(&self.network.state);
         if state.handlers.contains_key(&key) {
-            return Err(SeamError::Refused(format!("`{protocol}` is already registered")));
+            return Err(SeamError::Refused(format!(
+                "`{protocol}` is already registered"
+            )));
         }
         state.handlers.insert(key.clone(), handler);
         drop(state);
@@ -478,10 +499,20 @@ impl TestSource {
     /// A `text/plain` source whose envelope records the text's line count.
     pub(crate) fn text(address: &str, text: &str) -> Self {
         let address: Address = address.parse().expect("test addresses are valid");
-        Self::at(address, Mimetype::text_plain(), ContentLength::Lines(count_lines(text)), text.len())
+        Self::at(
+            address,
+            Mimetype::text_plain(),
+            ContentLength::Lines(count_lines(text)),
+            text.len(),
+        )
     }
 
-    pub(crate) fn at(address: Address, content_type: Mimetype, length: ContentLength, raw_bytes: usize) -> Self {
+    pub(crate) fn at(
+        address: Address,
+        content_type: Mimetype,
+        length: ContentLength,
+        raw_bytes: usize,
+    ) -> Self {
         Self {
             address,
             envelope: Envelope {
@@ -609,7 +640,10 @@ impl TestNode {
         // The disposer is dropped on purpose: the fake network lives as
         // long as the test, and nothing unmounts a test node.
         let _disposer = transport
-            .register(route_protocol(), RouteHandler::serving(Arc::clone(&service)))
+            .register(
+                route_protocol(),
+                RouteHandler::serving(Arc::clone(&service)),
+            )
             .expect("registers once");
         Self {
             id: record.id,

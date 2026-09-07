@@ -41,8 +41,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime};
 
 use iroh::endpoint::{
-    presets, BindOpts, Builder, Connection, ConnectionError, IdleTimeout, Incoming,
-    InvalidSocketAddr, PortmapperConfig, QuicTransportConfig, RecvStream, SendStream, VarInt,
+    BindOpts, Builder, Connection, ConnectionError, IdleTimeout, Incoming, InvalidSocketAddr,
+    PortmapperConfig, QuicTransportConfig, RecvStream, SendStream, VarInt, presets,
 };
 use iroh::{Endpoint as IrohEndpoint, EndpointAddr, PublicKey, RelayMode, RelayUrl};
 use serde::{Deserialize, Serialize};
@@ -52,17 +52,17 @@ use tokio::task::JoinHandle;
 use inseam_kernel::address::Timestamp;
 use inseam_kernel::network::{Endpoint, NodeId};
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, PluginFactory,
-};
-use inseam_seams::node::{SecretKeyBytes, NODE};
-use inseam_seams::transport::{
-    Admission, Admit, Disposer, InvitationToken, PeerAddress, ProtocolName, RequestHandler,
-    SessionDirection, SessionView, Transport, TRANSPORT,
+    ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, PluginFactory, parse_config,
 };
 use inseam_seams::SeamError;
+use inseam_seams::node::{NODE, SecretKeyBytes};
+use inseam_seams::transport::{
+    Admission, Admit, Disposer, InvitationToken, PeerAddress, ProtocolName, RequestHandler,
+    SessionDirection, SessionView, TRANSPORT, Transport,
+};
 
 use sessions::{Session, SessionTable};
-use wire::{Hello, WireError, HELLO_PROTOCOL};
+use wire::{HELLO_PROTOCOL, Hello, WireError};
 
 pub use wire::ALPN;
 
@@ -222,7 +222,8 @@ impl PluginFactory for IrohTransportFactory {
 
     fn build(&self, config: &toml::Table) -> Result<Box<dyn Plugin>, PluginError> {
         let config: TransportConfig = parse_config(config)?;
-        let settings = Settings::try_from(&config).map_err(|e| PluginError(format!("config: {e}")))?;
+        let settings =
+            Settings::try_from(&config).map_err(|e| PluginError(format!("config: {e}")))?;
         Ok(Box::new(IrohTransportPlugin { settings }))
     }
 }
@@ -248,7 +249,11 @@ impl Plugin for IrohTransportPlugin {
         // The node plugin derived its id through the same key type this
         // endpoint authenticates with; the two must agree or every peer
         // would refuse us as an impostor of ourselves.
-        assert_eq!(transport.local_id(), node.id(), "the endpoint's key is the node's key");
+        assert_eq!(
+            transport.local_id(),
+            node.id(),
+            "the endpoint's key is the node's key"
+        );
         tracing::info!(
             id = %transport.local_id().short(),
             relay = %self.settings.relay,
@@ -258,7 +263,9 @@ impl Plugin for IrohTransportPlugin {
             .with("relay", self.settings.relay.to_string())
             .with("id", transport.local_id().to_hex());
         let shutdown = transport.clone();
-        cx.effect("close the iroh endpoint", move || shutdown.shutdown_in_background());
+        cx.effect("close the iroh endpoint", move || {
+            shutdown.shutdown_in_background()
+        });
         cx.provide(&TRANSPORT, Arc::new(transport) as Arc<dyn Transport>, facts)
     }
 }
@@ -364,7 +371,10 @@ impl Shared {
                 self.local_id.short()
             ));
         };
-        let response = handler.handle(peer, body).await.map_err(|e| e.to_string())?;
+        let response = handler
+            .handle(peer, body)
+            .await
+            .map_err(|e| e.to_string())?;
         wire::check_body_bound(response.len())
             .map_err(|e| format!("the handler for `{protocol}` answered with too much: {e}"))?;
         Ok(response)
@@ -372,7 +382,12 @@ impl Shared {
 
     /// Record a live connection as the session with `peer` and start
     /// serving its streams, whichever side opened it.
-    fn install_session(self: &Arc<Self>, peer: NodeId, connection: Connection, direction: SessionDirection) {
+    fn install_session(
+        self: &Arc<Self>,
+        peer: NodeId,
+        connection: Connection,
+        direction: SessionDirection,
+    ) {
         let now = now();
         let session = Session {
             connection: connection.clone(),
@@ -442,7 +457,10 @@ impl Shared {
     }
 }
 
-async fn bind_endpoint(secret: SecretKeyBytes, settings: &Settings) -> Result<IrohEndpoint, SeamError> {
+async fn bind_endpoint(
+    secret: SecretKeyBytes,
+    settings: &Settings,
+) -> Result<IrohEndpoint, SeamError> {
     let quic = quic_transport_config(settings.idle_timeout)?;
     // `Minimal` sets only the crypto provider: no relays and no address
     // lookup come with it, so what follows is the whole network policy.
@@ -487,11 +505,16 @@ fn bind_target(builder: Builder, bind: BindTarget) -> Result<Builder, SeamError>
 /// stream ceiling. This transport opens bi-streams only, so a peer may
 /// open no uni-streams at all.
 fn quic_transport_config(idle_timeout: Duration) -> Result<QuicTransportConfig, SeamError> {
-    let max_idle: IdleTimeout = idle_timeout
-        .try_into()
-        .map_err(|e| SeamError::failed(format!("idle timeout {idle_timeout:?} is not representable: {e}")))?;
+    let max_idle: IdleTimeout = idle_timeout.try_into().map_err(|e| {
+        SeamError::failed(format!(
+            "idle timeout {idle_timeout:?} is not representable: {e}"
+        ))
+    })?;
     let keep_alive = idle_timeout / 3;
-    assert!(keep_alive >= Duration::from_secs(1), "the settings bound the idle timeout below");
+    assert!(
+        keep_alive >= Duration::from_secs(1),
+        "the settings bound the idle timeout below"
+    );
     assert!(keep_alive < idle_timeout);
     Ok(QuicTransportConfig::builder()
         .max_idle_timeout(Some(max_idle))
@@ -599,7 +622,8 @@ async fn admission_handshake(
             tracing::warn!(peer = %peer.short(), "refused: {reason}");
             let written = wire::write_response(&mut send, &Err("refused".to_string())).await;
             if written.is_ok() {
-                let _acknowledged = tokio::time::timeout(REFUSAL_FLUSH_TIMEOUT, send.stopped()).await;
+                let _acknowledged =
+                    tokio::time::timeout(REFUSAL_FLUSH_TIMEOUT, send.stopped()).await;
             }
             Err(HandshakeFailure::Refused)
         }
@@ -700,7 +724,9 @@ async fn session_or_dial(shared: &Arc<Shared>, to: &PeerAddress) -> Result<Conne
 /// back on, by design, so this fails loudly.
 async fn dial(shared: &Arc<Shared>, to: &PeerAddress) -> Result<Connection, SeamError> {
     if to.id == shared.local_id {
-        return Err(SeamError::Refused("a node does not dial itself".to_string()));
+        return Err(SeamError::Refused(
+            "a node does not dial itself".to_string(),
+        ));
     }
     let addrs = endpoints::parse(&to.endpoints);
     if addrs.is_empty() {
@@ -720,7 +746,11 @@ async fn dial(shared: &Arc<Shared>, to: &PeerAddress) -> Result<Connection, Seam
         })?;
     // iroh authenticates the dialed key in the TLS handshake; a connection
     // to anyone else cannot exist.
-    assert_eq!(node_id_of(connection.remote_id()), to.id, "iroh connects only to the dialed key");
+    assert_eq!(
+        node_id_of(connection.remote_id()),
+        to.id,
+        "iroh connects only to the dialed key"
+    );
     hello(&connection, to).await?;
     shared.install_session(to.id, connection.clone(), SessionDirection::Outbound);
     Ok(connection)
@@ -797,7 +827,11 @@ impl Transport for IrohTransport {
             )));
         }
         {
-            let mut handlers = self.inner.handlers.write().unwrap_or_else(|e| e.into_inner());
+            let mut handlers = self
+                .inner
+                .handlers
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
             if handlers.contains_key(&protocol) {
                 return Err(SeamError::Refused(format!(
                     "protocol `{protocol}` already has a handler"
@@ -826,7 +860,11 @@ impl Transport for IrohTransport {
 
     fn set_admission(&self, policy: Arc<dyn Admission>) -> Result<Disposer, SeamError> {
         {
-            let mut admission = self.inner.admission.write().unwrap_or_else(|e| e.into_inner());
+            let mut admission = self
+                .inner
+                .admission
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
             if admission.is_some() {
                 return Err(SeamError::Refused(
                     "an admission policy is already installed; dispose it first".to_string(),
@@ -858,7 +896,9 @@ impl Transport for IrohTransport {
             )));
         }
         if timeout.is_zero() {
-            return Err(SeamError::Refused("a zero timeout would refuse every request".to_string()));
+            return Err(SeamError::Refused(
+                "a zero timeout would refuse every request".to_string(),
+            ));
         }
         let exchange = async {
             let connection = session_or_dial(&self.inner, to).await?;
@@ -873,12 +913,14 @@ impl Transport for IrohTransport {
                 ))
             })
         };
-        tokio::time::timeout(timeout, exchange).await.map_err(|_elapsed| {
-            SeamError::Unavailable(format!(
-                "request `{protocol}` to node {} timed out after {timeout:?}",
-                to.id.short()
-            ))
-        })?
+        tokio::time::timeout(timeout, exchange)
+            .await
+            .map_err(|_elapsed| {
+                SeamError::Unavailable(format!(
+                    "request `{protocol}` to node {} timed out after {timeout:?}",
+                    to.id.short()
+                ))
+            })?
     }
 
     fn sessions(&self) -> Vec<SessionView> {
@@ -906,7 +948,12 @@ impl Transport for IrohTransport {
 impl Shared {
     /// A stream failure mid-request is either the session dying under it —
     /// evicted, and the caller retries — or a protocol fault on a live one.
-    fn explain_stream_failure(&self, connection: &Connection, to: &PeerAddress, e: WireError) -> SeamError {
+    fn explain_stream_failure(
+        &self,
+        connection: &Connection,
+        to: &PeerAddress,
+        e: WireError,
+    ) -> SeamError {
         match connection.close_reason() {
             Some(reason) => {
                 self.evict(&to.id, connection.stable_id());
@@ -1063,7 +1110,10 @@ mod tests {
         let _handler = a.register(echo(), handler.clone()).expect("registers");
 
         let to = address_of(&a, None).await;
-        let answer = b.request(&to, &echo(), b"hi".to_vec(), WAIT).await.expect("answered");
+        let answer = b
+            .request(&to, &echo(), b"hi".to_vec(), WAIT)
+            .await
+            .expect("answered");
         assert_eq!(answer, b"echo:hi");
         assert_eq!(*handler.asked_by.lock().expect("lock"), Some(b.local_id()));
 
@@ -1077,7 +1127,10 @@ mod tests {
         assert_eq!(on_b[0].direction, SessionDirection::Outbound);
 
         // A second request reuses the session: still one each side.
-        let again = b.request(&to, &echo(), b"again".to_vec(), WAIT).await.expect("answered");
+        let again = b
+            .request(&to, &echo(), b"again".to_vec(), WAIT)
+            .await
+            .expect("answered");
         assert_eq!(again, b"echo:again");
         assert_eq!(handler.calls.load(Ordering::SeqCst), 2);
         assert_eq!(a.sessions().len(), 1);
@@ -1091,22 +1144,37 @@ mod tests {
         let a = transport().await;
         let b = transport().await;
         let _policy = a.set_admission(Arc::new(AdmitAll)).expect("policy");
-        let _failing = a.register(protocol("inseam/no/1"), Arc::new(Failing)).expect("registers");
+        let _failing = a
+            .register(protocol("inseam/no/1"), Arc::new(Failing))
+            .expect("registers");
         let to = address_of(&a, None).await;
 
-        let unknown = tokio::time::timeout(WAIT * 2, b.request(&to, &protocol("inseam/nope/1"), Vec::new(), WAIT))
-            .await
-            .expect("answers before the bound");
+        let unknown = tokio::time::timeout(
+            WAIT * 2,
+            b.request(&to, &protocol("inseam/nope/1"), Vec::new(), WAIT),
+        )
+        .await
+        .expect("answers before the bound");
         match unknown {
-            Err(SeamError::Failed(message)) => assert!(message.contains("serves no protocol"), "{message}"),
+            Err(SeamError::Failed(message)) => {
+                assert!(message.contains("serves no protocol"), "{message}")
+            }
             other => panic!("expected a failed exchange, got {other:?}"),
         }
-        let refused = b.request(&to, &protocol("inseam/no/1"), Vec::new(), WAIT).await;
+        let refused = b
+            .request(&to, &protocol("inseam/no/1"), Vec::new(), WAIT)
+            .await;
         match refused {
-            Err(SeamError::Failed(message)) => assert!(message.contains("the handler said no"), "{message}"),
+            Err(SeamError::Failed(message)) => {
+                assert!(message.contains("the handler said no"), "{message}")
+            }
             other => panic!("expected the handler's error, got {other:?}"),
         }
-        assert_eq!(a.sessions().len(), 1, "an error answer does not cost the session");
+        assert_eq!(
+            a.sessions().len(),
+            1,
+            "an error answer does not cost the session"
+        );
         a.close().await;
         b.close().await;
     }
@@ -1123,11 +1191,17 @@ mod tests {
             Err(SeamError::NotAdmitted(id)) => assert_eq!(id, a.local_id()),
             other => panic!("expected NotAdmitted, got {other:?}"),
         }
-        assert!(a.sessions().is_empty(), "a refused peer never becomes a session");
+        assert!(
+            a.sessions().is_empty(),
+            "a refused peer never becomes a session"
+        );
         assert!(b.sessions().is_empty(), "a refused dial is not kept");
 
         let _policy = a.set_admission(Arc::new(AdmitAll)).expect("policy");
-        let answer = b.request(&to, &echo(), b"x".to_vec(), WAIT).await.expect("admitted now");
+        let answer = b
+            .request(&to, &echo(), b"x".to_vec(), WAIT)
+            .await
+            .expect("admitted now");
         assert_eq!(answer, b"echo:x");
         a.close().await;
         b.close().await;
@@ -1138,19 +1212,27 @@ mod tests {
         let a = transport().await;
         let b = transport().await;
         let token = InvitationToken::new("open-sesame").expect("valid");
-        let _policy = a.set_admission(Arc::new(AdmitToken(token))).expect("policy");
+        let _policy = a
+            .set_admission(Arc::new(AdmitToken(token)))
+            .expect("policy");
         let _handler = a.register(echo(), Echo::shared()).expect("registers");
 
         for wrong in [Some("wrong"), None] {
             let to = address_of(&a, wrong).await;
             let refused = b.request(&to, &echo(), b"x".to_vec(), WAIT).await;
-            assert!(matches!(refused, Err(SeamError::NotAdmitted(id)) if id == a.local_id()), "{refused:?}");
+            assert!(
+                matches!(refused, Err(SeamError::NotAdmitted(id)) if id == a.local_id()),
+                "{refused:?}"
+            );
             assert!(a.sessions().is_empty());
             assert!(b.sessions().is_empty());
         }
 
         let to = address_of(&a, Some("open-sesame")).await;
-        let answer = b.request(&to, &echo(), b"x".to_vec(), WAIT).await.expect("the right token admits");
+        let answer = b
+            .request(&to, &echo(), b"x".to_vec(), WAIT)
+            .await
+            .expect("the right token admits");
         assert_eq!(answer, b"echo:x");
         assert_eq!(a.sessions().len(), 1);
         a.close().await;
@@ -1169,13 +1251,18 @@ mod tests {
         // B dials A once; from then on A reaches B over that session, with
         // no endpoint for B at all — B is the outbound-only laptop.
         let to_a = address_of(&a, None).await;
-        b.request(&to_a, &echo(), b"from b".to_vec(), WAIT).await.expect("b reaches a");
+        b.request(&to_a, &echo(), b"from b".to_vec(), WAIT)
+            .await
+            .expect("b reaches a");
         let to_b = PeerAddress {
             id: b.local_id(),
             endpoints: Vec::new(),
             invitation: None,
         };
-        let answer = a.request(&to_b, &echo(), b"from a".to_vec(), WAIT).await.expect("a reaches b");
+        let answer = a
+            .request(&to_b, &echo(), b"from a".to_vec(), WAIT)
+            .await
+            .expect("a reaches b");
         assert_eq!(answer, b"echo:from a");
         assert_eq!(*on_b.asked_by.lock().expect("lock"), Some(a.local_id()));
 
@@ -1190,7 +1277,10 @@ mod tests {
         a.disconnect(&b.local_id());
         assert!(a.sessions().is_empty());
         let unreachable = a.request(&to_b, &echo(), b"?".to_vec(), WAIT).await;
-        assert!(matches!(unreachable, Err(SeamError::Unavailable(_))), "{unreachable:?}");
+        assert!(
+            matches!(unreachable, Err(SeamError::Unavailable(_))),
+            "{unreachable:?}"
+        );
         a.close().await;
         b.close().await;
     }
@@ -1207,7 +1297,9 @@ mod tests {
         assert!(b.sessions().is_empty(), "nothing was dialed");
         assert!(a.sessions().is_empty());
 
-        let hello = b.request(&to, &wire::hello_protocol(), Vec::new(), WAIT).await;
+        let hello = b
+            .request(&to, &wire::hello_protocol(), Vec::new(), WAIT)
+            .await;
         assert!(matches!(hello, Err(SeamError::Refused(_))), "{hello:?}");
         let zero = b.request(&to, &echo(), Vec::new(), Duration::ZERO).await;
         assert!(matches!(zero, Err(SeamError::Refused(_))), "{zero:?}");
@@ -1219,7 +1311,12 @@ mod tests {
     async fn a_bound_transport_publishes_endpoints_that_parse_back() {
         let a = transport().await;
         let endpoints = dialable_endpoints(&a).await;
-        assert!(endpoints.iter().all(|e| e.as_str().starts_with("ip:127.0.0.1:")), "{endpoints:?}");
+        assert!(
+            endpoints
+                .iter()
+                .all(|e| e.as_str().starts_with("ip:127.0.0.1:")),
+            "{endpoints:?}"
+        );
         let parsed = endpoints::parse(&endpoints);
         assert_eq!(parsed.len(), endpoints.len());
         assert!(parsed.iter().all(|addr| addr.is_ip()));
@@ -1232,18 +1329,28 @@ mod tests {
     async fn registrations_are_one_per_name_and_disposers_withdraw_them() {
         let a = transport().await;
         let first = a.register(echo(), Echo::shared()).expect("registers");
-        assert!(matches!(a.register(echo(), Echo::shared()), Err(SeamError::Refused(_))));
+        assert!(matches!(
+            a.register(echo(), Echo::shared()),
+            Err(SeamError::Refused(_))
+        ));
         first();
-        let _second = a.register(echo(), Echo::shared()).expect("registers again after disposal");
+        let _second = a
+            .register(echo(), Echo::shared())
+            .expect("registers again after disposal");
         assert!(matches!(
             a.register(wire::hello_protocol(), Echo::shared()),
             Err(SeamError::Refused(_))
         ));
 
         let policy = a.set_admission(Arc::new(AdmitAll)).expect("policy");
-        assert!(matches!(a.set_admission(Arc::new(AdmitAll)), Err(SeamError::Refused(_))));
+        assert!(matches!(
+            a.set_admission(Arc::new(AdmitAll)),
+            Err(SeamError::Refused(_))
+        ));
         policy();
-        let _policy = a.set_admission(Arc::new(AdmitAll)).expect("installs again after disposal");
+        let _policy = a
+            .set_admission(Arc::new(AdmitAll))
+            .expect("installs again after disposal");
         a.close().await;
     }
 
@@ -1255,7 +1362,10 @@ mod tests {
         assert_eq!(defaults.request_timeout, Duration::from_secs(30));
         assert_eq!(defaults.idle_timeout, Duration::from_secs(120));
 
-        assert_eq!(RelaySetting::parse("none").expect("parses"), RelaySetting::None);
+        assert_eq!(
+            RelaySetting::parse("none").expect("parses"),
+            RelaySetting::None
+        );
         let own = RelaySetting::parse("https://relay.example").expect("parses");
         assert!(matches!(&own, RelaySetting::Own(url) if url.as_str() == "https://relay.example/"));
         assert_eq!(own.to_string(), "https://relay.example/");

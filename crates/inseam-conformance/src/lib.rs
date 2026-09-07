@@ -21,10 +21,10 @@ use std::sync::Arc;
 use inseam_kernel::address::{Address, ContentLength, Envelope, Timestamp};
 use inseam_kernel::fragment::{Mimetype, Sprout};
 use inseam_kernel::substrate::{Kernel, PluginFactory};
-use inseam_seams::transforms::{
-    GrantedLlm, Registration, TransformCtx, TransformOutput, TRANSFORMS,
-};
 use inseam_seams::SeamError;
+use inseam_seams::transforms::{
+    GrantedLlm, Registration, TRANSFORMS, TransformCtx, TransformOutput,
+};
 
 pub use golden::{ChecksFile, Emitted, EmittedFragment, EmittedKeyed, Expect, GoldenCheck};
 
@@ -36,11 +36,19 @@ pub fn check_factories(
     factories: &[Arc<dyn PluginFactory>],
     config_for: &dyn Fn(&str) -> toml::Table,
 ) {
-    assert!(!factories.is_empty(), "a distribution links at least one plugin");
+    assert!(
+        !factories.is_empty(),
+        "a distribution links at least one plugin"
+    );
     for factory in factories {
-        let plugin = factory.build(&config_for(factory.name())).unwrap_or_else(|e| {
-            panic!("`{}` does not build from its conformance config: {e}", factory.name())
-        });
+        let plugin = factory
+            .build(&config_for(factory.name()))
+            .unwrap_or_else(|e| {
+                panic!(
+                    "`{}` does not build from its conformance config: {e}",
+                    factory.name()
+                )
+            });
         let manifest = plugin.manifest();
         assert_eq!(
             manifest.name,
@@ -48,10 +56,18 @@ pub fn check_factories(
             "factory and plugin manifest must agree on the name"
         );
         for inject in manifest.inject {
-            assert!(!inject.key.is_empty(), "`{}` declares an empty inject", manifest.name);
+            assert!(
+                !inject.key.is_empty(),
+                "`{}` declares an empty inject",
+                manifest.name
+            );
         }
         for provided in manifest.provides {
-            assert!(!provided.is_empty(), "`{}` declares an empty provide", manifest.name);
+            assert!(
+                !provided.is_empty(),
+                "`{}` declares an empty provide",
+                manifest.name
+            );
         }
     }
 }
@@ -111,8 +127,13 @@ async fn battery(registration: &Arc<Registration>, mimetype: &Mimetype) {
 /// Mimetypes every transform is offered; a transform claiming none of them
 /// escapes the battery, which the sweep treats as a failure — extend the
 /// list via `extra_samples` for exotic claims rather than skipping.
-const SAMPLES: [&str; 5] =
-    ["text/markdown", "text/plain", "text/x-rust", "image/png", "application/pdf"];
+const SAMPLES: [&str; 5] = [
+    "text/markdown",
+    "text/plain",
+    "text/x-rust",
+    "image/png",
+    "application/pdf",
+];
 
 /// Batter every transform registered in the booted kernel: claims must be
 /// deterministic, and every claimed sample mimetype faces the hostile-input
@@ -121,7 +142,10 @@ const SAMPLES: [&str; 5] =
 pub async fn batter_transforms(kernel: &Kernel, extra_samples: &[&str]) {
     let registry = kernel.service(&TRANSFORMS).expect("transforms seam bound");
     let registrations = registry.snapshot();
-    assert!(!registrations.is_empty(), "no transforms registered; nothing to batter");
+    assert!(
+        !registrations.is_empty(),
+        "no transforms registered; nothing to batter"
+    );
 
     let samples: Vec<&str> = SAMPLES.iter().chain(extra_samples).copied().collect();
     for registration in &registrations {
@@ -212,7 +236,10 @@ pub fn emitted_from_output(output: &TransformOutput) -> Emitted {
 /// Read and gate one transform's checks file, panicking with the fix.
 fn load_checks(name: &str, path: &Path) -> ChecksFile {
     let raw = std::fs::read_to_string(path).unwrap_or_else(|e| {
-        panic!("`{name}`: cannot read golden checks {}: {e}", path.display())
+        panic!(
+            "`{name}`: cannot read golden checks {}: {e}",
+            path.display()
+        )
     });
     let checks = ChecksFile::parse(&raw)
         .unwrap_or_else(|e| panic!("`{name}`: {} does not parse: {e}", path.display()));
@@ -243,9 +270,9 @@ async fn run_golden(
     }
     let bytes = match check.fixture_path(checks_path)? {
         None => None,
-        Some(path) => Some(
-            std::fs::read(&path).map_err(|e| format!("fixture {}: {e}", path.display()))?,
-        ),
+        Some(path) => {
+            Some(std::fs::read(&path).map_err(|e| format!("fixture {}: {e}", path.display()))?)
+        }
     };
     let envelope = synthetic_envelope(&mimetype);
     let llm: Arc<dyn GrantedLlm> = Arc::new(CannedLlm(check.llm_returns.clone()));
@@ -274,7 +301,10 @@ async fn run_golden(
 pub async fn golden_transforms(kernel: &Kernel, checks_for: &dyn Fn(&str) -> Option<PathBuf>) {
     let registry = kernel.service(&TRANSFORMS).expect("transforms seam bound");
     let registrations = registry.snapshot();
-    assert!(!registrations.is_empty(), "no transforms registered; nothing to check");
+    assert!(
+        !registrations.is_empty(),
+        "no transforms registered; nothing to check"
+    );
 
     for registration in &registrations {
         let name = registration.name.as_str();

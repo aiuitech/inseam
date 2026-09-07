@@ -15,12 +15,12 @@ use std::sync::Arc;
 
 use inseam_kernel::fragment::{Mimetype, NewFragment};
 use inseam_kernel::substrate::{
-    parse_config, ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory,
+    ApplyCx, Inject, Manifest, Plugin, PluginError, PluginFactory, parse_config,
 };
 use inseam_seams::llm::LlmLane;
 use inseam_seams::transforms::{
-    register_as_effect, Anchor, KeyedSprout, Registration, Transform, TransformCtx,
-    TransformKind, TransformOutput,
+    Anchor, KeyedSprout, Registration, Transform, TransformCtx, TransformKind, TransformOutput,
+    register_as_effect,
 };
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -108,8 +108,10 @@ impl Transform for EntityExtractorTransform {
     }
 
     async fn apply(&self, ctx: TransformCtx<'_>) -> TransformOutput {
-        let (Some(llm), Some(text)) = (ctx.llm.as_deref(), ctx.text.filter(|t| !t.trim().is_empty()))
-        else {
+        let (Some(llm), Some(text)) = (
+            ctx.llm.as_deref(),
+            ctx.text.filter(|t| !t.trim().is_empty()),
+        ) else {
             return TransformOutput::default();
         };
         let hint = ctx.envelope.hint.as_deref();
@@ -146,7 +148,9 @@ mod tests {
     use inseam_kernel::address::{Address, ContentLength, Envelope, Timestamp};
 
     fn address() -> Address {
-        "inseam://fs-test/tmp/note.md".parse().expect("valid address")
+        "inseam://fs-test/tmp/note.md"
+            .parse()
+            .expect("valid address")
     }
 
     #[tokio::test]

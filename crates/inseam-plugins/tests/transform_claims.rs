@@ -18,14 +18,23 @@ async fn claims_route_each_root_mimetype_to_the_right_transforms() {
         "[[entry]]\nid = \"entities\"\nplugin = \"transform-entities\"\n",
     )
     .await;
-    let registrations = kernel.service(&TRANSFORMS).expect("transforms bound").snapshot();
+    let registrations = kernel
+        .service(&TRANSFORMS)
+        .expect("transforms bound")
+        .snapshot();
 
     // Expected in snapshot order: structural transforms first, then
     // enrichment, each by entry id — the order the sweep applies them in.
     let cases: &[(&str, &[&str])] = &[
-        ("text/markdown", &["markdown", "entity-extractor", "summarizer"]),
+        (
+            "text/markdown",
+            &["markdown", "entity-extractor", "summarizer"],
+        ),
         ("text/plain", &["chunker", "entity-extractor", "summarizer"]),
-        ("application/json", &["chunker", "entity-extractor", "summarizer"]),
+        (
+            "application/json",
+            &["chunker", "entity-extractor", "summarizer"],
+        ),
         ("image/jpeg", &["entity-extractor", "summarizer"]),
     ];
     for (mimetype, expected) in cases {
@@ -39,9 +48,21 @@ async fn claims_route_each_root_mimetype_to_the_right_transforms() {
     }
 
     for r in &registrations {
-        assert!(!r.transform.claims(&Mimetype::markdown(), false), "{} claims a non-root", r.name);
-        assert!(!r.transform.claims(&Mimetype::summary(), true), "{} claims summaries", r.name);
+        assert!(
+            !r.transform.claims(&Mimetype::markdown(), false),
+            "{} claims a non-root",
+            r.name
+        );
+        assert!(
+            !r.transform.claims(&Mimetype::summary(), true),
+            "{} claims summaries",
+            r.name
+        );
         let entity = Mimetype::parse("text/x-inseam-entity").expect("valid");
-        assert!(!r.transform.claims(&entity, true), "{} claims entities", r.name);
+        assert!(
+            !r.transform.claims(&entity, true),
+            "{} claims entities",
+            r.name
+        );
     }
 }
