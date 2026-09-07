@@ -4,6 +4,12 @@
 owner API. It can also serve the compiled Vite console from `--web-dir`, so
 local and hosted nodes present the same client and operation messages.
 
+This page covers the node side only. The commercial hosted service —
+provisioning, tenant isolation, metering, and the OAuth callback router —
+lives in its own repository,
+[inseam-console](https://github.com/aiuitech/inseam-console), and drives an
+ordinary node through exactly what is described here.
+
 ## HTTP owner transport
 
 `crates/inseam-http` translates JSON to calls on the `operations` seam. It

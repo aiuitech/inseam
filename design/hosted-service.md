@@ -4,6 +4,8 @@ The commercial offering: inseam provisions and keeps alive a well-provisioned [n
 
 What is sold is three things, in order of how hard they are to copy: a **tuned composition** that indexes deeply, a set of **inseam-authored plugins** not published as open source, and **operation** — always-on, backed up, patched, provisioned in under a minute. There is no free tier; the open-source core is the free tier ([positioning](positioning.md)).
 
+The control plane, tenant lifecycle, callback router, and metering described here are built in their own repository, [inseam-console](https://github.com/aiuitech/inseam-console), which depends on this one and never the other way round. This repository carries only what a node itself needs to be hostable — `inseam serve`, `inseam self update`, the `deploy/hosted/` self-hosting profile — so that nothing about the commercial service leaks into an ordinary node.
+
 ## One tenant, one virtual machine
 
 The tenant boundary is a machine boundary, not a namespace. A hosted node holds live OAuth refresh tokens for a person's mail and files, their whole index, and executes community- and agent-authored WASM. The loaded tier's sandbox answers *intra*-node risk ([plugins](plugins.md)); it says nothing about tenant-to-tenant, and a shared-kernel escape would surrender every customer's grants at once. Containers on a shared kernel are therefore not a candidate, and the audience — developers who know what namespace isolation is worth — is the last one to sell it to.
