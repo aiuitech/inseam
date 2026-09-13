@@ -27,7 +27,7 @@ answers/rankings, and manifests are versioned.
 ## 7 September 2026: retrieval hints and vocabulary
 
 These earlier measurements are recorded in
-[the indexing design](indexing.md#retrieval-hints-are-planted-per-source-and-the-first-measurement-says-what-they-are-worth).
+[the indexing design](indexing.md).
 They use a 25,000-document EnterpriseRAG slice and its offline retrieval
 comparisons, not the later GPT-5.4 bookend sample.
 
