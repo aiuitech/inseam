@@ -1,11 +1,9 @@
 import Foundation
 import InseamKit
 
-/// Call recordings as a bridged host (design/ios-app.md). iOS lets no
-/// third-party app hear a phone call, so the recording comes from Apple's
-/// own call recorder: the user records in the Phone app, the audio and
-/// transcript land in Notes, and the user hands them to inseam (share
-/// sheet → "inseam", or Notes' *Save Audio to Files* into this folder).
+/// Imported calls and in-person meetings share a host and indexing path.
+/// Call audio is imported from another recorder; meetings are captured here.
+/// Optional meeting metadata keeps existing call sidecars compatible.
 /// The folder is the app's Documents › Call Recordings, visible in the
 /// Files app as "On My iPhone › inseam".
 ///
@@ -28,7 +26,7 @@ final class CallRecordingsHost: BridgedHostSource, @unchecked Sendable {
         description = BridgedHostDescription(
             kind: Self.kind,
             principal: "calls:\(device)",
-            displayName: "Call recordings on \(device)"
+            displayName: "Recordings on \(device)"
         )
     }
 
@@ -46,7 +44,7 @@ final class CallRecordingsHost: BridgedHostSource, @unchecked Sendable {
             let sidecar = Sidecar.read(beside: url)
             sources.append(BridgedSource(
                 locator: locator,
-                sourceType: contentType.hasPrefix("audio/") ? "call-recording" : "call-transcript",
+                sourceType: Self.sourceType(contentType: contentType, sidecar: sidecar),
                 contentType: contentType,
                 bytes: UInt64(values.fileSize ?? 0),
                 created: (sidecar?.callStarted ?? values.creationDate).map { Int64($0.timeIntervalSince1970) },
@@ -98,6 +96,12 @@ final class CallRecordingsHost: BridgedHostSource, @unchecked Sendable {
         return formatter
     }()
 
+    private static func sourceType(contentType: String, sidecar: Sidecar?) -> String {
+        let kind = sidecar?.meeting == nil ? "call" : "meeting"
+        let media = contentType.hasPrefix("audio/") ? "recording" : "transcript"
+        return "\(kind)-\(media)"
+    }
+
     private static func contentType(of url: URL) -> String? {
         let ext = url.pathExtension.lowercased()
         if audioExtensions.contains(ext) {
@@ -117,13 +121,26 @@ struct Sidecar: Codable {
     var participant: String
     var callStarted: Date
     var callEnded: Date?
+    var meeting: MeetingMetadata?
 
     var title: String {
-        "Call with \(participant), \(Self.titleFormatter.string(from: callStarted))"
+        if let meeting {
+            return "\(meeting.name), \(Self.titleFormatter.string(from: callStarted))"
+        } else {
+            return "Call with \(participant), \(Self.titleFormatter.string(from: callStarted))"
+        }
     }
 
     var properties: [BridgedProperty] {
-        [BridgedProperty(key: "participant", value: participant)]
+        if let meeting {
+            return [
+                BridgedProperty(key: "recording-kind", value: "in-person"),
+                BridgedProperty(key: "audio-channels", value: String(meeting.audio.channels)),
+                BridgedProperty(key: "capture-state", value: meeting.stopReason?.rawValue ?? "incomplete")
+            ]
+        } else {
+            return [BridgedProperty(key: "participant", value: participant)]
+        }
     }
 
     static func read(beside url: URL) -> Sidecar? {

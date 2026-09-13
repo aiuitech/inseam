@@ -7,6 +7,7 @@ struct ContentView: View {
     @Environment(NodeModel.self) private var model
     @State private var queryText = ""
     @State private var showingSettings = false
+    @State private var showingRecorder = false
 
     var body: some View {
         @Bindable var model = model
@@ -14,6 +15,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 12) {
                 StitchStrip(height: 10)
                     .foregroundStyle(Brand.thread)
+                meetingButton
                 TextField("search your data…", text: $queryText)
                     .textFieldStyle(.roundedBorder)
                     .font(Brand.font(.body))
@@ -63,12 +65,28 @@ struct ContentView: View {
             .sheet(item: $model.pendingAttachment) { attachment in
                 AttachRecordingView(attachment: attachment)
             }
+            .sheet(isPresented: $showingRecorder) {
+                MeetingRecordingView().environment(model)
+            }
             .sheet(isPresented: $showingSettings) {
                 SettingsView()
                     .environment(model)
             }
         }
         .preferredColorScheme(.dark)
+    }
+
+    private var meetingButton: some View {
+        Button {
+            showingRecorder = true
+        } label: {
+            Label("record a meeting", systemImage: "mic.fill")
+                .font(Brand.font(.body))
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(Brand.thread)
+        .foregroundStyle(Brand.ground)
+        .disabled(model.busy)
     }
 
     private var hostsSection: some View {
@@ -84,7 +102,7 @@ struct ContentView: View {
             }
             HStack {
                 Button("index photos") { model.indexPhotos() }
-                Button("index call recordings") { model.indexCallRecordings() }
+                Button("index recordings") { model.indexCallRecordings() }
             }
             .font(Brand.font(.callout))
             .buttonStyle(.bordered)

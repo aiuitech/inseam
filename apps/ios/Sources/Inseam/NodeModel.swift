@@ -165,6 +165,22 @@ final class NodeModel {
         }
     }
 
+    /// Capture has already saved the original. Transcription failure leaves it available in Files.
+    func processMeeting(at url: URL) {
+        guard !busy else {
+            status = "recording saved; index it when the current operation finishes"
+            return
+        }
+        let recordings = recordings
+        run("transcribe meeting") { [weak self] in
+            try Transcription.transcribe(url, into: recordings)
+            return {
+                self?.status = "saved \(url.lastPathComponent)"
+                Task { @MainActor [weak self] in self?.indexCallRecordings() }
+            }
+        }
+    }
+
     private static func describe(_ report: IndexReport, of what: String) -> String {
         let verb = report.stopped ? "stopped" : "indexed"
         return "\(verb) \(what): \(report.indexed) indexed, \(report.unchanged) unchanged, \(report.fragments) fragments"

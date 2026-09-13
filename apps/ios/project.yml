@@ -43,6 +43,8 @@ targets:
         # Contacts: naming a call recording's participant from a contact.
         NSContactsUsageDescription: >-
           inseam looks up a contact to record who a call was with.
+        NSMicrophoneUsageDescription: >-
+          inseam records in-person meetings so you can transcribe and search them on this device.
         # Speech: transcribing imported call recordings on device.
         NSSpeechRecognitionUsageDescription: >-
           inseam transcribes call recordings on this device so their words
@@ -66,6 +68,7 @@ targets:
         # Nightly catch-up sweeps while charging (BGProcessingTask).
         UIBackgroundModes:
           - processing
+          - audio
         BGTaskSchedulerPermittedIdentifiers:
           - dev.inseam.ios.sweep
     settings:
@@ -82,3 +85,31 @@ targets:
         # The core's static library was built for a minimum iOS matching
         # the deployment target; keep them equal.
         IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+  InseamTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+      - path: Sources/Inseam/CallRecordingsHost.swift
+      - path: Sources/Inseam/CallObserver.swift
+      - path: Sources/Inseam/MeetingMetadata.swift
+      - path: Sources/Inseam/MeetingAudioSession.swift
+    dependencies:
+      - package: InseamKit
+        product: InseamKit
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
+        LIBRARY_SEARCH_PATHS:
+          - $(inherited)
+          - $(SRCROOT)/Core/$(PLATFORM_NAME)
+schemes:
+  Inseam:
+    build:
+      targets:
+        Inseam: all
+        InseamTests: [test]
+    test:
+      targets:
+        - InseamTests

@@ -51,6 +51,8 @@
 	<true/>
 	<key>NSContactsUsageDescription</key>
 	<string>inseam looks up a contact to record who a call was with.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>inseam records in-person meetings so you can transcribe and search them on this device.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>inseam indexes your photo library on this device so you can search it by date, place, and content. Nothing leaves the phone.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
@@ -58,6 +60,7 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>processing</string>
+		<string>audio</string>
 	</array>
 	<key>UIFileSharingEnabled</key>
 	<true/>

@@ -52,6 +52,10 @@ The node's first-party endpoint plugins still work on iOS for owners who set a k
 
 **Messages — not on iOS.** No API reads iMessage or SMS history; iMessage app extensions see only their own payloads, and SMS filter extensions see unknown-sender SMS only and cannot store what they see. The Mac is where Messages is indexed: with Messages in iCloud, the full history is in `~/Library/Messages/chat.db`, readable with Full Disk Access — a macOS bridged host or linked connection, to be built there.
 
+## In-person recordings
+
+The app can directly record in-person meetings. [meeting-recording.md](meeting-recording.md) defines explicit start/stop, background audio, lossless stereo where supported, and the capture metadata retained for later speaker analysis. These recordings share the existing folder host, with distinct meeting source types.
+
 ## Recording calls, honestly
 
 An ordinary third-party iOS app has no documented public API to capture the audio of a cellular or FaceTime call handled by another app. Calls transported by the app itself or a participating carrier are different; see [phone-call-context.md](phone-call-context.md) for the researched options and proposed experiments. During a call the system's audio session is non-mixable and higher priority: the app's session is interrupted, its microphone input stops, and the remote party's audio never reaches any third-party process. Microphone permission changes nothing; Apple's own screen recording captures no call audio for the same reason. `CXCallObserver` reports that a call started, connected, and ended — and *not* the number. The public APIs reviewed for [phone-call-context.md](phone-call-context.md) do not establish access to that audio.
