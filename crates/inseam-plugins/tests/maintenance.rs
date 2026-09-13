@@ -617,3 +617,45 @@ async fn cutoff_catalogs_without_indexing_and_never_evicts() {
         "scope shrinkage never evicts paid-for understanding"
     );
 }
+
+#[tokio::test]
+async fn folder_summary_target_reindexes_folders_without_rebuilding_files() {
+    let corpus = tempfile::tempdir().expect("tempdir");
+    let data = tempfile::tempdir().expect("tempdir");
+    for name in ["a.txt", "b.txt"] {
+        std::fs::write(
+            corpus.path().join(name),
+            "Budget notes for the kitchen. Demo in June.",
+        )
+        .expect("writes");
+    }
+    let mut kernel = common::boot(data.path(), "").await;
+    let first = index(common::ops(&kernel).as_ref(), corpus.path()).await;
+    assert_eq!(first.indexed, 3);
+    common::reconcile(
+        &mut kernel,
+        r#"
+        [[entry]]
+        id = "summarizer"
+        [entry.config]
+        directory_target_chars = 20
+    "#,
+    )
+    .await;
+    let changed = index(common::ops(&kernel).as_ref(), corpus.path()).await;
+    assert_eq!(
+        changed.indexed, 1,
+        "only the folder target changed: {changed}"
+    );
+    assert_eq!(changed.unchanged, 2, "the two file subtrees are retained");
+    let steady = index(common::ops(&kernel).as_ref(), corpus.path()).await;
+    assert_eq!(steady.indexed, 0);
+    assert_eq!(steady.unchanged, 3);
+    common::reconcile(&mut kernel, "").await;
+    let restored = index(common::ops(&kernel).as_ref(), corpus.path()).await;
+    assert_eq!(
+        restored.indexed, 1,
+        "removing the override also dirties the folder"
+    );
+    assert_eq!(restored.unchanged, 2);
+}

@@ -6,3 +6,5 @@ The repository's benchmark harness and commands live in [benchmarks/README.md](.
 - **BEIR NFCorpus** measures retrieval alone with the standard nDCG family over 3,633 abstracts and 323 queries. Minutes and cents per run, and the one to reach for on every retrieval change.
 
 Benchmark design decisions, including data pins, model policy, scoring, run evidence, and the performance estimate, live in [design/benchmarking.md](../design/benchmarking.md).
+
+[The September 2026 retrieval audit](../benchmarks/reports/20260913-retrieval-audit.md) compares folder-aware retrieval tuning, query-only replays, and incremental folder re-indexing before the GPT-5.4 agent phase.

@@ -1,0 +1,5549 @@
+{
+  "distributions": {
+    "candidate_sources": {
+      "max": 119,
+      "median": 95,
+      "p95": 114
+    },
+    "elapsed_ms": {
+      "max": 2989,
+      "median": 325,
+      "p95": 487
+    },
+    "fts_hits": {
+      "max": 60,
+      "median": 60,
+      "p95": 60
+    },
+    "graph_ms": {
+      "max": 30,
+      "median": 0,
+      "p95": 2
+    },
+    "lexical_hits": {
+      "max": 0,
+      "median": 0,
+      "p95": 0
+    },
+    "relations": {
+      "max": 119,
+      "median": 95,
+      "p95": 114
+    },
+    "rollup_ms": {
+      "max": 110,
+      "median": 10,
+      "p95": 31
+    },
+    "seeds": {
+      "max": 119,
+      "median": 95,
+      "p95": 114
+    },
+    "seeds_ms": {
+      "max": 2944,
+      "median": 314,
+      "p95": 474
+    },
+    "vector_hits": {
+      "max": 60,
+      "median": 60,
+      "p95": 60
+    }
+  },
+  "folder_results": 0,
+  "queries": [
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 101,
+        "elapsed_ms": 1078,
+        "fts_hits": 60,
+        "graph_ms": 30,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 101,
+        "rollup_ms": 110,
+        "seeds": 101,
+        "seeds_ms": 937,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 117,
+        "elapsed_ms": 571,
+        "fts_hits": 60,
+        "graph_ms": 1,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 117,
+        "rollup_ms": 94,
+        "seeds": 117,
+        "seeds_ms": 475,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-12"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 108,
+        "elapsed_ms": 429,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 108,
+        "rollup_ms": 56,
+        "seeds": 108,
+        "seeds_ms": 372,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-23"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 106,
+        "elapsed_ms": 530,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 106,
+        "rollup_ms": 76,
+        "seeds": 106,
+        "seeds_ms": 453,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-33"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 67,
+        "elapsed_ms": 394,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 67,
+        "rollup_ms": 30,
+        "seeds": 67,
+        "seeds_ms": 363,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-44"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 111,
+        "elapsed_ms": 373,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 111,
+        "rollup_ms": 56,
+        "seeds": 111,
+        "seeds_ms": 316,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-56"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 95,
+        "elapsed_ms": 353,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 95,
+        "rollup_ms": 31,
+        "seeds": 95,
+        "seeds_ms": 320,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-68"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 103,
+        "elapsed_ms": 334,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 103,
+        "rollup_ms": 25,
+        "seeds": 103,
+        "seeds_ms": 307,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-78"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 104,
+        "elapsed_ms": 324,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 104,
+        "rollup_ms": 19,
+        "seeds": 104,
+        "seeds_ms": 303,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-91"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 108,
+        "elapsed_ms": 389,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 108,
+        "rollup_ms": 41,
+        "seeds": 108,
+        "seeds_ms": 348,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-102"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 108,
+        "elapsed_ms": 325,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 108,
+        "rollup_ms": 19,
+        "seeds": 108,
+        "seeds_ms": 305,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-112"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 114,
+        "elapsed_ms": 374,
+        "fts_hits": 60,
+        "graph_ms": 8,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 114,
+        "rollup_ms": 37,
+        "seeds": 114,
+        "seeds_ms": 328,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-123"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 110,
+        "elapsed_ms": 388,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 110,
+        "rollup_ms": 37,
+        "seeds": 110,
+        "seeds_ms": 350,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-133"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 101,
+        "elapsed_ms": 285,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 101,
+        "rollup_ms": 13,
+        "seeds": 101,
+        "seeds_ms": 271,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-143"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 107,
+        "elapsed_ms": 440,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 107,
+        "rollup_ms": 28,
+        "seeds": 107,
+        "seeds_ms": 411,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-153"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 94,
+        "elapsed_ms": 333,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 94,
+        "rollup_ms": 30,
+        "seeds": 94,
+        "seeds_ms": 302,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-165"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 112,
+        "elapsed_ms": 346,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 112,
+        "rollup_ms": 25,
+        "seeds": 112,
+        "seeds_ms": 319,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-175"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 87,
+        "elapsed_ms": 337,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 87,
+        "rollup_ms": 25,
+        "seeds": 87,
+        "seeds_ms": 311,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-186"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 105,
+        "elapsed_ms": 365,
+        "fts_hits": 49,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 105,
+        "rollup_ms": 38,
+        "seeds": 105,
+        "seeds_ms": 326,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-196"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 94,
+        "elapsed_ms": 383,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 94,
+        "rollup_ms": 18,
+        "seeds": 94,
+        "seeds_ms": 364,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-207"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 112,
+        "elapsed_ms": 302,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 112,
+        "rollup_ms": 19,
+        "seeds": 112,
+        "seeds_ms": 282,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-217"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 108,
+        "elapsed_ms": 310,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 108,
+        "rollup_ms": 17,
+        "seeds": 108,
+        "seeds_ms": 291,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-227"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 111,
+        "elapsed_ms": 311,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 111,
+        "rollup_ms": 22,
+        "seeds": 111,
+        "seeds_ms": 288,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-238"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 92,
+        "elapsed_ms": 314,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 92,
+        "rollup_ms": 20,
+        "seeds": 92,
+        "seeds_ms": 292,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-248"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 113,
+        "elapsed_ms": 425,
+        "fts_hits": 60,
+        "graph_ms": 5,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 113,
+        "rollup_ms": 29,
+        "seeds": 113,
+        "seeds_ms": 391,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-259"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 86,
+        "elapsed_ms": 396,
+        "fts_hits": 60,
+        "graph_ms": 2,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 86,
+        "rollup_ms": 34,
+        "seeds": 86,
+        "seeds_ms": 360,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-270"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 88,
+        "elapsed_ms": 354,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 88,
+        "rollup_ms": 22,
+        "seeds": 88,
+        "seeds_ms": 331,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-280"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 94,
+        "elapsed_ms": 410,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 94,
+        "rollup_ms": 20,
+        "seeds": 94,
+        "seeds_ms": 389,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-291"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 96,
+        "elapsed_ms": 346,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 96,
+        "rollup_ms": 19,
+        "seeds": 96,
+        "seeds_ms": 326,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-307"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 95,
+        "elapsed_ms": 991,
+        "fts_hits": 60,
+        "graph_ms": 1,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 95,
+        "rollup_ms": 12,
+        "seeds": 95,
+        "seeds_ms": 976,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-320"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 93,
+        "elapsed_ms": 415,
+        "fts_hits": 60,
+        "graph_ms": 1,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 93,
+        "rollup_ms": 23,
+        "seeds": 93,
+        "seeds_ms": 391,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-332"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 101,
+        "elapsed_ms": 423,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 101,
+        "rollup_ms": 18,
+        "seeds": 101,
+        "seeds_ms": 404,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-344"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 118,
+        "elapsed_ms": 351,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 118,
+        "rollup_ms": 28,
+        "seeds": 118,
+        "seeds_ms": 321,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-358"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 114,
+        "elapsed_ms": 355,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 114,
+        "rollup_ms": 18,
+        "seeds": 114,
+        "seeds_ms": 336,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-371"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 110,
+        "elapsed_ms": 391,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 110,
+        "rollup_ms": 10,
+        "seeds": 110,
+        "seeds_ms": 380,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-383"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 98,
+        "elapsed_ms": 374,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 98,
+        "rollup_ms": 7,
+        "seeds": 98,
+        "seeds_ms": 365,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-395"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 113,
+        "elapsed_ms": 338,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 113,
+        "rollup_ms": 12,
+        "seeds": 113,
+        "seeds_ms": 325,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-407"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 107,
+        "elapsed_ms": 328,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 107,
+        "rollup_ms": 10,
+        "seeds": 107,
+        "seeds_ms": 316,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-418"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 99,
+        "elapsed_ms": 246,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 99,
+        "rollup_ms": 3,
+        "seeds": 99,
+        "seeds_ms": 242,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-430"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 101,
+        "elapsed_ms": 357,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 101,
+        "rollup_ms": 8,
+        "seeds": 101,
+        "seeds_ms": 348,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-441"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 115,
+        "elapsed_ms": 288,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 115,
+        "rollup_ms": 5,
+        "seeds": 115,
+        "seeds_ms": 282,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-457"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 97,
+        "elapsed_ms": 324,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 97,
+        "rollup_ms": 8,
+        "seeds": 97,
+        "seeds_ms": 315,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-468"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 50,
+        "elapsed_ms": 257,
+        "fts_hits": 7,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 50,
+        "rollup_ms": 4,
+        "seeds": 50,
+        "seeds_ms": 252,
+        "vector_hits": 44
+      },
+      "query_id": "PLAIN-478"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 108,
+        "elapsed_ms": 257,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 108,
+        "rollup_ms": 10,
+        "seeds": 108,
+        "seeds_ms": 246,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-488"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 76,
+        "elapsed_ms": 355,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 76,
+        "rollup_ms": 4,
+        "seeds": 76,
+        "seeds_ms": 350,
+        "vector_hits": 35
+      },
+      "query_id": "PLAIN-499"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 24,
+        "elapsed_ms": 366,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 24,
+        "rollup_ms": 0,
+        "seeds": 24,
+        "seeds_ms": 365,
+        "vector_hits": 24
+      },
+      "query_id": "PLAIN-510"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 288,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 1,
+        "seeds": 60,
+        "seeds_ms": 286,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-520"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 107,
+        "elapsed_ms": 413,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 107,
+        "rollup_ms": 4,
+        "seeds": 107,
+        "seeds_ms": 408,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-531"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 99,
+        "elapsed_ms": 296,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 99,
+        "rollup_ms": 2,
+        "seeds": 99,
+        "seeds_ms": 293,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-541"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 47,
+        "elapsed_ms": 397,
+        "fts_hits": 0,
+        "graph_ms": 3,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 47,
+        "rollup_ms": 7,
+        "seeds": 47,
+        "seeds_ms": 385,
+        "vector_hits": 47
+      },
+      "query_id": "PLAIN-551"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 53,
+        "elapsed_ms": 343,
+        "fts_hits": 2,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 53,
+        "rollup_ms": 14,
+        "seeds": 53,
+        "seeds_ms": 327,
+        "vector_hits": 53
+      },
+      "query_id": "PLAIN-561"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 264,
+        "fts_hits": 5,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 4,
+        "seeds": 60,
+        "seeds_ms": 259,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-571"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 310,
+        "fts_hits": 0,
+        "graph_ms": 1,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 10,
+        "seeds": 60,
+        "seeds_ms": 298,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-583"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 20,
+        "elapsed_ms": 497,
+        "fts_hits": 2,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 20,
+        "rollup_ms": 10,
+        "seeds": 20,
+        "seeds_ms": 486,
+        "vector_hits": 19
+      },
+      "query_id": "PLAIN-593"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 6,
+        "elapsed_ms": 305,
+        "fts_hits": 3,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 6,
+        "rollup_ms": 3,
+        "seeds": 6,
+        "seeds_ms": 301,
+        "vector_hits": 4
+      },
+      "query_id": "PLAIN-603"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 108,
+        "elapsed_ms": 297,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 108,
+        "rollup_ms": 28,
+        "seeds": 108,
+        "seeds_ms": 268,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-613"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 108,
+        "elapsed_ms": 453,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 108,
+        "rollup_ms": 29,
+        "seeds": 108,
+        "seeds_ms": 422,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-623"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 61,
+        "elapsed_ms": 338,
+        "fts_hits": 2,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 61,
+        "rollup_ms": 18,
+        "seeds": 61,
+        "seeds_ms": 319,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-634"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 16,
+        "elapsed_ms": 290,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 16,
+        "rollup_ms": 8,
+        "seeds": 16,
+        "seeds_ms": 281,
+        "vector_hits": 16
+      },
+      "query_id": "PLAIN-645"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 89,
+        "elapsed_ms": 591,
+        "fts_hits": 46,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 89,
+        "rollup_ms": 20,
+        "seeds": 89,
+        "seeds_ms": 570,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-660"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 19,
+        "elapsed_ms": 362,
+        "fts_hits": 4,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 19,
+        "rollup_ms": 4,
+        "seeds": 19,
+        "seeds_ms": 357,
+        "vector_hits": 16
+      },
+      "query_id": "PLAIN-671"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 100,
+        "elapsed_ms": 314,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 100,
+        "rollup_ms": 10,
+        "seeds": 100,
+        "seeds_ms": 302,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-681"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 94,
+        "elapsed_ms": 299,
+        "fts_hits": 60,
+        "graph_ms": 2,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 94,
+        "rollup_ms": 16,
+        "seeds": 94,
+        "seeds_ms": 279,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-691"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 108,
+        "elapsed_ms": 338,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 108,
+        "rollup_ms": 16,
+        "seeds": 108,
+        "seeds_ms": 322,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-701"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 117,
+        "elapsed_ms": 358,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 117,
+        "rollup_ms": 23,
+        "seeds": 117,
+        "seeds_ms": 334,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-711"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 61,
+        "elapsed_ms": 347,
+        "fts_hits": 18,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 61,
+        "rollup_ms": 8,
+        "seeds": 61,
+        "seeds_ms": 338,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-721"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 66,
+        "elapsed_ms": 290,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 66,
+        "rollup_ms": 7,
+        "seeds": 66,
+        "seeds_ms": 282,
+        "vector_hits": 29
+      },
+      "query_id": "PLAIN-731"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 61,
+        "elapsed_ms": 292,
+        "fts_hits": 11,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 61,
+        "rollup_ms": 9,
+        "seeds": 61,
+        "seeds_ms": 283,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-741"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 115,
+        "elapsed_ms": 308,
+        "fts_hits": 60,
+        "graph_ms": 1,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 115,
+        "rollup_ms": 17,
+        "seeds": 115,
+        "seeds_ms": 289,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-751"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 105,
+        "elapsed_ms": 346,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 105,
+        "rollup_ms": 18,
+        "seeds": 105,
+        "seeds_ms": 326,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-761"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 322,
+        "fts_hits": 3,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 12,
+        "seeds": 60,
+        "seeds_ms": 309,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-771"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 61,
+        "elapsed_ms": 317,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 61,
+        "rollup_ms": 6,
+        "seeds": 61,
+        "seeds_ms": 311,
+        "vector_hits": 2
+      },
+      "query_id": "PLAIN-782"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 347,
+        "fts_hits": 3,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 9,
+        "seeds": 60,
+        "seeds_ms": 337,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-792"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 102,
+        "elapsed_ms": 291,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 102,
+        "rollup_ms": 12,
+        "seeds": 102,
+        "seeds_ms": 277,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-806"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 316,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 11,
+        "seeds": 60,
+        "seeds_ms": 303,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-817"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 76,
+        "elapsed_ms": 286,
+        "fts_hits": 29,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 76,
+        "rollup_ms": 11,
+        "seeds": 76,
+        "seeds_ms": 274,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-827"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 61,
+        "elapsed_ms": 312,
+        "fts_hits": 7,
+        "graph_ms": 2,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 61,
+        "rollup_ms": 19,
+        "seeds": 61,
+        "seeds_ms": 290,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-838"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 36,
+        "elapsed_ms": 283,
+        "fts_hits": 7,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 36,
+        "rollup_ms": 5,
+        "seeds": 36,
+        "seeds_ms": 276,
+        "vector_hits": 34
+      },
+      "query_id": "PLAIN-850"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 64,
+        "elapsed_ms": 286,
+        "fts_hits": 13,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 64,
+        "rollup_ms": 7,
+        "seeds": 64,
+        "seeds_ms": 278,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-872"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 31,
+        "elapsed_ms": 263,
+        "fts_hits": 2,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 31,
+        "rollup_ms": 5,
+        "seeds": 31,
+        "seeds_ms": 257,
+        "vector_hits": 31
+      },
+      "query_id": "PLAIN-882"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 61,
+        "elapsed_ms": 351,
+        "fts_hits": 6,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 61,
+        "rollup_ms": 14,
+        "seeds": 61,
+        "seeds_ms": 336,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-892"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 62,
+        "elapsed_ms": 1263,
+        "fts_hits": 4,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 62,
+        "rollup_ms": 13,
+        "seeds": 62,
+        "seeds_ms": 1250,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-902"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 62,
+        "elapsed_ms": 390,
+        "fts_hits": 14,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 62,
+        "rollup_ms": 9,
+        "seeds": 62,
+        "seeds_ms": 380,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-913"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 326,
+        "fts_hits": 1,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 9,
+        "seeds": 60,
+        "seeds_ms": 317,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-924"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 89,
+        "elapsed_ms": 324,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 89,
+        "rollup_ms": 9,
+        "seeds": 89,
+        "seeds_ms": 314,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-934"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 64,
+        "elapsed_ms": 341,
+        "fts_hits": 5,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 64,
+        "rollup_ms": 14,
+        "seeds": 64,
+        "seeds_ms": 327,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-946"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 97,
+        "elapsed_ms": 370,
+        "fts_hits": 60,
+        "graph_ms": 1,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 97,
+        "rollup_ms": 22,
+        "seeds": 97,
+        "seeds_ms": 345,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-956"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 68,
+        "elapsed_ms": 374,
+        "fts_hits": 13,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 68,
+        "rollup_ms": 10,
+        "seeds": 68,
+        "seeds_ms": 362,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-966"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 112,
+        "elapsed_ms": 333,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 112,
+        "rollup_ms": 11,
+        "seeds": 112,
+        "seeds_ms": 321,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-977"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 62,
+        "elapsed_ms": 311,
+        "fts_hits": 3,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 62,
+        "rollup_ms": 3,
+        "seeds": 62,
+        "seeds_ms": 308,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-987"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 0,
+        "elapsed_ms": 486,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 0,
+        "rollup_ms": 0,
+        "seeds": 0,
+        "seeds_ms": 486,
+        "vector_hits": 0
+      },
+      "query_id": "PLAIN-997"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 8,
+        "elapsed_ms": 1117,
+        "fts_hits": 0,
+        "graph_ms": 2,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 8,
+        "rollup_ms": 6,
+        "seeds": 8,
+        "seeds_ms": 1109,
+        "vector_hits": 8
+      },
+      "query_id": "PLAIN-1008"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 66,
+        "elapsed_ms": 297,
+        "fts_hits": 25,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 66,
+        "rollup_ms": 14,
+        "seeds": 66,
+        "seeds_ms": 281,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1018"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 112,
+        "elapsed_ms": 356,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 112,
+        "rollup_ms": 23,
+        "seeds": 112,
+        "seeds_ms": 332,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1028"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 109,
+        "elapsed_ms": 295,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 109,
+        "rollup_ms": 10,
+        "seeds": 109,
+        "seeds_ms": 284,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1039"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 72,
+        "elapsed_ms": 326,
+        "fts_hits": 13,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 72,
+        "rollup_ms": 10,
+        "seeds": 72,
+        "seeds_ms": 315,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1050"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 74,
+        "elapsed_ms": 265,
+        "fts_hits": 14,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 74,
+        "rollup_ms": 10,
+        "seeds": 74,
+        "seeds_ms": 254,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1066"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 487,
+        "fts_hits": 2,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 13,
+        "seeds": 60,
+        "seeds_ms": 474,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1088"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 14,
+        "elapsed_ms": 305,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 14,
+        "rollup_ms": 4,
+        "seeds": 14,
+        "seeds_ms": 300,
+        "vector_hits": 14
+      },
+      "query_id": "PLAIN-1098"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 84,
+        "elapsed_ms": 403,
+        "fts_hits": 42,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 84,
+        "rollup_ms": 14,
+        "seeds": 84,
+        "seeds_ms": 388,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1109"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 109,
+        "elapsed_ms": 320,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 109,
+        "rollup_ms": 23,
+        "seeds": 109,
+        "seeds_ms": 296,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1119"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 339,
+        "fts_hits": 1,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 11,
+        "seeds": 60,
+        "seeds_ms": 327,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1130"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 107,
+        "elapsed_ms": 287,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 107,
+        "rollup_ms": 14,
+        "seeds": 107,
+        "seeds_ms": 272,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1141"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 118,
+        "elapsed_ms": 356,
+        "fts_hits": 60,
+        "graph_ms": 1,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 118,
+        "rollup_ms": 18,
+        "seeds": 118,
+        "seeds_ms": 336,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1151"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 84,
+        "elapsed_ms": 329,
+        "fts_hits": 46,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 84,
+        "rollup_ms": 9,
+        "seeds": 84,
+        "seeds_ms": 319,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1161"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 61,
+        "elapsed_ms": 319,
+        "fts_hits": 1,
+        "graph_ms": 2,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 61,
+        "rollup_ms": 7,
+        "seeds": 61,
+        "seeds_ms": 309,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1172"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 14,
+        "elapsed_ms": 281,
+        "fts_hits": 14,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 14,
+        "rollup_ms": 2,
+        "seeds": 14,
+        "seeds_ms": 279,
+        "vector_hits": 2
+      },
+      "query_id": "PLAIN-1183"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 98,
+        "elapsed_ms": 292,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 98,
+        "rollup_ms": 8,
+        "seeds": 98,
+        "seeds_ms": 283,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1193"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 107,
+        "elapsed_ms": 296,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 107,
+        "rollup_ms": 9,
+        "seeds": 107,
+        "seeds_ms": 286,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1203"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 246,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 5,
+        "seeds": 60,
+        "seeds_ms": 240,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1214"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 67,
+        "elapsed_ms": 330,
+        "fts_hits": 24,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 67,
+        "rollup_ms": 1,
+        "seeds": 67,
+        "seeds_ms": 328,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1225"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 318,
+        "fts_hits": 1,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 15,
+        "seeds": 60,
+        "seeds_ms": 302,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1236"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 115,
+        "elapsed_ms": 339,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 115,
+        "rollup_ms": 12,
+        "seeds": 115,
+        "seeds_ms": 325,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1249"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 107,
+        "elapsed_ms": 286,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 107,
+        "rollup_ms": 18,
+        "seeds": 107,
+        "seeds_ms": 267,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1262"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 76,
+        "elapsed_ms": 301,
+        "fts_hits": 30,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 76,
+        "rollup_ms": 13,
+        "seeds": 76,
+        "seeds_ms": 287,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1275"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 66,
+        "elapsed_ms": 304,
+        "fts_hits": 16,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 66,
+        "rollup_ms": 7,
+        "seeds": 66,
+        "seeds_ms": 296,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1288"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 103,
+        "elapsed_ms": 334,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 103,
+        "rollup_ms": 18,
+        "seeds": 103,
+        "seeds_ms": 315,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1299"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 37,
+        "elapsed_ms": 319,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 37,
+        "rollup_ms": 5,
+        "seeds": 37,
+        "seeds_ms": 313,
+        "vector_hits": 37
+      },
+      "query_id": "PLAIN-1309"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 104,
+        "elapsed_ms": 310,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 104,
+        "rollup_ms": 21,
+        "seeds": 104,
+        "seeds_ms": 288,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1320"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 3,
+        "elapsed_ms": 303,
+        "fts_hits": 3,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 3,
+        "rollup_ms": 3,
+        "seeds": 3,
+        "seeds_ms": 299,
+        "vector_hits": 0
+      },
+      "query_id": "PLAIN-1331"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 98,
+        "elapsed_ms": 266,
+        "fts_hits": 59,
+        "graph_ms": 2,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 98,
+        "rollup_ms": 17,
+        "seeds": 98,
+        "seeds_ms": 246,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1342"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 7,
+        "elapsed_ms": 316,
+        "fts_hits": 2,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 7,
+        "rollup_ms": 3,
+        "seeds": 7,
+        "seeds_ms": 312,
+        "vector_hits": 5
+      },
+      "query_id": "PLAIN-1353"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 5,
+        "elapsed_ms": 277,
+        "fts_hits": 1,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 5,
+        "rollup_ms": 1,
+        "seeds": 5,
+        "seeds_ms": 275,
+        "vector_hits": 4
+      },
+      "query_id": "PLAIN-1363"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 107,
+        "elapsed_ms": 342,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 107,
+        "rollup_ms": 10,
+        "seeds": 107,
+        "seeds_ms": 331,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1374"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 66,
+        "elapsed_ms": 322,
+        "fts_hits": 15,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 66,
+        "rollup_ms": 6,
+        "seeds": 66,
+        "seeds_ms": 314,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1387"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 94,
+        "elapsed_ms": 324,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 94,
+        "rollup_ms": 7,
+        "seeds": 94,
+        "seeds_ms": 316,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1398"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 98,
+        "elapsed_ms": 350,
+        "fts_hits": 47,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 98,
+        "rollup_ms": 16,
+        "seeds": 98,
+        "seeds_ms": 332,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1409"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 24,
+        "elapsed_ms": 321,
+        "fts_hits": 4,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 24,
+        "rollup_ms": 1,
+        "seeds": 24,
+        "seeds_ms": 320,
+        "vector_hits": 20
+      },
+      "query_id": "PLAIN-1419"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 107,
+        "elapsed_ms": 389,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 107,
+        "rollup_ms": 10,
+        "seeds": 107,
+        "seeds_ms": 378,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1429"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 63,
+        "elapsed_ms": 293,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 63,
+        "rollup_ms": 11,
+        "seeds": 63,
+        "seeds_ms": 281,
+        "vector_hits": 18
+      },
+      "query_id": "PLAIN-1441"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 108,
+        "elapsed_ms": 336,
+        "fts_hits": 60,
+        "graph_ms": 1,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 108,
+        "rollup_ms": 17,
+        "seeds": 108,
+        "seeds_ms": 317,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1453"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 100,
+        "elapsed_ms": 338,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 100,
+        "rollup_ms": 12,
+        "seeds": 100,
+        "seeds_ms": 325,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1463"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 285,
+        "fts_hits": 1,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 5,
+        "seeds": 60,
+        "seeds_ms": 278,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1473"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 47,
+        "elapsed_ms": 328,
+        "fts_hits": 1,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 47,
+        "rollup_ms": 4,
+        "seeds": 47,
+        "seeds_ms": 324,
+        "vector_hits": 46
+      },
+      "query_id": "PLAIN-1485"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 362,
+        "fts_hits": 0,
+        "graph_ms": 2,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 6,
+        "seeds": 60,
+        "seeds_ms": 352,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1496"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 63,
+        "elapsed_ms": 268,
+        "fts_hits": 7,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 63,
+        "rollup_ms": 5,
+        "seeds": 63,
+        "seeds_ms": 261,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1506"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 271,
+        "fts_hits": 2,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 2,
+        "seeds": 60,
+        "seeds_ms": 268,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1516"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 102,
+        "elapsed_ms": 379,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 102,
+        "rollup_ms": 8,
+        "seeds": 102,
+        "seeds_ms": 370,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1527"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 100,
+        "elapsed_ms": 287,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 100,
+        "rollup_ms": 14,
+        "seeds": 100,
+        "seeds_ms": 272,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1537"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 114,
+        "elapsed_ms": 283,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 114,
+        "rollup_ms": 5,
+        "seeds": 114,
+        "seeds_ms": 277,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1547"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 85,
+        "elapsed_ms": 283,
+        "fts_hits": 29,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 85,
+        "rollup_ms": 7,
+        "seeds": 85,
+        "seeds_ms": 275,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1557"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 44,
+        "elapsed_ms": 305,
+        "fts_hits": 12,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 44,
+        "rollup_ms": 6,
+        "seeds": 44,
+        "seeds_ms": 299,
+        "vector_hits": 41
+      },
+      "query_id": "PLAIN-1568"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 61,
+        "elapsed_ms": 309,
+        "fts_hits": 2,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 61,
+        "rollup_ms": 6,
+        "seeds": 61,
+        "seeds_ms": 302,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1579"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 103,
+        "elapsed_ms": 318,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 103,
+        "rollup_ms": 20,
+        "seeds": 103,
+        "seeds_ms": 296,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1590"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 55,
+        "elapsed_ms": 267,
+        "fts_hits": 40,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 55,
+        "rollup_ms": 5,
+        "seeds": 55,
+        "seeds_ms": 262,
+        "vector_hits": 22
+      },
+      "query_id": "PLAIN-1601"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 6,
+        "elapsed_ms": 287,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 6,
+        "rollup_ms": 0,
+        "seeds": 6,
+        "seeds_ms": 286,
+        "vector_hits": 6
+      },
+      "query_id": "PLAIN-1611"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 336,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 7,
+        "seeds": 60,
+        "seeds_ms": 328,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1621"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 70,
+        "elapsed_ms": 345,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 70,
+        "rollup_ms": 8,
+        "seeds": 70,
+        "seeds_ms": 336,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1635"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 361,
+        "fts_hits": 1,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 10,
+        "seeds": 60,
+        "seeds_ms": 349,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1645"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 113,
+        "elapsed_ms": 265,
+        "fts_hits": 60,
+        "graph_ms": 2,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 113,
+        "rollup_ms": 15,
+        "seeds": 113,
+        "seeds_ms": 247,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1656"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 95,
+        "elapsed_ms": 287,
+        "fts_hits": 60,
+        "graph_ms": 1,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 95,
+        "rollup_ms": 7,
+        "seeds": 95,
+        "seeds_ms": 278,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1667"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 272,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 5,
+        "seeds": 60,
+        "seeds_ms": 266,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1679"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 116,
+        "elapsed_ms": 316,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 116,
+        "rollup_ms": 10,
+        "seeds": 116,
+        "seeds_ms": 305,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1690"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 81,
+        "elapsed_ms": 333,
+        "fts_hits": 59,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 81,
+        "rollup_ms": 8,
+        "seeds": 81,
+        "seeds_ms": 324,
+        "vector_hits": 29
+      },
+      "query_id": "PLAIN-1700"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 284,
+        "fts_hits": 13,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 5,
+        "seeds": 60,
+        "seeds_ms": 279,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1710"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 69,
+        "elapsed_ms": 325,
+        "fts_hits": 13,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 69,
+        "rollup_ms": 9,
+        "seeds": 69,
+        "seeds_ms": 316,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1721"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 288,
+        "fts_hits": 5,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 5,
+        "seeds": 60,
+        "seeds_ms": 282,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1731"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 95,
+        "elapsed_ms": 283,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 95,
+        "rollup_ms": 11,
+        "seeds": 95,
+        "seeds_ms": 271,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1741"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 5,
+        "elapsed_ms": 384,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 5,
+        "rollup_ms": 0,
+        "seeds": 5,
+        "seeds_ms": 383,
+        "vector_hits": 5
+      },
+      "query_id": "PLAIN-1752"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 106,
+        "elapsed_ms": 277,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 106,
+        "rollup_ms": 11,
+        "seeds": 106,
+        "seeds_ms": 264,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1762"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 358,
+        "fts_hits": 2,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 5,
+        "seeds": 60,
+        "seeds_ms": 352,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1772"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 104,
+        "elapsed_ms": 277,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 104,
+        "rollup_ms": 7,
+        "seeds": 104,
+        "seeds_ms": 269,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1784"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 4,
+        "elapsed_ms": 464,
+        "fts_hits": 2,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 4,
+        "rollup_ms": 0,
+        "seeds": 4,
+        "seeds_ms": 463,
+        "vector_hits": 4
+      },
+      "query_id": "PLAIN-1794"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 97,
+        "elapsed_ms": 366,
+        "fts_hits": 60,
+        "graph_ms": 2,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 97,
+        "rollup_ms": 10,
+        "seeds": 97,
+        "seeds_ms": 353,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1805"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 83,
+        "elapsed_ms": 297,
+        "fts_hits": 27,
+        "graph_ms": 1,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 83,
+        "rollup_ms": 9,
+        "seeds": 83,
+        "seeds_ms": 287,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1817"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 8,
+        "elapsed_ms": 397,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 8,
+        "rollup_ms": 0,
+        "seeds": 8,
+        "seeds_ms": 396,
+        "vector_hits": 8
+      },
+      "query_id": "PLAIN-1827"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 79,
+        "elapsed_ms": 278,
+        "fts_hits": 56,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 79,
+        "rollup_ms": 13,
+        "seeds": 79,
+        "seeds_ms": 264,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1837"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 3,
+        "elapsed_ms": 326,
+        "fts_hits": 3,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 3,
+        "rollup_ms": 0,
+        "seeds": 3,
+        "seeds_ms": 326,
+        "vector_hits": 2
+      },
+      "query_id": "PLAIN-1847"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 101,
+        "elapsed_ms": 287,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 101,
+        "rollup_ms": 11,
+        "seeds": 101,
+        "seeds_ms": 274,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1857"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 305,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 3,
+        "seeds": 60,
+        "seeds_ms": 301,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1867"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 98,
+        "elapsed_ms": 380,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 98,
+        "rollup_ms": 12,
+        "seeds": 98,
+        "seeds_ms": 367,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1877"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 107,
+        "elapsed_ms": 273,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 107,
+        "rollup_ms": 6,
+        "seeds": 107,
+        "seeds_ms": 265,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1887"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 62,
+        "elapsed_ms": 291,
+        "fts_hits": 5,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 62,
+        "rollup_ms": 5,
+        "seeds": 62,
+        "seeds_ms": 286,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1897"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 91,
+        "elapsed_ms": 314,
+        "fts_hits": 56,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 91,
+        "rollup_ms": 8,
+        "seeds": 91,
+        "seeds_ms": 305,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1909"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 89,
+        "elapsed_ms": 447,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 89,
+        "rollup_ms": 9,
+        "seeds": 89,
+        "seeds_ms": 437,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1919"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 108,
+        "elapsed_ms": 285,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 108,
+        "rollup_ms": 14,
+        "seeds": 108,
+        "seeds_ms": 270,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1929"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 65,
+        "elapsed_ms": 278,
+        "fts_hits": 7,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 65,
+        "rollup_ms": 5,
+        "seeds": 65,
+        "seeds_ms": 271,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1940"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 61,
+        "elapsed_ms": 273,
+        "fts_hits": 5,
+        "graph_ms": 2,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 61,
+        "rollup_ms": 8,
+        "seeds": 61,
+        "seeds_ms": 262,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1950"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 43,
+        "elapsed_ms": 1027,
+        "fts_hits": 2,
+        "graph_ms": 1,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 43,
+        "rollup_ms": 5,
+        "seeds": 43,
+        "seeds_ms": 1021,
+        "vector_hits": 41
+      },
+      "query_id": "PLAIN-1962"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 62,
+        "elapsed_ms": 331,
+        "fts_hits": 2,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 62,
+        "rollup_ms": 14,
+        "seeds": 62,
+        "seeds_ms": 316,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1972"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 68,
+        "elapsed_ms": 421,
+        "fts_hits": 24,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 68,
+        "rollup_ms": 10,
+        "seeds": 68,
+        "seeds_ms": 410,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1983"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 85,
+        "elapsed_ms": 319,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 85,
+        "rollup_ms": 12,
+        "seeds": 85,
+        "seeds_ms": 306,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-1995"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 336,
+        "fts_hits": 5,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 8,
+        "seeds": 60,
+        "seeds_ms": 327,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2009"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 17,
+        "elapsed_ms": 315,
+        "fts_hits": 1,
+        "graph_ms": 1,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 17,
+        "rollup_ms": 0,
+        "seeds": 17,
+        "seeds_ms": 312,
+        "vector_hits": 16
+      },
+      "query_id": "PLAIN-2019"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 23,
+        "elapsed_ms": 354,
+        "fts_hits": 2,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 23,
+        "rollup_ms": 4,
+        "seeds": 23,
+        "seeds_ms": 349,
+        "vector_hits": 21
+      },
+      "query_id": "PLAIN-2030"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 67,
+        "elapsed_ms": 311,
+        "fts_hits": 13,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 67,
+        "rollup_ms": 8,
+        "seeds": 67,
+        "seeds_ms": 302,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2040"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 97,
+        "elapsed_ms": 300,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 97,
+        "rollup_ms": 13,
+        "seeds": 97,
+        "seeds_ms": 286,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2051"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 89,
+        "elapsed_ms": 343,
+        "fts_hits": 41,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 89,
+        "rollup_ms": 8,
+        "seeds": 89,
+        "seeds_ms": 334,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2061"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 71,
+        "elapsed_ms": 289,
+        "fts_hits": 21,
+        "graph_ms": 2,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 71,
+        "rollup_ms": 10,
+        "seeds": 71,
+        "seeds_ms": 276,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2071"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 109,
+        "elapsed_ms": 292,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 109,
+        "rollup_ms": 9,
+        "seeds": 109,
+        "seeds_ms": 282,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2081"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 260,
+        "fts_hits": 5,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 1,
+        "seeds": 60,
+        "seeds_ms": 258,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2092"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 103,
+        "elapsed_ms": 291,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 103,
+        "rollup_ms": 7,
+        "seeds": 103,
+        "seeds_ms": 283,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2102"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 111,
+        "elapsed_ms": 313,
+        "fts_hits": 60,
+        "graph_ms": 1,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 111,
+        "rollup_ms": 7,
+        "seeds": 111,
+        "seeds_ms": 304,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2113"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 241,
+        "fts_hits": 2,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 4,
+        "seeds": 60,
+        "seeds_ms": 236,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2124"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 234,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 5,
+        "seeds": 60,
+        "seeds_ms": 229,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2134"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 114,
+        "elapsed_ms": 351,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 114,
+        "rollup_ms": 10,
+        "seeds": 114,
+        "seeds_ms": 340,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2145"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 347,
+        "fts_hits": 3,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 9,
+        "seeds": 60,
+        "seeds_ms": 337,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2156"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 8,
+        "elapsed_ms": 364,
+        "fts_hits": 2,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 8,
+        "rollup_ms": 0,
+        "seeds": 8,
+        "seeds_ms": 364,
+        "vector_hits": 6
+      },
+      "query_id": "PLAIN-2167"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 50,
+        "elapsed_ms": 240,
+        "fts_hits": 10,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 50,
+        "rollup_ms": 8,
+        "seeds": 50,
+        "seeds_ms": 231,
+        "vector_hits": 45
+      },
+      "query_id": "PLAIN-2177"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 61,
+        "elapsed_ms": 283,
+        "fts_hits": 2,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 61,
+        "rollup_ms": 9,
+        "seeds": 61,
+        "seeds_ms": 273,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2187"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 63,
+        "elapsed_ms": 297,
+        "fts_hits": 11,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 63,
+        "rollup_ms": 4,
+        "seeds": 63,
+        "seeds_ms": 293,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2197"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 26,
+        "elapsed_ms": 331,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 26,
+        "rollup_ms": 6,
+        "seeds": 26,
+        "seeds_ms": 324,
+        "vector_hits": 26
+      },
+      "query_id": "PLAIN-2209"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 249,
+        "fts_hits": 1,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 7,
+        "seeds": 60,
+        "seeds_ms": 241,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2220"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 62,
+        "elapsed_ms": 644,
+        "fts_hits": 3,
+        "graph_ms": 2,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 62,
+        "rollup_ms": 12,
+        "seeds": 62,
+        "seeds_ms": 629,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2230"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 64,
+        "elapsed_ms": 334,
+        "fts_hits": 9,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 64,
+        "rollup_ms": 11,
+        "seeds": 64,
+        "seeds_ms": 322,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2240"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 64,
+        "elapsed_ms": 328,
+        "fts_hits": 7,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 64,
+        "rollup_ms": 11,
+        "seeds": 64,
+        "seeds_ms": 315,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2250"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 113,
+        "elapsed_ms": 351,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 113,
+        "rollup_ms": 20,
+        "seeds": 113,
+        "seeds_ms": 330,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2261"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 26,
+        "elapsed_ms": 295,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 26,
+        "rollup_ms": 3,
+        "seeds": 26,
+        "seeds_ms": 291,
+        "vector_hits": 26
+      },
+      "query_id": "PLAIN-2271"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 276,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 12,
+        "seeds": 60,
+        "seeds_ms": 263,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2281"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 110,
+        "elapsed_ms": 310,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 110,
+        "rollup_ms": 16,
+        "seeds": 110,
+        "seeds_ms": 293,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2291"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 119,
+        "elapsed_ms": 354,
+        "fts_hits": 60,
+        "graph_ms": 1,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 119,
+        "rollup_ms": 14,
+        "seeds": 119,
+        "seeds_ms": 338,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2301"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 4,
+        "elapsed_ms": 340,
+        "fts_hits": 3,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 4,
+        "rollup_ms": 1,
+        "seeds": 4,
+        "seeds_ms": 339,
+        "vector_hits": 1
+      },
+      "query_id": "PLAIN-2311"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 110,
+        "elapsed_ms": 289,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 110,
+        "rollup_ms": 8,
+        "seeds": 110,
+        "seeds_ms": 281,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2321"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 100,
+        "elapsed_ms": 336,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 100,
+        "rollup_ms": 18,
+        "seeds": 100,
+        "seeds_ms": 317,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2332"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 95,
+        "elapsed_ms": 308,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 95,
+        "rollup_ms": 15,
+        "seeds": 95,
+        "seeds_ms": 292,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2343"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 98,
+        "elapsed_ms": 313,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 98,
+        "rollup_ms": 16,
+        "seeds": 98,
+        "seeds_ms": 297,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2354"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 97,
+        "elapsed_ms": 357,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 97,
+        "rollup_ms": 14,
+        "seeds": 97,
+        "seeds_ms": 343,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2364"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 34,
+        "elapsed_ms": 339,
+        "fts_hits": 0,
+        "graph_ms": 1,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 34,
+        "rollup_ms": 11,
+        "seeds": 34,
+        "seeds_ms": 326,
+        "vector_hits": 34
+      },
+      "query_id": "PLAIN-2375"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 62,
+        "elapsed_ms": 399,
+        "fts_hits": 3,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 62,
+        "rollup_ms": 10,
+        "seeds": 62,
+        "seeds_ms": 387,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2386"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 16,
+        "elapsed_ms": 341,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 16,
+        "rollup_ms": 4,
+        "seeds": 16,
+        "seeds_ms": 336,
+        "vector_hits": 16
+      },
+      "query_id": "PLAIN-2396"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 60,
+        "elapsed_ms": 337,
+        "fts_hits": 0,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 60,
+        "rollup_ms": 8,
+        "seeds": 60,
+        "seeds_ms": 328,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2408"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 110,
+        "elapsed_ms": 352,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 110,
+        "rollup_ms": 13,
+        "seeds": 110,
+        "seeds_ms": 338,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2430"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 109,
+        "elapsed_ms": 364,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 109,
+        "rollup_ms": 13,
+        "seeds": 109,
+        "seeds_ms": 350,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2440"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 93,
+        "elapsed_ms": 1136,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 93,
+        "rollup_ms": 40,
+        "seeds": 93,
+        "seeds_ms": 1095,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2450"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 102,
+        "elapsed_ms": 321,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 102,
+        "rollup_ms": 17,
+        "seeds": 102,
+        "seeds_ms": 303,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2460"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 94,
+        "elapsed_ms": 2989,
+        "fts_hits": 60,
+        "graph_ms": 5,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 94,
+        "rollup_ms": 39,
+        "seeds": 94,
+        "seeds_ms": 2944,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2470"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 109,
+        "elapsed_ms": 329,
+        "fts_hits": 60,
+        "graph_ms": 1,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 109,
+        "rollup_ms": 33,
+        "seeds": 109,
+        "seeds_ms": 294,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2480"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 112,
+        "elapsed_ms": 324,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 112,
+        "rollup_ms": 17,
+        "seeds": 112,
+        "seeds_ms": 305,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2490"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 98,
+        "elapsed_ms": 295,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 98,
+        "rollup_ms": 29,
+        "seeds": 98,
+        "seeds_ms": 265,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2500"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 85,
+        "elapsed_ms": 264,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 85,
+        "rollup_ms": 17,
+        "seeds": 85,
+        "seeds_ms": 246,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2510"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 97,
+        "elapsed_ms": 270,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 97,
+        "rollup_ms": 21,
+        "seeds": 97,
+        "seeds_ms": 248,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2520"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 98,
+        "elapsed_ms": 316,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 98,
+        "rollup_ms": 16,
+        "seeds": 98,
+        "seeds_ms": 299,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2530"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 103,
+        "elapsed_ms": 397,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 103,
+        "rollup_ms": 9,
+        "seeds": 103,
+        "seeds_ms": 387,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2540"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 102,
+        "elapsed_ms": 322,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 102,
+        "rollup_ms": 21,
+        "seeds": 102,
+        "seeds_ms": 300,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2550"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 88,
+        "elapsed_ms": 336,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 88,
+        "rollup_ms": 8,
+        "seeds": 88,
+        "seeds_ms": 326,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2560"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 110,
+        "elapsed_ms": 298,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 110,
+        "rollup_ms": 19,
+        "seeds": 110,
+        "seeds_ms": 278,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2570"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 108,
+        "elapsed_ms": 313,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 108,
+        "rollup_ms": 10,
+        "seeds": 108,
+        "seeds_ms": 301,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2580"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 86,
+        "elapsed_ms": 299,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 86,
+        "rollup_ms": 10,
+        "seeds": 86,
+        "seeds_ms": 288,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2590"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 100,
+        "elapsed_ms": 341,
+        "fts_hits": 60,
+        "graph_ms": 3,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 100,
+        "rollup_ms": 13,
+        "seeds": 100,
+        "seeds_ms": 324,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2600"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 102,
+        "elapsed_ms": 1368,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 102,
+        "rollup_ms": 25,
+        "seeds": 102,
+        "seeds_ms": 1341,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2610"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 101,
+        "elapsed_ms": 385,
+        "fts_hits": 60,
+        "graph_ms": 1,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 101,
+        "rollup_ms": 24,
+        "seeds": 101,
+        "seeds_ms": 358,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2620"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 100,
+        "elapsed_ms": 344,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 100,
+        "rollup_ms": 20,
+        "seeds": 100,
+        "seeds_ms": 323,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2630"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 94,
+        "elapsed_ms": 367,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 94,
+        "rollup_ms": 11,
+        "seeds": 94,
+        "seeds_ms": 355,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2640"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 72,
+        "elapsed_ms": 473,
+        "fts_hits": 60,
+        "graph_ms": 4,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 72,
+        "rollup_ms": 16,
+        "seeds": 72,
+        "seeds_ms": 452,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2650"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 97,
+        "elapsed_ms": 314,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 97,
+        "rollup_ms": 34,
+        "seeds": 97,
+        "seeds_ms": 279,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2660"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 106,
+        "elapsed_ms": 443,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 106,
+        "rollup_ms": 40,
+        "seeds": 106,
+        "seeds_ms": 401,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2670"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 107,
+        "elapsed_ms": 355,
+        "fts_hits": 60,
+        "graph_ms": 3,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 107,
+        "rollup_ms": 28,
+        "seeds": 107,
+        "seeds_ms": 323,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2680"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 106,
+        "elapsed_ms": 368,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 106,
+        "rollup_ms": 30,
+        "seeds": 106,
+        "seeds_ms": 337,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2690"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 105,
+        "elapsed_ms": 355,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 105,
+        "rollup_ms": 31,
+        "seeds": 105,
+        "seeds_ms": 323,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2700"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 101,
+        "elapsed_ms": 300,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 101,
+        "rollup_ms": 15,
+        "seeds": 101,
+        "seeds_ms": 284,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2710"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 100,
+        "elapsed_ms": 351,
+        "fts_hits": 46,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 100,
+        "rollup_ms": 17,
+        "seeds": 100,
+        "seeds_ms": 333,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2720"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 98,
+        "elapsed_ms": 381,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 98,
+        "rollup_ms": 15,
+        "seeds": 98,
+        "seeds_ms": 364,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2730"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 108,
+        "elapsed_ms": 282,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 108,
+        "rollup_ms": 14,
+        "seeds": 108,
+        "seeds_ms": 267,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2740"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 106,
+        "elapsed_ms": 350,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 106,
+        "rollup_ms": 12,
+        "seeds": 106,
+        "seeds_ms": 337,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2750"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 110,
+        "elapsed_ms": 309,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 110,
+        "rollup_ms": 3,
+        "seeds": 110,
+        "seeds_ms": 305,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2760"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 103,
+        "elapsed_ms": 259,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 103,
+        "rollup_ms": 7,
+        "seeds": 103,
+        "seeds_ms": 251,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2770"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 97,
+        "elapsed_ms": 396,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 97,
+        "rollup_ms": 4,
+        "seeds": 97,
+        "seeds_ms": 391,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2780"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 104,
+        "elapsed_ms": 286,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 104,
+        "rollup_ms": 3,
+        "seeds": 104,
+        "seeds_ms": 281,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2790"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 100,
+        "elapsed_ms": 272,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 100,
+        "rollup_ms": 7,
+        "seeds": 100,
+        "seeds_ms": 264,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2800"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 102,
+        "elapsed_ms": 371,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 102,
+        "rollup_ms": 11,
+        "seeds": 102,
+        "seeds_ms": 359,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2810"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 110,
+        "elapsed_ms": 312,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 110,
+        "rollup_ms": 7,
+        "seeds": 110,
+        "seeds_ms": 304,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2820"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 73,
+        "elapsed_ms": 294,
+        "fts_hits": 28,
+        "graph_ms": 3,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 73,
+        "rollup_ms": 8,
+        "seeds": 73,
+        "seeds_ms": 282,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2830"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 114,
+        "elapsed_ms": 352,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 114,
+        "rollup_ms": 17,
+        "seeds": 114,
+        "seeds_ms": 333,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2840"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 110,
+        "elapsed_ms": 307,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 110,
+        "rollup_ms": 25,
+        "seeds": 110,
+        "seeds_ms": 281,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2850"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 98,
+        "elapsed_ms": 551,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 98,
+        "rollup_ms": 15,
+        "seeds": 98,
+        "seeds_ms": 535,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2860"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 67,
+        "elapsed_ms": 330,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 67,
+        "rollup_ms": 19,
+        "seeds": 67,
+        "seeds_ms": 311,
+        "vector_hits": 13
+      },
+      "query_id": "PLAIN-2870"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 70,
+        "elapsed_ms": 348,
+        "fts_hits": 11,
+        "graph_ms": 3,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 70,
+        "rollup_ms": 19,
+        "seeds": 70,
+        "seeds_ms": 325,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2880"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 66,
+        "elapsed_ms": 390,
+        "fts_hits": 19,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 66,
+        "rollup_ms": 22,
+        "seeds": 66,
+        "seeds_ms": 368,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2890"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 102,
+        "elapsed_ms": 354,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 102,
+        "rollup_ms": 22,
+        "seeds": 102,
+        "seeds_ms": 330,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2900"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 113,
+        "elapsed_ms": 328,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 113,
+        "rollup_ms": 11,
+        "seeds": 113,
+        "seeds_ms": 316,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2910"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 103,
+        "elapsed_ms": 352,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 103,
+        "rollup_ms": 10,
+        "seeds": 103,
+        "seeds_ms": 341,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2920"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 93,
+        "elapsed_ms": 340,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 93,
+        "rollup_ms": 10,
+        "seeds": 93,
+        "seeds_ms": 329,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2930"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 102,
+        "elapsed_ms": 331,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 102,
+        "rollup_ms": 7,
+        "seeds": 102,
+        "seeds_ms": 322,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2940"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 86,
+        "elapsed_ms": 287,
+        "fts_hits": 32,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 86,
+        "rollup_ms": 7,
+        "seeds": 86,
+        "seeds_ms": 279,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2950"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 109,
+        "elapsed_ms": 266,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 109,
+        "rollup_ms": 8,
+        "seeds": 109,
+        "seeds_ms": 257,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2960"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 118,
+        "elapsed_ms": 291,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 118,
+        "rollup_ms": 7,
+        "seeds": 118,
+        "seeds_ms": 282,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2970"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 80,
+        "elapsed_ms": 309,
+        "fts_hits": 25,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 80,
+        "rollup_ms": 3,
+        "seeds": 80,
+        "seeds_ms": 306,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2981"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 109,
+        "elapsed_ms": 320,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 109,
+        "rollup_ms": 3,
+        "seeds": 109,
+        "seeds_ms": 316,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-2991"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 112,
+        "elapsed_ms": 269,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 112,
+        "rollup_ms": 3,
+        "seeds": 112,
+        "seeds_ms": 266,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3001"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 116,
+        "elapsed_ms": 355,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 116,
+        "rollup_ms": 3,
+        "seeds": 116,
+        "seeds_ms": 352,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3014"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 109,
+        "elapsed_ms": 312,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 109,
+        "rollup_ms": 5,
+        "seeds": 109,
+        "seeds_ms": 306,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3026"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 8,
+        "elapsed_ms": 410,
+        "fts_hits": 6,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 8,
+        "rollup_ms": 0,
+        "seeds": 8,
+        "seeds_ms": 409,
+        "vector_hits": 2
+      },
+      "query_id": "PLAIN-3037"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 117,
+        "elapsed_ms": 360,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 117,
+        "rollup_ms": 4,
+        "seeds": 117,
+        "seeds_ms": 355,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3053"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 108,
+        "elapsed_ms": 326,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 108,
+        "rollup_ms": 3,
+        "seeds": 108,
+        "seeds_ms": 321,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3063"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 112,
+        "elapsed_ms": 292,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 112,
+        "rollup_ms": 2,
+        "seeds": 112,
+        "seeds_ms": 289,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3074"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 96,
+        "elapsed_ms": 359,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 96,
+        "rollup_ms": 0,
+        "seeds": 96,
+        "seeds_ms": 358,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3085"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 97,
+        "elapsed_ms": 232,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 97,
+        "rollup_ms": 0,
+        "seeds": 97,
+        "seeds_ms": 230,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3097"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 108,
+        "elapsed_ms": 386,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 108,
+        "rollup_ms": 1,
+        "seeds": 108,
+        "seeds_ms": 383,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3116"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 117,
+        "elapsed_ms": 309,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 117,
+        "rollup_ms": 4,
+        "seeds": 117,
+        "seeds_ms": 304,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3131"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 104,
+        "elapsed_ms": 350,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 104,
+        "rollup_ms": 2,
+        "seeds": 104,
+        "seeds_ms": 347,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3141"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 108,
+        "elapsed_ms": 259,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 108,
+        "rollup_ms": 0,
+        "seeds": 108,
+        "seeds_ms": 258,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3151"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 82,
+        "elapsed_ms": 333,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 82,
+        "rollup_ms": 0,
+        "seeds": 82,
+        "seeds_ms": 332,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3161"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 109,
+        "elapsed_ms": 304,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 109,
+        "rollup_ms": 1,
+        "seeds": 109,
+        "seeds_ms": 302,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3171"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 108,
+        "elapsed_ms": 338,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 108,
+        "rollup_ms": 3,
+        "seeds": 108,
+        "seeds_ms": 335,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3181"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 102,
+        "elapsed_ms": 345,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 102,
+        "rollup_ms": 4,
+        "seeds": 102,
+        "seeds_ms": 341,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3191"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 100,
+        "elapsed_ms": 340,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 100,
+        "rollup_ms": 0,
+        "seeds": 100,
+        "seeds_ms": 339,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3201"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 61,
+        "elapsed_ms": 261,
+        "fts_hits": 2,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 61,
+        "rollup_ms": 2,
+        "seeds": 61,
+        "seeds_ms": 259,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3211"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 91,
+        "elapsed_ms": 399,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 91,
+        "rollup_ms": 1,
+        "seeds": 91,
+        "seeds_ms": 397,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3221"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 97,
+        "elapsed_ms": 369,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 97,
+        "rollup_ms": 0,
+        "seeds": 97,
+        "seeds_ms": 367,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3231"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 78,
+        "elapsed_ms": 301,
+        "fts_hits": 19,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 78,
+        "rollup_ms": 0,
+        "seeds": 78,
+        "seeds_ms": 300,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3241"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 80,
+        "elapsed_ms": 266,
+        "fts_hits": 25,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 80,
+        "rollup_ms": 13,
+        "seeds": 80,
+        "seeds_ms": 251,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3251"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 89,
+        "elapsed_ms": 286,
+        "fts_hits": 32,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 89,
+        "rollup_ms": 1,
+        "seeds": 89,
+        "seeds_ms": 285,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3261"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 105,
+        "elapsed_ms": 314,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 105,
+        "rollup_ms": 0,
+        "seeds": 105,
+        "seeds_ms": 313,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3271"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 114,
+        "elapsed_ms": 404,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 114,
+        "rollup_ms": 0,
+        "seeds": 114,
+        "seeds_ms": 403,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3281"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 107,
+        "elapsed_ms": 316,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 107,
+        "rollup_ms": 0,
+        "seeds": 107,
+        "seeds_ms": 314,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3292"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 77,
+        "elapsed_ms": 376,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 77,
+        "rollup_ms": 0,
+        "seeds": 77,
+        "seeds_ms": 375,
+        "vector_hits": 23
+      },
+      "query_id": "PLAIN-3302"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 101,
+        "elapsed_ms": 1177,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 101,
+        "rollup_ms": 0,
+        "seeds": 101,
+        "seeds_ms": 1176,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3312"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 114,
+        "elapsed_ms": 281,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 114,
+        "rollup_ms": 0,
+        "seeds": 114,
+        "seeds_ms": 280,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3322"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 97,
+        "elapsed_ms": 279,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 97,
+        "rollup_ms": 0,
+        "seeds": 97,
+        "seeds_ms": 278,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3332"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 105,
+        "elapsed_ms": 770,
+        "fts_hits": 60,
+        "graph_ms": 2,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 105,
+        "rollup_ms": 51,
+        "seeds": 105,
+        "seeds_ms": 716,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3342"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 111,
+        "elapsed_ms": 360,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 111,
+        "rollup_ms": 23,
+        "seeds": 111,
+        "seeds_ms": 335,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3352"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 33,
+        "elapsed_ms": 305,
+        "fts_hits": 28,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 33,
+        "rollup_ms": 7,
+        "seeds": 33,
+        "seeds_ms": 298,
+        "vector_hits": 9
+      },
+      "query_id": "PLAIN-3362"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 64,
+        "elapsed_ms": 294,
+        "fts_hits": 16,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 64,
+        "rollup_ms": 14,
+        "seeds": 64,
+        "seeds_ms": 279,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3372"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 81,
+        "elapsed_ms": 306,
+        "fts_hits": 35,
+        "graph_ms": 1,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 81,
+        "rollup_ms": 16,
+        "seeds": 81,
+        "seeds_ms": 287,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3382"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 96,
+        "elapsed_ms": 444,
+        "fts_hits": 43,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 96,
+        "rollup_ms": 8,
+        "seeds": 96,
+        "seeds_ms": 435,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3392"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 99,
+        "elapsed_ms": 390,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 99,
+        "rollup_ms": 9,
+        "seeds": 99,
+        "seeds_ms": 379,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3402"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 102,
+        "elapsed_ms": 301,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 102,
+        "rollup_ms": 6,
+        "seeds": 102,
+        "seeds_ms": 294,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3412"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 92,
+        "elapsed_ms": 317,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 92,
+        "rollup_ms": 12,
+        "seeds": 92,
+        "seeds_ms": 304,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3422"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 102,
+        "elapsed_ms": 267,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 102,
+        "rollup_ms": 8,
+        "seeds": 102,
+        "seeds_ms": 258,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3432"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 100,
+        "elapsed_ms": 318,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 100,
+        "rollup_ms": 4,
+        "seeds": 100,
+        "seeds_ms": 313,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3442"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 92,
+        "elapsed_ms": 324,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 92,
+        "rollup_ms": 10,
+        "seeds": 92,
+        "seeds_ms": 313,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3452"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 89,
+        "elapsed_ms": 254,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 89,
+        "rollup_ms": 6,
+        "seeds": 89,
+        "seeds_ms": 247,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3462"
+    },
+    {
+      "folder_ranks": [],
+      "meta": {
+        "candidate_sources": 114,
+        "elapsed_ms": 267,
+        "fts_hits": 60,
+        "graph_ms": 0,
+        "lexical_hits": 0,
+        "limit": 10,
+        "relations": 114,
+        "rollup_ms": 4,
+        "seeds": 114,
+        "seeds_ms": 262,
+        "vector_hits": 60
+      },
+      "query_id": "PLAIN-3472"
+    }
+  ],
+  "total_results": 3133
+}

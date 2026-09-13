@@ -1,0 +1,12 @@
+data dir       benchmarks/fixtures/enterprise-rag-bench/nodes/incremental-documents-20260913
+embedding      none (0 dims, vectors: all)
+sources        25275 (25275 indexed)
+fragments      70042
+relations      44767
+keyed          0
+search rows    44767
+vector index   not present (run `inseam repair`)
+store size     288.4 MB on disk
+content size   122.4 MB across cataloged sources
+caches         0 embeddings, 0 transform outputs
+remote sources 0 (learned from other nodes' logs, counted in sources)

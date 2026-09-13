@@ -1,5 +1,6 @@
 """Tests for the plumbing every benchmark runner shares."""
 
+import argparse
 import json
 import tempfile
 import time
@@ -52,6 +53,28 @@ class HarnessTests(unittest.TestCase):
         )
 
         self.assertEqual(arguments[-4:], ["statins and cancer", "--limit", "10", "--json"])
+
+    def test_observability_preserves_folder_ranks_and_phase_percentiles(self) -> None:
+        queries = [{"query_id": "q1", "query_meta": {"seeds_ms": 7}, "results": [
+            {"envelope": {"content_type": "inode/directory"}},
+            {"envelope": {"content_type": "text/plain"}},
+        ]}]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            harness.write_retrieval_observability(root, queries)
+            result = json.loads((root / "retrieval-observability.json").read_text())
+        self.assertEqual(result["folder_results"], 1)
+        self.assertEqual(result["queries"][0]["folder_ranks"], [1])
+        self.assertEqual(result["distributions"]["seeds_ms"], {"median": 7, "p95": 7, "max": 7})
+
+    def test_probability_rejects_invalid_values_at_both_boundaries(self) -> None:
+        for value in (-1, 1, float("nan"), float("inf")):
+            with self.subTest(value=value):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    harness.probability_argument(str(value))
+                with self.assertRaises(harness.BenchmarkError):
+                    harness.manifest_option_probability({"damping": value}, "damping")
+        self.assertEqual(harness.probability_argument("0"), 0.0)
 
     def test_parses_index_completion_numbers(self) -> None:
         output = (
@@ -145,21 +168,7 @@ class HarnessTests(unittest.TestCase):
         with self.assertRaises(harness.BenchmarkError):
             harness.parse_index_summary(output, 4_000)
 
-    def test_formats_index_progress_from_status(self) -> None:
-        status = (
-            "sources        12800 (12672 indexed)\n"
-            "search rows    12672\n"
-        )
-
-        progress = harness.format_index_progress(status, 511_962, 65.0)
-
-        self.assertEqual(
-            progress,
-            "1m 05s elapsed · 12,672 / 511,962 indexed · "
-            "12,800 cataloged · 12,672 search rows",
-        )
-
-    def test_index_uses_status_probe_every_thirty_seconds(self) -> None:
+    def test_index_heartbeats_do_not_boot_a_competing_store_writer(self) -> None:
         index_output = (
             "1 sources seen: 1 indexed, 0 unchanged, 0 catalog-only, "
             "0 past cutoff, 0 ignored\n"
@@ -183,17 +192,8 @@ class HarnessTests(unittest.TestCase):
             run.call_args.kwargs["progress_interval_seconds"],
             harness.INDEX_PROGRESS_INTERVAL_SECONDS,
         )
-        self.assertIsNotNone(run.call_args.kwargs["progress_probe"])
+        self.assertIsNone(run.call_args.kwargs["progress_probe"])
         self.assertEqual(record["summary"]["sources_seen"], 1)
-
-    def test_failed_index_status_probe_keeps_heartbeat_alive(self) -> None:
-        failure = harness.CommandResult(1, 0.1, "", "store busy")
-        with mock.patch.object(harness, "run_capture", return_value=failure):
-            progress = harness.read_index_progress(
-                Path("data"), Path("composition"), 511_962, 30.0
-            )
-
-        self.assertEqual(progress, "30s elapsed · status unavailable")
 
     def test_run_id_carries_the_start_time_and_revision(self) -> None:
         with mock.patch.object(harness, "git_value", return_value="0123456789ab"):

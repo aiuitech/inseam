@@ -290,3 +290,77 @@ async fn boost_never_gates_relationless_matches() {
     assert_eq!(results.first().map(|r| r.source.id), Some(sid));
     assert!(results[0].score > 0.0);
 }
+
+#[tokio::test]
+async fn lower_lexical_weight_preserves_name_discovery_and_favors_prose() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = open_store(dir.path()).await;
+    let embedder = hashed(DIMS);
+    let (prose, _) = seed_source(&store, embedder.as_ref(), "prose.md", "espresso").await;
+    let (names, _) = seed_source(&store, embedder.as_ref(), "names.md", "unrelated").await;
+    let fragment = store
+        .insert_fragment(
+            names,
+            &NewFragment {
+                mimetype: Mimetype::keywords(),
+                text: Some("espresso descaling".to_string()),
+                extent: None,
+                content_address: None,
+            },
+        )
+        .await
+        .expect("name fragment");
+    store
+        .add_search_rows(&[SearchRow {
+            fragment,
+            source: Some(names),
+            text: "espresso descaling".to_string(),
+            vector: None,
+            role: SearchRole::Lexical,
+        }])
+        .await
+        .expect("lexical row");
+    store.rebuild_fts().await.expect("fts");
+    let mut ratios = Vec::new();
+    for lexical_weight in [1.0, 0.1] {
+        let finder = FinderService::new(
+            Arc::clone(&store),
+            Arc::clone(&embedder),
+            FinderConfig {
+                lexical_weight,
+                seeds: inseam_plugins::finder::SeedLists::FullText,
+                ..FinderConfig::default()
+            },
+        );
+        let result = finder.query("espresso", 5).await.expect("queries");
+        assert_eq!(result.trace.lexical_hits, 1);
+        let prose_score = result
+            .ranked
+            .iter()
+            .find(|r| r.source.id == prose)
+            .expect("prose remains")
+            .score;
+        let name_score = result
+            .ranked
+            .iter()
+            .find(|r| r.source.id == names)
+            .expect("names remain")
+            .score;
+        ratios.push(name_score / prose_score);
+        let name_only = finder.query("descaling", 5).await.expect("name-only query");
+        assert_eq!(name_only.ranked[0].source.id, names);
+    }
+    assert!(ratios[1] < ratios[0]);
+}
+
+#[test]
+fn lexical_weight_rejects_disabling_or_invalid_weights() {
+    for lexical_weight in [0.0, -0.1, 1.1, f64::NAN, f64::INFINITY] {
+        let config = FinderConfig {
+            lexical_weight,
+            ..FinderConfig::default()
+        };
+        assert!(config.validate_query_bounds().is_err());
+    }
+    assert!(FinderConfig::default().validate_query_bounds().is_ok());
+}

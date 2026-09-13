@@ -54,12 +54,17 @@ from harness import (
     manifest_options_object,
     new_run_id,
     parse_query_results,
+    probability_argument,
+    manifest_option_probability,
+    manifest_option_weight,
+    weight_argument,
     prepare_search_index,
     print_reused_index,
     query_arguments,
     read_json_lines,
     read_json_object,
     record_run_outcome,
+    record_final_index_footprint,
     require_api_key,
     require_program,
     require_success,
@@ -74,6 +79,7 @@ from harness import (
     validate_run_id,
     write_json,
     write_json_lines,
+    write_retrieval_observability,
 )
 import harness
 
@@ -162,6 +168,11 @@ class RunOptions:
     structural: str = "off"
     # The finder's seed lists: both fused, or one alone as a diagnostic.
     finder_seeds: str = "both"
+    finder_seed_k: int = 60
+    finder_rrf_k: int = 60
+    finder_damping: float = 0.5
+    finder_lexical_weight: float = 1.0
+    directory_summary_target_chars: int = 0
     # Vector hits farther than this cosine distance are dropped before
     # fusion; 1.0 keeps every nearest-k hit.
     finder_max_vector_distance: float = 0.75
@@ -373,7 +384,7 @@ def composition_text(options: RunOptions) -> str:
     return f'''[[entry]]
 id = "fs"
 [entry.config]
-host_id = "beir-{DATASET.name}"
+machine_id = "beir-{DATASET.name}"
 skip_hidden = true
 gitignore = false
 ignore = []
@@ -402,7 +413,15 @@ disabled = {"false" if options.structural == "markdown" else "true"}
 id = "finder"
 [entry.config]
 seeds = "{options.finder_seeds}"
+seed_k = {options.finder_seed_k}
+rrf_k = {options.finder_rrf_k}
+damping = {options.finder_damping}
+lexical_weight = {options.finder_lexical_weight}
 max_vector_distance = {options.finder_max_vector_distance}
+
+[[entry]]
+id = "directory"
+disabled = false
 
 [[entry]]
 id = "chunker"
@@ -412,12 +431,17 @@ disabled = true
 id = "summarizer"
 [entry.config]
 target_chars = {options.summary_target_chars}
+{f"directory_target_chars = {options.directory_summary_target_chars}" if options.directory_summary_target_chars else ""}
 keywords_max = {options.keywords_max}
 llm_call_budget = {options.llm_call_budget}
 llm_lane = "{options.summarization_lane}"
 
 [[entry]]
 id = "entities"
+disabled = true
+
+[[entry]]
+id = "hints"
 disabled = true
 
 [[entry]]
@@ -477,7 +501,9 @@ def retrieved_document_ids(
     results: list[dict[str, Any]], document_ids: set[str], suffix: str = DOCUMENT_FILE_SUFFIX
 ) -> list[str]:
     ordered = [
-        document_id_from_address(str(result["address"]), document_ids, suffix)
+        str(result["address"])
+        if result.get("envelope", {}).get("content_type") == "inode/directory"
+        else document_id_from_address(str(result["address"]), document_ids, suffix)
         for result in results
     ]
     if len(set(ordered)) != len(ordered):
@@ -508,6 +534,7 @@ def query_command(
         "query_id": query_id,
         "query": query_text,
         "retrieval_duration_seconds": round(result.duration_seconds, 6),
+        "query_meta": json.loads(result.stdout).get("meta", {}),
         "results": results,
         "retrieved_document_ids": retrieved_document_ids(
             results, document_ids, CORPUS_SUFFIXES[options.corpus]
@@ -807,6 +834,8 @@ def execute_benchmark(
         )
         write_json_lines(run_dir / "query-scores.jsonl", per_query, MAX_QUERIES)
         write_trec_run(run_dir, queries)
+        record_final_index_footprint(manifest, data_dir)
+        write_retrieval_observability(run_dir, queries)
         complete_run(manifest, {"beir": aggregate})
         print_scores(aggregate)
     except BaseException as caught:
@@ -874,7 +903,10 @@ def load_resumable_run(
     composition = run_dir / "composition.toml"
     if not composition.is_file():
         raise BenchmarkError(f"run `{run_id}` has no composition.toml")
-    if composition.read_text(encoding="utf-8") != composition_text(options):
+    expected_composition = composition_text(options)
+    if "finder_lexical_weight" not in manifest["options"]:
+        expected_composition = expected_composition.replace("lexical_weight = 1.0\n", "")
+    if composition.read_text(encoding="utf-8") != expected_composition:
         raise BenchmarkError(f"run `{run_id}` composition does not match its options")
     data_dir = validate_index_data_path(run_id, manifest, FIXTURE_ROOT)
     # No index record means the index attempt never completed: the resumed
@@ -888,7 +920,9 @@ def load_resumable_run(
 
 
 def options_from_manifest(manifest: dict[str, Any]) -> RunOptions:
-    value = manifest_options_object(manifest, set(RunOptions.__annotations__))
+    value = manifest_options_object(
+        manifest, set(RunOptions.__annotations__), defaults={"finder_lexical_weight": 1.0}
+    )
     return RunOptions(
         query_count=manifest_option_integer(value, "query_count", MAX_QUERIES),
         results_per_query=manifest_option_integer(
@@ -897,7 +931,7 @@ def options_from_manifest(manifest: dict[str, Any]) -> RunOptions:
         index_concurrency=manifest_option_integer(
             value, "index_concurrency", MAX_INDEX_CONCURRENCY
         ),
-        llm_call_budget=manifest_option_integer(
+        llm_call_budget=manifest_option_count(
             value, "llm_call_budget", MAX_LLM_CALL_BUDGET
         ),
         summary_target_chars=manifest_option_integer(
@@ -910,6 +944,11 @@ def options_from_manifest(manifest: dict[str, Any]) -> RunOptions:
         ),
         corpus=manifest_option_choice(value, "corpus", frozenset(CORPUS_DIRECTORIES)),
         structural=manifest_option_choice(value, "structural", STRUCTURAL_CHOICES),
+        directory_summary_target_chars=manifest_option_count(value, "directory_summary_target_chars", MAX_SUMMARY_TARGET_CHARS),
+        finder_lexical_weight=manifest_option_weight(value, "finder_lexical_weight"),
+        finder_damping=manifest_option_probability(value, "finder_damping"),
+        finder_seed_k=manifest_option_integer(value, "finder_seed_k", 1000),
+        finder_rrf_k=manifest_option_integer(value, "finder_rrf_k", 1000),
         finder_seeds=manifest_option_choice(value, "finder_seeds", FINDER_SEEDS),
         finder_max_vector_distance=manifest_option_distance(value, "finder_max_vector_distance"),
     )
@@ -971,7 +1010,7 @@ def parse_arguments() -> argparse.Namespace:
     )
     run_parser.add_argument(
         "--llm-call-budget",
-        type=bounded_argument("llm-call-budget", MAX_LLM_CALL_BUDGET),
+        type=count_argument("llm-call-budget", MAX_LLM_CALL_BUDGET),
         default=500,
     )
     run_parser.add_argument(
@@ -1022,6 +1061,11 @@ def parse_arguments() -> argparse.Namespace:
         default=200,
         help="summarizer target length; text within it is its own summary, no model call",
     )
+    run_parser.add_argument("--finder-seed-k", type=bounded_argument("finder-seed-k", 1000), default=60)
+    run_parser.add_argument("--finder-rrf-k", type=bounded_argument("finder-rrf-k", 1000), default=60)
+    run_parser.add_argument("--finder-damping", type=probability_argument, default=0.5)
+    run_parser.add_argument("--directory-summary-target-chars", type=count_argument("directory-summary-target-chars", MAX_SUMMARY_TARGET_CHARS), default=0)
+    run_parser.add_argument("--finder-lexical-weight", type=weight_argument, default=1.0)
     resume_parser = subparsers.add_parser(
         "resume",
         help="reuse a completed index and continue a failed or interrupted run",
@@ -1052,6 +1096,11 @@ def main() -> int:
             corpus=arguments.corpus,
             structural=arguments.structural,
             finder_seeds=arguments.finder_seeds,
+            finder_seed_k=arguments.finder_seed_k,
+            finder_rrf_k=arguments.finder_rrf_k,
+            finder_damping=arguments.finder_damping,
+            finder_lexical_weight=arguments.finder_lexical_weight,
+            directory_summary_target_chars=arguments.directory_summary_target_chars,
             finder_max_vector_distance=arguments.finder_max_vector_distance,
         )
         return run_main(lambda: run_benchmark(options))

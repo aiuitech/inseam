@@ -41,6 +41,9 @@ pub struct FinderConfig {
     pub seeds: SeedLists,
     /// The `k` constant in reciprocal rank fusion.
     pub rrf_k: f64,
+    /// Relative lexical-list contribution. Names remain candidates, while
+    /// a container-heavy index can favor the document prose it also holds.
+    pub lexical_weight: f64,
     /// Personalized PageRank damping: probability a walk continues instead
     /// of restarting at the seeds. Keeps the boost local.
     pub damping: f64,
@@ -90,6 +93,7 @@ impl Default for FinderConfig {
             seed_k: 60,
             seeds: SeedLists::Both,
             rrf_k: RRF_K_DEFAULT,
+            lexical_weight: 1.0,
             damping: 0.5,
             iterations: 12,
             epsilon: 1e-6,
@@ -104,6 +108,15 @@ impl Default for FinderConfig {
 
 impl FinderConfig {
     pub fn validate_query_bounds(&self) -> Result<(), String> {
+        if !self.lexical_weight.is_finite() {
+            return Err("finder.lexical_weight must be finite".to_string());
+        }
+        if self.lexical_weight <= 0.0 {
+            return Err("finder.lexical_weight must be greater than zero".to_string());
+        }
+        if self.lexical_weight > 1.0 {
+            return Err("finder.lexical_weight must not exceed one".to_string());
+        }
         if self.seed_k == 0 {
             return Err("finder.seed_k must be greater than zero".to_string());
         }
@@ -360,9 +373,10 @@ impl FinderService {
         let fts_ranked: Vec<i64> = fts.iter().map(|(id, _)| id.0).collect();
         let lexical_ranked: Vec<i64> = lexical.iter().map(|(id, _)| id.0).collect();
         let vec_ranked: Vec<i64> = vector.iter().map(|(id, _)| id.0).collect();
-        let fused = rrf_fuse(
-            &[&fts_ranked, &lexical_ranked, &vec_ranked],
+        let fused = query_seeds_fuse(
+            [&fts_ranked, &lexical_ranked, &vec_ranked],
             self.config.rrf_k,
+            self.config.lexical_weight,
         );
         tracing::info!(
             fts = fts.len(),
@@ -379,6 +393,20 @@ impl FinderService {
             vector_hits: count_u32(vector.len()),
         })
     }
+}
+
+/// Keep all three lists, weighting lexical evidence before graph propagation.
+fn query_seeds_fuse(lists: [&[i64]; 3], k: f64, lexical_weight: f64) -> HashMap<i64, f64> {
+    assert!(lexical_weight.is_finite());
+    assert!(lexical_weight > 0.0);
+    assert!(lexical_weight <= 1.0);
+    let mut fused = HashMap::new();
+    for (list, weight) in lists.into_iter().zip([1.0, lexical_weight, 1.0]) {
+        for (id, score) in rrf_fuse(&[list], k) {
+            *fused.entry(id).or_insert(0.0) += weight * score;
+        }
+    }
+    fused
 }
 
 /// The seeds of one query with where they came from. Fusion keeps only an

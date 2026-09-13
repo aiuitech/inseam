@@ -27,7 +27,7 @@ use inseam_seams::connection::{Connection, Connections, EnumeratedSource};
 use inseam_seams::text::{count_lines, is_indexable_text};
 use inseam_seams::transforms::{
     Anchor, DecomposeBudget, GrantedLlm, KeyedSprout, Registration, TransformCtx, TransformOutput,
-    participating, prune, shape_stamp,
+    participating, prune, shape_stamp_for_inventory,
 };
 
 use super::cache::{ObservedLlm, cache_key, caches_output, decode_output, encode_output};
@@ -685,7 +685,11 @@ pub(super) fn expected_stamp(
     sweep_shape: &str,
 ) -> String {
     let participants = participating(registrations, inventory);
-    format!("{}+{}", shape_stamp(&participants), sweep_shape)
+    format!(
+        "{}+{}",
+        shape_stamp_for_inventory(&participants, inventory),
+        sweep_shape
+    )
 }
 
 /// The fragments a keyed sprout's anchor resolves to within one source:

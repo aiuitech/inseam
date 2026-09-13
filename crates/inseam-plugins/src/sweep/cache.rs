@@ -42,7 +42,7 @@ pub(super) fn cache_key(
         mimetype.essence(),
         u8::from(is_root),
         registration.entry_id,
-        registration.shape_fingerprint
+        registration.input_shape_fingerprint(mimetype, is_root)
     );
     ContentDigest::of_bytes(material.as_bytes()).to_hex()
 }

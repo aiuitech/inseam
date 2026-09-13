@@ -54,12 +54,17 @@ from harness import (
     manifest_options_object,
     new_run_id,
     parse_query_results,
+    probability_argument,
+    manifest_option_probability,
+    manifest_option_weight,
+    weight_argument,
     prepare_search_index,
     print_reused_index,
     query_arguments,
     read_json_lines,
     read_json_object,
     record_run_outcome,
+    record_final_index_footprint,
     require_api_key,
     require_program,
     require_success,
@@ -75,6 +80,7 @@ from harness import (
     validate_run_id,
     write_json,
     write_json_lines,
+    write_retrieval_observability,
 )
 import harness
 
@@ -174,6 +180,11 @@ class RunOptions:
     # Which seed lists the Finder runs before fusion; one alone is a
     # diagnostic for which search the fusion is carrying.
     finder_seeds: str = "both"
+    finder_seed_k: int = 60
+    finder_rrf_k: int = 60
+    finder_damping: float = 0.5
+    finder_lexical_weight: float = 1.0
+    directory_summary_target_chars: int = 0
 
     def __post_init__(self) -> None:
         if self.skip_agent and not self.skip_evaluation:
@@ -333,7 +344,7 @@ def composition_text(options: RunOptions) -> str:
     return f'''[[entry]]
 id = "fs"
 [entry.config]
-host_id = "enterprise-rag-bench"
+machine_id = "enterprise-rag-bench"
 skip_hidden = true
 gitignore = false
 ignore = []
@@ -358,6 +369,10 @@ id = "markdown"
 disabled = {"false" if options.structural == "markdown" else "true"}
 
 [[entry]]
+id = "directory"
+disabled = false
+
+[[entry]]
 id = "chunker"
 disabled = true
 
@@ -365,12 +380,17 @@ disabled = true
 id = "finder"
 [entry.config]
 seeds = "{options.finder_seeds}"
+seed_k = {options.finder_seed_k}
+rrf_k = {options.finder_rrf_k}
+damping = {options.finder_damping}
+lexical_weight = {options.finder_lexical_weight}
 max_vector_distance = {options.finder_max_vector_distance}
 
 [[entry]]
 id = "summarizer"
 [entry.config]
 target_chars = {options.summary_target_chars}
+{f"directory_target_chars = {options.directory_summary_target_chars}" if options.directory_summary_target_chars else ""}
 keywords_max = {options.keywords_max}
 llm_call_budget = {options.llm_call_budget}
 llm_lane = "{SUMMARIZATION_LANE}"
@@ -552,6 +572,7 @@ def question_commands(
             "question_type": question.get("question_type"),
             "question": question_text,
             "retrieval_duration_seconds": round(query.duration_seconds, 6),
+            "query_meta": json.loads(query.stdout).get("meta", {}),
             "answer_duration_seconds": 0.0,
             "duration_seconds": round(query.duration_seconds, 6),
             "results": query_results,
@@ -592,6 +613,21 @@ def question_commands(
     }
 
 
+def retrieval_ranking(query: dict[str, Any]) -> list[str]:
+    """Keep unjudged folders in their actual ranks instead of promoting documents."""
+    if "results" not in query:
+        return query["retrieved_document_ids"]
+    ranking: list[str] = []
+    for result in query["results"]:
+        address = str(result["address"])
+        if result.get("envelope", {}).get("content_type") == "inode/directory":
+            ranking.append(address)
+            continue
+        document_ids = extract_document_ids([address])
+        ranking.append(document_ids[0] if document_ids else address)
+    return ranking
+
+
 def retrieval_scores(
     queries: list[dict[str, Any]], questions: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -606,7 +642,7 @@ def retrieval_scores(
         expected = set(expected_by_id[query["question_id"]])
         if not expected:
             continue
-        retrieved = query["retrieved_document_ids"]
+        retrieved = retrieval_ranking(query)
         matched = expected.intersection(retrieved)
         recalls.append(len(matched) / len(expected))
         first_rank = next(
@@ -948,6 +984,8 @@ def execute_benchmark(
                 options.evaluation_model,
             )
             pip_freeze(run_dir)
+        record_final_index_footprint(manifest, data_dir)
+        write_retrieval_observability(run_dir, queries)
         complete_run(manifest, scores)
     except BaseException as caught:
         error = caught
@@ -1000,7 +1038,10 @@ def load_resumable_run(
     composition = run_dir / "composition.toml"
     if not composition.is_file():
         raise BenchmarkError(f"run `{run_id}` has no composition.toml")
-    if composition.read_text(encoding="utf-8") != composition_text(options):
+    expected_composition = composition_text(options)
+    if "finder_lexical_weight" not in manifest["options"]:
+        expected_composition = expected_composition.replace("lexical_weight = 1.0\n", "")
+    if composition.read_text(encoding="utf-8") != expected_composition:
         raise BenchmarkError(f"run `{run_id}` composition does not match its options")
     data_dir = validate_index_data_path(run_id, manifest, FIXTURE_ROOT)
     index_required = manifest.get("indexing") is None
@@ -1067,7 +1108,9 @@ def validate_resumable_manifest(
 
 
 def options_from_manifest(manifest: dict[str, Any]) -> RunOptions:
-    value = manifest_options_object(manifest, set(RunOptions.__annotations__))
+    value = manifest_options_object(
+        manifest, set(RunOptions.__annotations__), defaults={"finder_lexical_weight": 1.0}
+    )
     return RunOptions(
         question_limit=manifest_option_integer(value, "question_limit", MAX_QUESTIONS),
         query_limit=manifest_option_integer(value, "query_limit", MAX_QUERY_RESULTS),
@@ -1088,6 +1131,11 @@ def options_from_manifest(manifest: dict[str, Any]) -> RunOptions:
         keywords_max=manifest_option_count(value, "keywords_max", MAX_KEYWORDS),
         structural=manifest_option_choice(value, "structural", STRUCTURAL_CHOICES),
         embedding_vectors=manifest_option_choice(value, "embedding_vectors", EMBEDDER_CHOICES),
+        directory_summary_target_chars=manifest_option_count(value, "directory_summary_target_chars", MAX_SUMMARY_TARGET_CHARS),
+        finder_lexical_weight=manifest_option_weight(value, "finder_lexical_weight"),
+        finder_damping=manifest_option_probability(value, "finder_damping"),
+        finder_seed_k=manifest_option_integer(value, "finder_seed_k", 1000),
+        finder_rrf_k=manifest_option_integer(value, "finder_rrf_k", 1000),
         finder_seeds=manifest_option_choice(value, "finder_seeds", FINDER_SEEDS),
         finder_max_vector_distance=manifest_option_distance(value, "finder_max_vector_distance"),
         answer_model=manifest_option_model(value, "answer_model"),
@@ -1200,6 +1248,11 @@ def parse_arguments() -> argparse.Namespace:
         default=0,
         help="mount the hints transform with this many calls per run; 0 (the default) leaves it off",
     )
+    run_parser.add_argument("--finder-seed-k", type=bounded_argument("finder-seed-k", 1000), default=60)
+    run_parser.add_argument("--finder-rrf-k", type=bounded_argument("finder-rrf-k", 1000), default=60)
+    run_parser.add_argument("--finder-damping", type=probability_argument, default=0.5)
+    run_parser.add_argument("--directory-summary-target-chars", type=count_argument("directory-summary-target-chars", MAX_SUMMARY_TARGET_CHARS), default=0)
+    run_parser.add_argument("--finder-lexical-weight", type=weight_argument, default=1.0)
     resume_parser = subparsers.add_parser(
         "resume",
         help="reuse a completed index and continue a failed or interrupted run",
@@ -1233,6 +1286,11 @@ def main() -> int:
             structural=arguments.structural,
             embedding_vectors=arguments.vectors,
             finder_seeds=arguments.finder_seeds,
+            finder_seed_k=arguments.finder_seed_k,
+            finder_rrf_k=arguments.finder_rrf_k,
+            finder_damping=arguments.finder_damping,
+            finder_lexical_weight=arguments.finder_lexical_weight,
+            directory_summary_target_chars=arguments.directory_summary_target_chars,
             finder_max_vector_distance=arguments.finder_max_vector_distance,
             answer_model=arguments.answer_model,
             evaluation_model=arguments.evaluation_model,

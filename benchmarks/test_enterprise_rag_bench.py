@@ -62,6 +62,17 @@ class EnterpriseRagBenchTests(unittest.TestCase):
         self.assertEqual(scores["document_hit_rate_pct"], 100.0)
         self.assertEqual(scores["mean_reciprocal_rank"], 0.75)
 
+    def test_folder_rank_does_not_inflate_reciprocal_rank(self) -> None:
+        queries = [{"question_id": "q1", "retrieved_document_ids": [DOCUMENT_A], "results": [
+            {"address": f"inseam://fs/{DOCUMENT_A}", "envelope": {"content_type": "inode/directory"}},
+            {"address": f"inseam://fs/folder/{DOCUMENT_A}_file.txt"},
+        ]}]
+        scores = benchmark.retrieval_scores(queries, [
+            {"question_id": "q1", "expected_doc_ids": [DOCUMENT_A]},
+        ])
+        self.assertEqual(scores["mean_reciprocal_rank"], 0.5)
+        self.assertEqual(scores["average_document_recall_pct"], 100.0)
+
     def test_composition_defaults_to_whole_document_full_text_rows(self) -> None:
         options = benchmark.RunOptions(1, 8, 12, 8, 0, 4, False)
 

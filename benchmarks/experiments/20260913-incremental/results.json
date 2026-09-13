@@ -1,0 +1,188 @@
+{
+  "benchmark_origin_run_id": "20260913T181947Z-b414e6e7aa0f",
+  "corpus": "/Users/greg/aiui/projects/inseam/benchmarks/fixtures/enterprise-rag-bench/slices/25000/documents",
+  "data_dir": "/Users/greg/aiui/projects/inseam/benchmarks/fixtures/enterprise-rag-bench/nodes/incremental-documents-20260913",
+  "inseam": {
+    "binary_path": "/Users/greg/.cargo/bin/inseam",
+    "binary_sha256": "1802ad77187b3274d10653583f0c1ec2d1dddb5f0a8a8a1fc2392cb214ea4be0",
+    "cli_version": "inseam 0.1.0",
+    "repository_dirty": true,
+    "repository_revision": "b414e6e7aa0fb2cff839f1d40d792cb6a9ab6d61"
+  },
+  "note": "Fresh index followed by folder-only and Finder-only changes. Wall times were measured while other benchmarks ran; source reuse counts are the primary incremental evidence.",
+  "status_command": [
+    "inseam",
+    "--data-dir",
+    "/Users/greg/aiui/projects/inseam/benchmarks/fixtures/enterprise-rag-bench/nodes/incremental-documents-20260913",
+    "--composition",
+    "/Users/greg/aiui/projects/inseam/benchmarks/experiments/20260913-incremental/restore_folder.toml",
+    "status"
+  ],
+  "steps": [
+    {
+      "command": [
+        "inseam",
+        "--data-dir",
+        "/Users/greg/aiui/projects/inseam/benchmarks/fixtures/enterprise-rag-bench/nodes/incremental-documents-20260913",
+        "--composition",
+        "/Users/greg/aiui/projects/inseam/benchmarks/experiments/20260913-incremental/initial.toml",
+        "index",
+        "/Users/greg/aiui/projects/inseam/benchmarks/fixtures/enterprise-rag-bench/slices/25000/documents"
+      ],
+      "duration_seconds": 48.510719666985096,
+      "index_bytes": 288403521,
+      "name": "initial",
+      "summary": {
+        "cost_usd": 0.0,
+        "embeddings": 0,
+        "embeddings_reused": 0,
+        "fragments": 70042,
+        "keyed_fragments": 0,
+        "relations": 44767,
+        "sources_catalog_only": 0,
+        "sources_ignored": 0,
+        "sources_indexed": 25275,
+        "sources_past_cutoff": 0,
+        "sources_seen": 25275,
+        "sources_unchanged": 0,
+        "summaries_envelope": 0,
+        "summaries_extractive": 244,
+        "summaries_llm": 0,
+        "summaries_verbatim": 25031,
+        "transforms_reused": 0
+      }
+    },
+    {
+      "command": [
+        "inseam",
+        "--data-dir",
+        "/Users/greg/aiui/projects/inseam/benchmarks/fixtures/enterprise-rag-bench/nodes/incremental-documents-20260913",
+        "--composition",
+        "/Users/greg/aiui/projects/inseam/benchmarks/experiments/20260913-incremental/folder400.toml",
+        "index",
+        "/Users/greg/aiui/projects/inseam/benchmarks/fixtures/enterprise-rag-bench/slices/25000/documents"
+      ],
+      "duration_seconds": 14.00880245899316,
+      "index_bytes": 288403521,
+      "name": "folder400",
+      "summary": {
+        "cost_usd": 0.0,
+        "embeddings": 0,
+        "embeddings_reused": 0,
+        "fragments": 20073,
+        "keyed_fragments": 0,
+        "relations": 19798,
+        "sources_catalog_only": 0,
+        "sources_ignored": 0,
+        "sources_indexed": 275,
+        "sources_past_cutoff": 0,
+        "sources_seen": 25275,
+        "sources_unchanged": 25000,
+        "summaries_envelope": 0,
+        "summaries_extractive": 275,
+        "summaries_llm": 0,
+        "summaries_verbatim": 0,
+        "transforms_reused": 0
+      }
+    },
+    {
+      "command": [
+        "inseam",
+        "--data-dir",
+        "/Users/greg/aiui/projects/inseam/benchmarks/fixtures/enterprise-rag-bench/nodes/incremental-documents-20260913",
+        "--composition",
+        "/Users/greg/aiui/projects/inseam/benchmarks/experiments/20260913-incremental/folder200.toml",
+        "index",
+        "/Users/greg/aiui/projects/inseam/benchmarks/fixtures/enterprise-rag-bench/slices/25000/documents"
+      ],
+      "duration_seconds": 8.53700316598406,
+      "index_bytes": 288403521,
+      "name": "folder200",
+      "summary": {
+        "cost_usd": 0.0,
+        "embeddings": 0,
+        "embeddings_reused": 0,
+        "fragments": 20073,
+        "keyed_fragments": 0,
+        "relations": 19798,
+        "sources_catalog_only": 0,
+        "sources_ignored": 0,
+        "sources_indexed": 275,
+        "sources_past_cutoff": 0,
+        "sources_seen": 25275,
+        "sources_unchanged": 25000,
+        "summaries_envelope": 0,
+        "summaries_extractive": 275,
+        "summaries_llm": 0,
+        "summaries_verbatim": 0,
+        "transforms_reused": 0
+      }
+    },
+    {
+      "command": [
+        "inseam",
+        "--data-dir",
+        "/Users/greg/aiui/projects/inseam/benchmarks/fixtures/enterprise-rag-bench/nodes/incremental-documents-20260913",
+        "--composition",
+        "/Users/greg/aiui/projects/inseam/benchmarks/experiments/20260913-incremental/finder_only.toml",
+        "index",
+        "/Users/greg/aiui/projects/inseam/benchmarks/fixtures/enterprise-rag-bench/slices/25000/documents"
+      ],
+      "duration_seconds": 4.556553166999947,
+      "index_bytes": 288403521,
+      "name": "finder_only",
+      "summary": {
+        "cost_usd": 0.0,
+        "embeddings": 0,
+        "embeddings_reused": 0,
+        "fragments": 0,
+        "keyed_fragments": 0,
+        "relations": 0,
+        "sources_catalog_only": 0,
+        "sources_ignored": 0,
+        "sources_indexed": 0,
+        "sources_past_cutoff": 0,
+        "sources_seen": 25275,
+        "sources_unchanged": 25275,
+        "summaries_envelope": 0,
+        "summaries_extractive": 0,
+        "summaries_llm": 0,
+        "summaries_verbatim": 0,
+        "transforms_reused": 0
+      }
+    },
+    {
+      "command": [
+        "inseam",
+        "--data-dir",
+        "/Users/greg/aiui/projects/inseam/benchmarks/fixtures/enterprise-rag-bench/nodes/incremental-documents-20260913",
+        "--composition",
+        "/Users/greg/aiui/projects/inseam/benchmarks/experiments/20260913-incremental/restore_folder.toml",
+        "index",
+        "/Users/greg/aiui/projects/inseam/benchmarks/fixtures/enterprise-rag-bench/slices/25000/documents"
+      ],
+      "duration_seconds": 7.557100415986497,
+      "index_bytes": 288403521,
+      "name": "restore_folder",
+      "summary": {
+        "cost_usd": 0.0,
+        "embeddings": 0,
+        "embeddings_reused": 0,
+        "fragments": 20031,
+        "keyed_fragments": 0,
+        "relations": 19756,
+        "sources_catalog_only": 0,
+        "sources_ignored": 0,
+        "sources_indexed": 275,
+        "sources_past_cutoff": 0,
+        "sources_seen": 25275,
+        "sources_unchanged": 25000,
+        "summaries_envelope": 0,
+        "summaries_extractive": 233,
+        "summaries_llm": 0,
+        "summaries_verbatim": 42,
+        "transforms_reused": 0
+      }
+    }
+  ]
+}

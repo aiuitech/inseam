@@ -7,8 +7,12 @@ Implements [design/finder.md](../../design/finder.md): start from hybrid search 
 The query runs against three seed lists: prose full-text and lexical full-text (each BM25 over the query's words joined by OR, function words dropped, over its own table so a one-line term and a whole document are never scored by shared length statistics — on a large index "the" matches nearly every row and the ranker would score them all for rows that rank last anyway; a query made only of function words is searched whole) and vector nearest-k by cosine distance — the latter after dropping hits beyond `max_vector_distance`, because nearest-k always returns *something*, however unrelated. `seeds` can run one list alone (`full-text` or `vector`) to see which search the fusion is carrying, or because the node's embedder is not worth asking; it is query-time and never re-indexes. The two best-first lists merge by **reciprocal rank fusion**:
 
 ```
-seed(f) = Σ over lists  1 / (rrf_k + rank_f)
+seed(f) = Σ over lists  weight(list) / (rrf_k + rank_f)
 ```
+
+The prose and vector lists have weight 1. The lexical list uses `lexical_weight`, default 1, bounded to (0, 1]. Lower values keep names searchable while reducing their influence when a corpus has many container entries. A name-only query still receives lexical candidates and graph propagation. This is a query-time setting; the index and navigation references remain intact.
+
+Prose and vector lists have weight 1. The lexical list uses `lexical_weight`, default 1, in the range (0, 1]. Lowering it keeps names searchable while reducing their contribution beside document prose. It changes ranking only and preserves all indexed navigation evidence.
 
 Merging by rank instead of score sidesteps the fact that BM25 scores and cosine distances aren't comparable numbers — and it will merge the same way across nodes when multi-node search arrives.
 

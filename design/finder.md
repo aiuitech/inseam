@@ -66,3 +66,11 @@ The Finder runs per node against that node's own index. Fan-out ([discovery](dis
 - Learning relation weights from fetch-through feedback (a fetch after a query is a relevance signal).
 - Scan ranges for structureless single-line text (byte fallback) and media time ranges mapped through transcript extents.
 - Scanning a remote source that is not text: the routing seam carries line reads only, so a scan of another node's video is served from this node's own transcript fragments when it deep-indexed the video, and refused otherwise. The wire protocol already carries a `scan` body the steward serves in full; exposing it through the seam is the remaining step.
+
+## Unequal lexical evidence
+
+A lexical seed list can contain directory child names as well as extracted terms. With folders enabled, giving that list the same vote as whole-document prose can promote containers ahead of the documents a retrieval question expects. The query-time `lexical_weight` multiplies only that list's reciprocal-rank contribution before graph propagation. Its default is 1.0; the accepted range is finite (0, 1], so it cannot disable name discovery. Prose and vector contributions stay at weight 1. The bounded seed lists and graph are unchanged, and all directory entries and address references remain available to navigation.
+
+This is a per-composition control, not a new universal default. Retrieval scores measure the first ranked list; an agent may benefit from a folder that those scores mark unjudged. The next answer-and-navigation evaluation must measure that tradeoff before adopting a product default.
+
+Weighting adds only a few hundred additions across three bounded seed lists, O(seed_k), with no disk writes or embedding calls. Search and graph expansion remain the dominant costs.

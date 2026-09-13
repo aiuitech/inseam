@@ -22,6 +22,16 @@ BEIR's default run limits summaries to 500 LLM calls, and EnterpriseRAG-Bench's 
 
 Every run records the index's **footprint** beside its duration: the bytes of the node's data directory (database plus write-ahead log) against the bytes of the source documents it was built from, and the ratio between them, measured right after indexing (`indexing.footprint`) and again after the DiskANN build (`search_index_preparation.index_bytes`). The index summary also records how much of the run the node answered from its digest-keyed caches (`embeddings_reused`, `transforms_reused`); a fresh node reports zero for both.
 
+## Retrieval tuning and observability
+
+Both runners explicitly enable the directory transform. Folder hits consume rank slots as unjudged results. EnterpriseRAG MRR uses the original Finder rank, including folders, and BEIR writes folder addresses as unjudged IDs in its TREC ranking. Filtering folders before scoring would inflate the result.
+
+Both runners accept `--finder-seed-k` and `--finder-rrf-k`, each bounded to 1–1,000, and `--finder-damping`, bounded to [0, 1). The defaults remain 60, 60, and 0.5. `--finder-lexical-weight` scales the lexical list in (0, 1], default 1; names remain searchable at every accepted value. `--finder-lexical-weight` scales the lexical contribution in (0, 1], default 1; it cannot disable name discovery. `--directory-summary-target-chars` sets a separate folder summary target; 0 leaves it at the document target. It changes only folder summaries, preserving folder sources, directory entries, and their child-address references. Every control is recorded in the run options and composition.
+
+`retrieval-observability.json` records per-query phase timings, seed and candidate counts, folder rank positions, and median/p95/max distributions without corpus text. `final_index_footprint` measures the data directory after querying, because an observer holding a read connection can temporarily retain WAL bytes during indexing or repair. Use that settled size for storage comparisons. The local query checkpoint also retains the CLI's complete `meta` object. BEIR explicitly disables the hints transform to avoid inheriting an unrecorded 500-call budget from the distribution. Hints remain available in the product and through EnterpriseRAG's explicit budget option.
+
+These controls separate retrieval experiments from the later agent navigation evaluation. Keep navigation structures available even when they do not improve the first query's score.
+
 ## Tests
 
 The harness is tested without network or the real binary:
@@ -176,7 +186,7 @@ The composition dials, each recorded under the manifest's `options` and `models`
 - `--finder-seeds` (`both`): `full-text` or `vector` runs one seed list alone, a diagnostic for which search the fusion is carrying.
 - `--hints-llm-call-budget` (0): mounts the hints transform with that many calls per run, one per document, planting cues, a synopsis, discriminators, and shared glossary, identifier, and entity fragments ([design/indexing.md](../design/indexing.md)); about $4 on the batch lane for a 25,000-document slice, and the batch jobs can take hours to return.
 
-The runner prints each active phase immediately. During indexing it polls `inseam status` every 30 seconds and prints elapsed time, fully indexed sources against the fixture total, cataloged sources, and search rows. A failed status probe reports `status unavailable` but does not fail the index. Other long commands retain their five-second elapsed-time heartbeat.
+The runner prints each active phase immediately. During indexing it prints an elapsed-time heartbeat every 30 seconds. It does not boot a second store writer through `inseam status`, which can contend with the active index transaction. Other long commands retain their five-second elapsed-time heartbeat.
 
 Before questions the runner runs a timed `inseam repair` step named “Preparing libSQL vector search index”; this is normally instant, but on a node created before vector indexing it performs the one-time in-place conversion and DiskANN build. The repair reuses the resident vectors and does not rerun source indexing or embedding. Query progress includes the question number and ID. The current phase is mirrored in `manifest.json`, so a second terminal can distinguish indexing, querying, and evaluation without inspecting processes.
 
@@ -227,3 +237,16 @@ The manifest's `scores.retrieval` block is computed from the initial ranked Find
 ## Recorded runs
 
 Commit completed runs under `benchmarks/runs/<benchmark>/<UTC timestamp>-<inseam commit>/`. Git versions only the result of a run: the manifest, the composition, the scores, and the ranking or answers the scores were computed from. The `logs/` directory and `queries.jsonl` stay local because they are large, reproducible from the pins, and never needed to compare two runs; `benchmarks/.gitignore` enforces this. Runs whose status is `interrupted`, `failed`, or `running` are not results and must not be committed. Only a manifest whose `status` is `completed` should enter comparisons. Compare runs only when dataset pins, model assignments, question or query count, and relevant options match, and call out dirty source trees and hardware differences instead of hiding them.
+
+### Reuse an index while tuning retrieval
+
+```sh
+python3 benchmarks/requery.py beir <completed-run-id> --finder-rrf-k 10
+python3 benchmarks/requery.py enterprise <completed-run-id> --finder-lexical-weight 0.1
+```
+
+Replay accepts Finder controls only, preserves the source composition's indexing settings, and runs neither indexing nor repair. Enterprise replay always disables agent answers and judging. Results live in the original run's `retrieval/<new-run-id>/` directory, with the origin manifest hash, current binary identity, separate scores, timings, and observability. `indexing: null` makes reuse explicit; never compare replay duration with fresh indexing duration. Keep the origin node available, and run only one process against a node at a time. Replays require matching benchmark pins and a completed index.
+
+Changing `summarizer.directory_target_chars` now invalidates directory inputs only: the sweep and transform cache share the same input-specific identity. File summaries and embeddings retain their previous identity. Removing the override rebuilds the affected directories again. Finder controls do not change the index shape at all.
+
+See the [13 September 2026 retrieval audit](reports/20260913-retrieval-audit.md) for the measured settings and the [incremental experiment](experiments/20260913-incremental/README.md) for source reuse counts.

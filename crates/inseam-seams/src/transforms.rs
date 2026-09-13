@@ -161,6 +161,12 @@ pub trait Transform: Send + Sync {
         false
     }
 
+    /// Additional output identity for configuration that applies only to a
+    /// particular input type. Used by both source dirtiness and cache keys.
+    fn input_shape(&self, _mimetype: &Mimetype, _is_root: bool) -> Option<String> {
+        None
+    }
+
     async fn apply(&self, ctx: TransformCtx<'_>) -> TransformOutput;
 }
 
@@ -181,6 +187,17 @@ pub struct Registration {
     /// output shape: its config, and for loaded transforms the artifact
     /// version. Two mounts with equal fingerprints build equal subtrees.
     pub shape_fingerprint: String,
+}
+
+impl Registration {
+    /// The common identity includes the model assigned by the sweep; the
+    /// input-specific suffix must never replace it and lose that dependency.
+    pub fn input_shape_fingerprint(&self, mimetype: &Mimetype, is_root: bool) -> String {
+        match self.transform.input_shape(mimetype, is_root) {
+            Some(shape) => format!("{}|input={shape}", self.shape_fingerprint),
+            None => self.shape_fingerprint.clone(),
+        }
+    }
 }
 
 /// The registry seam. Registration returns a disposer — the effect the
@@ -222,6 +239,38 @@ pub fn shape_stamp(participating: &[&Arc<Registration>]) -> String {
         .map(|r| format!("{}={}", r.entry_id, r.shape_fingerprint))
         .collect();
     parts.sort();
+    format!("v2|{:016x}", fnv1a(parts.join("|").as_bytes()))
+}
+
+/// Include only input-specific settings that can change this source's
+/// inventory. Unrelated input settings leave the existing stamp unchanged.
+pub fn shape_stamp_for_inventory(
+    participants: &[&Arc<Registration>],
+    inventory: &[InventoryEntry],
+) -> String {
+    let mut parts: Vec<String> = participants
+        .iter()
+        .map(|r| format!("{}={}", r.entry_id, r.shape_fingerprint))
+        .collect();
+    for registration in participants {
+        for entry in inventory {
+            let Ok(mimetype) = Mimetype::parse(&entry.mimetype) else {
+                continue;
+            };
+            if registration.transform.claims(&mimetype, entry.is_root) {
+                if let Some(shape) = registration.transform.input_shape(&mimetype, entry.is_root) {
+                    parts.push(format!(
+                        "{}|{}|{}={shape}",
+                        registration.entry_id,
+                        mimetype.essence(),
+                        u8::from(entry.is_root)
+                    ));
+                }
+            }
+        }
+    }
+    parts.sort();
+    parts.dedup();
     format!("v2|{:016x}", fnv1a(parts.join("|").as_bytes()))
 }
 
@@ -268,6 +317,70 @@ mod tests {
     use super::*;
 
     struct Claimer(&'static [&'static str], bool);
+
+    struct FolderShape;
+
+    #[async_trait::async_trait]
+    impl Transform for FolderShape {
+        fn kind(&self) -> TransformKind {
+            TransformKind::Enrichment
+        }
+        fn claims(&self, _: &Mimetype, is_root: bool) -> bool {
+            is_root
+        }
+        fn input_shape(&self, mimetype: &Mimetype, is_root: bool) -> Option<String> {
+            if is_root {
+                if mimetype.is_directory() {
+                    return Some("directory_target_chars=200".to_string());
+                }
+            }
+            None
+        }
+        async fn apply(&self, _: TransformCtx<'_>) -> TransformOutput {
+            TransformOutput::default()
+        }
+    }
+
+    #[test]
+    fn input_specific_shapes_preserve_file_identity_and_model_dependencies() {
+        let mut base = Registration {
+            entry_id: "summarizer".to_string(),
+            name: "summarizer".to_string(),
+            transform: Arc::new(FolderShape),
+            llm_call_budget: 1,
+            llm_lane: LlmLane::Interactive,
+            shape_fingerprint: "common|model=one".to_string(),
+        };
+        let directory = Mimetype::parse("inode/directory").expect("valid mimetype");
+        let folder_key = base.input_shape_fingerprint(&directory, true);
+        assert_eq!(
+            base.input_shape_fingerprint(&Mimetype::text_plain(), true),
+            base.shape_fingerprint
+        );
+        assert_eq!(
+            base.input_shape_fingerprint(&directory, false),
+            base.shape_fingerprint
+        );
+        base.shape_fingerprint = "common|model=two".to_string();
+        assert_ne!(base.input_shape_fingerprint(&directory, true), folder_key);
+        let registration = Arc::new(base);
+        let participants = [&registration];
+        let file_inventory = inventory(&[("text/plain", true)]);
+        let folder_inventory = inventory(&[("inode/directory", true)]);
+        assert_eq!(
+            shape_stamp_for_inventory(&participants, &file_inventory),
+            shape_stamp(&participants)
+        );
+        assert_ne!(
+            shape_stamp_for_inventory(&participants, &folder_inventory),
+            shape_stamp(&participants)
+        );
+        let duplicated = inventory(&[("inode/directory", true), ("inode/directory", true)]);
+        assert_eq!(
+            shape_stamp_for_inventory(&participants, &folder_inventory),
+            shape_stamp_for_inventory(&participants, &duplicated)
+        );
+    }
 
     #[async_trait::async_trait]
     impl Transform for Claimer {

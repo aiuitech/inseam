@@ -18,6 +18,7 @@ import os
 import platform
 import re
 import shutil
+import statistics
 import subprocess
 import sys
 import time
@@ -65,10 +66,6 @@ PROGRESS_INTERVAL_SECONDS = 5
 INDEX_PROGRESS_INTERVAL_SECONDS = 30
 RUN_ID_PATTERN = re.compile(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}")
 RUN_PHASES = ("indexing", "querying", "evaluating")
-STATUS_SOURCE_PATTERN = re.compile(
-    r"^sources\s+(\d+) \((\d+) indexed\)$", re.MULTILINE
-)
-STATUS_SEARCH_ROWS_PATTERN = re.compile(r"^search rows\s+(\d+)$", re.MULTILINE)
 INDEX_SOURCE_PATTERN = re.compile(
     r"(\d+) sources seen: (\d+) indexed, (\d+) unchanged, (\d+) catalog-only, "
     r"(\d+) past cutoff, (\d+) ignored"
@@ -434,43 +431,6 @@ def inseam_arguments(data_dir: Path, composition: Path) -> list[str]:
     return ["inseam", "--data-dir", str(data_dir), "--composition", str(composition)]
 
 
-def format_index_progress(
-    status_output: str, document_count: int, elapsed_seconds: float
-) -> str:
-    assert document_count > 0
-    sources = STATUS_SOURCE_PATTERN.search(status_output)
-    search_rows = STATUS_SEARCH_ROWS_PATTERN.search(status_output)
-    if sources is None or search_rows is None:
-        raise BenchmarkError("`inseam status` output has no indexing counts")
-    cataloged = int(sources.group(1))
-    indexed = int(sources.group(2))
-    if indexed > cataloged or cataloged > document_count:
-        raise BenchmarkError("`inseam status` returned impossible indexing counts")
-    return (
-        f"{format_duration(elapsed_seconds)} elapsed · "
-        f"{indexed:,} / {document_count:,} indexed · "
-        f"{cataloged:,} cataloged · {int(search_rows.group(1)):,} search rows"
-    )
-
-
-def read_index_progress(
-    data_dir: Path,
-    composition: Path,
-    document_count: int,
-    elapsed_seconds: float,
-) -> str:
-    result = run_capture(
-        [*inseam_arguments(data_dir, composition), "status"],
-        timeout_seconds=METADATA_TIMEOUT_SECONDS,
-    )
-    if result.returncode != 0:
-        return f"{format_duration(elapsed_seconds)} elapsed · status unavailable"
-    try:
-        return format_index_progress(result.stdout, document_count, elapsed_seconds)
-    except BenchmarkError:
-        return f"{format_duration(elapsed_seconds)} elapsed · status unavailable"
-
-
 def fixture_document_count(fixture_root: Path, documents_max: int) -> int | None:
     """The document count recorded by setup, or None before extraction."""
     assert documents_max > 0
@@ -511,20 +471,18 @@ def index_documents(
         log_path = run_dir / "logs" / "index.log"
     assert log_path.is_relative_to(run_dir)
     progress_label = "Indexing benchmark documents"
-    progress_probe: Callable[[float], str] | None = None
     if document_count is not None:
         assert 0 < document_count <= sources_max
         progress_label = f"Indexing {document_count:,} benchmark documents"
-        progress_probe = lambda elapsed_seconds: read_index_progress(
-            data_dir, composition, document_count, elapsed_seconds
-        )
     started_at = utc_now()
     result = run_logged(
         [*inseam_arguments(data_dir, composition), "index", str(documents)],
         log_path,
         timeout_seconds=INDEX_TIMEOUT_SECONDS,
         progress_label=progress_label,
-        progress_probe=progress_probe,
+        # A status CLI boots another writer against the live index.
+        # Elapsed heartbeats avoid lock contention with the sweep.
+        progress_probe=None,
         progress_interval_seconds=INDEX_PROGRESS_INTERVAL_SECONDS,
     )
     finished_at = utc_now()
@@ -656,6 +614,46 @@ def parse_query_results(stdout: str, results_max: int) -> list[dict[str, Any]]:
             f"inseam returned {len(results)} results; hard limit is {results_max}"
         )
     return results
+
+
+def record_final_index_footprint(manifest: dict[str, Any], data_dir: Path) -> None:
+    """Measure after query processes close so a temporary WAL is not a size win."""
+    index_bytes, index_files = directory_bytes(data_dir, FOOTPRINT_FILES_MAX)
+    manifest["final_index_footprint"] = {
+        "index_bytes": index_bytes,
+        "index_files": index_files,
+        "measured_at": utc_now(),
+    }
+
+
+def write_retrieval_observability(run_dir: Path, queries: list[dict[str, Any]]) -> None:
+    """Keep phase costs and folder occupancy without storing corpus text."""
+    assert len(queries) <= 1_000
+    fields = ("elapsed_ms", "seeds_ms", "graph_ms", "rollup_ms", "fts_hits",
+              "lexical_hits", "vector_hits", "seeds", "relations", "candidate_sources")
+    observations = []
+    for query in queries:
+        observations.append({
+            "query_id": query.get("query_id", query.get("question_id")),
+            "meta": query.get("query_meta", {}),
+            "folder_ranks": [rank for rank, result in enumerate(query["results"], 1)
+                             if result.get("envelope", {}).get("content_type") == "inode/directory"],
+        })
+    distributions = {}
+    for field in fields:
+        values = sorted(row["meta"][field] for row in observations if field in row["meta"])
+        if values:
+            distributions[field] = {
+                "median": statistics.median(values),
+                "p95": values[min(len(values) - 1, (95 * len(values) + 99) // 100 - 1)],
+                "max": values[-1],
+            }
+    write_json(run_dir / "retrieval-observability.json", {
+        "queries": observations,
+        "distributions": distributions,
+        "folder_results": sum(len(row["folder_ranks"]) for row in observations),
+        "total_results": sum(len(query["results"]) for query in queries),
+    })
 
 
 def query_arguments(
@@ -880,10 +878,13 @@ def manifest_option_integer(value: dict[str, Any], name: str, maximum: int) -> i
     return option
 
 
-def manifest_options_object(manifest: dict[str, Any], names: set[str]) -> dict[str, Any]:
+def manifest_options_object(
+    manifest: dict[str, Any], names: set[str], *, defaults: dict[str, Any] | None = None
+) -> dict[str, Any]:
     value = manifest.get("options")
     if type(value) is not dict:
         raise BenchmarkError("run manifest has no options object")
+    value = {**(defaults or {}), **value}
     if set(value) != names:
         raise BenchmarkError("run manifest options do not match this runner")
     return value
@@ -931,6 +932,38 @@ def manifest_option_choice(value: dict[str, Any], name: str, choices: frozenset[
     if option not in choices:
         raise BenchmarkError(f"run option {name} is not one of {sorted(choices)}")
     return option
+
+
+def weight_argument(raw: str) -> float:
+    value = float(raw)
+    if not 0.0 < value <= 1.0:
+        raise argparse.ArgumentTypeError("a weight must be in (0, 1]")
+    return value
+
+
+def manifest_option_weight(value: dict[str, Any], name: str) -> float:
+    option = value[name]
+    if type(option) not in (int, float):
+        raise BenchmarkError(f"run option {name} is not a weight")
+    if not 0.0 < float(option) <= 1.0:
+        raise BenchmarkError(f"run option {name} is not a weight in (0, 1]")
+    return float(option)
+
+
+def probability_argument(raw: str) -> float:
+    value = float(raw)
+    if not 0.0 <= value < 1.0:
+        raise argparse.ArgumentTypeError("a probability must be in [0, 1)")
+    return value
+
+
+def manifest_option_probability(value: dict[str, Any], name: str) -> float:
+    option = value[name]
+    if type(option) not in (int, float):
+        raise BenchmarkError(f"run option {name} is not a probability")
+    if not 0.0 <= float(option) < 1.0:
+        raise BenchmarkError(f"run option {name} is not a probability in [0, 1)")
+    return float(option)
 
 
 def distance_argument(raw: str) -> float:

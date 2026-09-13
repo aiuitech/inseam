@@ -137,14 +137,26 @@ class BeirFixtureTests(unittest.TestCase):
     def test_composition_embeds_every_fragment_with_the_shared_models(self) -> None:
         composition = beir.composition_text(beir.RunOptions(323, 10, 8, 500))
 
-        self.assertIn('host_id = "beir-nfcorpus"', composition)
+        self.assertIn('machine_id = "beir-nfcorpus"', composition)
         self.assertIn('transform_model = "google/gemini-2.5-flash-lite"', composition)
         self.assertIn('llm_lane = "batch"', composition)
         self.assertIn('model = "openai/text-embedding-3-small"', composition)
         self.assertIn("dimensions = 384", composition)
         self.assertIn('vectors = "all"', composition)
         self.assertNotIn("agent_model", composition)
-        self.assertEqual(composition.count("disabled = true"), 3)
+        self.assertEqual(composition.count("disabled = true"), 4)
+
+
+class FolderRankingTests(unittest.TestCase):
+    def test_folder_consumes_a_rank_without_becoming_a_judged_document(self) -> None:
+        results = [
+            {"address": "inseam://fs/root", "envelope": {"content_type": "inode/directory"}},
+            {"address": "inseam://fs/root/MED-10.txt"},
+        ]
+        ranking = beir.retrieved_document_ids(results, {"MED-10"})
+        self.assertEqual(ranking, ["inseam://fs/root", "MED-10"])
+        scores = beir.score_query(ranking, {"MED-10": 1}, [1, 3])
+        self.assertEqual(scores["recall@1"], 0.0)
 
 
 class BeirRunTests(unittest.TestCase):

@@ -65,7 +65,7 @@ Every `query` response carries a `meta` object beside `results`, so a slow or th
 | `elapsed_ms` | wall-clock for the whole operation, dispatch to response, including rendering the results |
 | `limit` | the limit actually served after clamping the request to 1..=50 |
 | `seeds_ms`, `graph_ms`, `rollup_ms` | the finder's three phases ([algorithm.md](algorithm.md)): hybrid seed retrieval (full-text, query embedding, vector search, fusion), the relation graph load plus relevance walk, and grouping by source plus dressing with envelopes, summaries, and hints |
-| `fts_hits`, `vector_hits`, `seeds` | fragments the full-text and vector searches returned (vector after the distance floor; zero on a node without an embedder), and distinct fragments left after rank fusion |
+| `fts_hits`, `lexical_hits`, `vector_hits`, `seeds` | fragments returned by prose full-text, lexical names and tokens, and vector search (vector after the distance floor; zero on a node without an embedder), and distinct fragments left after rank fusion |
 | `relations` | relations loaded around the seeds for the walk |
 | `candidate_sources` | distinct sources holding a scored fragment, before the limit cut — how much competition the results won |
 | `remote` | one entry per node the query fanned out to: `node`, `results` it contributed before the merge, `elapsed_ms`, and `error` when it contributed none; absent when the query fanned out to nobody |

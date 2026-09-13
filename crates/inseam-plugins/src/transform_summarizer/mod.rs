@@ -30,6 +30,9 @@ pub struct SummarizerConfig {
     /// existence: every indexed source gets a summary. Text that already
     /// fits is its own summary and costs no call.
     pub target_chars: usize,
+    /// Optional folder target, so a whole-document profile need not repeat
+    /// thousands of characters of child summaries in every container.
+    pub directory_target_chars: Option<usize>,
     /// Characters of source text one LLM summary call reads. A longer
     /// source is first reduced, without a model, to the sentences that
     /// best represent it across its sections, so the whole document —
@@ -56,6 +59,7 @@ impl Default for SummarizerConfig {
     fn default() -> Self {
         Self {
             target_chars: 400,
+            directory_target_chars: None,
             llm_input_chars: 8_000,
             keywords_max: 12,
             llm_call_budget: 500,
@@ -100,6 +104,7 @@ impl Plugin for SummarizerPlugin {
                 entry_id: cx.entry_id().to_string(),
                 name: "summarizer".to_string(),
                 transform: Arc::new(SummarizerTransform {
+                    directory_target_chars: self.config.directory_target_chars,
                     shape: SummaryShape {
                         target_chars: self.config.target_chars,
                         llm_input_chars: self.config.llm_input_chars,
@@ -118,6 +123,7 @@ impl Plugin for SummarizerPlugin {
 }
 
 pub(crate) struct SummarizerTransform {
+    directory_target_chars: Option<usize>,
     pub(crate) shape: SummaryShape,
 }
 
@@ -131,11 +137,32 @@ impl Transform for SummarizerTransform {
         is_root && !mimetype.is_inseam_defined()
     }
 
+    fn input_shape(&self, mimetype: &Mimetype, is_root: bool) -> Option<String> {
+        if self.claims(mimetype, is_root) {
+            if mimetype.is_directory() {
+                return self
+                    .directory_target_chars
+                    .map(|target| format!("directory_target_chars={target}"));
+            }
+        }
+        None
+    }
+
     async fn apply(&self, ctx: TransformCtx<'_>) -> TransformOutput {
         let hint = ctx.envelope.hint.as_deref();
+        let shape = if ctx.mimetype.is_directory() {
+            SummaryShape {
+                target_chars: self
+                    .directory_target_chars
+                    .unwrap_or(self.shape.target_chars),
+                ..self.shape
+            }
+        } else {
+            self.shape
+        };
         let summary = match ctx.text.filter(|t| !t.trim().is_empty()) {
             Some(content) => {
-                summarize::summarize_text(ctx.llm.as_deref(), hint, content, self.shape).await
+                summarize::summarize_text(ctx.llm.as_deref(), hint, content, shape).await
             }
             None => summarize::Summary {
                 text: summarize::envelope_summary(ctx.envelope),
@@ -229,9 +256,12 @@ mod tests {
     async fn without_content_derives_from_the_envelope() {
         let envelope = envelope("image/jpeg", "IMG_2019.jpeg");
         let m = envelope.content_type.clone();
-        let out = SummarizerTransform { shape: shape(200) }
-            .apply(ctx(&envelope, &m, None))
-            .await;
+        let out = SummarizerTransform {
+            shape: shape(200),
+            directory_target_chars: None,
+        }
+        .apply(ctx(&envelope, &m, None))
+        .await;
         assert_eq!(out.sprouts.len(), 1, "an envelope summary has no keywords");
         let sprout = &out.sprouts[0];
         assert_eq!(sprout.relation, RelationKind::derives());
@@ -258,13 +288,16 @@ mod tests {
     async fn without_llm_capability_is_extractive_with_the_texts_own_keywords() {
         let envelope = envelope("text/markdown", "note.md");
         let m = envelope.content_type.clone();
-        let out = SummarizerTransform { shape: shape(20) }
-            .apply(ctx(
-                &envelope,
-                &m,
-                Some("# Reno\n\nBudget notes for the kitchen. Kitchen demo in June."),
-            ))
-            .await;
+        let out = SummarizerTransform {
+            shape: shape(20),
+            directory_target_chars: None,
+        }
+        .apply(ctx(
+            &envelope,
+            &m,
+            Some("# Reno\n\nBudget notes for the kitchen. Kitchen demo in June."),
+        ))
+        .await;
         assert_eq!(out.sprouts.len(), 2);
         assert_eq!(
             out.sprouts[0].fragment.mimetype.param("via"),
@@ -284,12 +317,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn folder_target_shortens_only_folder_summaries() {
+        let transform = SummarizerTransform {
+            shape: shape(200),
+            directory_target_chars: Some(20),
+        };
+        for (content_type, expected_via) in [
+            ("inode/directory", "extractive"),
+            ("text/plain", "verbatim"),
+        ] {
+            let envelope = envelope(content_type, "notes");
+            let out = transform
+                .apply(ctx(
+                    &envelope,
+                    &envelope.content_type,
+                    Some("Budget notes for the kitchen. Kitchen demo in June."),
+                ))
+                .await;
+            assert_eq!(
+                out.sprouts[0].fragment.mimetype.param("via"),
+                Some(expected_via)
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn text_within_the_target_is_verbatim() {
         let envelope = envelope("text/plain", "note.txt");
         let m = envelope.content_type.clone();
-        let out = SummarizerTransform { shape: shape(200) }
-            .apply(ctx(&envelope, &m, Some("Budget notes for the kitchen.")))
-            .await;
+        let out = SummarizerTransform {
+            shape: shape(200),
+            directory_target_chars: None,
+        }
+        .apply(ctx(&envelope, &m, Some("Budget notes for the kitchen.")))
+        .await;
         assert_eq!(
             out.sprouts[0].fragment.mimetype.param("via"),
             Some("verbatim")
