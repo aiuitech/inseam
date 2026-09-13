@@ -1,0 +1,110 @@
+# Vocabulary
+
+**Status: proposal with validation gates, not adopted architecture.** Nothing here is implemented. The measurements in [indexing](indexing.md) (retrieval hints) and the last end-to-end run (`benchmarks/runs/enterprise-rag-bench/20260907T032046Z-6b040bbfd905/report.md`) are the evidence it answers to, and the gates at the end say what must be true before any of it lands.
+
+The **vocabulary** is the corpus's own words — product names, codenames, region codes, ticket ids, people, customers, the jargon a team uses — as first-class rows in the index, grouped into **clusters** of words that belong together, so that a document and a question are both read in the corpus's terms instead of a general model's. It is the answer to two measured failures: the glossary terms a general model extracts are textbook words that join thousands of documents and flood the graph walk, and a quarter of the benchmark's questions paraphrase their document so that no word matches.
+
+## The thesis: grounding is a corpus problem, not a document problem
+
+The hints transform asked a model, one document at a time, for the document's "internal terms". It answered with the industry's words (SLO, KV cache, P95) because, reading one document with no view of the corpus, it cannot know which words are local. Locality is a property of the corpus: a word is local when it is rare in general language and recurs in a few of *these* documents. So the vocabulary is built **from the index's own statistics first, and the model is asked only what statistics cannot answer** — what a term means, which spellings are the same thing, and what a searcher would call it instead.
+
+Three consequences shape everything below:
+
+1. **Terms are mined and matched, not generated.** A term row exists because the text contains it, so its key is exact by construction and resolution ("Greg" vs "Greg Hunt") is a separate, later step over the term rows, not a property of extraction.
+2. **The model reads a cluster, not a document, when it grounds.** Alias resolution, glosses, and search phrases are asked once per changed cluster (thousands at most), never once per document (hundreds of thousands). This is the LLM-in-the-loop clustering, at the granularity where it is affordable and where the model has the context it needs.
+3. **A question is grounded the same way a document is.** The query is matched against the vocabulary exactly, and embedded against the clusters for what it paraphrases; the clusters' terms and aliases become lexical seeds. This is the bridge from "the new top end 80GB accelerator" to `H200` with no per-query model call.
+
+The retrieval walk itself does not change. The [Finder](finder.md) already runs personalized PageRank over typed, weighted relations; what changes is what is in the graph, how seeds are made, and how hubs are bounded.
+
+## Rows
+
+All vocabulary rows are **keyed fragments** ([indexing](indexing.md)): they belong to no source, dedupe index-wide under a key, carry no address, conduct relevance, and never rank as results. They are lexical rows: full-text indexed in the lexical table, never given a vector.
+
+- **Term** (`term:<normalized>`, `text/x-inseam-term`) — a word or phrase local to the corpus, with a plain gloss once a cluster pass has written one. Anchored `mentions` from every source-content fragment whose text contains it.
+- **Identifier** (`identifier:<normalized>`, `text/x-inseam-identifier`) — a ticket, PR, version, metric, or config name, exactly as written. Near-unique by nature: the strongest conductor in the graph.
+- **Entity** (`entity:<kind>:<normalized>`, `text/x-inseam-entity;kind=…`) — a person, customer, project, place. The entity extractor's vocabulary, unchanged.
+- **Alias** (`alias:<normalized>`, `text/x-inseam-alias`) — what a searcher would say instead of a term: a paraphrase, a plain description, a spelling variant. Related `aliases` to exactly one term, identifier, or entity. Aliases are the vocabulary's outward face: they exist so a question's words land on a lexical row that leads to the corpus's word.
+
+Every vocabulary row records its **document frequency** (the number of sources anchored to it), maintained by the cluster pass, because the hub bound below must read it without counting edges at query time.
+
+Each term, identifier, and entity belongs to **at most one cluster**. One home per row keeps membership a column rather than a table and makes the invariant checkable; cross-topic reach is the graph's job through the documents, not the cluster's.
+
+## Clusters
+
+A **cluster** is a set of vocabulary rows that co-occur across sources, with one vector over its concatenated terms and glosses in a stable order. Clusters are stored in their own catalog table (`clusters`: id, label, text digest, vector, member count, document frequency, last changed sweep). They are **not fragments and not in the relation graph**: a cluster linked to sixty terms linked to thousands of documents would be the exact super-hub the hints measurement showed floods the walk. Clusters are read at two moments only, the cluster pass and query grounding.
+
+Bounds: `clusters_max` (10,000 by default), `cluster_terms_max` (64). A vocabulary row that would push a cluster past its cap forms a sibling instead; a cluster pass never splits.
+
+**Formation is by co-occurrence, not by embedding.** A new vocabulary row is assigned to the cluster whose members share the most sources with it (Jaccard over the `mentions` anchors), joining when the overlap clears `cluster_join_min` and founding a new cluster otherwise. This is the discrete form of "embed the source and find the nearest cluster", and it is exact, free, and available for a row that appears in one document (its co-occurrence is that document's other rows). Two clusters whose vectors exceed `cluster_merge_cosine` after re-embedding merge, smaller into larger, bounded to the clusters that changed in this pass against their nearest neighbours. The vector is for retrieval by paraphrase, where a discrete match has nothing to match on; it is not needed to decide membership.
+
+## The vocabulary pass
+
+Vocabulary is a **sweep phase**, run after every file has landed and before folders, exactly as folders are composed from landed state ([indexing](indexing.md)). It reads the store and never a host, so it costs no I/O that indexing did not already pay, and it keeps the sweep's invariant that planning touches no store: per-source planners still emit keyed sprouts (entities, identifiers, cues) as pure functions of their text; the pass does what needs the whole corpus in view.
+
+1. **Mine candidates.** Read the lexical statistics the full-text index already holds (FTS5's vocabulary table gives every token's document frequency for free). A candidate is a token or code-shaped string with document frequency in the local band — `term_df_min` (2) to `term_df_max` (a fraction of the corpus, 2% by default) — that carries the marks of internal naming: capitals inside a word, digits, hyphens, dots, underscores, or absence from a small general-English list. Multi-word phrases come from the model's per-source extraction and from the cluster pass, not from mining; token-level mining is what is free, and the identifier-shaped strings it catches are the ones that matter most.
+2. **Match and anchor.** One bounded automaton over every candidate and every existing vocabulary row's spellings, run once over each source-content fragment landed or re-landed this sweep. A hit plants the row if new and anchors it `mentions`. This replaces the per-source "needle" anchor rule for vocabulary, and it is why a document indexed before a term was known still gets its edge: the pass anchors against *all* text it walks, and a full sweep walks everything.
+3. **Update frequencies and cluster.** Recount document frequency for every row touched; assign new rows to clusters by co-occurrence; re-embed changed clusters (one embedding per changed cluster, cached by text digest like every vector); merge over-threshold pairs.
+4. **Ground changed clusters with the model.** For each cluster that gained members this sweep, one call with the cluster's current rows, their glosses, and up to `cluster_context_sources` (3) short excerpts where its new rows appear. The model returns: which rows are the same thing (merges, applied by re-keying anchors to the survivor and dropping the loser), a gloss for each ungloss'd row, and up to `aliases_per_row_max` (4) search phrases per row in a searcher's plain words. Aliases land as rows related `aliases`. Cost: one call per changed cluster, bounded by `cluster_llm_budget`; with no budget or no model the pass still mines, matches, anchors, and clusters, and only glosses and aliases wait.
+
+The pass is idempotent in the sweep's sense: a second run over unchanged text plants nothing, anchors nothing new, and changes no cluster. What it produced rides the shape stamp only through its config dials, so changing `term_df_max` re-runs the pass, never the per-source transforms.
+
+**Why not ground per source, as first proposed.** The natural shape — embed the source, retrieve its cluster, hand the model the cluster as context, let it add terms — was considered and rejected on three grounds. It is order-dependent: whether source B joins the cluster source A founded depends on which planned first, and the sweep's built index is deliberately independent of concurrency. It reads and writes the store from planners, which the plan-then-land pipeline forbids so that landing stays one writer in enumeration order. And it puts the grounding context into every per-source cache key, so a cluster changing would either silently leave stale extractions or re-spend every LLM call in the corpus. Grounding per cluster gives the model more context (every document that uses the word, not one) at a thousandth of the calls, and leaves per-source extraction a pure, cacheable function of the text.
+
+## The model's per-source job shrinks
+
+The hints and entity transforms fold into one **extractor** transform that emits, per source: entities with kinds, identifiers, and cues (the plain-word questions the document answers). It no longer asks for glossary terms — mining finds the local ones and the model's were the industry's — and no longer writes glosses, which the cluster pass writes with the whole corpus in view. Discriminators and the synopsis stay as hint rows under the source. The entity kinds and the `mentions` edge are unchanged, so nothing in the graph reads differently.
+
+## Retrieval
+
+Seeding gains a **grounding** step before the existing hybrid seed; the walk and the rollup are the Finder's as they stand.
+
+1. **Exact grounding.** The query runs through the same automaton the pass used. A vocabulary row the query names outright becomes a seed with the strength of a full-text hit.
+2. **Paraphrase grounding.** The query vector (already computed for the vector seed list) is scored against every cluster vector — ten thousand dot products, well under a millisecond — and clusters above `cluster_query_cosine` contribute their rows and aliases as a fourth seed list, entering fusion at `cluster_seed_weight` (0.3) and only from their top `cluster_seed_ranks` (5), the same rank-gated, down-weighted shape the cue vectors measured best at. Their job is to add candidates the text lists lack, never to reorder what full-text already carries.
+3. **Hybrid seeds and fusion**, as today: prose full-text, lexical full-text, vectors, reciprocal rank fusion.
+4. **The walk**, as today, with two changes to what conducts. Edge weight is the relation kind's weight times a weight for the far end's row kind (`[finder.weights.by_row_kind]`: identifier 1.0, entity 0.8, term 0.6, alias 0.4, prose 1.0), because a shared ticket number says more than a shared jargon word. And a vocabulary row whose document frequency exceeds `hub_df_max` keeps its lexical row and its seeds but contributes **no edges** to the walk's slice: hub protection is a bound, not a damping, because the measurement showed every damping of hub terms still lost twenty points.
+5. **Rollup and merge**, as today.
+
+A big node may add a **grounded rewrite**: one cheap model call that rewrites the question in the corpus's words given the clusters step 2 matched. It is the benchmark report's second lever with the cluster as context, and it is an option outside the core loop, which must still answer on a phone, offline, in milliseconds.
+
+## Authority, as an experiment
+
+"Traditional" PageRank — global, unpersonalized — was rejected for the walk because it converges to importance rather than relevance. It may still earn a place as a **prior**: the cluster pass could compute one bounded global PageRank over the whole graph per sweep and store an authority score per source, and the rollup could break ties among near-duplicate siblings toward the more-referenced one. The last run's largest failure is the agent answering from a sibling draft; whether the referenced copy is the authoritative one is an empirical question. Gate: on the slice, does the prior move the gold sibling above its near-duplicates more often than not? Unmeasured, so not designed further.
+
+## Costs
+
+Per sweep, on a 25,000-document corpus of 500 MB of text:
+
+- Mining: one scan of the FTS vocabulary table; seconds.
+- Matching: one automaton pass over the landed text; tens of seconds, no I/O beyond the catalog.
+- Cluster vectors: at most `clusters_max` embeddings, only for changed clusters; a few dollars at most on the first sweep, cents after.
+- Cluster grounding: one model call per changed cluster; the first sweep pays for every cluster (thousands of short calls, under the per-source extractor's cost), later sweeps for the few that changed.
+- Storage: vocabulary rows are one-line lexical rows and `mentions` edges; the hints measurement already carried 300,000 of them without harm once the lexical table was split.
+
+Per query: one automaton pass over the query and one dot product per cluster, both under a millisecond; the rest is the Finder as it stands.
+
+## Paths not taken
+
+- **Vectors on vocabulary rows** (already rejected in [indexing](indexing.md)). Still rejected: the cluster carries the one vector the paraphrase bridge needs; a vector per term buys fuzzy name matching that aliases give exactly.
+- **Clusters as fragments in the graph.** A cluster is a super-hub by construction; measured hub flooding says no. Clusters are read at grounding time only.
+- **A topic model or community detection for clusters.** The vocabulary is words, not themes; co-occurrence over anchors is the signal at hand and needs no second algorithm.
+- **The model choosing which words are local.** Measured: it chooses the industry's. Statistics choose; the model glosses.
+- **Grounding per source at plan time.** Order-dependent, store-touching in planners, and it poisons the cache keys; see the vocabulary pass.
+- **A per-query model rewrite in the core loop.** Kept as a big-node option; the cluster bridge is the offline, millisecond answer.
+
+## Validation gates, in order
+
+Each is a run on the 25,000-document slice with the per-role side-table harness ([benchmarking](benchmarking.md)), before any code beyond what the gate needs.
+
+1. **Ceiling.** Mine candidates from the slice's FTS vocabulary with the band and shape rules above, offline. Of the 159 gold documents that finished outside the top 25, how many share a mined term or identifier with their question? That number bounds what exact grounding can recover. Below 30, stop here.
+2. **Exact grounding and the hub bound.** Plant the mined rows, anchor, seed from exact matches, exclude hubs by `hub_df_max`. Recall per question type against 84.3. Must not lose on basic while gaining on semantic.
+3. **Clusters and aliases.** Form clusters by co-occurrence, ground with the model, add the paraphrase seed list. Semantic recall against 56.0 end to end; the fusion weight and rank gate swept.
+4. **Extractor fold.** Replace hints and entities with the single extractor; confirm nothing regresses, and that project-related recall rises with entities on.
+5. **Authority prior.** Sibling tie-breaks on the near-duplicate questions, measured separately.
+
+## Open questions
+
+- Multi-word local phrases without a model: whether FTS5 phrase statistics or a bounded bigram count over the landed text is worth its cost, or whether the cluster pass's aliases cover it.
+- The general-English list for the shape rule: size, source, and whether a corpus in another language needs its own.
+- Re-anchoring after a merge in the cluster pass touches every edge of the losing row; whether that lands in the same transaction as the pass's other writes or in bounded batches.
+- Whether `hub_df_max` is a count or a fraction of the corpus; a fraction scales, a count is legible.
+- A phone's composition: the pass without a model still mines, matches, and clusters; whether a leaf node should run it at all or receive vocabulary from a larger node through the network is undecided ([discovery](discovery.md)).
