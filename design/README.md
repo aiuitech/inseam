@@ -13,3 +13,7 @@ Research supporting the iOS design: [phone-call-context](phone-call-context.md) 
 [Vocabulary](vocabulary.md) is a proposal with validation gates: the corpus's own terms mined from the index's statistics, grouped into clusters the model grounds once each, so documents and questions are read in the corpus's words and hub terms are bounded rather than damped.
 
 [Index explorer](index-explorer.md) defines the local working-copy library, bounded graph views, and per-result retrieval evidence.
+
+[Finder refinement](finder-refinement.md) proposes additive candidate tracking,
+query-relevant excerpts, size-aware reading, and a bounded combined
+search/expand/scan request controlled by the querying model.

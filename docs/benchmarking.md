@@ -20,3 +20,9 @@ scored 92.0 in 5 minutes 42 seconds and records the failures to track next.
 [The navigation improvement diagnosis](../benchmarks/reports/20260913-navigation-improvement-plan.md)
 compares those failures with public answers and proposes bounded query-time
 experiments before changing the corpus index or increasing the sample.
+
+The [Finder refinement proposal](../design/finder-refinement.md) develops the
+next tool contract. The current agent already receives source lengths and
+summary prefixes and uses `scan`; the benchmark's lean index provides no
+fragment hints. Combined refinement and explicit candidate accumulation are
+proposed behavior, not current API capabilities.
