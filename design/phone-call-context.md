@@ -6,7 +6,7 @@ The goal is to remember conversations with minimal interruption to the user's ex
 
 ## Recommendation
 
-Keep Apple's recorder and improve ingestion first. Investigate whether user-authorized automation can remove the later export step. Test a Mac companion only for people who already answer calls there. Conference recording remains an optional fallback with explicit per-call friction. Carrier migration is excluded; forwarding, VoIP, and accessories do not meet the preferred unchanged-setup experience.
+Keep Apple's recorder and improve ingestion first. Investigate whether user-authorized automation can remove the later export step. Test a Mac companion only for people who already answer calls there. A callback conference recorder is the leading alternative when automatic ingestion matters more than the answer-and-merge steps. Continuum documents this exact approach. It preserves the existing carrier and number, but still requires per-call interaction. Carrier migration is excluded; forwarding, VoIP, and accessories do not meet the preferred unchanged-setup experience.
 
 There is no documented public iOS API in the material reviewed that lets an ordinary app tap both sides of an unrelated cellular or FaceTime call. That is a platform constraint, not evidence that seamless capture is impossible everywhere. Audio can also be captured by the endpoint handling a call, the carrier transporting it, or external hardware.
 
@@ -16,7 +16,7 @@ The supplied screenshot says Continuum captures system audio without a meeting b
 
 Desktop capture is technically credible. Apple publishes a [Core Audio tap sample](https://developer.apple.com/documentation/coreaudio/capturing-system-audio-with-core-audio-taps) for macOS 14.2 and later that captures process output after system-audio permission. The local microphone is a separate input. Inferring a desktop implementation is reasonable; claiming that this is Continuum's implementation would exceed the evidence.
 
-The mobile guide establishes an ambient microphone workflow. It is not evidence of an iOS call-audio exception. Any separate claim of active cellular-call capture would still need an explicit supported workflow and demonstration. No vendor was contacted for this research.
+The mobile guide establishes an ambient microphone workflow. Its separate [phone-call guide](https://help.oncontinuum.com/overview/phone-calls), subsequently supplied by the user, explicitly documents callback conferencing: Continuum calls the user, who answers and merges it with the contact call. It does not dial the contact. Capture begins after merging, and the resulting transcript appears as a meeting. This confirms the user's original external-number suggestion as a documented vendor workflow, not an iOS audio-capture exception. No vendor was contacted and the workflow was not device-tested.
 
 ## Options compared
 
@@ -72,7 +72,7 @@ The business tradeoff is substantial: this is a communications service partnersh
 
 Three distinct products are possible. Combining them loosely creates misleading promises.
 
-**Conference recorder.** Save a recording-service number as a contact. The user adds it and merges during a cellular call. Apple's [conference instructions](https://support.apple.com/en-euro/111787) require user actions and carrier support. Inseam cannot assume it can programmatically merge an arbitrary existing call. Audio before joining is absent. A recorder joining a carrier-mixed conference may receive the humans already mixed together.
+**Conference recorder.** Prefer a callback variant: the user requests capture from inseam, our service calls their existing number, and they answer and merge it with their contact call. This avoids manually dialing a recorder number. Continuum's phone-call guide documents this workflow and recommends saving its outbound numbers as a contact to reduce call screening. Its contact-saving advice is a mitigation, not our guarantee of carrier delivery. The alternative is dialing a recording-service contact and merging it. Apple's [conference instructions](https://support.apple.com/en-euro/111787) require user actions and carrier support. Inseam cannot assume it can programmatically merge an arbitrary existing call. Audio before joining is absent. A recorder joining a carrier-mixed conference may receive the humans already mixed together.
 
 **Outgoing calls with the existing caller ID.** Twilio's [Call resource](https://www.twilio.com/docs/voice/api/call-resource) accepts a verified outgoing caller ID. Inseam could initiate VoIP or arrange a two-leg callback bridge. Recipients may see the familiar number, but return calls still reach the original carrier unless separately routed. Test caller-ID delivery in each destination market. A callback avoids carrying the user's leg over app VoIP, at the price of answering an extra call and paying for two legs.
 
@@ -121,7 +121,7 @@ Transient audio processing still handles private conversation content, and a ret
 | Apple import UX | One target iPhone, ten recordings across short and long calls | Exact taps; audio and transcript fidelity; duplicate handling; interruption recovery |
 | Notes-to-Mac ingestion | Ten synchronized recordings, supported automation first | Actual attachment access, stable identifiers, deletion behavior, delayed-sync handling |
 | Mac audio capture | Twelve calls across built-in audio, AirPods, USB headset, and handset handoff | Both speakers captured; route changes handled; gaps reported; no unrelated audio retained |
-| Conference fallback | Six calls across two intended carriers | Merge works, notice reaches participants, join delay measured, missing start marked |
+| Callback conference capture | Six calls across two intended carriers | Incoming callback can merge with the contact call, screening handled, notice reaches participants after merge, join delay measured, missing start marked |
 | VoIP/forwarding prototype | Only if its UX tradeoff is accepted | Correct inbound/outbound identity, no forwarding loop, failure/voicemail behavior, per-call cost |
 
-These experiments are proposed, not executed. The immediate implementation priority is reducing friction in the existing import path. The research priority is removing ingestion friction without changing the user's phone service. The Mac experiment can establish useful automatic capture without committing inseam to being a telephone provider.
+These experiments are proposed, not executed. The immediate implementation priority is reducing friction in the existing import path. The research priority is comparing Apple recording plus import with callback conferencing: the first minimizes in-call disruption, while the second can automate ingestion without changing phone service. The Mac experiment can establish useful automatic capture without committing inseam to being a telephone provider.
