@@ -53,8 +53,15 @@ python3 benchmarks/requery.py enterprise 20260913T181642Z-b414e6e7aa0f \
   --finder-lexical-weight 0.1
 ```
 
-This runs the installed `inseam agent` with Finder's `query`, `expand`, `scan`,
-and `fetch` operations against all 511,962 documents. It inherits the source
+For a 50-question check, change `--bookend-count 10` to `--bookend-count 25`.
+This selects the first 25 and last 25 questions and includes the original 20.
+In the pinned release, those 50 contain 25 `basic`, 5 `high_level`, and 20
+`info_not_found` questions. Compare the repeated 20 separately from the added
+30 when measuring changes against an earlier 20-question run.
+
+This runs the installed `inseam agent` with the additive `find` tool, combining
+Finder queries, expansion, and source scans against all 511,962 documents.
+It inherits the source
 run's 12-turn limit and index configuration. It performs no indexing or repair.
 Install changed Rust code before rerunning. Query settings can change using the
 same Finder flags as a retrieval replay; index-shape changes require a new index.

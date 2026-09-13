@@ -1,0 +1,132 @@
+{
+  "previous_run": "20260913T205625Z-09bc883d9a0a",
+  "current_run": "20260913T214310Z-a4951ac828ca",
+  "previous_20": {
+    "count": 20,
+    "correctness_pct": 100.0,
+    "combined_score": 99.0
+  },
+  "repeated_20": {
+    "count": 20,
+    "correctness_pct": 100.0,
+    "combined_score": 100.0
+  },
+  "added_30": {
+    "count": 30,
+    "correctness_pct": 83.33,
+    "combined_score": 78.89
+  },
+  "all_50": {
+    "count": 50,
+    "correctness_pct": 90.0,
+    "combined_score": 87.33
+  },
+  "initial_rankings_changed_on_repeated_questions": [],
+  "repeated_question_score_changes": [
+    {
+      "question_id": "qst_0010",
+      "previous": {
+        "question_id": "qst_0010",
+        "corrected": false,
+        "question_type": "basic",
+        "answer_correct": true,
+        "correctness_reasoning": "It matches the gold answer\u2019s core mechanism: deterministic stage-based cohort keys from stage-level signals, short-lived cohort aggregates, and a route \u00d7 stage alert matrix that attributes SLO issues and escalates to top-k likely stages to cut noise and speed RCA.",
+        "completeness_pct": 80.0,
+        "document_recall_pct": 100.0,
+        "invalid_extra_docs": 7
+      },
+      "current": {
+        "question_id": "qst_0010",
+        "corrected": false,
+        "question_type": "basic",
+        "answer_correct": true,
+        "correctness_reasoning": "It matches the gold answer\u2019s core mechanism\u2014deterministic stage-based cohort keys, short-lived per-cohort aggregates, and a route \u00d7 stage alert matrix that attributes SLO issues to top-k likely stages to reduce alert noise and speed RCA.",
+        "completeness_pct": 100.0,
+        "document_recall_pct": 100.0,
+        "invalid_extra_docs": 7
+      }
+    }
+  ],
+  "nonperfect_questions": [
+    {
+      "question_id": "qst_0014",
+      "corrected": false,
+      "question_type": "basic",
+      "answer_correct": true,
+      "correctness_reasoning": "It matches the core idea that rollback is mainly a manual restore-from-backup process using control-plane/etcd backups and PV/storage snapshots where available, though it adds extra procedural detail.",
+      "completeness_pct": 33.33,
+      "document_recall_pct": 0.0,
+      "invalid_extra_docs": 11
+    },
+    {
+      "question_id": "qst_0016",
+      "corrected": false,
+      "question_type": "basic",
+      "answer_correct": false,
+      "correctness_reasoning": "The candidate does not give the gold answer\u2019s key policy that contractor access defaults to expiring after 30 days and instead says no contractor-specific duration is stated.",
+      "completeness_pct": 0.0,
+      "document_recall_pct": 0.0,
+      "invalid_extra_docs": 8
+    },
+    {
+      "question_id": "qst_0019",
+      "corrected": false,
+      "question_type": "basic",
+      "answer_correct": true,
+      "correctness_reasoning": "It matches the gold answer that the bridge was incorrectly configured in Gateway/NAT mode with NAT/MASQUERADE enabled instead of bridge/passthrough mode, causing source IP rewriting.",
+      "completeness_pct": 66.67,
+      "document_recall_pct": 100.0,
+      "invalid_extra_docs": 7
+    },
+    {
+      "question_id": "qst_0020",
+      "corrected": false,
+      "question_type": "basic",
+      "answer_correct": true,
+      "correctness_reasoning": "It matches the key point that `max_tokens: null` is treated as unset and indicates omitted `max_tokens` uses normal default handling as well, with no conflict on the null-not-0 behavior.",
+      "completeness_pct": 66.67,
+      "document_recall_pct": 100.0,
+      "invalid_extra_docs": 7
+    },
+    {
+      "question_id": "qst_0023",
+      "corrected": false,
+      "question_type": "basic",
+      "answer_correct": false,
+      "correctness_reasoning": "The candidate answer lists different review roles and reviewers than the gold answer, omitting key required roles like Applied ML, Runtime, SRE/Release, and Security/RBAC.",
+      "completeness_pct": 0.0,
+      "document_recall_pct": 0.0,
+      "invalid_extra_docs": 13
+    },
+    {
+      "question_id": "qst_0477",
+      "corrected": false,
+      "question_type": "high_level",
+      "answer_correct": false,
+      "correctness_reasoning": "The candidate matches only hosted API usage and dedicated capacity, but replaces enterprise licensing/support for Private deployments and add-on fees with marketplace/partner credits and professional services, so it conflicts on two core revenue streams.",
+      "completeness_pct": 50.0,
+      "document_recall_pct": null,
+      "invalid_extra_docs": null
+    },
+    {
+      "question_id": "qst_0478",
+      "corrected": false,
+      "question_type": "high_level",
+      "answer_correct": false,
+      "correctness_reasoning": "The candidate answer gives a different add-on category (CMK) and omits/conflicts with the gold answer\u2019s categories of advanced observability retention, compliance packages, and premium SLAs.",
+      "completeness_pct": 0.0,
+      "document_recall_pct": null,
+      "invalid_extra_docs": null
+    },
+    {
+      "question_id": "qst_0480",
+      "corrected": false,
+      "question_type": "high_level",
+      "answer_correct": false,
+      "correctness_reasoning": "It only overlaps on Product, Engineering, and Go-to-market while omitting several core departments from the gold answer and adding conflicting ones like Finance and People Ops.",
+      "completeness_pct": 0.0,
+      "document_recall_pct": null,
+      "invalid_extra_docs": null
+    }
+  ]
+}

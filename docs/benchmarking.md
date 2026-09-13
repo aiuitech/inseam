@@ -31,3 +31,9 @@ improved the same sample from 92 to 99, with 100% correctness. It took 7 minutes
 25 seconds and $2.81 in answer cost, versus 5 minutes 42 seconds and $1.64.
 The report records the remaining completeness gap and the increased search
 cost on unanswerable questions before any larger evaluation.
+
+[The expanded 50-question run](../benchmarks/reports/20260913-gpt54-50-bookends.md)
+scored 87.33 with 90% correctness in 18 minutes 44 seconds, at $6.61 in answer
+cost. The original 20 scored 100; the added 30 scored 78.89. High-level
+company questions exposed three incorrect answers out of five. Use
+`--bookend-count 25` to repeat this first-25/last-25 sample.
