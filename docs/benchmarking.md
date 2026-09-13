@@ -2,6 +2,9 @@
 
 The repository's benchmark harness and commands live in [benchmarks/README.md](../benchmarks/README.md). Start there for either benchmark:
 
+For what we have tried and learned, see the
+[indexing and Finder experiment history](../design/indexing-experiments.md).
+
 - **EnterpriseRAG-Bench** measures indexing at scale, retrieval, agent answers, and an LLM judge over half a million documents. Hours and dollars per run.
 - **BEIR NFCorpus** measures retrieval alone with the standard nDCG family over 3,633 abstracts and 323 queries. Minutes and cents per run, and the one to reach for on every retrieval change.
 
