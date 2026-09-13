@@ -192,6 +192,39 @@ async fn long_unicode_lines_continue_without_losing_or_duplicating_text() {
 }
 
 #[tokio::test]
+async fn truncated_windows_preserve_the_requested_later_lines() {
+    let body = format!(
+        "{}\n{}last-window evidence\n",
+        "x".repeat(30_000),
+        "middle\n".repeat(2_000)
+    );
+    let (corpus, _data, kernel) = fixture(&body).await;
+    let address = common::address_of(&kernel, &corpus.path().join("evidence.txt"));
+    let mut session = DiscoverySession::default();
+    let mut request = json!({"source":address,"start":1,"end":2002});
+    let mut assembled = String::new();
+    let mut completed = false;
+    for _ in 0..16 {
+        let response = find(&mut session, &kernel, json!({"scan":[request]})).await;
+        let read = &response["results"][0];
+        if read["offset_chars"] == 0 {
+            if !assembled.is_empty() {
+                assembled.push('\n');
+            }
+        }
+        assembled.push_str(read["text"].as_str().unwrap());
+        request = read["next"].clone();
+        if request.is_null() {
+            completed = true;
+            break;
+        }
+        assert_eq!(request["end"], 2002);
+    }
+    assert!(completed);
+    assert_eq!(assembled, body.trim_end_matches('\n'));
+}
+
+#[tokio::test]
 async fn continuation_refuses_a_changed_source_window() {
     let (corpus, _data, kernel) = fixture(&"x".repeat(30_000)).await;
     let path = corpus.path().join("evidence.txt");

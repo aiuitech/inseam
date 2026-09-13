@@ -72,9 +72,11 @@ the next request's `scan` array. It contains the source, line range, character
 offset, and window digest needed to resume even within one very long line.
 Continuing the same window fails if its text changed, so two versions cannot
 silently be spliced together. A range exceeding the underlying 2,000-line scan
-window continues at the next line. Expansion similarly returns `next` with an
-entry offset. Expansion text fields are previews; use their source/ranges to
-read the full evidence. Expansion pagination is a fresh view, not a snapshot.
+window continues at the next line. The requested final line survives a character continuation
+inside a 2,000-line window, so following `next` still reaches later windows.
+Expansion similarly returns `next` with an entry offset. Expansion text fields
+are previews; use their source/ranges to read the full evidence. Expansion
+pagination is a fresh view, not a snapshot.
 
 The session accepts at most 512 batches. The agent allows at most eight tool
 calls per model turn and 64 configured turns. Its normal benchmark limit is

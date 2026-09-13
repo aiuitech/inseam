@@ -143,7 +143,7 @@ fn scan_fill(
         .map_or(request.end, |total| total.min(request.end));
     value["next"] = if offset + count < available {
         json!({"source":request.source, "start":response.start,
-            "end":response.end, "offset_chars":offset + count,
+            "end":request.end, "offset_chars":offset + count,
             "window_digest":value["window_digest"]})
     } else if response.end < end {
         json!({"source":request.source, "start":response.end + 1,
