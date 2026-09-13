@@ -1,0 +1,130 @@
+{
+  "incorrect": [
+    {
+      "question_id": "qst_0014",
+      "type": "basic",
+      "initial_recall_pct": 0.0,
+      "combined_document_recall_pct": 0.0,
+      "reason": "The candidate does not report the customer's described current rollback method from the gold answer and instead gives a different supported rollback procedure while saying the customer's own practice was not found."
+    },
+    {
+      "question_id": "qst_0016",
+      "type": "basic",
+      "initial_recall_pct": 0.0,
+      "combined_document_recall_pct": 0.0,
+      "reason": "The candidate answer conflicts with the gold answer on the key policy duration, stating a 90-day default instead of 30 days."
+    },
+    {
+      "question_id": "qst_0022",
+      "type": "basic",
+      "initial_recall_pct": 100.0,
+      "combined_document_recall_pct": 100.0,
+      "reason": "The candidate contradicts the gold answer on the cap amount, exceptions, and source, giving $5,000,000 and data-security carveouts instead of the SOP\u2019s $1,000,000/confidentiality formulation."
+    },
+    {
+      "question_id": "qst_0023",
+      "type": "basic",
+      "initial_recall_pct": 0.0,
+      "combined_document_recall_pct": 0.0,
+      "reason": "The candidate answer conflicts with the gold answer by naming DevEx and Support instead of the required Applied ML, Runtime, Platform/Console, SRE/Release, and Security/RBAC reviewers."
+    },
+    {
+      "question_id": "qst_0028",
+      "type": "basic",
+      "initial_recall_pct": 0.0,
+      "combined_document_recall_pct": 0.0,
+      "reason": "It omits critical recommended commands from the gold answer (updating the release branch, separate annotated tag creation, and the exact `gh release create ... --draft` command) and gives a different tag message while claiming the release command was unavailable."
+    },
+    {
+      "question_id": "qst_0037",
+      "type": "basic",
+      "initial_recall_pct": 0.0,
+      "combined_document_recall_pct": 0.0,
+      "reason": "The candidate attributes the spike to a mixed embedding/streaming traffic pattern and ingress/proxy exhaustion, which conflicts with the gold answer\u2019s cause of API gateway backpressure plus hedged retries overloading dsp-6 and exhausting serving runtime process/thread limits, with increased prefetch.window_size as a contributor."
+    },
+    {
+      "question_id": "qst_0039",
+      "type": "basic",
+      "initial_recall_pct": 0.0,
+      "combined_document_recall_pct": 0.0,
+      "reason": "It conflicts with the gold answer by saying there are six gates instead of the three types\u2014Quality, Performance, and Compliance\u2014asked for in the query."
+    },
+    {
+      "question_id": "qst_0043",
+      "type": "basic",
+      "initial_recall_pct": 0.0,
+      "combined_document_recall_pct": 0.0,
+      "reason": "The candidate gives a different root cause and different mitigation than the gold answer, conflicting on both what triggered the p99 spike and how it was resolved."
+    },
+    {
+      "question_id": "qst_0050",
+      "type": "basic",
+      "initial_recall_pct": 0.0,
+      "combined_document_recall_pct": 0.0,
+      "reason": "The candidate gives different header names, a different value format, and an environment variable instead of the opt-in header specified in the gold answer."
+    },
+    {
+      "question_id": "qst_0451",
+      "type": "miscellaneous",
+      "initial_recall_pct": 0.0,
+      "combined_document_recall_pct": 0.0,
+      "reason": "The candidate gives a different tagging requirement (\u201csatire/meme\u201d) instead of the gold answer\u2019s requirement to tag memes with the model version."
+    },
+    {
+      "question_id": "qst_0456",
+      "type": "miscellaneous",
+      "initial_recall_pct": 0.0,
+      "combined_document_recall_pct": 0.0,
+      "reason": "The candidate does not give the gold answer\u2019s scheduled time of 8:00 PM and instead cites a different time while claiming no explicit mock draft time was provided."
+    },
+    {
+      "question_id": "qst_0460",
+      "type": "miscellaneous",
+      "initial_recall_pct": 0.0,
+      "combined_document_recall_pct": 0.0,
+      "reason": "The candidate answer is about a different person and different next steps, and it omits the key agreed actions of sending Priya a take-home assignment due in 48 hours followed by a panel interview."
+    },
+    {
+      "question_id": "qst_0471",
+      "type": "high_level",
+      "initial_recall_pct": 0.0,
+      "combined_document_recall_pct": null,
+      "reason": "The candidate gives a different mission statement and omits the gold answer\u2019s core phrasing about making high-performance, reliable LLM inference accessible to every engineering team."
+    },
+    {
+      "question_id": "qst_0474",
+      "type": "high_level",
+      "initial_recall_pct": 0.0,
+      "combined_document_recall_pct": null,
+      "reason": "The candidate misses key explicitly called-out design items from the gold answer\u2014especially modern attention optimizations, continuous batching in its final answer, prefix/KV cache management, and optimized kernel selection\u2014and instead substitutes items like device placement hints and batch sizing."
+    },
+    {
+      "question_id": "qst_0475",
+      "type": "high_level",
+      "initial_recall_pct": 0.0,
+      "combined_document_recall_pct": null,
+      "reason": "It mentions latency, region, and tier-like constraints, but it omits the gold answer\u2019s core policy dimension of cost, so it does not match the key enumerated dimensions."
+    },
+    {
+      "question_id": "qst_0477",
+      "type": "high_level",
+      "initial_recall_pct": 0.0,
+      "combined_document_recall_pct": null,
+      "reason": "It matches hosted API and dedicated capacity but replaces Private deployment licensing/support and add-ons with marketplace credits and professional services, which conflicts with the gold answer\u2019s four streams."
+    },
+    {
+      "question_id": "qst_0478",
+      "type": "high_level",
+      "initial_recall_pct": 0.0,
+      "combined_document_recall_pct": null,
+      "reason": "The candidate answer gives a different add-on (customer-managed keys) and misses the gold answer\u2019s categories: advanced observability retention, compliance packages, and premium SLAs."
+    },
+    {
+      "question_id": "qst_0480",
+      "type": "high_level",
+      "initial_recall_pct": 0.0,
+      "combined_document_recall_pct": null,
+      "reason": "The candidate only identifies Product, Engineering, and Go-to-Market and says it could not verify the full organization, missing several gold-listed departments and conflicting with the existence of a fuller high-level list."
+    }
+  ]
+}

@@ -490,3 +490,22 @@ followed by a score review and a pause before any 500-question extension. The
 selection is the first fifty and last fifty release questions on the existing
 full index. Agent effort returns to the endpoint default and judging uses the
 original upstream medium setting. Vocabulary indexing remains interrupted.
+
+The authorized 100-question GPT-5.4 check completed with all questions judged, no
+skips, and no correction. Combined score was 78.98 and correctness 82%. The same
+fifty questions scored 85.80 versus 87.33 before, with identical initial rankings;
+the added fifty scored 72.17. High-level questions scored 35 and unanswerable ones
+100. Eleven of twelve incorrect questions with expected document IDs had zero
+expected-document recall in the initial-plus-agent trace. One wrong answer had the
+correct source exposed but substituted facts from related material. These findings
+support further investigation of missing-source discovery and source selection,
+not a demonstrated indexing improvement. The original twenty-question sample still
+scores 100 and would have hidden these failures.
+
+Answer generation took 427.18 seconds with eight sessions sharing one database;
+total with the official judge was 634.14 seconds. Reported answer charges were $11.00;
+judge charges remain unknown. Different concurrency and question mix prevent a
+causal runtime comparison with the earlier sequential fifty. The replay used the
+existing full index, not a completed vocabulary-enriched index. The owner-required
+pause is in effect before 500 questions or more indexing. Evidence and per-question
+comparisons are in the [100-question report](../benchmarks/reports/20260913-gpt54-100-bookends.md).

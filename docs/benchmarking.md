@@ -50,3 +50,8 @@ scored 87.33 with 90% correctness in 18 minutes 44 seconds, at $6.61 in answer
 cost. The original 20 scored 100; the added 30 scored 78.89. High-level
 company questions exposed three incorrect answers out of five. Use
 `--bookend-count 25` to repeat this first-25/last-25 sample.
+
+The [100-question GPT-5.4 review](../benchmarks/reports/20260913-gpt54-100-bookends.md)
+scored 78.98 over the first fifty and last fifty questions on the full index.
+It includes a paired comparison with the earlier fifty and records the pause
+before any extension to 500.

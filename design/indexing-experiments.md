@@ -133,3 +133,19 @@ answer time for GLM low versus 7.19 for the prior GPT-5.4 run. Different concurr
 settings and unfinished questions limit the comparison. Both the answer run and
 resumed slice were stopped, with checkpoints retained. See the
 [partial experiment record](../benchmarks/experiments/20260913-glm-full/README.md).
+
+### GPT-5.4 100-question review point, 13 September 2026
+
+The [100-question report](../benchmarks/reports/20260913-gpt54-100-bookends.md)
+records 78.98 combined score and 82% correctness. The repeated fifty score 85.80
+versus 87.33 previously; their initial rankings are identical. The added fifty
+score 72.17. High-level questions score 35, while unanswerable questions score 100.
+Eleven of twelve incorrect questions with expected documents never expose those
+documents in the initial or agent-trace union. No initial retrieval gain is shown.
+The original twenty still score 100, so that small sample is inadequate for this gap.
+
+One database owner with eight independent answer sessions completed answers in
+427.18 seconds; total with judging was 634.14 seconds. Answer charges were $11.00,
+judge charges unrecorded. Both workload mix and concurrency differ from the earlier
+50-question run. The existing full index was reused; vocabulary enrichment remains
+unmeasured. Stopped at the owner's gate: no 500-question extension or indexing resume.

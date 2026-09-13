@@ -47,3 +47,7 @@ review. The batch driver defaults to GPT-5.4 and 50 questions from each end.
 Without `--reasoning-effort`, it preserves the agent endpoint default and calls
 the unmodified upstream scorer with its existing medium judge effort. The 100
 question run must finish and report scores before any extension to 500.
+
+The authorized GPT-5.4 100-question run completed with score 78.98 and 82% correctness.
+The [report](../../reports/20260913-gpt54-100-bookends.md) records the comparisons.
+Execution is paused at the owner's review gate; the scripts are not scheduled.

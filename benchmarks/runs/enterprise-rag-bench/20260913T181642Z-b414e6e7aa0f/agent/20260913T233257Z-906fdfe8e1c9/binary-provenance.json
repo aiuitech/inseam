@@ -1,0 +1,8 @@
+{
+  "binary_source_revision": "906fdfe8e1c99b8b1a49762056bf84b6c667b1d4",
+  "binary_sha256": "1699dcc4909ccad5d3324ce7186b0061198f5bba783af3a71482aeb0f4a4f472",
+  "source_diff": "source-diff.patch",
+  "source_diff_empty": true,
+  "index_origin_run_id": "20260913T181642Z-b414e6e7aa0f",
+  "note": "Current Finder code on the existing full index. No vocabulary indexing was performed by this replay."
+}

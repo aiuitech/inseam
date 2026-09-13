@@ -1,0 +1,55 @@
+{
+  "total": {
+    "find": 368,
+    "queries": 504,
+    "scan": 390,
+    "expand": 26,
+    "inspect": 186,
+    "forget": 225
+  },
+  "by_type": {
+    "basic": {
+      "questions": 50,
+      "answer_seconds": 774.988087837,
+      "turn_limit_questions": 0,
+      "queries": 99,
+      "scan": 135,
+      "expand": 2,
+      "inspect": 34,
+      "forget": 30
+    },
+    "miscellaneous": {
+      "questions": 20,
+      "answer_seconds": 244.746915958,
+      "turn_limit_questions": 0,
+      "queries": 50,
+      "scan": 41,
+      "expand": 2,
+      "inspect": 10,
+      "forget": 32
+    },
+    "high_level": {
+      "questions": 10,
+      "answer_seconds": 335.529029087,
+      "turn_limit_questions": 0,
+      "queries": 44,
+      "scan": 57,
+      "expand": 0,
+      "inspect": 6,
+      "forget": 54
+    },
+    "info_not_found": {
+      "questions": 20,
+      "answer_seconds": 1360.048448543,
+      "turn_limit_questions": 1,
+      "queries": 311,
+      "scan": 157,
+      "expand": 22,
+      "inspect": 136,
+      "forget": 109
+    }
+  },
+  "answer_provider_cost_usd": 10.999819999999998,
+  "judge_provider_cost_usd": null,
+  "timing_note": "Per-question durations overlap across eight sessions; do not sum them as wall time."
+}

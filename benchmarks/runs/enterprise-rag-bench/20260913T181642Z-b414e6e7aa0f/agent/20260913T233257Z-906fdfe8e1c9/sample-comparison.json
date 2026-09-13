@@ -1,0 +1,57 @@
+{
+  "old_run_id": "20260913T214310Z-a4951ac828ca",
+  "new_run_id": "20260913T233257Z-906fdfe8e1c9",
+  "repeated_50_before": {
+    "count": 50,
+    "combined_score": 87.33,
+    "correctness_pct": 90.0
+  },
+  "repeated_50_now": {
+    "count": 50,
+    "combined_score": 85.8,
+    "correctness_pct": 86.0
+  },
+  "added_50": {
+    "count": 50,
+    "combined_score": 72.17,
+    "correctness_pct": 78.0
+  },
+  "original_20_now": {
+    "count": 20,
+    "combined_score": 100.0,
+    "correctness_pct": 100.0
+  },
+  "initial_rankings_changed_on_repeated_50": 0,
+  "changes": [
+    {
+      "question_id": "qst_0013",
+      "old_score": 100.0,
+      "new_score": 90.0,
+      "new_correctness_reasoning": "The candidate answer matches the gold answer\u2019s two-phase rotation process, key timing/details (24h/3 windows, 5-minute grace, 20-minute canary), safe cutover, and rollback by reverting the alias and marking the new key revocation-pending."
+    },
+    {
+      "question_id": "qst_0014",
+      "old_score": 33.33,
+      "new_score": 0,
+      "new_correctness_reasoning": "The candidate does not report the customer's described current rollback method from the gold answer and instead gives a different supported rollback procedure while saying the customer's own practice was not found."
+    },
+    {
+      "question_id": "qst_0019",
+      "old_score": 66.67,
+      "new_score": 100.0,
+      "new_correctness_reasoning": "The candidate matches the gold answer that the Ubiquiti office bridge was mistakenly set to Gateway/NAT mode with NAT/MASQUERADE enabled instead of bridge/passthrough, causing source IP rewriting."
+    },
+    {
+      "question_id": "qst_0020",
+      "old_score": 66.67,
+      "new_score": 100.0,
+      "new_correctness_reasoning": "It matches the gold answer that both `max_tokens: null` and omitting `max_tokens` result in using model defaults rather than treating null as 0."
+    },
+    {
+      "question_id": "qst_0022",
+      "old_score": 100.0,
+      "new_score": 0,
+      "new_correctness_reasoning": "The candidate contradicts the gold answer on the cap amount, exceptions, and source, giving $5,000,000 and data-security carveouts instead of the SOP\u2019s $1,000,000/confidentiality formulation."
+    }
+  ]
+}

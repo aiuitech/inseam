@@ -3,6 +3,7 @@ __pycache__
 # Logs and the raw per-query dumps stay local because they are large and reproducible.
 runs/**/logs/
 runs/**/queries.jsonl
+runs/**/batch/
 
 # Incremental experiments retain command logs locally alongside their evidence.
 experiments/**/logs/

@@ -36,6 +36,9 @@ def run_queries(run_dir, data_dir, composition, manifest, inputs, options, rows,
     manifest['execution'] = {'answer_workers_max':8, 'database_owners':1,
         'answer_reasoning_effort':effort or 'endpoint-default', 'judge_reasoning_effort':effort or 'medium',
         'attempts_per_question_max':ATTEMPTS_MAX, 'cost_scope':'batch provider total; per-question cost unavailable'}
+    # The batch command uses the typed query default without score ledgers.
+    manifest['options'] = {**manifest['options'], 'explain':False}
+    harness.write_json(run_dir / 'manifest.json', manifest)
     for attempt in range(1, ATTEMPTS_MAX + 1):
         pending = [row for row in inputs if row['question_id'] not in completed]
         if not pending:
