@@ -16,3 +16,7 @@ comparing Finder changes.
 
 [The first GPT-5.4 bookend baseline](../benchmarks/reports/20260913-gpt54-bookends.md)
 scored 92.0 in 5 minutes 42 seconds and records the failures to track next.
+
+[The navigation improvement diagnosis](../benchmarks/reports/20260913-navigation-improvement-plan.md)
+compares those failures with public answers and proposes bounded query-time
+experiments before changing the corpus index or increasing the sample.
