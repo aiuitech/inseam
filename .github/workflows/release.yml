@@ -19,6 +19,10 @@ permissions: {}
 
 jobs:
   build:
+    # A called workflow may hold no more than its caller grants, and the
+    # build jobs read the checkout; without this the run fails at startup.
+    permissions:
+      contents: read
     uses: ./.github/workflows/build-distribution.yml
     with:
       package: inseam-cli
