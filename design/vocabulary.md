@@ -37,6 +37,13 @@ Bounds: `clusters_max` (10,000 by default), `cluster_terms_max` (64). A vocabula
 
 **Formation is by co-occurrence, not by embedding.** A new vocabulary row is assigned to the cluster whose members share the most sources with it (Jaccard over the `mentions` anchors), joining when the overlap clears `cluster_join_min` and founding a new cluster otherwise. This is the discrete form of "embed the source and find the nearest cluster", and it is exact, free, and available for a row that appears in one document (its co-occurrence is that document's other rows). Two clusters whose vectors exceed `cluster_merge_cosine` after re-embedding merge, smaller into larger, bounded to the clusters that changed in this pass against their nearest neighbours. The vector is for retrieval by paraphrase, where a discrete match has nothing to match on; it is not needed to decide membership.
 
+## Derived fragments: candidates, never anchors
+
+The graph as it stands is untouched: `contains` and `derives` edges, summaries, hints, cues, and keywords all stay, conduct at their weights, and rank as they do today. Vocabulary adds rows and `mentions` edges beside them; it removes nothing. Two rules say how derived understanding meets the vocabulary:
+
+- **Derived fragments are never anchors.** A term anchors only to source-content fragments (sections, transcript lines, entries), as keyed sprouts already do ([transforms](../docs/indexing/transforms.md)). A summary repeats what its content says, so anchoring it too would count every mention twice, and a model-written summary can name a thing the content never does, which would be an edge the source cannot justify. A summary that a vector hit still receives walk mass from the vocabulary through `derives` from the root and `contains` to the content, so nothing is lost by the rule.
+- **Derived fragments are the phrase candidates.** Token mining cannot see multi-word names; the summarizer's keywords and the extractor's cues and entity names can, and they are already paid for. Every keyword phrase and extracted name in the index is a candidate: one that the automaton then matches in `term_df_min` or more sources' *content* becomes a term, anchored to that content. The model proposes, the text confirms, and a phrase the model invented that appears nowhere plants nothing. This closes the multi-word question without a bigram count.
+
 ## The vocabulary pass
 
 Vocabulary is a **sweep phase**, run after every file has landed and before folders, exactly as folders are composed from landed state ([indexing](indexing.md)). It reads the store and never a host, so it costs no I/O that indexing did not already pay, and it keeps the sweep's invariant that planning touches no store: per-source planners still emit keyed sprouts (entities, identifiers, cues) as pure functions of their text; the pass does what needs the whole corpus in view.
@@ -54,6 +61,22 @@ The pass is idempotent in the sweep's sense: a second run over unchanged text pl
 
 The hints and entity transforms fold into one **extractor** transform that emits, per source: entities with kinds, identifiers, and cues (the plain-word questions the document answers). It no longer asks for glossary terms — mining finds the local ones and the model's were the industry's — and no longer writes glosses, which the cluster pass writes with the whole corpus in view. Discriminators and the synopsis stay as hint rows under the source. The entity kinds and the `mentions` edge are unchanged, so nothing in the graph reads differently.
 
+## Facets: what the host says about a source
+
+A source's envelope says things no text does and no model needs to guess: which **host** it came from (Slack, Gmail, Drive, GitHub), which **container** holds it (a channel, a thread, a label, a repository, a folder), who its **author** is, and when it was **modified**. Today the envelope carries the source type, the content type, timestamps, a title, and trust properties the hosts leave empty; channel and author exist only as boilerplate in the text, and the benchmark's weakest sources (Slack, HubSpot, transcripts) are the ones whose text opens with exactly that boilerplate.
+
+The envelope gains **facets**: `Vec<Facet { key, value }>` in the connection's own vocabulary (`channel`, `thread`, `label`, `repository`, `author`, …), filled at enumeration, synced with the envelope like the rest of it. They are a separate field from `properties`, which carry trust levels and feed boundary filtering; a channel name must never be read as an access decision. The vocabulary pass turns them into rows, anchored from the **root**, not from text:
+
+- `facet:host:<host kind>` and `facet:container:<host>:<value>` (`text/x-inseam-facet`), one row per distinct value, row kind **facet**.
+- An author lands on the **entity row** `entity:person:<normalized>`, related `authored` from the root, so "wrote it" and "is mentioned in it" meet on one row and a person's name in a question reaches both.
+- Modified time is not a row. A time is a range, and a range is a filter.
+
+A host facet has a document frequency in the thousands by construction, so the hub bound keeps it out of the walk; a channel with forty messages conducts, and that is the right line. Facets are in the ledger and the harness as their own row kind, which turns the report's per-source table from a folder-name convention into a measured channel.
+
+Their second use is as **constraints**. A query may carry filters — host, container, author, modified range — applied to the candidate set before rollup, the way boundary properties are. The exact grounding step recognises facet values in the question ("in Slack", "the #incidents thread") as seeds; a big node's grounded rewrite may promote them to filters; the agent gets them as query options so a question that names a system searches that system. The constrained question type already scores 95, so filters are for the agent's precision and for the leaf node whose whole index is one host, not for recall.
+
+For the benchmark corpus, which is files under folders, the filesystem host has no facets to give; the harness's fixture would carry a sidecar mapping folder to host, or the filesystem host could take a configured rule that reads facets from path components. Undecided, and listed below.
+
 ## Retrieval
 
 Seeding gains a **grounding** step before the existing hybrid seed; the walk and the rollup are the Finder's as they stand.
@@ -61,7 +84,7 @@ Seeding gains a **grounding** step before the existing hybrid seed; the walk and
 1. **Exact grounding.** The query runs through the same automaton the pass used. A vocabulary row the query names outright becomes a seed with the strength of a full-text hit.
 2. **Paraphrase grounding.** The query vector (already computed for the vector seed list) is scored against every cluster vector — ten thousand dot products, well under a millisecond — and clusters above `cluster_query_cosine` contribute their rows and aliases as a fourth seed list, entering fusion at `cluster_seed_weight` (0.3) and only from their top `cluster_seed_ranks` (5), the same rank-gated, down-weighted shape the cue vectors measured best at. Their job is to add candidates the text lists lack, never to reorder what full-text already carries.
 3. **Hybrid seeds and fusion**, as today: prose full-text, lexical full-text, vectors, reciprocal rank fusion.
-4. **The walk**, as today, with two changes to what conducts. Edge weight is the relation kind's weight times a weight for the far end's row kind (`[finder.weights.by_row_kind]`: identifier 1.0, entity 0.8, term 0.6, alias 0.4, prose 1.0), because a shared ticket number says more than a shared jargon word. And a vocabulary row whose document frequency exceeds `hub_df_max` keeps its lexical row and its seeds but contributes **no edges** to the walk's slice: hub protection is a bound, not a damping, because the measurement showed every damping of hub terms still lost twenty points.
+4. **The walk**, as today, with two changes to what conducts. Edge weight is the relation kind's weight times a weight for the far end's row kind (`[finder.weights.by_row_kind]`: identifier 1.0, entity 0.8, term 0.6, facet 0.5, alias 0.4, prose 1.0), because a shared ticket number says more than a shared jargon word. And a vocabulary row whose document frequency exceeds `hub_df_max` keeps its lexical row and its seeds but contributes **no edges** to the walk's slice: hub protection is a bound, not a damping, because the measurement showed every damping of hub terms still lost twenty points.
 5. **Rollup and merge**, as today.
 
 A big node may add a **grounded rewrite**: one cheap model call that rewrites the question in the corpus's words given the clusters step 2 matched. It is the benchmark report's second lever with the cluster as context, and it is an option outside the core loop, which must still answer on a phone, offline, in milliseconds.
@@ -91,7 +114,7 @@ The proposal adds four ways for a document to reach the ranking (exact grounding
 Under `explain` (a query option; the CLI's `--explain`, off by default because it costs a few extra walk iterations), every ranked source carries the exact decomposition of its score:
 
 - **By seed channel.** Reciprocal-rank fusion is a sum over lists and the walk is linear in its restart vector, so the final score decomposes exactly: the walk runs once per channel on the same graph slice (a matrix of restart columns, same iteration count) and each source's score is reported as `prose + lexical + vector + exact + cluster` seed mass plus the walk mass each channel induced. No counterfactual runs are needed to say "this document is here because of cluster grounding".
-- **By row kind.** The walk's last iteration is repeated with edges grouped by the far end's row kind, so each source also reports how much walk mass arrived through identifiers, entities, terms, aliases, and prose. This is the cut that answers "are mined terms pulling most of the weight".
+- **By row kind.** The walk's last iteration is repeated with edges grouped by the far end's row kind, so each source also reports how much walk mass arrived through identifiers, entities, terms, facets, aliases, and prose. This is the cut that answers "are mined terms pulling most of the weight".
 - **By row.** The vocabulary rows and clusters that carried mass into the source, best first, with each row's document frequency: the top three edges for a result are usually the whole story, and a row with a frequency in the thousands sitting at the top of many results is the hub the bound missed.
 - **The prior**, when the authority experiment is on, as its own line.
 
@@ -143,7 +166,9 @@ Each is a run on the 25,000-document slice with the per-role side-table harness 
 
 ## Open questions
 
-- Multi-word local phrases without a model: whether FTS5 phrase statistics or a bounded bigram count over the landed text is worth its cost, or whether the cluster pass's aliases cover it.
+- Multi-word local phrases beyond what keywords and cues propose: whether a bounded bigram count over the landed text finds names the model never wrote, or whether the derived candidates cover it.
+- Facets for a file corpus: a fixture sidecar, or a filesystem-host rule that reads facets from path components. The benchmark needs one of them before facets can be measured.
+- Modified time as a sibling tie-break: among near-duplicate drafts the later one is more often the authoritative one; measured beside the authority prior, not assumed.
 - The general-English list for the shape rule: size, source, and whether a corpus in another language needs its own.
 - Re-anchoring after a merge in the cluster pass touches every edge of the losing row; whether that lands in the same transaction as the pass's other writes or in bounded batches.
 - Whether `hub_df_max` is a count or a fraction of the corpus; a fraction scales, a count is legible.
