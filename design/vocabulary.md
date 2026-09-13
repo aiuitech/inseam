@@ -82,6 +82,46 @@ Per sweep, on a 25,000-document corpus of 500 MB of text:
 
 Per query: one automaton pass over the query and one dot product per cluster, both under a millisecond; the rest is the Finder as it stands.
 
+## Observability: every point of score has a ledger entry
+
+The proposal adds four ways for a document to reach the ranking (exact grounding, cluster grounding, vocabulary edges in the walk, an authority prior) beside the three that exist, and the only honest way to tune seven channels is to see, per result and per benchmark, what each one did. Today's `QueryTrace` counts hits per seed list and times the phases; it says nothing about *why a given source ranked*. The design adds a per-result **ledger**, makes every channel a query-time dial the benchmark can sweep without re-indexing, and has the harness read both against gold.
+
+### The ledger
+
+Under `explain` (a query option; the CLI's `--explain`, off by default because it costs a few extra walk iterations), every ranked source carries the exact decomposition of its score:
+
+- **By seed channel.** Reciprocal-rank fusion is a sum over lists and the walk is linear in its restart vector, so the final score decomposes exactly: the walk runs once per channel on the same graph slice (a matrix of restart columns, same iteration count) and each source's score is reported as `prose + lexical + vector + exact + cluster` seed mass plus the walk mass each channel induced. No counterfactual runs are needed to say "this document is here because of cluster grounding".
+- **By row kind.** The walk's last iteration is repeated with edges grouped by the far end's row kind, so each source also reports how much walk mass arrived through identifiers, entities, terms, aliases, and prose. This is the cut that answers "are mined terms pulling most of the weight".
+- **By row.** The vocabulary rows and clusters that carried mass into the source, best first, with each row's document frequency: the top three edges for a result are usually the whole story, and a row with a frequency in the thousands sitting at the top of many results is the hub the bound missed.
+- **The prior**, when the authority experiment is on, as its own line.
+
+The ledger rides `QueryTrace` beside the counts it already has, serializes with `--json`, and is printed under each result by the CLI as one line per non-zero channel. It is also served through the node API so the macOS app and the agent can show it; the agent is not shown it by default, because it is diagnosis, not evidence.
+
+### Dials
+
+Every channel and weight in this design is **query-time** ([index-maintenance](index-maintenance.md) tiers), so a sweep of settings costs queries, never an index:
+
+- per seed list, `[finder.seed_lists.<prose|lexical|vector|exact|cluster>]`: `enabled`, `weight` (the vote in fusion; 1.0 is an equal vote), `ranks_max` (a rank gate: only this many of the list's best enter fusion). The existing `seeds = full-text | vector | both` becomes a shorthand over these.
+- per row kind, `[finder.weights.by_row_kind]`, and per relation kind as today.
+- `hub_df_max`, `cluster_query_cosine`, the walk's damping and iterations, and the authority prior's weight (0 is off).
+
+A query request may carry **overrides** for any of these keys, restricted to the query-time tier (`inseam query --finder cluster.weight=0`): the composition stays the node's only configuration, and an override is a request parameter like `--limit`, never stored. The benchmark harness uses overrides to run a **matrix** of settings over one index: each cell is the full question set at one setting, recorded in the manifest as the override set, so two cells of a run differ by exactly what they say they differ by. The index-side dials (`term_df_min`, `term_df_max`, the shape rule, cluster thresholds) are shape and re-run the vocabulary pass, which is the cheap phase; the harness records them from the composition as it records everything else.
+
+### The pass reports
+
+The vocabulary pass reports into the sweep's `IndexReport` and `inseam status`: candidates mined, rows planted and anchored, rows above the hub bound (with the twenty highest by document frequency, named), clusters formed, joined, merged, and re-grounded, model calls and their cost, and time per step. `inseam vocabulary` lists rows and clusters with document frequency and cluster membership; `inseam vocabulary show <row>` prints one row's gloss, aliases, cluster, and the sources anchored to it. The first thing to do after a pass is read the top of that list: if it is full of industry words, the shape rule is wrong before any query is run.
+
+### What the harness reads
+
+For every question with gold documents, the harness records each gold document's rank and its ledger, whether or not it made the top ten, in `attribution.jsonl` beside `answers.jsonl` ([benchmarking](benchmarking.md), evidence in a run). From that it derives, and prints in the report:
+
+- **per channel:** how many gold documents it seeded at all, how many it alone seeded (present in this list and no other), and how many it was the largest contributor for; the same for documents in the top ten that are neither gold nor valid, so a channel's noise stands beside its recall;
+- **per row kind:** the same three counts over walk mass;
+- **per vocabulary row:** the rows that most often carried gold, and the rows that most often carried non-gold into the top ten, each with its document frequency. The second list is the flood detector: a row that appears in many wrong top tens and few right ones is either a hub the bound should catch or a term mining should not have kept;
+- **per question type**, all of the above, because the semantic quarter is where the vocabulary must pay and the basic three quarters are where it must not cost.
+
+A run's report then says in one table what each channel bought and what it cost, and two runs differ in that table before they differ in the headline score. The matrix over query-time dials answers "what if this channel were weaker" directly; the ledger answers "what did it actually do" without running anything twice.
+
 ## Paths not taken
 
 - **Vectors on vocabulary rows** (already rejected in [indexing](indexing.md)). Still rejected: the cluster carries the one vector the paraphrase bridge needs; a vector per term buys fuzzy name matching that aliases give exactly.
@@ -93,7 +133,7 @@ Per query: one automaton pass over the query and one dot product per cluster, bo
 
 ## Validation gates, in order
 
-Each is a run on the 25,000-document slice with the per-role side-table harness ([benchmarking](benchmarking.md)), before any code beyond what the gate needs.
+Each is a run on the 25,000-document slice with the per-role side-table harness ([benchmarking](benchmarking.md)), before any code beyond what the gate needs. The ledger, the query-time overrides, and the harness's attribution output land before gate 2, because they are what the gates read.
 
 1. **Ceiling.** Mine candidates from the slice's FTS vocabulary with the band and shape rules above, offline. Of the 159 gold documents that finished outside the top 25, how many share a mined term or identifier with their question? That number bounds what exact grounding can recover. Below 30, stop here.
 2. **Exact grounding and the hub bound.** Plant the mined rows, anchor, seed from exact matches, exclude hubs by `hub_df_max`. Recall per question type against 84.3. Must not lose on basic while gaining on semantic.
