@@ -6,13 +6,15 @@ The SwiftUI shell in `apps/ios` embeds the node core through `crates/inseam-ffi`
 
 - **Opens the node** under the app's Application Support with Apple's on-device sentence embedder mounted as the `embedder` provider (`embedder-app`), so no API key is needed for vectors. When the model's assets are not on the device yet it requests them and opens with the base embedder, which needs an endpoint key.
 - **Stewards two bridged hosts**, both listed under *this device stewards*: the photo library (`photos`, images only, full access required) and the Call Recordings folder (`call-recordings`). *index photos* and *index call recordings* run the sweep over each.
-- **Attaches call recordings.** iOS lets no third-party app record a call, so the recording comes from the Phone app's own recorder (iOS 18.1+), which saves into Notes. Share it from Notes to inseam (the app is an "open in" target for audio and plain text) or save it into *Files › On My iPhone › inseam › Call Recordings*. The attach sheet names the participant — typed or from the contact picker — writes a sidecar with the participant and the call's times, transcribes the audio on device (iOS 26 `SpeechAnalyzer`) when no transcript came along, and indexes. The participant becomes a claimed `participant` property on the recording's envelope.
+- **Attaches call recordings.** Inseam does not capture live cellular-call audio. Its recording import flow uses the Phone app's own recorder (iOS 18.1+), which saves into Notes. Share it from Notes to inseam (the app is an "open in" target for audio and plain text) or save it into *Files › On My iPhone › inseam › Call Recordings*. The attach sheet names the participant — typed or from the contact picker — writes a sidecar with the participant and the call's times, transcribes the audio on device (iOS 26 `SpeechAnalyzer`) when no transcript came along, and indexes. The participant becomes a claimed `participant` property on the recording's envelope.
 - **Observes calls.** With the app running, a call ending posts a local notification reminding you to share the recording; the call's start and end are kept for the attach sheet. CallKit exposes no phone number for calls the app did not place.
 - **Searches** through the same finder as every client, with the shared result row.
 - **Shows each indexing run** as it enumerates, catalogs, indexes, and finalizes. The process view reports source counts and the current address and can pause, resume, or stop the Rust sweep. A stopped run keeps completed sources and the next run resumes.
 - **Configures the node** from a Settings sheet. Connections, model endpoints, indexing limits, ignore rules, search ranking, Keychain secrets, and raw composition use the same validated settings bridge as macOS. Visual saves retain the Apple on-device embedder; raw composition can replace it deliberately.
 
 Configuration rows keep a caption visible above each editable value. Placeholder text only describes an empty value; it never carries the field's identity.
+
+Further capture options and their evidence are in [phone-call-context.md](../../design/phone-call-context.md). Carrier recording, Mac capture, and automated Notes ingestion are research proposals, not current app capabilities.
 
 ## Layout
 
