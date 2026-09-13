@@ -85,3 +85,8 @@ and evidence actually read. That check never receives benchmark gold answers.
 
 See [the design](../../design/finder-refinement.md) for the reasoning and
 [benchmarking](../benchmarking.md) for the fixed GPT-5.4 question sample.
+
+If the final review returns empty content, the agent keeps its preceding completed
+answer and logs the fallback. It never treats an assistant message that called a
+tool as a completed answer. If neither reply contains an answer, it reports an
+empty-answer error instead of suggesting that the turn limit was exhausted.

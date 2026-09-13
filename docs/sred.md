@@ -421,3 +421,37 @@ Technical reviewer and review date:
 | Date | Update |
 | --- | --- |
 | 2026-09-13 | Initial retrospective consolidation from repository history through `36eef31`, existing designs, reports, experiment artifacts, and current CRA form/guidance. Draft technical narratives and evidence/financial gaps recorded. No new benchmark or eligibility determination was performed for this documentation task. |
+
+### 2026-09-13 continuation: full GLM evaluation and interrupted vocabulary slice
+
+The owner requested a full 500-question EnterpriseRAG evaluation with
+`z-ai/glm-5.3-flash` for answers and both official evaluator roles, resumption of
+the killed vocabulary slice, then full retrieval and answer comparisons. The
+owner clarified that the interrupted run is `20260913T224507Z-812f3f4af037`.
+The adjacent `20260913T224122Z-812f3f4af037` had already completed its 25,000-document
+index and 500 retrieval queries. Resume attempt 2 reuses the interrupted node.
+Results of the requested new comparisons are pending at this entry's preparation.
+
+A baseline attempt with the frozen binary from the GPT-5.4 50-question run stopped
+on question 2 after completing question 1. A diagnostic proxy recorded provider
+response metadata without authorization headers. Repeated GLM responses from
+DeepInfra reported a normal stop with empty content and nonzero completion tokens.
+In two probes, the first response contained a completed answer; the final review
+returned empty content. An explicit low reasoning setting and an explicit
+`tool_choice=none` also produced empty review replies. These observations do not
+establish a retrieval failure or prove a specific provider implementation defect.
+Disabling reasoning was rejected by the endpoint. Provider upstream-cost fields
+were nonzero while the OpenRouter cost field was zero under BYOK, so those zeros
+must not be interpreted as free inference.
+
+The agent previously discarded a completed draft when the optional final review
+was empty, reporting a misleading turn-limit error. The repair retains only the
+immediately preceding completed assistant answer, records a warning, and still
+fails if neither reply has an answer. Tool-call preambles are excluded. Four
+new offline tests through the agent's public entry point cover draft preservation,
+successful replacement, empty-answer rejection, and preamble rejection. All six
+agent tests, strict CLI clippy with the repository's nested-if exception, and
+66 Python benchmark tests passed. The repair is applied to an isolated old Finder
+build for the model baseline as well as the current implementation. This preserves
+the ability to distinguish the retrieval/indexing change from this response-handling
+change. No successful full GLM score is claimed yet.

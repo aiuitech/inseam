@@ -295,3 +295,22 @@ Replay accepts Finder controls only, preserves the source composition's indexing
 Changing `summarizer.directory_target_chars` now invalidates directory inputs only: the sweep and transform cache share the same input-specific identity. File summaries and embeddings retain their previous identity. Removing the override rebuilds the affected directories again. Finder controls do not change the index shape at all.
 
 See the [13 September 2026 retrieval audit](reports/20260913-retrieval-audit.md) for the measured settings and the [incremental experiment](experiments/20260913-incremental/README.md) for source reuse counts.
+
+### Full GLM answer evaluation on an existing index
+
+Judged replays now default to `z-ai/glm-5.3-flash` for answer generation and both
+upstream judge roles. Explicit model flags still override those defaults.
+For all 500 questions, select 250 disjoint questions from each end:
+
+```sh
+python3 benchmarks/requery.py enterprise 20260913T181642Z-b414e6e7aa0f \
+  --bookend-count 250 \
+  --answer-model z-ai/glm-5.3-flash \
+  --evaluation-model z-ai/glm-5.3-flash \
+  --finder-lexical-weight 0.1
+```
+
+This selection is the complete release in its original order. Compare the same
+question IDs separately when comparing with an earlier GPT-5.4 subset. A changed
+judge can change the score independently of Finder quality. BEIR NFCorpus uses
+its relevance judgments directly and has no answer model or LLM judge.

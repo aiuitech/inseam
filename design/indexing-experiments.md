@@ -116,3 +116,13 @@ IDs, judge explanations, and the observed source-selection mistakes.
   Not adding one is not evidence that it could never help.
 - The 50-question bookends cover basic, high-level, and unanswerable questions.
   Semantic and other omitted categories still need their own evaluation.
+
+### Full GLM run preparation, 13 September 2026
+
+Full 500-question GLM answer/judge evaluation and the interrupted vocabulary slice
+`20260913T224507Z-812f3f4af037` are in progress. The first full answer attempt stopped
+at question 2 because an empty final model review erased an existing draft. The
+agent now preserves a completed draft in that case and reports a true empty-answer
+error when neither response contains an answer. Four new offline behavior tests
+pass. This is an execution repair, not evidence of a retrieval improvement.
+See the [SR&ED continuation](../docs/sred.md) for the probes and measurement plan.
