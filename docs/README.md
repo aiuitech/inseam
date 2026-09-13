@@ -9,6 +9,7 @@ Docs are written for **incremental discovery**: a person or an agent should be a
 Start here:
 
 - [get-started.md](get-started.md) — install a node, index something, query it, modify it.
+- [index-explorer.md](index-explorer.md) — open benchmark indexes in a local web app, index sources, and inspect graph and retrieval evidence.
 - [cli.md](cli.md) — the `inseam` binary, command by command.
 - [configuration.md](configuration.md) — the composition file, the node's only config.
 - [releases.md](releases.md) — how a binary updates itself, and how a release is built, signed, and promoted.

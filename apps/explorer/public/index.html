@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="explorer-token" content="__TOKEN__" />
+    <title>Inseam / Index explorer</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/">in<span>≋</span>seam</a
+      ><span class="divider">/</span><span>Index explorer</span
+      ><span class="local">LOCAL WORKSPACE</span>
+    </header>
+    <div class="shell">
+      <aside class="navigation">
+        <label for="index-select">WORKING INDEX</label
+        ><select id="index-select">
+          <option value="">Select an index</option></select
+        ><button id="add-index" class="primary">＋ Open or create index</button>
+        <p id="origin" class="quiet">
+          Benchmark runs and your own indexes, in one place.
+        </p>
+        <nav aria-label="Workspace">
+          <button data-tab="overview" class="active">
+            01 <span>Index map</span></button
+          ><button data-tab="search">02 <span>Search lab</span></button
+          ><button data-tab="catalog">03 <span>Source catalog</span></button
+          ><button data-tab="indexing">04 <span>Indexing</span></button>
+        </nav>
+        <div class="nav-foot">
+          WORKING COPIES<br />
+          <p>Explore freely. Imported indexes stay at their original paths.</p>
+          <button id="refresh">Refresh library</button>
+        </div>
+      </aside>
+      <main>
+        <div id="notice" role="status" aria-live="polite" hidden></div>
+        <section id="overview" class="view">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">STRUCTURE / TYPES / CONNECTIONS</p>
+              <h1>Index map</h1>
+            </div>
+            <button id="reload-map">Refresh map ↗</button>
+          </div>
+          <div id="metrics" class="metrics"></div>
+          <div class="graph-layout">
+            <div class="graph-panel">
+              <div class="panel-head">
+                <span>Relations between fragment types</span>
+                <div>
+                  <button id="zoom-out" aria-label="Zoom out">−</button
+                  ><button id="zoom-in" aria-label="Zoom in">＋</button
+                  ><button id="zoom-reset">Fit</button>
+                </div>
+              </div>
+              <div id="type-graph" class="graph">
+                <div class="empty">
+                  <span class="empty-mark">≋</span>
+                  <h2>Start with an index.</h2>
+                  <p>
+                    Open a benchmark run, copy an existing index,<br />or index
+                    a folder from scratch.
+                  </p>
+                  <button id="empty-add" class="primary">
+                    Open or create index ↗
+                  </button>
+                </div>
+              </div>
+              <p class="graph-caption">
+                Node size reflects fragment count. Lines are stored relations.
+                Select a type to inspect it.
+              </p>
+            </div>
+            <aside class="inspector">
+              <h2>Type inventory</h2>
+              <p class="quiet">
+                Counts cover the whole working index. The map shows up to 128
+                types and 256 type relations.
+              </p>
+              <div id="type-list"></div>
+              <div id="type-detail"></div>
+            </aside>
+          </div>
+        </section>
+        <section id="search" class="view" hidden>
+          <p class="eyebrow">RETRIEVE / TRACE / INSPECT</p>
+          <h1>Search lab</h1>
+          <form id="search-form">
+            <div class="query-bar">
+              <input
+                id="query"
+                required
+                maxlength="4096"
+                placeholder="Ask a question or search for a term…"
+                aria-label="Search query"
+              /><button class="primary">Search ↗</button>
+            </div>
+            <div class="controls">
+              <label
+                >Seed method<select id="mode">
+                  <option value="both">Hybrid</option>
+                  <option value="full-text">Full-text</option>
+                  <option value="vector">Vector</option>
+                </select></label
+              ><label
+                >Results<input
+                  id="limit"
+                  type="number"
+                  min="1"
+                  max="50"
+                  value="12" /></label
+              ><label
+                >Seeds per list<input
+                  id="seed-k"
+                  type="number"
+                  min="1"
+                  max="1000"
+                  value="60" /></label
+              ><label
+                >Graph hops<input
+                  id="hops"
+                  type="number"
+                  min="0"
+                  max="4"
+                  value="2" /></label
+              ><label
+                >Damping<input
+                  id="damping"
+                  type="number"
+                  min="0"
+                  max="0.99"
+                  step="0.05"
+                  value="0.5"
+              /></label>
+            </div>
+          </form>
+          <p class="quiet">
+            Hybrid fuses prose, lexical and vector ranks. Full-text uses prose
+            and lexical lists. Vector search needs an embedded index. Set
+            damping to 0 to disable propagation.
+          </p>
+          <div id="trace"></div>
+          <div class="result-layout">
+            <div id="results" class="results">
+              <p class="empty-copy">
+                Search to see ranked sources and the fragments that earned their
+                scores.
+              </p>
+            </div>
+            <aside id="evidence" class="evidence">
+              <h2>Retrieval evidence</h2>
+              <p class="quiet">
+                Select a result to inspect its score and matching hints.
+              </p>
+            </aside>
+          </div>
+        </section>
+        <section id="catalog" class="view" hidden>
+          <p class="eyebrow">EVERY SOURCE / INDEXED OR PENDING</p>
+          <h1>Source catalog</h1>
+          <form id="catalog-form" class="query-bar">
+            <input
+              id="catalog-term"
+              placeholder="Filter by path…"
+              aria-label="Path filter"
+            /><input
+              id="catalog-type"
+              placeholder="Content type, e.g. text/plain"
+              aria-label="Content type filter"
+            /><button>Filter</button>
+          </form>
+          <div class="panel-head">
+            <span id="catalog-count"></span>
+            <div>
+              <button id="previous">← Previous</button
+              ><button id="next">Next →</button>
+            </div>
+          </div>
+          <div id="catalog-results"></div>
+        </section>
+        <section id="indexing" class="view" hidden>
+          <p class="eyebrow">BUILD / REBUILD / CONFIGURE</p>
+          <h1>Indexing controls</h1>
+          <div class="index-layout">
+            <form id="index-form">
+              <h2>Index a scope</h2>
+              <label
+                >Folder or host scope<input
+                  id="root"
+                  required
+                  placeholder="/absolute/path/to/documents" /></label
+              ><label
+                >Host ID, optional<input
+                  id="host"
+                  placeholder="Needed when multiple hosts are mounted" /></label
+              ><label
+                >Maximum sources to deep-index<input
+                  id="max-sources"
+                  type="number"
+                  min="1"
+                  max="1000000"
+                  value="1000" /></label
+              ><label class="check"
+                ><input id="catalog-only" type="checkbox" /> Catalog only</label
+              ><label class="check"
+                ><input id="rebuild" type="checkbox" /> Rebuild unchanged
+                sources too</label
+              ><label class="check"
+                ><input id="batch" type="checkbox" /> Use provider batch
+                lane</label
+              ><button class="primary">Start indexing ↗</button>
+              <p class="quiet">
+                New indexes default to offline full-text search with extractive
+                summaries. Endpoint embeddings and model calls use the
+                credentials inherited by this server.
+              </p>
+            </form>
+            <div>
+              <h2>Composition</h2>
+              <p class="quiet">
+                Edit transform, embedding, source concurrency and model budgets.
+                Saved changes apply on the next operation. Re-index to apply
+                changes to index shape.
+              </p>
+              <textarea
+                id="composition"
+                spellcheck="false"
+                aria-label="Index composition TOML"
+              ></textarea
+              ><button id="save-config">Save composition</button>
+              <p class="quiet">
+                Network transport, sync, routing and Google access stay disabled
+                in working copies. Original node credentials are not copied.
+              </p>
+            </div>
+          </div>
+        </section>
+        <section id="job-panel" hidden>
+          <div class="panel-head">
+            <strong id="job-title">Operation</strong
+            ><button id="cancel-job">Cancel operation</button>
+          </div>
+          <pre id="job-log"></pre>
+        </section>
+      </main>
+    </div>
+    <dialog id="library-dialog">
+      <form id="create-form">
+        <div class="panel-head">
+          <h2>Open an index.</h2>
+          <button id="close-library" type="button" aria-label="Close">×</button>
+        </div>
+        <p class="quiet">
+          Existing indexes open as SQLite snapshots in your working library.
+          Large copies need space equal to the index size.
+        </p>
+        <label
+          >Source<select id="source-kind">
+            <option value="benchmark">Benchmark run</option>
+            <option value="existing">Existing index directory</option>
+            <option value="new">Create empty index</option>
+          </select></label
+        >
+        <div id="benchmark-fields">
+          <label>Run<select id="benchmark-run"></select></label>
+          <p id="run-detail" class="quiet"></p>
+        </div>
+        <div id="existing-fields" hidden>
+          <label
+            >Index data directory<input
+              id="data-path"
+              placeholder="/path/to/node" /></label
+          ><label
+            >Original composition TOML<input
+              id="config-path"
+              placeholder="/path/to/composition.toml"
+          /></label>
+        </div>
+        <label
+          >Name<input
+            id="index-name"
+            required
+            maxlength="120"
+            placeholder="My index experiment" /></label
+        ><button class="primary">Create working index ↗</button>
+      </form>
+    </dialog>
+    <dialog id="source-dialog">
+      <div class="panel-head">
+        <h2>Source inspector</h2>
+        <button id="close-source" aria-label="Close source inspector">×</button>
+      </div>
+      <p id="source-address" class="address"></p>
+      <div class="panel-head">
+        <span>Fragment relations · drag to pan</span>
+        <div>
+          <button id="source-zoom-out" aria-label="Zoom source graph out">
+            −</button
+          ><button id="source-zoom-in" aria-label="Zoom source graph in">
+            ＋</button
+          ><button id="source-zoom-reset">Fit</button>
+        </div>
+      </div>
+      <div id="source-graph" class="graph source-graph"></div>
+      <p class="quiet">
+        Up to 200 fragments and 400 edges. Select a node to read it. Foreign
+        fragments link to their source.
+      </p>
+      <div id="fragment-detail"></div>
+      <details>
+        <summary>Fragments and typed relations</summary>
+        <div id="fragment-list"></div>
+        <div id="relation-list"></div>
+      </details>
+      <form id="scan-form" class="controls">
+        <label
+          >Start line<input
+            id="scan-start"
+            type="number"
+            min="1"
+            value="1" /></label
+        ><label
+          >End line<input
+            id="scan-end"
+            type="number"
+            min="1"
+            value="100" /></label
+        ><button>Read source lines</button>
+      </form>
+      <pre id="scan-output"></pre>
+    </dialog>
+    <script type="module" src="/app.mjs"></script>
+  </body>
+</html>

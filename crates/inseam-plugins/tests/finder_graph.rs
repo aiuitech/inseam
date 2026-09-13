@@ -364,3 +364,61 @@ fn lexical_weight_rejects_disabling_or_invalid_weights() {
     }
     assert!(FinderConfig::default().validate_query_bounds().is_ok());
 }
+
+#[tokio::test]
+async fn evidence_reconstructs_each_returned_source_score() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = open_store(dir.path()).await;
+    let embedder = hashed(DIMS);
+    seed_source(
+        &store,
+        embedder.as_ref(),
+        "coffee.md",
+        "Coffee espresso brewing notes.",
+    )
+    .await;
+    seed_source(
+        &store,
+        embedder.as_ref(),
+        "tea.md",
+        "Tea brewing temperature guide.",
+    )
+    .await;
+    store.rebuild_fts().await.expect("fts");
+    let finder = FinderService::new(Arc::clone(&store), embedder, FinderConfig::default());
+    let discovery = finder.query("coffee brewing", 10).await.expect("query");
+    assert!(!discovery.ranked.is_empty());
+    assert_eq!(discovery.trace.evidence.len(), discovery.ranked.len());
+    for result in &discovery.ranked {
+        let evidence = discovery
+            .trace
+            .evidence
+            .iter()
+            .find(|item| item.address == result.source.address)
+            .expect("evidence");
+        assert!(evidence.fragments.len() <= 3);
+        let raw: f64 = evidence
+            .fragments
+            .iter()
+            .map(|fragment| (fragment.seed + fragment.graph) * fragment.weight)
+            .sum();
+        assert!((raw - evidence.score_raw).abs() < 1e-12);
+        assert!((raw / evidence.normalization - result.score).abs() < 1e-12);
+        assert!(
+            evidence
+                .fragments
+                .iter()
+                .any(|fragment| fragment.prose_rank.is_some())
+        );
+    }
+}
+
+#[tokio::test]
+async fn empty_retrieval_has_no_score_evidence() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = open_store(dir.path()).await;
+    let finder = FinderService::new(store, hashed(DIMS), FinderConfig::default());
+    let discovery = finder.query("missing", 10).await.expect("query");
+    assert!(discovery.ranked.is_empty());
+    assert!(discovery.trace.evidence.is_empty());
+}

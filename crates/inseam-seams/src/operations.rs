@@ -183,7 +183,7 @@ pub struct QueryResponse {
 /// Timing and shape of one served query. `elapsed_ms` covers the whole
 /// operation as the transport saw it; the trace breaks the provider's share
 /// into phases.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct QueryMeta {
     /// Wall-clock from dispatch to response, including result rendering.
     pub elapsed_ms: u64,

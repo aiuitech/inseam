@@ -19,7 +19,8 @@ use inseam_kernel::substrate::{
 use inseam_seams::SeamError;
 use inseam_seams::embedder::{EMBEDDER, Embedder};
 use inseam_seams::finder::{
-    Discovery, Expansion, FINDER, Finder, QueryTrace, RankedFragment, RankedSource,
+    Discovery, Expansion, FINDER, Finder, FragmentEvidence, QueryTrace, RankedFragment,
+    RankedSource, SourceEvidence,
 };
 
 /// The `k` in reciprocal rank fusion: the finder's default for fusing its
@@ -28,6 +29,8 @@ use inseam_seams::finder::{
 /// Sixty is the value the RRF paper settled on; a smaller `k` lets a
 /// single top rank dominate, a larger one flattens every list together.
 pub const RRF_K_DEFAULT: f64 = 60.0;
+
+const SOURCE_SCORE_WEIGHTS: [f64; 3] = [1.0, 0.1, 0.05];
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -293,17 +296,18 @@ impl Finder for FinderService {
             self.config.epsilon,
         );
 
-        let mut final_scores: HashMap<i64, f64> = seeds.fused;
-        for (id, score) in boosted {
-            *final_scores.entry(id).or_insert(0.0) += score;
-        }
+        let final_scores = boosted
+            .iter()
+            .map(|(id, score)| (*id, score + seeds.fused.get(id).copied().unwrap_or(0.0)))
+            .collect();
         trace.graph_ms = millis(graph_started.elapsed());
         trace.relations = count_u32(relations.len());
 
         let rollup_started = Instant::now();
-        let rollup = self.rollup(final_scores, limit).await?;
+        let rollup = self.rollup(final_scores, limit, &seeds, &boosted).await?;
         trace.rollup_ms = millis(rollup_started.elapsed());
         trace.candidate_sources = rollup.candidate_sources;
+        trace.evidence = rollup.evidence;
         tracing::info!(
             results = rollup.ranked.len(),
             elapsed_ms = trace.seeds_ms + trace.graph_ms + trace.rollup_ms,
@@ -387,6 +391,7 @@ impl FinderService {
             "finder seed retrieval completed"
         );
         Ok(Seeds {
+            ranks: [fts_ranked, lexical_ranked, vec_ranked],
             fused,
             fts_hits: count_u32(fts.len()),
             lexical_hits: count_u32(lexical.len()),
@@ -412,6 +417,7 @@ fn query_seeds_fuse(lists: [&[i64]; 3], k: f64, lexical_weight: f64) -> HashMap<
 /// The seeds of one query with where they came from. Fusion keeps only an
 /// id's best rank per list, so `fused` never exceeds the lists' sum.
 struct Seeds {
+    ranks: [Vec<i64>; 3],
     fused: HashMap<i64, f64>,
     fts_hits: u32,
     lexical_hits: u32,
@@ -420,6 +426,7 @@ struct Seeds {
 
 /// Ranked sources plus how many sources competed for the limit.
 struct Rollup {
+    evidence: Vec<SourceEvidence>,
     ranked: Vec<RankedSource>,
     candidate_sources: u32,
 }
@@ -443,6 +450,8 @@ impl FinderService {
         &self,
         final_scores: HashMap<i64, f64>,
         limit: usize,
+        seeds: &Seeds,
+        boosted: &HashMap<i64, f64>,
     ) -> Result<Rollup, SeamError> {
         let ids: Vec<FragmentId> = final_scores.keys().map(|id| FragmentId(*id)).collect();
         let owners = self.store.sources_of_fragments(&ids).await?;
@@ -468,32 +477,16 @@ impl FinderService {
         let norm = if top > 0.0 { top } else { 1.0 };
 
         let mut out = Vec::with_capacity(ranked.len());
+        let mut evidence = Vec::with_capacity(ranked.len());
         for (sid, score, frags) in ranked {
             let Some(source) = self.store.source(sid).await? else {
                 continue;
             };
+            evidence.push(rollup_evidence(
+                &source, score, norm, &frags, seeds, boosted,
+            ));
             let summary = self.store.summary_of(sid).await?;
-            let mut hints = Vec::new();
-            for (fid, fscore) in &frags {
-                if hints.len() >= self.config.max_hints {
-                    break;
-                }
-                let Some(fragment) = self.store.fragment(*fid).await? else {
-                    continue;
-                };
-                // Summaries ride along separately, keywords have no place
-                // to scan to, and text-less roots hint nothing.
-                if fragment.mimetype.is_summary() || fragment.mimetype.is_keywords() {
-                    continue;
-                }
-                if fragment.text.is_none() {
-                    continue;
-                }
-                hints.push(RankedFragment {
-                    fragment,
-                    score: fscore / norm,
-                });
-            }
+            let hints = self.rollup_hints(&frags, norm).await?;
             out.push(RankedSource {
                 source,
                 score: score / norm,
@@ -502,10 +495,86 @@ impl FinderService {
                 replicas: Vec::new(),
             });
         }
+        let ranked = collapse_by_digest(out);
+        evidence.retain(|item| {
+            ranked
+                .iter()
+                .any(|result| result.source.address == item.address)
+        });
         Ok(Rollup {
-            ranked: collapse_by_digest(out),
+            evidence,
+            ranked,
             candidate_sources,
         })
+    }
+
+    async fn rollup_hints(
+        &self,
+        fragments: &[ScoredFragment],
+        normalization: f64,
+    ) -> Result<Vec<RankedFragment>, SeamError> {
+        assert!(normalization > 0.0);
+        let mut hints = Vec::new();
+        for (fid, fscore) in fragments {
+            if hints.len() >= self.config.max_hints {
+                break;
+            }
+            let Some(fragment) = self.store.fragment(*fid).await? else {
+                continue;
+            };
+            // Summaries ride along separately, keywords have no place
+            // to scan to, and text-less roots hint nothing.
+            if fragment.mimetype.is_summary() || fragment.mimetype.is_keywords() {
+                continue;
+            }
+            if fragment.text.is_none() {
+                continue;
+            }
+            hints.push(RankedFragment {
+                fragment,
+                score: fscore / normalization,
+            });
+        }
+        Ok(hints)
+    }
+}
+
+/// Preserve the actual rollup inputs so clients never reconstruct scores from hints.
+fn rollup_evidence(
+    source: &StoredSource,
+    score_raw: f64,
+    normalization: f64,
+    fragments: &[ScoredFragment],
+    seeds: &Seeds,
+    boosted: &HashMap<i64, f64>,
+) -> SourceEvidence {
+    assert!(normalization > 0.0);
+    let fragments = fragments
+        .iter()
+        .take(3)
+        .zip(SOURCE_SCORE_WEIGHTS)
+        .map(|((id, _), weight)| {
+            let ranks = seeds.ranks.each_ref().map(|list| {
+                list.iter()
+                    .position(|candidate| *candidate == id.0)
+                    .map(|index| count_u32(index + 1))
+            });
+            FragmentEvidence {
+                fragment: *id,
+                prose_rank: ranks[0],
+                lexical_rank: ranks[1],
+                vector_rank: ranks[2],
+                seed: seeds.fused.get(&id.0).copied().unwrap_or(0.0),
+                graph: boosted.get(&id.0).copied().unwrap_or(0.0),
+                weight,
+            }
+        })
+        .collect();
+    SourceEvidence {
+        address: source.address.clone(),
+        score_raw,
+        normalization,
+        fragments,
     }
 }
 
@@ -684,13 +753,8 @@ type ScoredFragment = (FragmentId, f64);
 /// long-document bias, max alone ignores corroboration (`design/finder.md`).
 fn source_score(sorted: &[ScoredFragment]) -> f64 {
     let mut score = 0.0;
-    for (rank, (_, s)) in sorted.iter().take(3).enumerate() {
-        let weight = match rank {
-            0 => 1.0,
-            1 => 0.1,
-            _ => 0.05,
-        };
-        score += weight * s;
+    for ((_, fragment_score), weight) in sorted.iter().zip(SOURCE_SCORE_WEIGHTS) {
+        score += weight * fragment_score;
     }
     score
 }

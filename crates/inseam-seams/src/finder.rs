@@ -40,7 +40,7 @@ pub struct RankedFragment {
 /// numbers a client inspects when a query feels slow or thin. Milliseconds
 /// are wall-clock inside the provider; counts are what each phase handed
 /// to the next.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct QueryTrace {
     /// Hybrid seed retrieval: full-text search, query embedding, and
     /// vector search, fused by rank.
@@ -63,6 +63,30 @@ pub struct QueryTrace {
     pub relations: u32,
     /// Distinct sources holding a scored fragment, before the limit cut.
     pub candidate_sources: u32,
+    /// Local result score evidence, before any cross-node merge.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<SourceEvidence>,
+}
+
+/// The three fragments that contribute to a source's rollup score.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SourceEvidence {
+    pub address: Address,
+    pub score_raw: f64,
+    pub normalization: f64,
+    pub fragments: Vec<FragmentEvidence>,
+}
+
+/// Measured contributions, with one-based ranks in each seed list.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FragmentEvidence {
+    pub fragment: inseam_kernel::fragment::FragmentId,
+    pub prose_rank: Option<u32>,
+    pub lexical_rank: Option<u32>,
+    pub vector_rank: Option<u32>,
+    pub seed: f64,
+    pub graph: f64,
+    pub weight: f64,
 }
 
 /// The result of `query`: the ranked sources and the trace of producing
