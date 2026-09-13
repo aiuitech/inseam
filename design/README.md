@@ -14,6 +14,6 @@ Research supporting the iOS design: [phone-call-context](phone-call-context.md) 
 
 [Index explorer](index-explorer.md) defines the local working-copy library, bounded graph views, and per-result retrieval evidence.
 
-[Finder refinement](finder-refinement.md) proposes additive candidate tracking,
+[Finder refinement](finder-refinement.md) defines additive candidate tracking,
 query-relevant excerpts, size-aware reading, and a bounded combined
 search/expand/scan request controlled by the querying model.

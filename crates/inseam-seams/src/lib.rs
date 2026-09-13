@@ -20,6 +20,7 @@
 
 pub mod connection;
 pub mod dates;
+pub mod discovery;
 pub mod embedder;
 pub mod error;
 pub mod extract;

@@ -92,4 +92,10 @@ Each answers `Unavailable`, naming the entry it lacks (`roster`, `sync`, `node`)
 
 ## The agent demo
 
-`inseam agent "<question>"` (`crates/inseam-cli/src/agent.rs`, a consumer of the `operations` and `llm` seams — not a plugin) hands a live model exactly the four boundary operations as OpenAI-style tools and prints each rung it climbs. It's both a demo and a test of the ladder's usability: if the model can't navigate it, neither can a real client. Boundary enforcement is a deny-wins guard on dispatch (`OperationRequest`); no access-control listeners ship yet, so the network is one trust domain until the boundary layer lands.
+`inseam agent "<question>"` consumes the `operations` and `llm` seams through
+the client-owned [refinement session](refinement.md). Its `find` tool combines
+bounded searches, expansions, and scans, retains candidates across calls, and
+prints each request. The original question is searched before model-directed
+refinement begins. Boundary enforcement remains a deny-wins guard on each
+underlying operation (`OperationRequest`); no access-control listeners ship
+yet, so the network is one trust domain until the boundary layer lands.

@@ -1,8 +1,10 @@
 # Additive discovery and reading
 
-Proposed next tool contract, based on the September 2026 navigation evaluation.
-This document describes intended behavior; the combined operation and explicit
-candidate collection are not implemented yet.
+The client-owned discovery session implements this contract for `inseam agent`.
+Its current fields, bounds, and continuation rules are documented in
+[agent refinement](../docs/finder/refinement.md). Existing server operations
+remain stateless; the client composes their guarded search, expand, and scan
+methods. This design grew from the September 2026 navigation evaluation.
 
 ## Let the caller follow the evidence
 
@@ -62,10 +64,10 @@ shape, with field names subject to the API implementation:
 ```json
 {
   "queries": [{"text": "streaming time-limit finalization metric", "limit": 8}],
-  "expand": [{"address": "inseam://host/document-a"}],
+  "expand": [{"source": "inseam://host/document-a"}],
   "scan": [
-    {"address": "inseam://host/document-b", "start": 1, "end": 18},
-    {"address": "inseam://host/document-c", "start": 80, "end": 130}
+    {"source": "inseam://host/document-b", "start": 1, "end": 18},
+    {"source": "inseam://host/document-c", "start": 80, "end": 130}
   ]
 }
 ```
@@ -83,9 +85,9 @@ reads. Preserve node routing, deny-wins authorization, and source-version
 checks by composing the existing operations. Client-owned accumulation keeps
 independent users and conversations from sharing hidden server search state.
 
-Initial bounds to evaluate are eight actions per request, four concurrent
+The implemented bounds are eight actions per request, four concurrent
 actions, 100 retained candidate sources, and 24,000 characters of returned
-content. These are proposed limits, not current product settings. Every
+content. Every
 response must be valid structured data, with per-item completeness and a
 continuation range for cut content. Reserve room for each requested action's
 status before distributing the content budget. Do not serialize arbitrary
@@ -103,9 +105,9 @@ a short document can be read completely in one scan.
 Keep requested qualifiers and supported facts connected to source passages.
 The model chooses when evidence answers the request. A completion check should
 inspect that evidence and the user's question, without using benchmark gold
-answers. Multiple tool calls from one current model response are already
-supported, but the CLI executes them sequentially and does not explicitly
-encourage batching worthwhile reads.
+answers. Multiple find calls remain sequential because they share candidate state.
+Independent actions within a find call run concurrently, and the agent is
+instructed to batch worthwhile reads.
 
 ## Cost and validation
 
