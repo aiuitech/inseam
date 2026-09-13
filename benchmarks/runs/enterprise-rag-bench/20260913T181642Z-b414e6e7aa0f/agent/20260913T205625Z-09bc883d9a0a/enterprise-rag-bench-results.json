@@ -1,0 +1,233 @@
+{
+  "aggregate_stats": {
+    "total_questions": 20,
+    "completed_questions": 20,
+    "skipped_rows": 0,
+    "num_corrected_questions": 0,
+    "average_correctness_pct": 100.0,
+    "average_completeness_pct": 99.0,
+    "combined_correctness_completeness_score": 99.0,
+    "average_recall_pct": 90.0,
+    "average_invalid_extra_docs": 7.5
+  },
+  "question_type_stats": {
+    "basic": {
+      "count": 10,
+      "average_correctness_pct": 100.0,
+      "average_completeness_pct": 98.0,
+      "combined_correctness_completeness_score": 98.0,
+      "average_recall_pct": 90.0,
+      "average_invalid_extra_docs": 7.5
+    },
+    "info_not_found": {
+      "count": 10,
+      "average_correctness_pct": 100.0,
+      "average_completeness_pct": 100.0,
+      "combined_correctness_completeness_score": 100.0,
+      "average_recall_pct": 0.0,
+      "average_invalid_extra_docs": 0.0
+    }
+  },
+  "questions": [
+    {
+      "question_id": "qst_0001",
+      "corrected": false,
+      "question_type": "basic",
+      "answer_correct": true,
+      "correctness_reasoning": "The candidate gives the same default size limits as the gold answer\u201410 MiB per file and 50 MiB total per request\u2014and its extra details do not conflict.",
+      "completeness_pct": 100.0,
+      "document_recall_pct": 100.0,
+      "invalid_extra_docs": 7
+    },
+    {
+      "question_id": "qst_0002",
+      "corrected": false,
+      "question_type": "basic",
+      "answer_correct": true,
+      "correctness_reasoning": "It matches the gold answer by naming the metric as `stream.timebox_finalized` and also correctly notes the route/model labels.",
+      "completeness_pct": 100.0,
+      "document_recall_pct": 100.0,
+      "invalid_extra_docs": 7
+    },
+    {
+      "question_id": "qst_0003",
+      "corrected": false,
+      "question_type": "basic",
+      "answer_correct": true,
+      "correctness_reasoning": "The candidate answer matches all six acceptance criteria in the gold answer, including the required quantities and rollout details, without introducing conflicts.",
+      "completeness_pct": 100.0,
+      "document_recall_pct": 100.0,
+      "invalid_extra_docs": 7
+    },
+    {
+      "question_id": "qst_0004",
+      "corrected": false,
+      "question_type": "basic",
+      "answer_correct": true,
+      "correctness_reasoning": "The candidate matches the gold answer\u2019s core recommendation to treat delayed entitlements as a pending/syncing state with messaging that it may take a few minutes, plus retry/refresh and support guidance rather than failing onboarding.",
+      "completeness_pct": 100.0,
+      "document_recall_pct": 0.0,
+      "invalid_extra_docs": 12
+    },
+    {
+      "question_id": "qst_0005",
+      "corrected": false,
+      "question_type": "basic",
+      "answer_correct": true,
+      "correctness_reasoning": "It matches the gold answer on failover order, RPO/RTO targets, and the pre-approved 4-hour maximum US emergency failover window.",
+      "completeness_pct": 100.0,
+      "document_recall_pct": 100.0,
+      "invalid_extra_docs": 7
+    },
+    {
+      "question_id": "qst_0006",
+      "corrected": false,
+      "question_type": "basic",
+      "answer_correct": true,
+      "correctness_reasoning": "The candidate matches the draft\u2019s five-signal priority order and corresponding actions from the gold answer without conflicting on any core point.",
+      "completeness_pct": 100.0,
+      "document_recall_pct": 100.0,
+      "invalid_extra_docs": 7
+    },
+    {
+      "question_id": "qst_0007",
+      "corrected": false,
+      "question_type": "basic",
+      "answer_correct": true,
+      "correctness_reasoning": "It matches the baseline and optimized averages (2.7 and 1.9) and correctly states the change as a 0.8-point decrease.",
+      "completeness_pct": 100.0,
+      "document_recall_pct": 100.0,
+      "invalid_extra_docs": 7
+    },
+    {
+      "question_id": "qst_0008",
+      "corrected": false,
+      "question_type": "basic",
+      "answer_correct": true,
+      "correctness_reasoning": "It matches the gold answer exactly by stating the verified rollback threshold is under 10 minutes.",
+      "completeness_pct": 100.0,
+      "document_recall_pct": 100.0,
+      "invalid_extra_docs": 7
+    },
+    {
+      "question_id": "qst_0009",
+      "corrected": false,
+      "question_type": "basic",
+      "answer_correct": true,
+      "correctness_reasoning": "The candidate answer matches the gold answer\u2019s core terms and quantities\u2014declining the 50%/$60k match and instead offering a 12-month committed prepay at ~40% off, a $50k milestone-tied migration credit, optional seat/license spend cap, and a 99.9% US hosted latency SLO\u2014without conflicting details.",
+      "completeness_pct": 100.0,
+      "document_recall_pct": 100.0,
+      "invalid_extra_docs": 7
+    },
+    {
+      "question_id": "qst_0010",
+      "corrected": false,
+      "question_type": "basic",
+      "answer_correct": true,
+      "correctness_reasoning": "It matches the gold answer\u2019s core mechanism: deterministic stage-based cohort keys from stage-level signals, short-lived cohort aggregates, and a route \u00d7 stage alert matrix that attributes SLO issues and escalates to top-k likely stages to cut noise and speed RCA.",
+      "completeness_pct": 80.0,
+      "document_recall_pct": 100.0,
+      "invalid_extra_docs": 7
+    },
+    {
+      "question_id": "qst_0491",
+      "corrected": false,
+      "question_type": "info_not_found",
+      "answer_correct": true,
+      "correctness_reasoning": "The candidate clearly states that the exact APHL canonicalization, signing algorithm, key rotation, and verification-key retrieval mechanism are not specified in the available sources, which matches the gold answer's required caveat.",
+      "completeness_pct": 100.0,
+      "document_recall_pct": null,
+      "invalid_extra_docs": null
+    },
+    {
+      "question_id": "qst_0492",
+      "corrected": false,
+      "question_type": "info_not_found",
+      "answer_correct": true,
+      "correctness_reasoning": "The candidate explicitly says the documents do not provide the default burst surcharge or the GL account, which matches the gold answer's requirement to note the query is not fully answerable from available sources.",
+      "completeness_pct": 100.0,
+      "document_recall_pct": null,
+      "invalid_extra_docs": null
+    },
+    {
+      "question_id": "qst_0493",
+      "corrected": false,
+      "question_type": "info_not_found",
+      "answer_correct": true,
+      "correctness_reasoning": "The candidate explicitly says the exact Azure Marketplace dimension names are not fully supported by the sources and clearly caveats the partial Azure evidence while providing related non-Azure reporting details.",
+      "completeness_pct": 100.0,
+      "document_recall_pct": null,
+      "invalid_extra_docs": null
+    },
+    {
+      "question_id": "qst_0494",
+      "corrected": false,
+      "question_type": "info_not_found",
+      "answer_correct": true,
+      "correctness_reasoning": "The candidate clearly states that the exact TEU multipliers are not available from the sources/read documents, which matches the gold answer\u2019s required caveat that the query is not fully answerable.",
+      "completeness_pct": 100.0,
+      "document_recall_pct": null,
+      "invalid_extra_docs": null
+    },
+    {
+      "question_id": "qst_0495",
+      "corrected": false,
+      "question_type": "info_not_found",
+      "answer_correct": true,
+      "correctness_reasoning": "The candidate explicitly states that the exact vendors, SKUs, and Canada under-48-hour shipping details are not supported by the sources, which matches the gold answer\u2019s required caveat that the query is not fully answerable from the documents.",
+      "completeness_pct": 100.0,
+      "document_recall_pct": null,
+      "invalid_extra_docs": null
+    },
+    {
+      "question_id": "qst_0496",
+      "corrected": false,
+      "question_type": "info_not_found",
+      "answer_correct": true,
+      "correctness_reasoning": "The candidate answer clearly states that the available sources do not establish Teams/Adaptive Cards support or Teams-specific update semantics, which matches the gold answer\u2019s required caveat that the query is not fully answerable from the documents.",
+      "completeness_pct": 100.0,
+      "document_recall_pct": null,
+      "invalid_extra_docs": null
+    },
+    {
+      "question_id": "qst_0497",
+      "corrected": false,
+      "question_type": "info_not_found",
+      "answer_correct": true,
+      "correctness_reasoning": "The candidate correctly states that the documents do not provide the quorum or tie-break rule and clearly caveats the answer as not fully answerable from the sources.",
+      "completeness_pct": 100.0,
+      "document_recall_pct": null,
+      "invalid_extra_docs": null
+    },
+    {
+      "question_id": "qst_0498",
+      "corrected": false,
+      "question_type": "info_not_found",
+      "answer_correct": true,
+      "correctness_reasoning": "The candidate explicitly says the exact Redwood metering coefficients could not be verified from the available sources and clearly distinguishes verified sourcing from unresolved missing numeric coefficients, which matches the gold answer's required caveat.",
+      "completeness_pct": 100.0,
+      "document_recall_pct": null,
+      "invalid_extra_docs": null
+    },
+    {
+      "question_id": "qst_0499",
+      "corrected": false,
+      "question_type": "info_not_found",
+      "answer_correct": true,
+      "correctness_reasoning": "The candidate clearly states that the production partition count, retention time, and latest approval/change record were not found in the reviewed sources, which matches the gold answer\u2019s required caveat that the query is not fully answerable from available documents.",
+      "completeness_pct": 100.0,
+      "document_recall_pct": null,
+      "invalid_extra_docs": null
+    },
+    {
+      "question_id": "qst_0500",
+      "corrected": false,
+      "question_type": "info_not_found",
+      "answer_correct": true,
+      "correctness_reasoning": "The candidate clearly states that the key requested details\u2014quorum, tie-break process, and final decision authority\u2014are not found in the sources, which matches the gold answer\u2019s required caveat.",
+      "completeness_pct": 100.0,
+      "document_recall_pct": null,
+      "invalid_extra_docs": null
+    }
+  ]
+}

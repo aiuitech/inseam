@@ -1,0 +1,300 @@
+{
+  "question_count": 20,
+  "find_calls": 97,
+  "actions": {
+    "queries": 161,
+    "scan": 93,
+    "inspect": 73,
+    "expand": 10,
+    "forget": 69
+  },
+  "mixed_action_batches": 41,
+  "multiple_read_batches": 30,
+  "largest_requested_scan_line_count": 396,
+  "initial_rankings_identical_to_baseline": true,
+  "answer_cost_usd": 2.8092,
+  "answer_duration_seconds": 351.813,
+  "retrieval_duration_seconds": 27.172,
+  "answer_latency_median_seconds": 19.8688285,
+  "judge_cost_usd": null,
+  "cost_note": "Answer cost is summed from CLI provider totals rounded to four decimals. The upstream judge does not report cost.",
+  "questions": [
+    {
+      "question_id": "qst_0001",
+      "question_type": "basic",
+      "turns": 2,
+      "find_calls": 2,
+      "actions": {
+        "queries": 1,
+        "scan": 3,
+        "inspect": 3
+      },
+      "answer_cost_usd": 0.0595,
+      "answer_duration_seconds": 8.837528,
+      "retrieval_duration_seconds": 2.227881
+    },
+    {
+      "question_id": "qst_0002",
+      "question_type": "basic",
+      "turns": 2,
+      "find_calls": 2,
+      "actions": {
+        "queries": 1,
+        "scan": 1
+      },
+      "answer_cost_usd": 0.0353,
+      "answer_duration_seconds": 4.691544,
+      "retrieval_duration_seconds": 1.779514
+    },
+    {
+      "question_id": "qst_0003",
+      "question_type": "basic",
+      "turns": 2,
+      "find_calls": 2,
+      "actions": {
+        "queries": 1,
+        "scan": 1
+      },
+      "answer_cost_usd": 0.0458,
+      "answer_duration_seconds": 8.395134,
+      "retrieval_duration_seconds": 0.594307
+    },
+    {
+      "question_id": "qst_0004",
+      "question_type": "basic",
+      "turns": 6,
+      "find_calls": 6,
+      "actions": {
+        "queries": 6,
+        "scan": 12,
+        "expand": 3,
+        "inspect": 6
+      },
+      "answer_cost_usd": 0.1718,
+      "answer_duration_seconds": 23.26657,
+      "retrieval_duration_seconds": 1.741643
+    },
+    {
+      "question_id": "qst_0005",
+      "question_type": "basic",
+      "turns": 3,
+      "find_calls": 3,
+      "actions": {
+        "queries": 5,
+        "scan": 3
+      },
+      "answer_cost_usd": 0.0926,
+      "answer_duration_seconds": 10.816997,
+      "retrieval_duration_seconds": 1.45082
+    },
+    {
+      "question_id": "qst_0006",
+      "question_type": "basic",
+      "turns": 2,
+      "find_calls": 2,
+      "actions": {
+        "queries": 1,
+        "scan": 2
+      },
+      "answer_cost_usd": 0.0682,
+      "answer_duration_seconds": 8.504493,
+      "retrieval_duration_seconds": 0.798312
+    },
+    {
+      "question_id": "qst_0007",
+      "question_type": "basic",
+      "turns": 2,
+      "find_calls": 2,
+      "actions": {
+        "queries": 1,
+        "scan": 1
+      },
+      "answer_cost_usd": 0.0392,
+      "answer_duration_seconds": 4.545489,
+      "retrieval_duration_seconds": 0.888446
+    },
+    {
+      "question_id": "qst_0008",
+      "question_type": "basic",
+      "turns": 2,
+      "find_calls": 2,
+      "actions": {
+        "queries": 1,
+        "scan": 1
+      },
+      "answer_cost_usd": 0.0396,
+      "answer_duration_seconds": 4.660695,
+      "retrieval_duration_seconds": 2.252778
+    },
+    {
+      "question_id": "qst_0009",
+      "question_type": "basic",
+      "turns": 2,
+      "find_calls": 2,
+      "actions": {
+        "queries": 1,
+        "scan": 1
+      },
+      "answer_cost_usd": 0.0579,
+      "answer_duration_seconds": 6.575466,
+      "retrieval_duration_seconds": 1.825442
+    },
+    {
+      "question_id": "qst_0010",
+      "question_type": "basic",
+      "turns": 2,
+      "find_calls": 2,
+      "actions": {
+        "queries": 1,
+        "scan": 2,
+        "inspect": 2
+      },
+      "answer_cost_usd": 0.0587,
+      "answer_duration_seconds": 8.782681,
+      "retrieval_duration_seconds": 0.668644
+    },
+    {
+      "question_id": "qst_0491",
+      "question_type": "info_not_found",
+      "turns": 8,
+      "find_calls": 9,
+      "actions": {
+        "queries": 13,
+        "scan": 6,
+        "inspect": 15,
+        "forget": 13
+      },
+      "answer_cost_usd": 0.283,
+      "answer_duration_seconds": 25.602431,
+      "retrieval_duration_seconds": 1.843324
+    },
+    {
+      "question_id": "qst_0492",
+      "question_type": "info_not_found",
+      "turns": 5,
+      "find_calls": 6,
+      "actions": {
+        "queries": 13,
+        "scan": 8
+      },
+      "answer_cost_usd": 0.2004,
+      "answer_duration_seconds": 18.285243,
+      "retrieval_duration_seconds": 1.889394
+    },
+    {
+      "question_id": "qst_0493",
+      "question_type": "info_not_found",
+      "turns": 5,
+      "find_calls": 5,
+      "actions": {
+        "queries": 13,
+        "scan": 14
+      },
+      "answer_cost_usd": 0.1994,
+      "answer_duration_seconds": 29.554881,
+      "retrieval_duration_seconds": 0.81423
+    },
+    {
+      "question_id": "qst_0494",
+      "question_type": "info_not_found",
+      "turns": 7,
+      "find_calls": 7,
+      "actions": {
+        "queries": 7,
+        "scan": 4,
+        "expand": 1,
+        "inspect": 17
+      },
+      "answer_cost_usd": 0.1877,
+      "answer_duration_seconds": 21.630759,
+      "retrieval_duration_seconds": 0.960792
+    },
+    {
+      "question_id": "qst_0495",
+      "question_type": "info_not_found",
+      "turns": 9,
+      "find_calls": 9,
+      "actions": {
+        "queries": 21,
+        "scan": 4,
+        "inspect": 14,
+        "expand": 2
+      },
+      "answer_cost_usd": 0.2386,
+      "answer_duration_seconds": 25.28156,
+      "retrieval_duration_seconds": 0.524955
+    },
+    {
+      "question_id": "qst_0496",
+      "question_type": "info_not_found",
+      "turns": 3,
+      "find_calls": 5,
+      "actions": {
+        "queries": 7,
+        "scan": 5
+      },
+      "answer_cost_usd": 0.1715,
+      "answer_duration_seconds": 27.927209,
+      "retrieval_duration_seconds": 0.979458
+    },
+    {
+      "question_id": "qst_0497",
+      "question_type": "info_not_found",
+      "turns": 7,
+      "find_calls": 7,
+      "actions": {
+        "queries": 19,
+        "scan": 2,
+        "forget": 25,
+        "expand": 1
+      },
+      "answer_cost_usd": 0.1592,
+      "answer_duration_seconds": 27.404841,
+      "retrieval_duration_seconds": 0.589204
+    },
+    {
+      "question_id": "qst_0498",
+      "question_type": "info_not_found",
+      "turns": 8,
+      "find_calls": 8,
+      "actions": {
+        "queries": 11,
+        "scan": 14,
+        "forget": 4,
+        "inspect": 16,
+        "expand": 3
+      },
+      "answer_cost_usd": 0.2479,
+      "answer_duration_seconds": 37.456729,
+      "retrieval_duration_seconds": 1.700671
+    },
+    {
+      "question_id": "qst_0499",
+      "question_type": "info_not_found",
+      "turns": 6,
+      "find_calls": 9,
+      "actions": {
+        "queries": 25,
+        "scan": 4,
+        "forget": 18
+      },
+      "answer_cost_usd": 0.2397,
+      "answer_duration_seconds": 28.139954,
+      "retrieval_duration_seconds": 1.553733
+    },
+    {
+      "question_id": "qst_0500",
+      "question_type": "info_not_found",
+      "turns": 7,
+      "find_calls": 7,
+      "actions": {
+        "queries": 13,
+        "scan": 5,
+        "forget": 9
+      },
+      "answer_cost_usd": 0.2132,
+      "answer_duration_seconds": 21.452414,
+      "retrieval_duration_seconds": 2.088496
+    }
+  ]
+}

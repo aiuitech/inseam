@@ -25,3 +25,9 @@ The [Finder refinement implementation](finder/refinement.md) combines searches,
 expansion, and scans with explicit candidate accumulation. Indexed excerpts
 supplement the summary prefix even when the lean benchmark index provides no
 fragment hints.
+
+[The additive-navigation rerun](../benchmarks/reports/20260913-gpt54-refinement.md)
+improved the same sample from 92 to 99, with 100% correctness. It took 7 minutes
+25 seconds and $2.81 in answer cost, versus 5 minutes 42 seconds and $1.64.
+The report records the remaining completeness gap and the increased search
+cost on unanswerable questions before any larger evaluation.
