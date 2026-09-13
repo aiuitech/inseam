@@ -71,11 +71,15 @@ The envelope gains **facets**: `Vec<Facet { key, value }>` in the connection's o
 - An author lands on the **entity row** `entity:person:<normalized>`, related `authored` from the root, so "wrote it" and "is mentioned in it" meet on one row and a person's name in a question reaches both.
 - Modified time is not a row. A time is a range, and a range is a filter.
 
-A host facet has a document frequency in the thousands by construction, so the hub bound keeps it out of the walk; a channel with forty messages conducts, and that is the right line. Facets are in the ledger and the harness as their own row kind, which turns the report's per-source table from a folder-name convention into a measured channel.
+A host facet has a degree in the thousands by construction, so the hub bound keeps it out of the walk; a channel with forty messages conducts, and that is the right line. Facets are in the ledger and the harness as their own row kind, which turns the report's per-source table from a folder-name convention into a measured channel.
 
 Their second use is as **constraints**. A query may carry filters — host, container, author, modified range — applied to the candidate set before rollup, the way boundary properties are. The exact grounding step recognises facet values in the question ("in Slack", "the #incidents thread") as seeds; a big node's grounded rewrite may promote them to filters; the agent gets them as query options so a question that names a system searches that system. The constrained question type already scores 95, so filters are for the agent's precision and for the leaf node whose whole index is one host, not for recall.
 
-For the benchmark corpus, which is files under folders, the filesystem host has no facets to give; the harness's fixture would carry a sidecar mapping folder to host, or the filesystem host could take a configured rule that reads facets from path components. Undecided, and listed below.
+**Folders are the container facet for path hosts.** A directory is already a source with a summary and one entry per child ([indexing](indexing.md), folders), so a filesystem host declares no container facet: the folder is it, with a name, a summary, and a place in results that a facet row would never have. Container facet rows exist for hosts whose locators are flat (a Slack channel, a Gmail label) and nothing else. The benchmark corpus, files under `slack/`, `gmail/`, `confluence/`, is therefore covered by folders as they stand, and the harness already reads a document's source from its path.
+
+What folders lack is an **edge**. An entry fragment carries the child's address as a content reference so `expand` and `fetch` can follow it, but a reference is not a relation, and the walk cannot cross it: two messages in the same channel folder are unconnected in the graph today. The fix is one relation, `contains`, from the entry to the child's root fragment, resolved by the sweep from the entry's address when either side lands — the folder lands after its children, so the child root exists to point at, and a child re-landed later gets its entry re-linked by an address lookup when its new root lands, so a child rebuild that leaves the folder's listing digest unchanged never leaves the edge dangling. With that edge, folder membership conducts like any structure: a hit in one message reaches its channel and its siblings, at the folder's weight, bounded by the hub rule below.
+
+**The hub bound is a degree bound on any vertex.** A vocabulary row's document frequency is its degree; a folder root with five thousand entries is a hub by the same measure, and so is an entity that every document mentions. So `hub_degree_max` applies to every fragment the walk's slice would load, not to vocabulary rows alone: a vertex over the bound stays in the index, stays a result, stays expandable, and contributes no edges to the walk. The `slack/` folder is excluded by construction; a forty-message channel folder conducts.
 
 ## Retrieval
 
@@ -84,7 +88,7 @@ Seeding gains a **grounding** step before the existing hybrid seed; the walk and
 1. **Exact grounding.** The query runs through the same automaton the pass used. A vocabulary row the query names outright becomes a seed with the strength of a full-text hit.
 2. **Paraphrase grounding.** The query vector (already computed for the vector seed list) is scored against every cluster vector — ten thousand dot products, well under a millisecond — and clusters above `cluster_query_cosine` contribute their rows and aliases as a fourth seed list, entering fusion at `cluster_seed_weight` (0.3) and only from their top `cluster_seed_ranks` (5), the same rank-gated, down-weighted shape the cue vectors measured best at. Their job is to add candidates the text lists lack, never to reorder what full-text already carries.
 3. **Hybrid seeds and fusion**, as today: prose full-text, lexical full-text, vectors, reciprocal rank fusion.
-4. **The walk**, as today, with two changes to what conducts. Edge weight is the relation kind's weight times a weight for the far end's row kind (`[finder.weights.by_row_kind]`: identifier 1.0, entity 0.8, term 0.6, facet 0.5, alias 0.4, prose 1.0), because a shared ticket number says more than a shared jargon word. And a vocabulary row whose document frequency exceeds `hub_df_max` keeps its lexical row and its seeds but contributes **no edges** to the walk's slice: hub protection is a bound, not a damping, because the measurement showed every damping of hub terms still lost twenty points.
+4. **The walk**, as today, with two changes to what conducts. Edge weight is the relation kind's weight times a weight for the far end's row kind (`[finder.weights.by_row_kind]`: identifier 1.0, entity 0.8, term 0.6, facet 0.5, alias 0.4, prose 1.0), because a shared ticket number says more than a shared jargon word. And any vertex whose degree exceeds `hub_degree_max` (a vocabulary row's document frequency, a folder's entry count) keeps its rows and its seeds but contributes **no edges** to the walk's slice: hub protection is a bound, not a damping, because the measurement showed every damping of hub terms still lost twenty points.
 5. **Rollup and merge**, as today.
 
 A big node may add a **grounded rewrite**: one cheap model call that rewrites the question in the corpus's words given the clusters step 2 matched. It is the benchmark report's second lever with the cluster as context, and it is an option outside the core loop, which must still answer on a phone, offline, in milliseconds.
@@ -126,13 +130,13 @@ Every channel and weight in this design is **query-time** ([index-maintenance](i
 
 - per seed list, `[finder.seed_lists.<prose|lexical|vector|exact|cluster>]`: `enabled`, `weight` (the vote in fusion; 1.0 is an equal vote), `ranks_max` (a rank gate: only this many of the list's best enter fusion). The existing `seeds = full-text | vector | both` becomes a shorthand over these.
 - per row kind, `[finder.weights.by_row_kind]`, and per relation kind as today.
-- `hub_df_max`, `cluster_query_cosine`, the walk's damping and iterations, and the authority prior's weight (0 is off).
+- `hub_degree_max`, `cluster_query_cosine`, the walk's damping and iterations, and the authority prior's weight (0 is off).
 
 A query request may carry **overrides** for any of these keys, restricted to the query-time tier (`inseam query --finder cluster.weight=0`): the composition stays the node's only configuration, and an override is a request parameter like `--limit`, never stored. The benchmark harness uses overrides to run a **matrix** of settings over one index: each cell is the full question set at one setting, recorded in the manifest as the override set, so two cells of a run differ by exactly what they say they differ by. The index-side dials (`term_df_min`, `term_df_max`, the shape rule, cluster thresholds) are shape and re-run the vocabulary pass, which is the cheap phase; the harness records them from the composition as it records everything else.
 
 ### The pass reports
 
-The vocabulary pass reports into the sweep's `IndexReport` and `inseam status`: candidates mined, rows planted and anchored, rows above the hub bound (with the twenty highest by document frequency, named), clusters formed, joined, merged, and re-grounded, model calls and their cost, and time per step. `inseam vocabulary` lists rows and clusters with document frequency and cluster membership; `inseam vocabulary show <row>` prints one row's gloss, aliases, cluster, and the sources anchored to it. The first thing to do after a pass is read the top of that list: if it is full of industry words, the shape rule is wrong before any query is run.
+The vocabulary pass reports into the sweep's `IndexReport` and `inseam status`: candidates mined, rows planted and anchored, vertices above the hub bound (with the twenty highest by degree, named: rows and folders alike), clusters formed, joined, merged, and re-grounded, model calls and their cost, and time per step. `inseam vocabulary` lists rows and clusters with document frequency and cluster membership; `inseam vocabulary show <row>` prints one row's gloss, aliases, cluster, and the sources anchored to it. The first thing to do after a pass is read the top of that list: if it is full of industry words, the shape rule is wrong before any query is run.
 
 ### What the harness reads
 
@@ -159,7 +163,7 @@ A run's report then says in one table what each channel bought and what it cost,
 Each is a run on the 25,000-document slice with the per-role side-table harness ([benchmarking](benchmarking.md)), before any code beyond what the gate needs. The ledger, the query-time overrides, and the harness's attribution output land before gate 2, because they are what the gates read.
 
 1. **Ceiling.** Mine candidates from the slice's FTS vocabulary with the band and shape rules above, offline. Of the 159 gold documents that finished outside the top 25, how many share a mined term or identifier with their question? That number bounds what exact grounding can recover. Below 30, stop here.
-2. **Exact grounding and the hub bound.** Plant the mined rows, anchor, seed from exact matches, exclude hubs by `hub_df_max`. Recall per question type against 84.3. Must not lose on basic while gaining on semantic.
+2. **Exact grounding and the hub bound.** Plant the mined rows, anchor, seed from exact matches, exclude hubs by `hub_degree_max`. Recall per question type against 84.3. Must not lose on basic while gaining on semantic.
 3. **Clusters and aliases.** Form clusters by co-occurrence, ground with the model, add the paraphrase seed list. Semantic recall against 56.0 end to end; the fusion weight and rank gate swept.
 4. **Extractor fold.** Replace hints and entities with the single extractor; confirm nothing regresses, and that project-related recall rises with entities on.
 5. **Authority prior.** Sibling tie-breaks on the near-duplicate questions, measured separately.
@@ -167,9 +171,9 @@ Each is a run on the 25,000-document slice with the per-role side-table harness 
 ## Open questions
 
 - Multi-word local phrases beyond what keywords and cues propose: whether a bounded bigram count over the landed text finds names the model never wrote, or whether the derived candidates cover it.
-- Facets for a file corpus: a fixture sidecar, or a filesystem-host rule that reads facets from path components. The benchmark needs one of them before facets can be measured.
+- Host facets for a file corpus: the benchmark's per-source breakdown comes from the path, and folders carry the container; whether the filesystem host should ever declare a host facet from a configured path component is not needed for the benchmark and not decided.
 - Modified time as a sibling tie-break: among near-duplicate drafts the later one is more often the authoritative one; measured beside the authority prior, not assumed.
 - The general-English list for the shape rule: size, source, and whether a corpus in another language needs its own.
 - Re-anchoring after a merge in the cluster pass touches every edge of the losing row; whether that lands in the same transaction as the pass's other writes or in bounded batches.
-- Whether `hub_df_max` is a count or a fraction of the corpus; a fraction scales, a count is legible.
+- Whether `hub_degree_max` is a count or a fraction of the corpus; a fraction scales, a count is legible.
 - A phone's composition: the pass without a model still mines, matches, and clusters; whether a leaf node should run it at all or receive vocabulary from a larger node through the network is undecided ([discovery](discovery.md)).
