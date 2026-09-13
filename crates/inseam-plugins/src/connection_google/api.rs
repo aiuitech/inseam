@@ -236,6 +236,7 @@ pub fn rendered(
             modified,
             observed,
             properties: Vec::new(),
+            facets: Vec::new(),
             hint,
             content_digest: None,
         },

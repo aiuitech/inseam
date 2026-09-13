@@ -94,9 +94,11 @@ async fn vanished_sources_are_removed_and_their_entities_collected() {
     std::fs::remove_file(&doomed).expect("removes");
     let report = index(ops.as_ref(), corpus.path()).await;
     assert_eq!(report.removed, 1, "vanished source reconciled: {report}");
-    assert_eq!(
-        report.keyed_removed, 1,
-        "unanchored keyed fragment collected"
+    // The planted entity, plus any mined term the vocabulary pass retracts
+    // once the doomed note's words no longer recur (`design/vocabulary.md`).
+    assert!(
+        report.keyed_removed >= 1,
+        "unanchored keyed fragment collected: {report}"
     );
     assert_eq!(report.unchanged, 1, "the keeper was untouched");
     assert_eq!(
@@ -538,10 +540,7 @@ async fn embedding_change_reembeds_in_place_without_reindexing() {
     let ops = common::ops(&kernel);
     assert!(kernel.store().reembed_pending());
     let err = ops
-        .query(QueryRequest {
-            text: "kitchen".into(),
-            limit: 5,
-        })
+        .query(QueryRequest::new("kitchen", 5))
         .await
         .expect_err("search refuses until the migration runs");
     assert!(

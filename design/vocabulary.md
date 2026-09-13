@@ -1,6 +1,6 @@
 # Vocabulary
 
-**Status: proposal with validation gates, not adopted architecture.** Nothing here is implemented. The measurements in [indexing](indexing.md) (retrieval hints) and the last end-to-end run (`benchmarks/runs/enterprise-rag-bench/20260907T032046Z-6b040bbfd905/report.md`) are the evidence it answers to, and the gates at the end say what must be true before any of it lands.
+**Status: implemented; the gates below are the measurement plan and the SR&ED record of what was uncertain.** The mechanism is in the sweep's vocabulary pass, the finder's grounding, hub bound, row-kind weights, filters, and ledger, and the harness's attribution ([docs/indexing/vocabulary.md](../docs/indexing/vocabulary.md), [docs/finder/algorithm.md](../docs/finder/algorithm.md), [docs/benchmarking.md](../docs/benchmarking.md)). The measurements in [indexing](indexing.md) (retrieval hints) and the end-to-end run (`benchmarks/runs/enterprise-rag-bench/20260913T032046Z-6b040bbfd905/report.md`) are the evidence it answers to; the runs recorded under *Settled since* are what it has measured so far.
 
 The **vocabulary** is the corpus's own words — product names, codenames, region codes, ticket ids, people, customers, the jargon a team uses — as first-class rows in the index, grouped into **clusters** of words that belong together, so that a document and a question are both read in the corpus's terms instead of a general model's. It is the answer to two measured failures: the glossary terms a general model extracts are textbook words that join thousands of documents and flood the graph walk, and a quarter of the benchmark's questions paraphrase their document so that no word matches.
 
@@ -167,6 +167,25 @@ Each is a run on the 25,000-document slice with the per-role side-table harness 
 3. **Clusters and aliases.** Form clusters by co-occurrence, ground with the model, add the paraphrase seed list. Semantic recall against 56.0 end to end; the fusion weight and rank gate swept.
 4. **Extractor fold.** Replace hints and entities with the single extractor; confirm nothing regresses, and that project-related recall rises with entities on.
 5. **Authority prior.** Sibling tie-breaks on the near-duplicate questions, measured separately.
+
+## Settled since
+
+- **The pass is one sweep phase, keyed by its own digest.** Mining, matching, facets, clustering, embedding, and grounding run after files land and before folders, read only the store, and skip entirely when the run changed no source under an unchanged configuration. The mining dials ride a digest of their own, never the shape stamp, so a band change re-runs the pass and no per-source transform. *Rejected while building:* FTS5's vocabulary table as the statistics source — its tokenizer splits `eu-central-1` into three words, and the identifier-shaped tokens are the ones that matter most; the pass tokenizes text itself, keeping inner `-_./'`, and counts once per source under a bounded table.
+- **Matching is n-gram lookup on word boundaries, not substring search.** Four probes per token against the normalized spellings of every row, mined or extracted, so `H200` never matches inside `H2000`, and a document indexed before a term was known still gets its edge because every sweep that changed something walks all the text. Phrases come from the summarizer's keyword rows and count through matching; a phrase the model proposed that no text contains plants nothing.
+- **Clusters form by co-occurrence in one pass with an in-memory presence table**, so a row founded a moment ago is a home for the next; vectors are embedded afterwards from the members in a stable order and re-embedded only when that text's digest moves. The hub bound became a **degree bound on any vertex**, applied while the slice loads: a hub is never expanded and its edges are dropped, which also stops a five-thousand-entry folder from spending the relation limit.
+- **The folder edge exists.** An entry relates `contains` to its child's root, resolved from the entry's address when either side lands. At the default two hops the walk reaches from a note to its folder and stops; at four it reaches the siblings, at a fraction of the matching note's score (`tests/vocabulary.rs`).
+- **Grounding at extraction time was not built; grounding per cluster was**, with the prompt asking only what statistics cannot answer: merges, glosses, aliases. A spent budget stops grounding, never the pass.
+- **Overrides are TOML paths.** A request's `key=value` pairs are set into the finder configuration's own table and re-validated, so an unknown key is refused by the same `deny_unknown_fields` that guards a composition, and integers coerce to floats where a person types `weight=1`.
+- **Small corpora expose the floor.** With `term_df_max_floor` at 50, a corpus of two notes treats every shared word as a term and the walk reaches every note through it; the integration tests count only results at a material share of the top score. On a real corpus the percentage rule (2% of 25,000 is 500) is what bounds the band, and the floor is for corpora too small to have statistics.
+
+### Uncertainties this work records
+
+For the SR&ED record: what was not known when the work began, and what resolves each.
+
+1. Whether corpus statistics alone (a document-frequency band and a shape rule) select the words a general model treats as noise, without a model. The ceiling count on the slice (gate 1) resolves it.
+2. Whether a hub *bound* recovers the recall a hub *damping* lost (64% at best in the hints measurement). Gate 2's per-type recall resolves it.
+3. Whether clusters formed by co-occurrence, embedded once each, bridge a paraphrased question to the corpus's word better than per-document cue vectors did (+1.3 points offline). Gate 3 resolves it.
+4. Whether the walk's linearity makes an exact per-channel ledger cheap enough to run on every benchmark query. Measured: five restart columns over a twenty-thousand-relation slice add milliseconds; the harness runs every query with `--explain`.
 
 ## Open questions
 

@@ -17,6 +17,7 @@ use std::sync::Arc;
 use inseam_kernel::address::HostId;
 use inseam_kernel::network::{NodeId, StewardshipRecord};
 use inseam_seams::SeamError;
+use inseam_seams::finder::FinderRequest;
 use inseam_seams::connection::Connection;
 use inseam_seams::text::check_line_range;
 use inseam_seams::transport::{PeerAddress, RequestHandler};
@@ -144,7 +145,8 @@ impl RoutingService {
 
     async fn serve_query(&self, text: &str, limit: u32) -> Result<RouteReply, SeamError> {
         let limit = ladder::clamp_query_limit(usize::try_from(limit).unwrap_or(usize::MAX));
-        let (results, _trace) = ladder::query(self.finder.as_ref(), text, limit).await?;
+        let (results, _trace) =
+            ladder::query(self.finder.as_ref(), &FinderRequest::new(text, limit)).await?;
         Ok(super::query_results_reply(results))
     }
 

@@ -525,6 +525,7 @@ pub(crate) fn envelope_of(plugin: &str, envelope: WitEnvelope) -> Envelope {
         modified: envelope.modified.map(Timestamp),
         observed: Timestamp::from(SystemTime::now()),
         properties: Vec::new(),
+        facets: Vec::new(),
         hint: envelope.hint.filter(|h| !h.trim().is_empty()),
         content_digest: None,
     }

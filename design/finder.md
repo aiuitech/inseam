@@ -61,6 +61,8 @@ The Finder runs per node against that node's own index. Fan-out ([discovery](dis
 
 - **Cross-node merge.** The fan-out merge fuses the local list and each remote list by reciprocal rank with the finder's own `k` (60), so scores from differently-profiled indexes never compare directly. One copy per address survives: the local copy when this node ranked the address, else the copy that ranked best on any remote node — its summary and hints come with it, and `via` names the node it came from. Then digest-equal copies collapse into `replicas` exactly as one node's results do, and the top result is renormalized to 1.0. With no remote results the local list stands untouched, scores and all, so a node with no network answers exactly as it always has. `expand` is served from the answering node's own index when it stewards the host or holds the source's subtree, else from the steward's index: whichever node has a subtree serves it, and the closer one wins. A remote node that fails or times out is reported beside the results, never as a failed query.
 
+- **Five seed lists, a hub bound, row-kind weights, filters, overrides, and the ledger** landed with the vocabulary ([vocabulary](vocabulary.md)): exact and cluster grounding join the three hybrid lists, each with an `enabled`, `weight`, and `ranks_max` dial; edges weigh the row kind at their far end; a degree bound keeps hubs out of the slice; a request may filter by envelope and facet, override any query-time dial, and ask for the exact decomposition of every result's score.
+
 ## Open questions
 
 - Learning relation weights from fetch-through feedback (a fetch after a query is a relevance signal).

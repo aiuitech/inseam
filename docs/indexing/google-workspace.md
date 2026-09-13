@@ -1,5 +1,7 @@
 # Google Workspace
 
+Gmail envelopes carry facets ([vocabulary.md](vocabulary.md)): `author` from the `From` header — the display name when there is one, else the address — and one `label` per Gmail label, so a message's author becomes an entity row related `authored` from its root and each label a facet row a query can filter on (`inseam query … --facet label:INBOX`).
+
 The `google` entry (plugin `connection-google`, in the base composition) connects one Google account and stewards each of its services as its own host: **Gmail**, **Google Drive**, **Google Calendar**, **Google Contacts**, **Google Tasks** — read-only. One sign-in covers all of them: the entry registers a single OAuth grant whose scopes are the union of the enabled services' read-only scopes plus the OpenID scopes that name the account ([../plugins/oauth.md](../plugins/oauth.md)).
 
 ## Set up once

@@ -437,10 +437,7 @@ pub unsafe extern "C" fn inseam_node_query(
     let Some(operations) = handle.operations.as_ref() else {
         return fail(error_out, &unsettled_message(&handle.kernel()));
     };
-    let request = QueryRequest {
-        text: text.to_owned(),
-        limit: limit as usize,
-    };
+    let request = QueryRequest::new(text.to_owned(), limit as usize);
     let response = handle.runtime.block_on(operations.query(request));
     json_result(response, error_out)
 }

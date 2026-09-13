@@ -334,6 +334,7 @@ impl HostContext {
             modified: source.modified.map(Timestamp),
             observed,
             properties,
+            facets: Vec::new(),
             hint: source.title,
             content_digest: None,
         };

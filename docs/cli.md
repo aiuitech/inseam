@@ -26,6 +26,11 @@ inseam network sync                 # one sync round with every dialable node no
 inseam query "kitchen renovation"   # ranked results with summaries and hints; --json for raw output.
                                     # a result from another node's index says `via <node>`, and the
                                     # footer has one line per node the query fanned out to (network/discovery.md)
+                                    # --explain prints each result's score ledger (finder/algorithm.md); --finder key=value
+                                    # overrides a finder dial for this request (repeatable); --host, --source-type, --facet,
+                                    # --modified-after / --modified-before filter the candidates
+inseam vocabulary                   # the corpus's own words, most frequent first (indexing/vocabulary.md); --kind term|identifier|entity|alias|facet,
+                                    # --show <spelling> for one row with gloss, aliases, cluster, sources; --clusters; --limit, --offset, --json
 inseam expand <address>             # one source's fragments, relations, connected keyed fragments (entities)
 inseam scan <address> --start 120 --end 160   # read a line range of a source
 inseam fetch <address>              # the whole source as text

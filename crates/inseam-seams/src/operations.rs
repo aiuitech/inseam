@@ -79,6 +79,13 @@ pub trait Operations: Send + Sync {
     /// Owner operation: the catalog as this node holds it — every source it
     /// knows about, deep-indexed or still waiting on budget.
     async fn catalog(&self, request: CatalogRequest) -> Result<CatalogResponse, SeamError>;
+    /// Owner operation: the vocabulary as this node holds it — rows by
+    /// frequency, one row with its anchors, or the clusters
+    /// (`design/vocabulary.md`, observability).
+    async fn vocabulary(
+        &self,
+        request: VocabularyRequest,
+    ) -> Result<VocabularyResponse, SeamError>;
     /// Owner operation: the OAuth grants this node holds and where each
     /// stands — what a "connect an account" surface lists.
     async fn grants(&self) -> Result<Vec<GrantView>, SeamError>;
@@ -186,6 +193,30 @@ pub struct QueryRequest {
     pub text: String,
     #[serde(default = "default_limit")]
     pub limit: usize,
+    /// Query-time finder settings for this request alone, as `key=value`
+    /// pairs (`inseam query --finder seed_lists.cluster.weight=0`). The
+    /// composition stays the node's only configuration; an override is a
+    /// request parameter like `limit`, never stored
+    /// (`design/vocabulary.md`, observability).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub finder: Vec<String>,
+    /// Attach each result's score ledger to the response's evidence.
+    #[serde(default)]
+    pub explain: bool,
+    #[serde(default, skip_serializing_if = "QueryFilters::is_empty")]
+    pub filters: QueryFilters,
+}
+
+impl QueryRequest {
+    pub fn new(text: impl Into<String>, limit: usize) -> Self {
+        Self {
+            text: text.into(),
+            limit,
+            finder: Vec::new(),
+            explain: false,
+            filters: QueryFilters::default(),
+        }
+    }
 }
 
 fn default_limit() -> usize {
@@ -285,6 +316,79 @@ pub struct FragmentHint {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extent: Option<Extent>,
     pub text: String,
+}
+
+/// What `inseam vocabulary` asks for.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VocabularyRequest {
+    /// Narrow the listing to one kind (`term`, `identifier`, `entity`,
+    /// `alias`, `facet`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<VocabularyKind>,
+    /// Show one row by its spelling: its gloss, aliases, cluster, and the
+    /// sources anchored to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show: Option<String>,
+    /// List clusters instead of rows.
+    #[serde(default)]
+    pub clusters: bool,
+    #[serde(default = "default_vocabulary_limit")]
+    pub limit: u32,
+    #[serde(default)]
+    pub offset: u32,
+}
+
+fn default_vocabulary_limit() -> u32 {
+    50
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VocabularyResponse {
+    pub counts: Option<VocabularyCounts>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rows: Vec<VocabularyRowView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clusters: Vec<ClusterView>,
+    /// The one row asked for with `show`, when it exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shown: Option<ShownRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VocabularyRowView {
+    pub fragment: FragmentId,
+    pub key: String,
+    pub kind: VocabularyKind,
+    pub origin: String,
+    pub spelling: String,
+    pub document_frequency: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gloss: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterView {
+    pub id: i64,
+    pub label: String,
+    pub member_count: u32,
+    pub document_frequency: u32,
+    pub has_vector: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShownRow {
+    pub row: VocabularyRowView,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster: Option<ClusterView>,
+    /// Addresses anchored to the row, bounded.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<Address>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -758,6 +862,10 @@ pub struct StatusReport {
     /// within `sources`.
     #[serde(default)]
     pub remote_sources: u64,
+    /// Vocabulary rows by kind, clusters, and the generation
+    /// (`design/vocabulary.md`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vocabulary: Option<VocabularyCounts>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

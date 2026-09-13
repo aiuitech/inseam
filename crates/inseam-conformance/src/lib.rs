@@ -85,6 +85,7 @@ fn synthetic_envelope(mimetype: &Mimetype) -> Envelope {
         modified: Some(Timestamp(0)),
         observed: Timestamp(0),
         properties: Vec::new(),
+        facets: Vec::new(),
         hint: Some("conformance".into()),
         content_digest: None,
     }

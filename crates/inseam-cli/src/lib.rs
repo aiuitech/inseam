@@ -322,6 +322,53 @@ enum Command {
         text: String,
         #[arg(long, default_value_t = 8)]
         limit: usize,
+        /// A query-time finder setting for this request alone, as
+        /// `key=value` over the finder's configuration keys
+        /// (`seed_lists.cluster.weight=0`, `hub_degree_max=200`). Repeatable.
+        #[arg(long = "finder", value_name = "KEY=VALUE")]
+        finder: Vec<String>,
+        /// Print each result's score ledger: seed and walk mass per channel,
+        /// the row kinds that carried it, and the rows that did.
+        #[arg(long)]
+        explain: bool,
+        /// Only sources of this host id.
+        #[arg(long)]
+        host: Option<String>,
+        /// Only sources of this envelope type (`file`, `email`, `directory`).
+        #[arg(long)]
+        source_type: Option<String>,
+        /// Only sources anchored to this facet or entity value (a channel
+        /// name, an author). Repeatable; every one must hold.
+        #[arg(long = "facet", value_name = "VALUE")]
+        facets: Vec<String>,
+        /// Only sources modified on or after this date (`YYYY-MM-DD`).
+        #[arg(long, value_name = "YYYY-MM-DD")]
+        modified_after: Option<String>,
+        /// Only sources modified on or before this date (`YYYY-MM-DD`).
+        #[arg(long, value_name = "YYYY-MM-DD")]
+        modified_before: Option<String>,
+        /// Emit the operation response as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// The vocabulary the index mined and grounded: rows by frequency,
+    /// one row with its gloss, aliases, cluster and sources, or the
+    /// clusters.
+    Vocabulary {
+        /// Only rows of this kind (`term`, `identifier`, `entity`, `alias`,
+        /// `facet`).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Show one row by its spelling.
+        #[arg(long)]
+        show: Option<String>,
+        /// List clusters instead of rows.
+        #[arg(long)]
+        clusters: bool,
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+        #[arg(long, default_value_t = 0)]
+        offset: u32,
         /// Emit the operation response as JSON.
         #[arg(long)]
         json: bool,
@@ -909,13 +956,74 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 .await?;
             println!("grant `{id}` {}", grant_status(&view));
         }
-        Command::Query { text, limit, json } => {
+        Command::Query {
+            text,
+            limit,
+            finder,
+            explain,
+            host,
+            source_type,
+            facets,
+            modified_after,
+            modified_before,
+            json,
+        } => {
             let ops = kernel.service(&OPERATIONS)?;
-            let response = ops.query(QueryRequest { text, limit }).await?;
+            let filters = QueryFilters {
+                host,
+                source_type,
+                facets,
+                modified_after: parse_date_flag(modified_after.as_deref())?,
+                modified_before: parse_date_flag(modified_before.as_deref())?,
+            };
+            let response = ops
+                .query(QueryRequest {
+                    text,
+                    limit,
+                    finder,
+                    explain,
+                    filters,
+                })
+                .await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&response)?);
             } else {
                 print_results(&response);
+                if explain {
+                    print_ledgers(&response);
+                }
+            }
+        }
+        Command::Vocabulary {
+            kind,
+            show,
+            clusters,
+            limit,
+            offset,
+            json,
+        } => {
+            let ops = kernel.service(&OPERATIONS)?;
+            let kind = match kind.as_deref() {
+                None => None,
+                Some(name) => Some(VocabularyKind::parse(name).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "`{name}` is not a vocabulary kind (term, identifier, entity, alias, facet)"
+                    )
+                })?),
+            };
+            let response = ops
+                .vocabulary(VocabularyRequest {
+                    kind,
+                    show,
+                    clusters,
+                    limit,
+                    offset,
+                })
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            } else {
+                print_vocabulary(&response);
             }
         }
         Command::Expand { address, json } => {
@@ -1103,6 +1211,21 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
             println!("fragments      {}", status.fragments);
             println!("relations      {}", status.relations);
             println!("keyed          {}", status.keyed_fragments);
+            if let Some(vocabulary) = &status.vocabulary {
+                let by_kind: Vec<String> = vocabulary
+                    .by_kind
+                    .iter()
+                    .map(|(kind, count)| format!("{count} {kind}"))
+                    .collect();
+                println!(
+                    "vocabulary     {} ({} clusters, {} clustered rows, {} glossed, generation {})",
+                    by_kind.join(", "),
+                    vocabulary.clusters,
+                    vocabulary.clustered,
+                    vocabulary.glossed,
+                    vocabulary.generation
+                );
+            }
             println!("search rows    {}", status.search_rows);
             println!(
                 "vector index   {}",
@@ -1693,20 +1816,174 @@ fn print_results(response: &QueryResponse) {
 fn print_query_meta(meta: &inseam_seams::operations::QueryMeta) {
     let t = &meta.trace;
     println!(
-        "{} ms · seeds {} ms ({} fts + {} lexical + {} vector → {}) · graph {} ms ({} relations) · rollup {} ms ({} sources → limit {})",
+        "{} ms · seeds {} ms ({} fts + {} lexical + {} vector + {} exact + {} cluster → {}) · graph {} ms ({} relations, {} hubs out) · rollup {} ms ({} sources → limit {})",
         meta.elapsed_ms,
         t.seeds_ms,
         t.fts_hits,
         t.lexical_hits,
         t.vector_hits,
+        t.exact_hits,
+        t.cluster_hits,
         t.seeds,
         t.graph_ms,
         t.relations,
+        t.hubs_excluded.len(),
         t.rollup_ms,
         t.candidate_sources,
         meta.limit,
     );
+    if t.clusters_matched > 0 || t.filtered_sources > 0 {
+        println!(
+            "grounding {} ms · {} clusters matched · {} sources filtered out",
+            t.grounding_ms, t.clusters_matched, t.filtered_sources
+        );
+    }
     print_query_remote(meta);
+}
+
+/// Under `--explain`: each result's ledger, one line per channel with
+/// non-zero mass, the row kinds the walk arrived through, and the rows
+/// that carried the most — then the hubs the bound kept out.
+fn print_ledgers(response: &QueryResponse) {
+    println!();
+    for (i, evidence) in response.meta.trace.evidence.iter().enumerate() {
+        let Some(ledger) = &evidence.ledger else {
+            continue;
+        };
+        println!(
+            "{:2}. {} ledger (raw {:.5})",
+            i + 1,
+            evidence.address,
+            evidence.score_raw
+        );
+        for line in &ledger.channels {
+            println!(
+                "    {:8} seed {:.5}  walk {:.5}",
+                line.channel.as_str(),
+                line.seed,
+                line.walk
+            );
+        }
+        let kinds: Vec<String> = ledger
+            .walk_by_row_kind
+            .iter()
+            .filter(|(_, mass)| **mass > 0.0)
+            .map(|(kind, mass)| format!("{kind} {mass:.5}"))
+            .collect();
+        if !kinds.is_empty() {
+            println!("    walk by row kind: {}", kinds.join(", "));
+        }
+        for row in &ledger.rows {
+            let frequency = row
+                .document_frequency
+                .map(|f| format!(" df {f}"))
+                .unwrap_or_default();
+            println!(
+                "    ← {:.5} {}{} {}",
+                row.mass,
+                row.kind.as_str(),
+                frequency,
+                row.text
+            );
+        }
+    }
+    let hubs = &response.meta.trace.hubs_excluded;
+    if !hubs.is_empty() {
+        println!("hubs kept out of the walk:");
+        for hub in hubs.iter().take(20) {
+            let kind = hub.kind.map(|k| k.as_str()).unwrap_or("?");
+            println!(
+                "    degree {:6} {} {}",
+                hub.degree,
+                kind,
+                hub.text.as_deref().unwrap_or("")
+            );
+        }
+    }
+}
+
+fn print_vocabulary(response: &VocabularyResponse) {
+    if let Some(counts) = &response.counts {
+        let by_kind: Vec<String> = counts
+            .by_kind
+            .iter()
+            .map(|(kind, count)| format!("{count} {kind}"))
+            .collect();
+        println!(
+            "{} · {} clusters ({} rows clustered, {} glossed) · generation {}",
+            by_kind.join(", "),
+            counts.clusters,
+            counts.clustered,
+            counts.glossed,
+            counts.generation
+        );
+    }
+    if let Some(shown) = &response.shown {
+        print_shown_row(shown);
+        return;
+    }
+    for cluster in &response.clusters {
+        println!(
+            "{:6} {:32} {:4} members  df {:6}  {}  {}",
+            cluster.id,
+            cluster.label,
+            cluster.member_count,
+            cluster.document_frequency,
+            if cluster.has_vector { "vec" } else { "   " },
+            cluster.members.join(", ")
+        );
+    }
+    for row in &response.rows {
+        let cluster = row
+            .cluster
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "-".into());
+        let gloss = row
+            .gloss
+            .as_deref()
+            .map(|g| format!("  — {g}"))
+            .unwrap_or_default();
+        println!(
+            "{:6} {:10} {:9} c{:6} {}{}",
+            row.document_frequency, row.kind, row.origin, cluster, row.spelling, gloss
+        );
+    }
+}
+
+fn print_shown_row(shown: &inseam_seams::operations::ShownRow) {
+    let row = &shown.row;
+    println!(
+        "{} ({}, {}, df {}, cluster {})",
+        row.spelling,
+        row.kind,
+        row.origin,
+        row.document_frequency,
+        row.cluster
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "-".into())
+    );
+    if let Some(gloss) = &row.gloss {
+        println!("  gloss: {gloss}");
+    }
+    if !shown.aliases.is_empty() {
+        println!("  aliases: {}", shown.aliases.join(" | "));
+    }
+    if let Some(cluster) = &shown.cluster {
+        println!("  cluster {}: {}", cluster.id, cluster.members.join(", "));
+    }
+    for address in &shown.sources {
+        println!("  {address}");
+    }
+}
+
+/// A `YYYY-MM-DD` flag as a timestamp.
+fn parse_date_flag(value: Option<&str>) -> anyhow::Result<Option<Timestamp>> {
+    match value {
+        None => Ok(None),
+        Some(text) => Ok(Some(Timestamp(
+            parse_ymd_epoch(text).map_err(|e| anyhow::anyhow!("{e}"))?,
+        ))),
+    }
 }
 
 /// One line per node the query fanned out to: what it contributed before

@@ -56,6 +56,12 @@ pub fn strip_stopwords(query: &str) -> String {
     }
 }
 
+/// Whether a lowercase word is a function word (`the`, `about`): the one
+/// list every stopword decision in the node shares.
+pub fn is_stopword(word: &str) -> bool {
+    STOPWORDS.contains(&word)
+}
+
 /// Function words that never name a subject. English only: a text in
 /// another language loses nothing but the filtering.
 const STOPWORDS: &[&str] = &[

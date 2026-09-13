@@ -14,7 +14,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use futures_util::stream::{self, StreamExt};
 
-use inseam_kernel::address::{Address, ContentLength, Envelope, HostId, Locator, Timestamp};
+use inseam_kernel::address::{Address, ContentLength, Envelope, HostId, Locator, Timestamp, Facet};
 use inseam_kernel::fragment::Mimetype;
 use inseam_seams::SeamError;
 use inseam_seams::connection::{Connection, EnumeratedSource};
@@ -103,11 +103,52 @@ impl GmailConnection {
                 modified: internal,
                 observed,
                 properties: Vec::new(),
+                facets: facets_of(&message),
                 hint: subject,
                 content_digest: None,
             },
             raw_bytes: size,
         })
+    }
+}
+
+/// Most labels one message contributes as facets.
+const LABEL_FACETS_MAX: usize = 16;
+
+/// What the message's metadata says about it (`design/vocabulary.md`,
+/// facets): the sender as `author` (the display name when the header
+/// carries one, else the address) and each Gmail label as `label`.
+fn facets_of(message: &serde_json::Value) -> Vec<Facet> {
+    let mut facets = Vec::new();
+    if let Some(from) = header(message, "From") {
+        let author = sender_name(&from);
+        if !author.is_empty() {
+            facets.push(Facet::new("author", author));
+        }
+    }
+    let labels = message
+        .get("labelIds")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.as_str())
+        .filter(|label| !label.is_empty())
+        .take(LABEL_FACETS_MAX);
+    for label in labels {
+        facets.push(Facet::new("label", label));
+    }
+    facets
+}
+
+/// `Dana Reyes <dana@example.com>` → `Dana Reyes`; a bare address stays.
+fn sender_name(from: &str) -> String {
+    let trimmed = from.trim();
+    match trimmed.split_once('<') {
+        Some((name, _)) if !name.trim().trim_matches('"').is_empty() => {
+            name.trim().trim_matches('"').to_string()
+        }
+        Some((_, rest)) => rest.trim_end_matches('>').trim().to_string(),
+        None => trimmed.to_string(),
     }
 }
 

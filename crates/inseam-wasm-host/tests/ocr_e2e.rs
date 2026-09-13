@@ -221,10 +221,7 @@ async fn loaded_ocr_transcribes_images_through_the_seam() {
 
     // The transcription is a first-class fragment: findable...
     let found = ops
-        .query(QueryRequest {
-            text: "garage sale elm street".into(),
-            limit: 5,
-        })
+        .query(QueryRequest::new("garage sale elm street", 5))
         .await
         .expect("queries");
     assert!(

@@ -132,6 +132,7 @@ impl From<SeamError> for ApiError {
             SeamError::Address(_)
             | SeamError::AmbiguousHost(_)
             | SeamError::ScanRange { .. }
+            | SeamError::Invalid(_)
             | SeamError::ScanBeyondEnd { .. } => (StatusCode::BAD_REQUEST, "invalid_request"),
             SeamError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "unauthorized"),
             SeamError::Refused(_) => (StatusCode::FORBIDDEN, "refused"),

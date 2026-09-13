@@ -330,6 +330,7 @@ mod tests {
             modified: Some(Timestamp(1_420_070_400)),
             observed: Timestamp(1_700_000_000),
             properties: Vec::new(),
+            facets: Vec::new(),
             hint: Some("IMG_2019.jpeg".into()),
             content_digest: None,
         };

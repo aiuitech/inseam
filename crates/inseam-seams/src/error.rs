@@ -44,6 +44,10 @@ pub enum SeamError {
     /// A policy seam (budget guard, boundary filter) refused the call.
     #[error("refused: {0}")]
     Refused(String),
+    /// A request the client can fix: a malformed override, a filter that
+    /// names nothing the node knows.
+    #[error("invalid request: {0}")]
+    Invalid(String),
     /// The call needed a capability that is not granted or not mounted.
     #[error("capability unavailable: {0}")]
     Unavailable(String),

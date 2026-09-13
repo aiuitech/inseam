@@ -261,6 +261,7 @@ mod tests {
             modified: None,
             observed: Timestamp(1_700_000_100),
             properties: Vec::new(),
+            facets: Vec::new(),
             hint: Some("note.txt".into()),
             content_digest: None,
         }

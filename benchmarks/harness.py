@@ -53,6 +53,13 @@ MAX_KEYWORDS = 100
 STRUCTURAL_CHOICES = frozenset({"off", "markdown"})
 VECTOR_SCOPES = frozenset({"summaries", "all"})
 FINDER_SEEDS = frozenset({"both", "full-text", "vector"})
+# A query-time Finder override (`inseam query --finder KEY=VALUE`,
+# design/vocabulary.md, dials) is a request parameter, never composition,
+# so a matrix of settings costs queries and not an index. The key is a
+# dotted path into the finder's query-time tier; the value is whatever the
+# CLI parses. Both are bounded so a manifest cannot carry a runaway list.
+FINDER_OVERRIDE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*=[^\s=]{1,64}$")
+FINDER_OVERRIDES_MAX = 32
 # Files one footprint walk may visit: the largest fixture extracts to
 # slightly more than 500,000 documents, and a node's data directory is a
 # handful of files.
@@ -633,9 +640,16 @@ def write_retrieval_observability(run_dir: Path, queries: list[dict[str, Any]]) 
               "lexical_hits", "vector_hits", "seeds", "relations", "candidate_sources")
     observations = []
     for query in queries:
+        # Per-result evidence and ledgers are the attribution file's; here
+        # only the phase costs and counts stay, so the artifact stays small.
+        meta = {
+            key: value
+            for key, value in query.get("query_meta", {}).items()
+            if key != "evidence"
+        }
         observations.append({
             "query_id": query.get("query_id", query.get("question_id")),
-            "meta": query.get("query_meta", {}),
+            "meta": meta,
             "folder_ranks": [rank for rank, result in enumerate(query["results"], 1)
                              if result.get("envelope", {}).get("content_type") == "inode/directory"],
         })
@@ -657,14 +671,25 @@ def write_retrieval_observability(run_dir: Path, queries: list[dict[str, Any]]) 
 
 
 def query_arguments(
-    data_dir: Path, composition: Path, text: str, results_limit: int
+    data_dir: Path,
+    composition: Path,
+    text: str,
+    results_limit: int,
+    overrides: list[str] | None = None,
+    explain: bool = False,
 ) -> list[str]:
+    """The `inseam query` command line; overrides and `--explain` ride behind `--json`.
+
+    Every override is validated again here because the list may come from a
+    manifest rather than the argument parser, and an unvalidated value would
+    be handed to a subprocess as a flag argument.
+    """
     assert results_limit > 0
     if not text.strip():
         raise BenchmarkError("cannot run an empty query")
     if text.startswith("-"):
         raise BenchmarkError("query text starting with `-` would be read as a flag")
-    return [
+    arguments = [
         *inseam_arguments(data_dir, composition),
         "query",
         text,
@@ -672,6 +697,16 @@ def query_arguments(
         str(results_limit),
         "--json",
     ]
+    if overrides is not None:
+        if len(overrides) > FINDER_OVERRIDES_MAX:
+            raise BenchmarkError(f"more than {FINDER_OVERRIDES_MAX} finder overrides")
+        for override in overrides:
+            if FINDER_OVERRIDE_PATTERN.match(override) is None:
+                raise BenchmarkError(f"finder override {override!r} is not KEY=VALUE")
+            arguments.extend(["--finder", override])
+    if explain:
+        arguments.append("--explain")
+    return arguments
 
 
 def begin_attempt(
@@ -986,6 +1021,27 @@ def manifest_option_boolean(value: dict[str, Any], name: str) -> bool:
     if type(option) is not bool:
         raise BenchmarkError(f"run option {name} is not a boolean")
     return option
+
+
+def finder_override_argument(raw: str) -> str:
+    """An argparse type for one `KEY=VALUE` query-time Finder override."""
+    if FINDER_OVERRIDE_PATTERN.match(raw) is None:
+        raise argparse.ArgumentTypeError(
+            "a finder override is KEY=VALUE, for example seed_lists.cluster.weight=0"
+        )
+    return raw
+
+
+def manifest_option_finder_overrides(value: dict[str, Any], name: str) -> list[str]:
+    option = value[name]
+    if type(option) is not list:
+        raise BenchmarkError(f"run option {name} is not a list")
+    if len(option) > FINDER_OVERRIDES_MAX:
+        raise BenchmarkError(f"run option {name} exceeds the {FINDER_OVERRIDES_MAX} safety limit")
+    for override in option:
+        if type(override) is not str or FINDER_OVERRIDE_PATTERN.match(override) is None:
+            raise BenchmarkError(f"run option {name} holds a value that is not KEY=VALUE")
+    return list(option)
 
 
 def run_main(command: Callable[[], None]) -> int:

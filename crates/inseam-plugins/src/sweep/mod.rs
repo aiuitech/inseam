@@ -30,6 +30,7 @@ mod embed;
 mod folders;
 mod grant;
 mod plan;
+mod vocabulary;
 
 use std::collections::HashSet;
 use std::num::{NonZeroU32, NonZeroUsize};
@@ -63,6 +64,8 @@ use embed::{EmbedStage, PendingRow, RowBuffer};
 use grant::{Grantor, RunMeters};
 use ignore::{IgnoreRule, IgnoreSet};
 use plan::{PlanContent, PlanInput, PlanLimits, Planned, Planner, expected_stamp};
+pub use vocabulary::VocabularyConfig;
+use vocabulary::{LLM_CONSUMER, VocabularyPass};
 
 /// Catalog-only rows per transaction.
 const CATALOG_CHUNK: usize = 1_000;
@@ -124,6 +127,10 @@ pub struct SweepConfig {
     /// scope: an ignored source is not cataloged, and one that was indexed
     /// before a rule covered it is removed like a vanished source.
     pub ignore: Vec<IgnoreRule>,
+    /// The vocabulary pass (`design/vocabulary.md`): mining, matching,
+    /// clustering, and grounding after every file has landed. Its own
+    /// digest, never the shape stamp.
+    pub vocabulary: VocabularyConfig,
 }
 
 impl Default for SweepConfig {
@@ -139,6 +146,7 @@ impl Default for SweepConfig {
             max_reference_hops: 1,
             modified_after: None,
             ignore: Vec::new(),
+            vocabulary: VocabularyConfig::default(),
         }
     }
 }
@@ -521,7 +529,8 @@ impl SweepService {
             lane_override: request.llm_lane,
             reasoning_effort: self.transform_reasoning_effort.clone(),
             bus: self.bus.clone(),
-            meters: RunMeters::for_registrations(&registrations),
+            meters: RunMeters::for_registrations(&registrations)
+                .with_meter(LLM_CONSUMER, self.config.vocabulary.cluster_llm_budget),
         });
         let planning = self.planning_concurrency(&grantor, &registrations, request.llm_lane);
         let planner =
@@ -535,6 +544,20 @@ impl SweepService {
         if !report.stopped {
             self.reconcile_vanished(&steward, &request.root, &sources, report)
                 .await?;
+            if self.config.vocabulary.enabled {
+                let changed = report.indexed > 0 || report.removed > 0;
+                let pass = VocabularyPass {
+                    store: &self.store,
+                    embedder: self.embedder.as_ref(),
+                    grantor: &grantor,
+                    config: &self.config.vocabulary,
+                    host: &steward.host.id,
+                    host_kind: steward.host.kind.as_str(),
+                };
+                let vocabulary = pass.run(changed).await?;
+                tracing::info!("{vocabulary}");
+                report.vocabulary = Some(vocabulary);
+            }
             let folder_run = FolderRun {
                 registrations: &planner.registrations,
                 sweep_shape: &planner.sweep_shape,

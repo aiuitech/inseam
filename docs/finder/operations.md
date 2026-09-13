@@ -6,7 +6,7 @@ The boundary operations from [design/node-api.md](../../design/node-api.md), ser
 
 | Rung | Operation | Cost | Returns |
 | --- | --- | --- | --- |
-| 1 | `query { text, limit }` | cheapest | ranked addresses + envelopes, each with a score, summary, fragment hints (text preview, score, and structured extent), and any `replicas` — other addresses of the same content, collapsed by content digest; plus a `meta` block describing the query itself (below) |
+| 1 | `query { text, limit, finder?, explain?, filters? }` | cheapest | ranked addresses + envelopes, each with a score, summary, fragment hints (text preview, score, and structured extent), and any `replicas` — other addresses of the same content, collapsed by content digest; plus a `meta` block describing the query itself (below) |
 | 2 | `expand { address }` | index-only | the source's fragments (mimetype, extent, preview), its typed relations, and neighboring fragments beyond the source — keyed fragments such as entities and the sources they connect to |
 | 3 | `scan { address, start, end }` | reads a slice | lines `start..=end` (1-based, inclusive) of a text source, read no further than line `end`; anything else is served from its largest text descendant (`served_from_fragment` set) — details below |
 | 4 | `fetch { address }` | full content | the whole source as text |
@@ -68,7 +68,13 @@ Every `query` response carries a `meta` object beside `results`, so a slow or th
 | `fts_hits`, `lexical_hits`, `vector_hits`, `seeds` | fragments returned by prose full-text, lexical names and tokens, and vector search (vector after the distance floor; zero on a node without an embedder), and distinct fragments left after rank fusion |
 | `relations` | relations loaded around the seeds for the walk |
 | `candidate_sources` | distinct sources holding a scored fragment, before the limit cut — how much competition the results won |
+| `exact_hits`, `cluster_hits`, `clusters_matched`, `grounding_ms` | the vocabulary lists ([algorithm.md](algorithm.md)): rows the question spelled exactly, rows and aliases the matched clusters contributed, how many clusters cleared the cosine floor, and the time grounding took |
+| `hubs_excluded` | vertices the hub bound kept out of the walk, highest degree first, with `kind` and `text` under `explain` |
+| `filtered_sources` | candidate sources the request's filters removed before the rollup |
+| `evidence` | per result, the three fragments that scored it with their rank in every list, seed and walk mass, and under `explain` the `ledger` ([algorithm.md](algorithm.md)) |
 | `remote` | one entry per node the query fanned out to: `node`, `results` it contributed before the merge, `elapsed_ms`, and `error` when it contributed none; absent when the query fanned out to nobody |
+
+The request's optional fields: `finder` is a list of `key=value` overrides over the finder's query-time dials for this request alone (never stored; an unknown key is `Invalid`), `explain` attaches ledgers, and `filters` is `{ host?, source_type?, facets?: [..], modified_after?, modified_before? }` (timestamps as epoch seconds; the CLI takes `YYYY-MM-DD`).
 
 `elapsed_ms` always contains the three phases; the remainder is dispatch, the access guard, and building the views. `inseam query` prints the same numbers as one footer line; `--json` carries them verbatim.
 
@@ -76,7 +82,9 @@ Every `query` response carries a `meta` object beside `results`, so a slow or th
 
 `operations.index { host?, root, rebuild }` — hands off to the `sweep` seam over a scope of one stewarded host, returning an `IndexReport` (counts per summary kind, fragments, relations, keyed fragments anchored, dollars spent). `host` may be omitted only while the node stewards exactly one host; with several, the error lists them. `operations.hosts` — every host this node stewards: id, kind, display name, the entry whose connection serves it, and its capabilities ([indexing/connections.md](../indexing/connections.md)). `operations.grants` / `authorize_grant { grant, redirect }` / `await_authorization { state }` / `complete_authorization { state, code, … }` / `revoke_grant { grant }` — the OAuth grants and the owner's authorization of them, shaped so a local transport can take the loopback redirect and a remote one can serve the redirect itself ([plugins/oauth.md](../plugins/oauth.md)). All owner-only; never exposed through a boundary adapter.
 
-`operations.status` reports `remote_sources` — cataloged sources learned from peers' logs rather than stewarded here, counted within `sources` — and each `operations.catalog` entry carries `origin`, the steward's node id, for such a row.
+`operations.vocabulary { kind?, show?, clusters?, limit, offset }` — the vocabulary as the node holds it ([../indexing/vocabulary.md](../indexing/vocabulary.md)): rows most frequent first, one row by spelling with its gloss, aliases, cluster and anchored sources, or the clusters; every response carries the counts by kind and the generation. Owner-only.
+
+`operations.status` reports `vocabulary` (rows by kind, clusters, clustered and glossed rows, the generation) and `remote_sources` — cataloged sources learned from peers' logs rather than stewarded here, counted within `sources` — and each `operations.catalog` entry carries `origin`, the steward's node id, for such a row.
 
 The network operations, owner-only like the rest:
 

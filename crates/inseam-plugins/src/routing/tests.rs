@@ -215,6 +215,7 @@ async fn describe_is_answered_by_the_stewards_connection() {
         modified: None,
         observed: Timestamp(2),
         properties: Vec::new(),
+        facets: Vec::new(),
         hint: Some("Subject".to_string()),
         content_digest: None,
     };

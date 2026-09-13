@@ -54,6 +54,7 @@ pub(crate) fn envelope(modified: i64) -> Envelope {
         modified: Some(Timestamp(modified)),
         observed: Timestamp(modified),
         properties: Vec::new(),
+        facets: Vec::new(),
         hint: None,
         content_digest: None,
     }

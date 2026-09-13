@@ -213,7 +213,22 @@ async fn search_rows_reference_landed_fragments_only() {
         .into_iter()
         .filter(|f| f.text.as_deref().is_some_and(|t| !t.trim().is_empty()))
         .count();
-    assert_eq!(rows, texted, "one search row per text-bearing fragment");
+    // The vocabulary pass plants keyed rows of no source, each with one
+    // lexical search row (`design/vocabulary.md`); they are not in any
+    // source's subtree, so they are counted from the vocabulary itself.
+    let vocabulary: u64 = store
+        .vocabulary_counts()
+        .await
+        .expect("ok")
+        .by_kind
+        .iter()
+        .map(|(_, count)| *count)
+        .sum();
+    assert_eq!(
+        rows,
+        texted + usize::try_from(vocabulary).expect("fits"),
+        "one search row per text-bearing fragment and per vocabulary row"
+    );
 }
 
 #[tokio::test]

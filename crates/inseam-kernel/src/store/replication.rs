@@ -108,8 +108,8 @@ pub(super) const SCHEMA_DROP_SQL: &str = "DROP TABLE IF EXISTS sync_log;
 /// overwriting what this node stewards.
 const SOURCE_UPSERT_SQL: &str = "INSERT INTO sources
        (host, locator, source_type, content_type, len_unit, len,
-        created, modified, observed, hint, properties, digest, raw_bytes, indexed, origin)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, ?14)
+        created, modified, observed, hint, properties, digest, raw_bytes, indexed, origin, facets)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, ?14, ?15)
      ON CONFLICT (host, locator) DO UPDATE SET
        source_type = excluded.source_type,
        content_type = excluded.content_type,
@@ -120,6 +120,7 @@ const SOURCE_UPSERT_SQL: &str = "INSERT INTO sources
        observed = excluded.observed,
        hint = excluded.hint,
        properties = excluded.properties,
+       facets = excluded.facets,
        digest = excluded.digest,
        raw_bytes = excluded.raw_bytes,
        indexed = 0,
@@ -414,7 +415,8 @@ async fn source_state_in(
         .await?,
         |row| {
             let stored = row_to_source(row)?;
-            let raw_bytes: i64 = row.get(15)?;
+            // `raw_bytes` follows the source columns, facets included.
+            let raw_bytes: i64 = row.get(16)?;
             Ok(SourceState {
                 origin: stored.origin,
                 envelope: stored.envelope,
@@ -440,6 +442,7 @@ async fn write_source_row_in(
     };
     let properties =
         serde_json::to_string(&envelope.properties).expect("envelope properties serialize to JSON");
+    let facets = serde_json::to_string(&envelope.facets).expect("envelope facets serialize to JSON");
     let id = drain_single_i64(
         conn.query(
             &format!("{SOURCE_UPSERT_SQL} {guard} RETURNING id"),
@@ -458,6 +461,7 @@ async fn write_source_row_in(
                 envelope.content_digest.map(|d| d.to_hex()),
                 i64::try_from(raw_bytes).unwrap_or(i64::MAX),
                 origin.as_deref(),
+                facets,
             ],
         )
         .await?,

@@ -141,11 +141,18 @@ pub fn ops(kernel: &Kernel) -> Arc<dyn Operations> {
 /// File results for a query. Folders are sources and rank too — their
 /// summaries cover what they hold — but most tests are about files; the
 /// folder tests count folders explicitly.
+/// A result under this share of the top score is a tail boost through
+/// shared structure or vocabulary (a sibling in the same folder, a note
+/// sharing one mined term), not a hit on the query.
+pub const HIT_SCORE_MIN: f64 = 0.1;
+
+/// Non-folder results that carry a material share of the top score.
 pub async fn hits(operations: &dyn Operations, text: &str) -> usize {
     results(operations, text)
         .await
         .iter()
         .filter(|r| r.envelope.source_type != "directory")
+        .filter(|r| r.score >= HIT_SCORE_MIN)
         .count()
 }
 
@@ -160,10 +167,7 @@ pub async fn folder_hits(operations: &dyn Operations, text: &str) -> usize {
 
 async fn results(operations: &dyn Operations, text: &str) -> Vec<QueryResult> {
     operations
-        .query(QueryRequest {
-            text: text.into(),
-            limit: 10,
-        })
+        .query(QueryRequest::new(text, 10))
         .await
         .expect("queries")
         .results

@@ -84,10 +84,7 @@ async fn the_incremental_discovery_ladder_works_offline() {
 
     // --- rung 1: query ---
     let response = ops
-        .query(QueryRequest {
-            text: "kitchen renovation budget".into(),
-            limit: 5,
-        })
+        .query(QueryRequest::new("kitchen renovation budget", 5))
         .await
         .expect("queries");
     assert!(!response.results.is_empty());

@@ -165,6 +165,102 @@ pub struct IndexReport {
     /// The owner stopped the run at a safe checkpoint. Work reported above
     /// is complete and a later sweep resumes from the remaining dirty rows.
     pub stopped: bool,
+    /// What the vocabulary pass did this run (`design/vocabulary.md`);
+    /// `None` when the pass is disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vocabulary: Option<VocabularyReport>,
+}
+
+/// The vocabulary pass's report: what it mined, planted, anchored, and
+/// grounded, and what the hub bound would keep out of the walk, so the
+/// first thing to do after a pass is read the top of the hub list.
+#[derive(Debug, Default, Clone, PartialEq, serde::Serialize)]
+pub struct VocabularyReport {
+    /// The pass found nothing to do and why (`"unchanged"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped: Option<String>,
+    /// Sources whose content text the pass walked.
+    pub sources_walked: usize,
+    /// Distinct tokens and phrases that cleared the shape rule.
+    pub candidates_mined: usize,
+    /// Candidates in the document-frequency band, planted or already rows.
+    pub candidates_kept: usize,
+    /// Phrases proposed by keywords, cues, and extracted names.
+    pub candidates_derived: usize,
+    pub rows_planted: usize,
+    pub anchors_added: usize,
+    /// Mined rows the statistics no longer name, unanchored for collection.
+    pub rows_retracted: usize,
+    /// Transform-planted keyed fragments adopted as vocabulary rows.
+    pub rows_adopted: usize,
+    pub clusters_founded: usize,
+    pub clusters_joined: usize,
+    pub clusters_merged: usize,
+    pub clusters_embedded: usize,
+    pub clusters_grounded: usize,
+    pub aliases_planted: usize,
+    pub glosses_written: usize,
+    pub rows_merged: usize,
+    pub llm_calls: usize,
+    /// Facet and author rows planted from envelopes, and their anchors.
+    pub facets_planted: usize,
+    pub facet_anchors: usize,
+    /// The vertices over the hub bound, highest degree first, named.
+    pub hubs: Vec<(String, u32)>,
+    pub mine_ms: u64,
+    pub match_ms: u64,
+    pub cluster_ms: u64,
+    pub ground_ms: u64,
+}
+
+impl fmt::Display for VocabularyReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(reason) = &self.skipped {
+            return write!(f, "vocabulary: skipped ({reason})");
+        }
+        writeln!(
+            f,
+            "vocabulary: {} sources walked, {} candidates mined ({} kept, {} derived), {} rows planted, {} anchors, {} retracted, {} adopted, {} facet rows ({} anchors)",
+            self.sources_walked,
+            self.candidates_mined,
+            self.candidates_kept,
+            self.candidates_derived,
+            self.rows_planted,
+            self.anchors_added,
+            self.rows_retracted,
+            self.rows_adopted,
+            self.facets_planted,
+            self.facet_anchors
+        )?;
+        writeln!(
+            f,
+            "clusters: {} founded, {} joined, {} merged, {} embedded, {} grounded ({} aliases, {} glosses, {} rows merged, {} llm calls)",
+            self.clusters_founded,
+            self.clusters_joined,
+            self.clusters_merged,
+            self.clusters_embedded,
+            self.clusters_grounded,
+            self.aliases_planted,
+            self.glosses_written,
+            self.rows_merged,
+            self.llm_calls
+        )?;
+        write!(
+            f,
+            "vocabulary time: mine {} ms, match {} ms, cluster {} ms, ground {} ms",
+            self.mine_ms, self.match_ms, self.cluster_ms, self.ground_ms
+        )?;
+        if !self.hubs.is_empty() {
+            let named: Vec<String> = self
+                .hubs
+                .iter()
+                .take(20)
+                .map(|(name, degree)| format!("{name} ({degree})"))
+                .collect();
+            write!(f, "\nhubs over the bound: {}", named.join(", "))?;
+        }
+        Ok(())
+    }
 }
 
 impl fmt::Display for IndexReport {
@@ -214,6 +310,10 @@ impl fmt::Display for IndexReport {
             self.envelope_summaries,
             self.embedded,
             self.spent
-        )
+        )?;
+        if let Some(vocabulary) = &self.vocabulary {
+            write!(f, "\n{vocabulary}")?;
+        }
+        Ok(())
     }
 }

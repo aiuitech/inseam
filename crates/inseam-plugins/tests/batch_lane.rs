@@ -127,6 +127,13 @@ llm_call_budget = 1000
 # The corpus notes are a line each; a target they exceed keeps every
 # summary a model call, which is what the lane tests count.
 target_chars = 20
+
+[[entry]]
+id = "sweep"
+[entry.config.vocabulary]
+# The lane tests count summary requests; cluster grounding would add its
+# own call per changed cluster (`design/vocabulary.md`).
+cluster_llm_budget = 0
 "#
     )
 }
@@ -281,10 +288,11 @@ async fn rebuilds_and_shape_changes_reuse_cached_summaries_and_vectors() {
     // A sweep shape change dirties every note but leaves the summarizer's
     // identity alone, so its outputs still hit; the texts are unchanged,
     // so every vector does too.
-    let reshaped_overlay = format!(
-        "{}\n[[entry]]\nid = \"sweep\"\n[entry.config]\nmax_depth = 3\n",
-        overlay(&base)
+    let reshaped_overlay = overlay(&base).replace(
+        "[entry.config.vocabulary]",
+        "[entry.config]\nmax_depth = 3\n[entry.config.vocabulary]",
     );
+    assert_ne!(reshaped_overlay, overlay(&base));
     common::reconcile(&mut kernel, &reshaped_overlay).await;
     let reshaped = common::ops(&kernel)
         .index(request(false))

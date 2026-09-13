@@ -306,10 +306,7 @@ async fn assert_b_reads_through_a(b: &Node, a: &Node, alpha: &Address) {
 
     let response = b
         .ops
-        .query(QueryRequest {
-            text: "zebras".to_string(),
-            limit: 8,
-        })
+        .query(QueryRequest::new("zebras".to_string(), 8))
         .await
         .expect("queries");
     let hit = response

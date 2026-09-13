@@ -68,6 +68,14 @@ impl RunMeters {
         Self { meters }
     }
 
+    /// The same meters plus one for a sweep-owned consumer that is no
+    /// transform (the vocabulary pass's cluster grounding), charged and
+    /// reported under `name` like any entry.
+    pub(super) fn with_meter(mut self, name: &str, budget: usize) -> Self {
+        self.meters.insert(name.to_string(), RunMeter::new(budget));
+        self
+    }
+
     /// Calls charged per entry this run, entries with none omitted.
     pub(super) fn calls_by_entry(&self) -> impl Iterator<Item = (&str, usize)> {
         self.meters
@@ -117,6 +125,28 @@ impl Grantor {
             grantor: Arc::clone(self),
             consumer: registration.entry_id.clone(),
             model: self.model_for(self.lane_of(registration)).to_string(),
+        }))
+    }
+
+    /// The handle for a sweep-owned consumer metered under `name`
+    /// ([`RunMeters::with_meter`]), on `lane` unless the run overrides it.
+    pub(super) fn grant_named(
+        self: &Arc<Self>,
+        name: &str,
+        lane: LlmLane,
+    ) -> Option<Arc<dyn GrantedLlm>> {
+        let llm = self.llm.as_ref()?;
+        let meter = self.meters.meters.get(name)?;
+        if !meter.has_budget() {
+            return None;
+        }
+        Some(Arc::new(MeteredLlm {
+            llm: Arc::clone(llm),
+            grantor: Arc::clone(self),
+            consumer: name.to_string(),
+            model: self
+                .model_for(self.lane_override.unwrap_or(lane))
+                .to_string(),
         }))
     }
 

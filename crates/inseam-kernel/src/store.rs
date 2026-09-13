@@ -24,7 +24,7 @@ use std::time::Instant;
 use libsql::params;
 use thiserror::Error;
 
-use crate::address::{
+use crate::address::{Facet, 
     Address, ContentDigest, ContentLength, Envelope, HostId, Locator, Property, Timestamp,
 };
 use crate::fragment::{
@@ -34,6 +34,14 @@ use crate::network::{Epoch, NetworkError, NodeId};
 use crate::subtree::{PlanNode, SubtreePlan};
 
 mod replication;
+mod vocabulary;
+
+pub use vocabulary::{
+    CLUSTERS_MAX, ClusterId, ContentText, FacetedSource, NewVocabularyRow, PlantedRow, RowKind,
+    StoredCluster,
+    VOCABULARY_LIST_MAX, VocabularyCounts, VocabularyKind, VocabularyOrigin, VocabularyRow,
+    normalize_spelling,
+};
 
 pub use replication::{AppliedReport, LogCount};
 
@@ -212,6 +220,15 @@ impl SubtreeWritten {
             }
         }
     }
+}
+
+/// A seed-local relation slice with the hubs the degree bound kept out of
+/// it ([`IndexStore::relations_near_bounded`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BoundedNeighborhood {
+    pub relations: Vec<Relation>,
+    /// Vertices over the bound, highest degree first, with their degrees.
+    pub hubs: Vec<(FragmentId, u32)>,
 }
 
 /// A source whose run has finished: its shape records, to be written with
@@ -748,10 +765,18 @@ impl IndexStore {
             fragments: Vec::with_capacity(plan.fragments.len()),
             keyed: Vec::with_capacity(plan.keyed.len()),
         };
+        // A folder's entry references this source by address; now that the
+        // source has a root again, the entry's edge to it is relinked, so
+        // a child rebuild never leaves folder membership dangling
+        // (`design/vocabulary.md`, folders).
+        link_entries_referencing_in(&tx, &plan.address, root).await?;
         for planned in &plan.fragments {
             let parent = written.id_of(planned.parent);
             let id = insert_fragment_in(&tx, Some(source), &planned.fragment).await?;
             insert_relation_in(&tx, &Relation::new(parent, planned.relation.clone(), id)).await?;
+            if planned.fragment.mimetype.is_directory_entry() {
+                link_entry_to_child_in(&tx, id, planned.fragment.content_address.as_ref()).await?;
+            }
             written.fragments.push(id);
         }
         for planned in &plan.keyed {
@@ -957,6 +982,55 @@ async fn insert_relation_in(
     conn.execute(
         "INSERT OR IGNORE INTO relations (from_fragment, kind, to_fragment) VALUES (?1, ?2, ?3)",
         params![relation.from.0, relation.kind.as_str(), relation.to.0],
+    )
+    .await?;
+    Ok(())
+}
+
+/// Relate every folder entry that references `address` to the source's
+/// new root with `contains`, so folder membership conducts in the walk. A
+/// content reference is not a relation; this is the edge that makes it one.
+async fn link_entries_referencing_in(
+    conn: &libsql::Connection,
+    address: &Address,
+    root: FragmentId,
+) -> Result<(), StoreError> {
+    conn.execute(
+        "INSERT OR IGNORE INTO relations (from_fragment, kind, to_fragment)
+         SELECT id, ?2, ?3 FROM fragments
+         WHERE content_address = ?1 AND (mimetype = ?4 OR mimetype LIKE ?4 || ';%')",
+        params![
+            address.to_string(),
+            RelationKind::contains().as_str(),
+            root.0,
+            Mimetype::directory_entry().to_string()
+        ],
+    )
+    .await?;
+    Ok(())
+}
+
+/// Relate one folder entry to the root of the child it references, when
+/// that child has landed. A child that lands later is linked by
+/// [`link_entries_referencing_in`] when its own subtree is written.
+async fn link_entry_to_child_in(
+    conn: &libsql::Connection,
+    entry: FragmentId,
+    child: Option<&Address>,
+) -> Result<(), StoreError> {
+    let Some(child) = child else {
+        return Ok(());
+    };
+    conn.execute(
+        "INSERT OR IGNORE INTO relations (from_fragment, kind, to_fragment)
+         SELECT ?1, ?2, root_fragment FROM sources
+         WHERE host = ?3 AND locator = ?4 AND root_fragment IS NOT NULL",
+        params![
+            entry.0,
+            RelationKind::contains().as_str(),
+            child.host.as_str(),
+            child.locator.as_str()
+        ],
     )
     .await?;
     Ok(())
@@ -1333,6 +1407,86 @@ impl IndexStore {
             }
         }
         Ok(out)
+    }
+
+    /// [`Self::relations_near`] with the walk's **hub bound**
+    /// (`design/vocabulary.md`): a vertex whose degree exceeds
+    /// `degree_max` is never expanded and every edge touching it is dropped
+    /// from the slice, so a five-thousand-entry folder or a corpus-wide term
+    /// neither floods the walk nor spends the relation limit. Hubs found are
+    /// returned with their degrees for the ledger. `None` bounds nothing.
+    pub async fn relations_near_bounded(
+        &self,
+        ids: &[FragmentId],
+        hops: u32,
+        limit: u32,
+        degree_max: Option<u32>,
+    ) -> Result<BoundedNeighborhood, StoreError> {
+        let Some(degree_max) = degree_max else {
+            return Ok(BoundedNeighborhood {
+                relations: self.relations_near(ids, hops, limit).await?,
+                hubs: Vec::new(),
+            });
+        };
+        let hops = hops.min(RELATION_HOPS_MAX);
+        let limit = limit.min(RELATION_LIMIT_MAX);
+        if ids.is_empty() || hops == 0 || limit == 0 {
+            return Ok(BoundedNeighborhood::default());
+        }
+        let mut frontier: Vec<FragmentId> = ids.to_vec();
+        frontier.sort();
+        frontier.dedup();
+        let mut visited: HashSet<FragmentId> = frontier.iter().copied().collect();
+        let mut seen: HashSet<Relation> = HashSet::new();
+        let mut hubs: HashMap<FragmentId, u32> = HashMap::new();
+        let mut out = Vec::new();
+        for _ in 0..hops {
+            let remaining = usize::try_from(limit).expect("relation limit fits usize") - out.len();
+            if remaining == 0 {
+                break;
+            }
+            let expandable = self
+                .split_hubs(&frontier, degree_max, &mut hubs)
+                .await?;
+            let level = self
+                .relations_touching_limited(&expandable, remaining)
+                .await?;
+            frontier = relation_frontier(&level, &mut visited, &mut seen, &mut out);
+            if frontier.is_empty() {
+                break;
+            }
+        }
+        // The last frontier was reached but never expanded; a hub among it
+        // still has its edges in the slice until it is checked too.
+        let _ = self.split_hubs(&frontier, degree_max, &mut hubs).await?;
+        out.retain(|relation| !hubs.contains_key(&relation.from) && !hubs.contains_key(&relation.to));
+        let mut hubs: Vec<(FragmentId, u32)> = hubs.into_iter().collect();
+        hubs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        Ok(BoundedNeighborhood {
+            relations: out,
+            hubs,
+        })
+    }
+
+    /// The frontier vertices at or under the degree bound; the rest are
+    /// recorded as hubs.
+    async fn split_hubs(
+        &self,
+        frontier: &[FragmentId],
+        degree_max: u32,
+        hubs: &mut HashMap<FragmentId, u32>,
+    ) -> Result<Vec<FragmentId>, StoreError> {
+        let degrees = self.degrees_of(frontier).await?;
+        let mut expandable = Vec::with_capacity(frontier.len());
+        for id in frontier {
+            let degree = degrees.get(id).copied().unwrap_or(0);
+            if degree > degree_max {
+                hubs.insert(*id, degree);
+            } else {
+                expandable.push(*id);
+            }
+        }
+        Ok(expandable)
     }
 
     async fn relations_touching_limited(
@@ -2072,11 +2226,14 @@ async fn converge_schema(conn: &libsql::Connection) -> Result<Epoch, StoreError>
         );
         conn.execute_batch(SEARCH_SCHEMA_DROP_SQL).await?;
         conn.execute_batch(replication::SCHEMA_DROP_SQL).await?;
+        conn.execute_batch(vocabulary::VOCABULARY_SCHEMA_DROP_SQL).await?;
         conn.execute_batch(CATALOG_SCHEMA_DROP_SQL).await?;
     }
     conn.execute_batch(CATALOG_SCHEMA_SQL).await?;
+    conn.execute_batch(vocabulary::VOCABULARY_SCHEMA_SQL).await?;
     conn.execute_batch(replication::SCHEMA_SQL).await?;
     migrate_embedding_cache_layout(conn).await?;
+    converge_sources_facets_column(conn).await?;
     conn.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
         params![SCHEMA_VERSION],
@@ -2110,6 +2267,30 @@ async fn table_sql_contains(
 /// Move an embedding cache built as a WITHOUT ROWID table into the rowid
 /// layout, in one transaction: the rows are the same, only their pages
 /// change. Nothing is re-embedded.
+/// A catalog from before facets gains the column in place: a default of
+/// `'[]'` reads as no facets, and the next sweep's envelopes fill it. A
+/// layout convergence, not a rebuild — nothing derived is touched.
+async fn converge_sources_facets_column(conn: &libsql::Connection) -> Result<(), StoreError> {
+    let mut rows = conn.query("PRAGMA table_info(sources)", ()).await?;
+    let mut present = false;
+    while let Some(row) = rows.next().await? {
+        let name: String = row.get(1)?;
+        if name == "facets" {
+            present = true;
+        }
+    }
+    if present {
+        return Ok(());
+    }
+    tracing::info!("adding the facets column to the sources catalog");
+    conn.execute(
+        "ALTER TABLE sources ADD COLUMN facets TEXT NOT NULL DEFAULT '[]'",
+        (),
+    )
+    .await?;
+    Ok(())
+}
+
 async fn migrate_embedding_cache_layout(conn: &libsql::Connection) -> Result<(), StoreError> {
     if !table_sql_contains(conn, "embedding_cache", "WITHOUT ROWID").await? {
         return Ok(());
@@ -2154,6 +2335,7 @@ const CATALOG_SCHEMA_SQL: &str = "CREATE TABLE IF NOT EXISTS meta (
        observed INTEGER NOT NULL,
        hint TEXT,
        properties TEXT NOT NULL DEFAULT '[]',
+       facets TEXT NOT NULL DEFAULT '[]',
        digest TEXT,
        raw_bytes INTEGER NOT NULL DEFAULT 0,
        root_fragment INTEGER,
@@ -2789,7 +2971,7 @@ fn fts_match_expression(q: &str) -> String {
 }
 
 const SOURCE_COLUMNS: &str = "id, host, locator, source_type, content_type, len_unit, len, created, modified, observed, \
-     hint, properties, root_fragment, digest, origin";
+     hint, properties, root_fragment, digest, origin, facets";
 
 /// A missing file is a zero-byte footprint: the WAL is absent between
 /// checkpoints, and the database itself only before the first open.
@@ -2837,6 +3019,7 @@ fn row_to_source(r: &libsql::Row) -> Result<StoredSource, StoreError> {
     let len_unit: String = r.get(5)?;
     let len: i64 = r.get(6)?;
     let properties: String = r.get(11)?;
+    let facets: String = r.get(15)?;
     let digest: Option<String> = r.get(13)?;
     let origin: Option<String> = r.get(14)?;
     let address = Address::new(
@@ -2861,6 +3044,7 @@ fn row_to_source(r: &libsql::Row) -> Result<StoredSource, StoreError> {
             hint: r.get(10)?,
             properties: serde_json::from_str::<Vec<Property>>(&properties)
                 .map_err(|e| corrupt(id, e))?,
+            facets: serde_json::from_str::<Vec<Facet>>(&facets).map_err(|e| corrupt(id, e))?,
             content_digest: digest
                 .map(|d| d.parse().map_err(|e| corrupt(id, e)))
                 .transpose()?,
@@ -2991,6 +3175,7 @@ mod tests {
             modified: Some(Timestamp(modified)),
             observed: Timestamp(1_700_000_000),
             properties: Vec::new(),
+            facets: Vec::new(),
             hint: Some("note.md".into()),
             content_digest: None,
         }

@@ -128,6 +128,7 @@ impl DriveConnection {
                 modified: timestamp_field(file, "modifiedTime"),
                 observed,
                 properties: Vec::new(),
+                facets: Vec::new(),
                 hint: opt_str_field(file, "name"),
                 content_digest: None,
             },

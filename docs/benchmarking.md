@@ -10,6 +10,16 @@ The repository's benchmark harness and commands live in [benchmarks/README.md](.
 
 Benchmark design decisions, including data pins, model policy, scoring, run evidence, and the performance estimate, live in [design/benchmarking.md](../design/benchmarking.md).
 
+## Attribution: what bought recall and what carried noise
+
+An EnterpriseRAG-Bench run asks the Finder for 50 results per question (the CLI's clamp) and scores the first `--query-limit` of them, so recall and MRR mean what they always meant while every gold document reports where it actually landed. With `--explain` (the default; `--no-explain` skips it) each query also returns its score ledger, and the run records:
+
+- `attribution.jsonl`, beside `answers.jsonl`: one row per gold document — `question_id`, `question_type`, `document_id`, `rank` (1-based within the 50, or `null`), and the result's `evidence` object with its ledger, or `null` when the document was not returned.
+- `retrieval-attribution.json`: the tables the [vocabulary design](../design/vocabulary.md) asks for. Per channel (`prose`, `lexical`, `vector`, `exact`, `cluster`): how many gold documents it seeded, seeded alone, and was the largest ledger contributor for, and the same three counts over noise (documents in the scored top list that are neither gold nor in the question's `valid_doc_ids`). Per row kind: the documents whose walk mass arrived mostly through that kind. `rows_carried_gold` and `rows_carried_noise`: the 25 vocabulary rows that carried mass into the most gold and the most noise documents, each with its document frequency. `hubs_excluded`: the 25 highest-degree hubs any query left out. Everything is repeated under `by_question_type`.
+- `scores.retrieval.attribution_ready` in the manifest says whether any result carried a ledger; `scores.retrieval_attribution` holds the channel and row-kind tables.
+
+The runner prints the channel and row-kind tables when scoring finishes. `--finder-override KEY=VALUE` (repeatable) passes a query-time Finder override to every query as `inseam query --finder KEY=VALUE`, for example `--finder-override seed_lists.cluster.weight=0`; the list is recorded in the manifest's `options.finder_overrides`, so a matrix of settings over one index is a set of runs that differ by exactly that list.
+
 [The September 2026 retrieval audit](../benchmarks/reports/20260913-retrieval-audit.md) compares folder-aware retrieval tuning, query-only replays, and incremental folder re-indexing before the GPT-5.4 agent phase.
 
 For a short end-to-end iteration, use the [GPT-5.4 navigation check](../benchmarks/README.md#fast-gpt-54-navigation-check).

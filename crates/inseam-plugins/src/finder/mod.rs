@@ -1,192 +1,51 @@
-//! The default `finder` provider (`design/finder.md`): seed with hybrid
-//! search — full-text and vector, fused by reciprocal rank — then let the
-//! graph boost what search alone would underrank, via personalized PageRank
-//! over the relation graph. Ranked fragments roll up to their sources.
-//! Every config dial here is query-time tier: tuning it never re-indexes.
+//! The default `finder` provider (`design/finder.md`): ground the query
+//! against the vocabulary, seed with hybrid search — full-text, vector,
+//! exact and cluster grounding, fused by reciprocal rank — then let the
+//! graph boost what search alone would underrank, via personalized
+//! PageRank over the relation graph under the hub bound. Ranked fragments
+//! roll up to their sources. Every config dial here is query-time tier:
+//! tuning it never re-indexes, and a request may override any of them
+//! (`design/vocabulary.md`, observability). Under `explain` every result
+//! carries the exact decomposition of its score.
 
-use std::collections::{BTreeMap, HashMap};
+mod config;
+mod seeds;
+mod walk;
+
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-use serde::{Deserialize, Serialize};
-
 use inseam_kernel::address::ContentDigest;
-use inseam_kernel::fragment::{FragmentId, Relation, RelationKind};
-use inseam_kernel::store::{IndexStore, SourceId, StoredSource};
+use inseam_kernel::fragment::FragmentId;
+use inseam_kernel::store::{IndexStore, RowKind, SourceId, StoredSource, VocabularyKind};
 use inseam_kernel::substrate::{
     ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, STORE, parse_config,
 };
 use inseam_seams::SeamError;
 use inseam_seams::embedder::{EMBEDDER, Embedder};
 use inseam_seams::finder::{
-    Discovery, Expansion, FINDER, Finder, FragmentEvidence, QueryTrace, RankedFragment,
-    RankedSource, SourceEvidence,
+    CarryingRow, ChannelLine, Discovery, ExcludedHub, Expansion, FINDER, Finder, FinderRequest,
+    FragmentEvidence, Ledger, QueryFilters, QueryTrace, RankedFragment, RankedSource, SeedChannel,
+    SourceEvidence,
 };
 
-/// The `k` in reciprocal rank fusion: the finder's default for fusing its
-/// two seed lists, and the constant the cross-node merge reuses to fuse
-/// ranked lists from differently-profiled indexes (`design/finder.md`).
-/// Sixty is the value the RRF paper settled on; a smaller `k` lets a
-/// single top rank dominate, a larger one flattens every list together.
-pub const RRF_K_DEFAULT: f64 = 60.0;
+pub use config::{
+    FinderConfig, OVERRIDES_MAX, RRF_K_DEFAULT, RelationWeights, SeedList, SeedListTable, SeedLists,
+};
+pub use seeds::{cosine, nearest_clusters, query_tokens, rrf_fuse};
+pub use walk::{Graph, personalized_pagerank, weighted_edges};
 
+use seeds::{ClusterCache, Seeder, Seeds, SharedClusterCache};
+use walk::sum_columns;
+
+/// The rollup: a source scores its best fragment plus a tapering bonus
+/// for additional hits (`design/finder.md`).
 const SOURCE_SCORE_WEIGHTS: [f64; 3] = [1.0, 0.1, 0.05];
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct FinderConfig {
-    /// Fragments retrieved from each seed list (full-text and vector).
-    pub seed_k: usize,
-    /// Which seed lists run: both, fused by rank, or one alone. One alone
-    /// is a diagnostic — it shows which search the fusion is carrying —
-    /// and a deliberate choice for a node whose embedder is not worth
-    /// asking; query-time, so switching never re-indexes.
-    pub seeds: SeedLists,
-    /// The `k` constant in reciprocal rank fusion.
-    pub rrf_k: f64,
-    /// Relative lexical-list contribution. Names remain candidates, while
-    /// a container-heavy index can favor the document prose it also holds.
-    pub lexical_weight: f64,
-    /// Personalized PageRank damping: probability a walk continues instead
-    /// of restarting at the seeds. Keeps the boost local.
-    pub damping: f64,
-    pub iterations: usize,
-    pub epsilon: f64,
-    /// Fragment hints attached to each result.
-    pub max_hints: usize,
-    /// Vector hits farther than this cosine distance are noise, not seeds:
-    /// nearest-k always returns something, even when nothing is close.
-    pub max_vector_distance: f64,
-    /// Relation hops loaded around the fused seeds before propagation.
-    pub graph_hops: u32,
-    /// Hard cap on relations in one query's local graph.
-    pub graph_relation_limit: u32,
-    pub weights: RelationWeights,
-}
-
-/// The seed lists a query runs before fusion.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum SeedLists {
-    #[default]
-    Both,
-    FullText,
-    Vector,
-}
-
-impl SeedLists {
-    fn runs_full_text(self) -> bool {
-        match self {
-            Self::Both | Self::FullText => true,
-            Self::Vector => false,
-        }
-    }
-
-    fn runs_vector(self) -> bool {
-        match self {
-            Self::Both | Self::Vector => true,
-            Self::FullText => false,
-        }
-    }
-}
-
-impl Default for FinderConfig {
-    fn default() -> Self {
-        Self {
-            seed_k: 60,
-            seeds: SeedLists::Both,
-            rrf_k: RRF_K_DEFAULT,
-            lexical_weight: 1.0,
-            damping: 0.5,
-            iterations: 12,
-            epsilon: 1e-6,
-            max_hints: 3,
-            max_vector_distance: 0.75,
-            graph_hops: 2,
-            graph_relation_limit: 20_000,
-            weights: RelationWeights::default(),
-        }
-    }
-}
-
-impl FinderConfig {
-    pub fn validate_query_bounds(&self) -> Result<(), String> {
-        if !self.lexical_weight.is_finite() {
-            return Err("finder.lexical_weight must be finite".to_string());
-        }
-        if self.lexical_weight <= 0.0 {
-            return Err("finder.lexical_weight must be greater than zero".to_string());
-        }
-        if self.lexical_weight > 1.0 {
-            return Err("finder.lexical_weight must not exceed one".to_string());
-        }
-        if self.seed_k == 0 {
-            return Err("finder.seed_k must be greater than zero".to_string());
-        }
-        if self.graph_hops == 0 {
-            return Err("finder.graph_hops must be greater than zero".to_string());
-        }
-        if self.graph_hops > inseam_kernel::store::RELATION_HOPS_MAX {
-            return Err("finder.graph_hops must not exceed four".to_string());
-        }
-        if self.graph_relation_limit == 0 {
-            return Err("finder.graph_relation_limit must be greater than zero".to_string());
-        }
-        if self.graph_relation_limit > inseam_kernel::store::RELATION_LIMIT_MAX {
-            return Err("finder.graph_relation_limit must not exceed 100000".to_string());
-        }
-        Ok(())
-    }
-}
-
-/// How strongly each relation kind conducts relevance during propagation.
-/// Kinds are an open vocabulary (`design/kernel.md`), so this is a map by
-/// kind name plus a default for kinds it does not list; the built-in table
-/// tunes the kinds the first-party transforms emit, and a composition may
-/// add or override entries (`[entry.config.weights]`).
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct RelationWeights {
-    /// Weight for any kind `by_kind` does not name.
-    pub default: f64,
-    /// Weight per relation kind name (`"links-to" = 0.4`).
-    pub by_kind: BTreeMap<String, f64>,
-}
-
-impl Default for RelationWeights {
-    fn default() -> Self {
-        Self {
-            default: 0.5,
-            by_kind: BTreeMap::from([
-                ("contains".to_string(), 1.0),
-                ("derives".to_string(), 0.9),
-                ("links-to".to_string(), 0.4),
-                ("mentions".to_string(), 0.8),
-                ("transcribes".to_string(), 1.0),
-            ]),
-        }
-    }
-}
-
-impl RelationWeights {
-    pub fn weight(&self, kind: &RelationKind) -> f64 {
-        self.by_kind
-            .get(kind.as_str())
-            .copied()
-            .unwrap_or(self.default)
-    }
-
-    /// Layer configured weights over the built-in table, so naming one kind
-    /// in a composition does not silently zero the rest.
-    fn over_defaults(self) -> Self {
-        let mut merged = Self {
-            default: self.default,
-            ..Self::default()
-        };
-        merged.by_kind.extend(self.by_kind);
-        merged
-    }
-}
+/// Most sources a facet filter resolves through one row.
+const FACET_SOURCES_MAX: u32 = 200_000;
+/// Longest hub or carrying-row text the ledger carries.
+const LEDGER_TEXT_CHARS_MAX: usize = 120;
 
 pub struct FinderPlugin {
     config: FinderConfig,
@@ -225,11 +84,7 @@ impl Plugin for FinderPlugin {
     }
 
     async fn apply(&self, cx: &mut ApplyCx<'_>) -> Result<(), PluginError> {
-        let service = FinderService {
-            store: cx.get(&STORE)?,
-            embedder: cx.get(&EMBEDDER)?,
-            config: self.config.clone(),
-        };
+        let service = FinderService::new(cx.get(&STORE)?, cx.get(&EMBEDDER)?, self.config.clone());
         cx.provide(&FINDER, Arc::new(service) as Arc<dyn Finder>, Facts::new())?;
         Ok(())
     }
@@ -239,6 +94,7 @@ pub struct FinderService {
     store: Arc<IndexStore>,
     embedder: Arc<dyn Embedder>,
     config: FinderConfig,
+    clusters: SharedClusterCache,
 }
 
 impl FinderService {
@@ -249,23 +105,50 @@ impl FinderService {
             store,
             embedder,
             config,
+            clusters: Arc::new(tokio::sync::Mutex::new(ClusterCache::default())),
+        }
+    }
+}
+
+/// The walk's output for one query: the graph, the per-column mass, and
+/// its column sum — everything the rollup and the ledger read.
+struct Walked {
+    graph: Graph,
+    columns: usize,
+    mass: Vec<f64>,
+    total: Vec<f64>,
+    row_kinds: HashMap<FragmentId, RowKind>,
+    hubs: Vec<(FragmentId, u32)>,
+}
+
+impl Walked {
+    /// A fragment's walk mass, all columns.
+    fn boost(&self, id: i64) -> f64 {
+        self.graph.index_of(id).map_or(0.0, |i| self.total[i])
+    }
+
+    /// A fragment's walk mass per column.
+    fn boost_by_column(&self, id: i64) -> Vec<f64> {
+        match self.graph.index_of(id) {
+            Some(i) => self.mass[i * self.columns..(i + 1) * self.columns].to_vec(),
+            None => vec![0.0; self.columns],
         }
     }
 }
 
 #[async_trait::async_trait]
 impl Finder for FinderService {
-    async fn query(&self, text: &str, limit: usize) -> Result<Discovery, SeamError> {
+    async fn discover(&self, request: &FinderRequest) -> Result<Discovery, SeamError> {
+        let config = self.config.with_overrides(&request.overrides)?;
         let seeds_started = Instant::now();
-        let seeds = self.query_seeds(text).await?;
-        let mut trace = QueryTrace {
-            seeds_ms: millis(seeds_started.elapsed()),
-            fts_hits: seeds.fts_hits,
-            lexical_hits: seeds.lexical_hits,
-            vector_hits: seeds.vector_hits,
-            seeds: count_u32(seeds.fused.len()),
-            ..QueryTrace::default()
+        let seeder = Seeder {
+            store: &self.store,
+            embedder: self.embedder.as_ref(),
+            clusters: &self.clusters,
+            config: &config,
         };
+        let seeds = seeder.seeds(&request.text).await?;
+        let mut trace = trace_of(&seeds, millis(seeds_started.elapsed()));
         if seeds.fused.is_empty() {
             return Ok(Discovery {
                 ranked: Vec::new(),
@@ -273,40 +156,29 @@ impl Finder for FinderService {
             });
         }
         let graph_started = Instant::now();
-        let seed_ids: Vec<FragmentId> = seeds.fused.keys().map(|id| FragmentId(*id)).collect();
-        let relations = self
-            .store
-            .relations_near(
-                &seed_ids,
-                self.config.graph_hops,
-                self.config.graph_relation_limit,
-            )
-            .await?;
-        tracing::info!(
-            relations = relations.len(),
-            elapsed_ms = graph_started.elapsed().as_millis(),
-            "finder loaded the local relation graph"
-        );
-        let edges = weighted_edges(&relations, &self.config.weights);
-        let boosted = personalized_pagerank(
-            &seeds.fused,
-            &edges,
-            self.config.damping,
-            self.config.iterations,
-            self.config.epsilon,
-        );
-
-        let final_scores = boosted
-            .iter()
-            .map(|(id, score)| (*id, score + seeds.fused.get(id).copied().unwrap_or(0.0)))
-            .collect();
+        let walked = self.walk(&config, &seeds, request.explain).await?;
         trace.graph_ms = millis(graph_started.elapsed());
-        trace.relations = count_u32(relations.len());
+        trace.hubs_excluded = self.excluded_hubs(&walked, request.explain).await?;
+        let final_scores: HashMap<i64, f64> = walked
+            .graph
+            .ids()
+            .filter(|id| walked.boost(*id) > 0.0 || seeds.fused.contains_key(id))
+            .map(|id| {
+                (
+                    id,
+                    walked.boost(id) + seeds.fused.get(&id).copied().unwrap_or(0.0),
+                )
+            })
+            .collect();
 
         let rollup_started = Instant::now();
-        let rollup = self.rollup(final_scores, limit, &seeds, &boosted).await?;
+        let rollup = self
+            .rollup(&config, request, final_scores, &seeds, &walked)
+            .await?;
         trace.rollup_ms = millis(rollup_started.elapsed());
+        trace.relations = count_u32(walked.graph.len());
         trace.candidate_sources = rollup.candidate_sources;
+        trace.filtered_sources = rollup.filtered_sources;
         trace.evidence = rollup.evidence;
         tracing::info!(
             results = rollup.ranked.len(),
@@ -323,7 +195,7 @@ impl Finder for FinderService {
         let fragments = self.store.fragments_of(source.id).await?;
         let ids: Vec<FragmentId> = fragments.iter().map(|f| f.id).collect();
         let relations = self.store.relations_touching(&ids).await?;
-        let known: std::collections::HashSet<i64> = ids.iter().map(|f| f.0).collect();
+        let known: HashSet<i64> = ids.iter().map(|f| f.0).collect();
         let mut foreign_ids: Vec<FragmentId> = relations
             .iter()
             .flat_map(|r| [r.from, r.to])
@@ -340,95 +212,142 @@ impl Finder for FinderService {
     }
 }
 
-impl FinderService {
-    async fn query_seeds(&self, text: &str) -> Result<Seeds, SeamError> {
-        let started = Instant::now();
-        // Function words go: a query that ORs "the" matches every row of a
-        // large index and BM25 scores them all, for rows that rank last.
-        // Prose rows and lexical rows are two seed lists, each ranked by
-        // its own table's statistics and fused by rank: a one-line term row
-        // and a whole document are not comparable by BM25 score.
-        let (fts, lexical) = if self.config.seeds.runs_full_text() {
-            let query = inseam_seams::extract::strip_stopwords(text);
-            (
-                self.store.search_fts(&query, self.config.seed_k).await?,
-                self.store
-                    .search_fts_lexical(&query, self.config.seed_k)
-                    .await?,
-            )
-        } else {
-            (Vec::new(), Vec::new())
-        };
-        let mut vector = match self.embedder.dimensions() {
-            Some(_) if self.config.seeds.runs_vector() => {
-                let qvec = self.embedder.embed(&[text]).await?;
-                match qvec.first() {
-                    Some(v) => self.store.search_vector(v, self.config.seed_k).await?,
-                    None => Vec::new(),
-                }
-            }
-            Some(_) | None => Vec::new(),
-        };
-        // Nearest-k returns the k nearest whatever the distance; beyond the
-        // floor a "neighbor" is noise and must not seed the walk.
-        vector.retain(|(_, distance)| f64::from(*distance) <= self.config.max_vector_distance);
+fn trace_of(seeds: &Seeds, seeds_ms: u64) -> QueryTrace {
+    QueryTrace {
+        seeds_ms,
+        fts_hits: seeds.hits(SeedChannel::Prose),
+        lexical_hits: seeds.hits(SeedChannel::Lexical),
+        vector_hits: seeds.hits(SeedChannel::Vector),
+        exact_hits: seeds.hits(SeedChannel::Exact),
+        cluster_hits: seeds.hits(SeedChannel::Cluster),
+        clusters_matched: seeds.clusters_matched,
+        grounding_ms: seeds.grounding_ms,
+        seeds: count_u32(seeds.fused.len()),
+        ..QueryTrace::default()
+    }
+}
 
-        // Every list arrives best-first; fusion cares only about rank.
-        let fts_ranked: Vec<i64> = fts.iter().map(|(id, _)| id.0).collect();
-        let lexical_ranked: Vec<i64> = lexical.iter().map(|(id, _)| id.0).collect();
-        let vec_ranked: Vec<i64> = vector.iter().map(|(id, _)| id.0).collect();
-        let fused = query_seeds_fuse(
-            [&fts_ranked, &lexical_ranked, &vec_ranked],
-            self.config.rrf_k,
-            self.config.lexical_weight,
+impl FinderService {
+    /// Load the seed-local slice under the hub bound, weigh its edges, and
+    /// run the walk — one restart column for the fused seeds, or one per
+    /// channel under `explain`, which sum to the same walk.
+    async fn walk(
+        &self,
+        config: &FinderConfig,
+        seeds: &Seeds,
+        explain: bool,
+    ) -> Result<Walked, SeamError> {
+        let seed_ids: Vec<FragmentId> = seeds.fused.keys().map(|id| FragmentId(*id)).collect();
+        let neighborhood = self
+            .store
+            .relations_near_bounded(
+                &seed_ids,
+                config.graph_hops,
+                config.graph_relation_limit,
+                config.hub_bound(),
+            )
+            .await?;
+        let mut vertex_ids: Vec<FragmentId> = neighborhood
+            .relations
+            .iter()
+            .flat_map(|r| [r.from, r.to])
+            .chain(seed_ids.iter().copied())
+            .chain(neighborhood.hubs.iter().map(|(id, _)| *id))
+            .collect();
+        vertex_ids.sort();
+        vertex_ids.dedup();
+        let row_kinds = if config.weights.row_kinds_matter() || explain {
+            self.store.row_kinds_of(&vertex_ids).await?
+        } else {
+            HashMap::new()
+        };
+        let graph = Graph::build(
+            &neighborhood.relations,
+            &config.weights,
+            (!row_kinds.is_empty()).then_some(&row_kinds),
+            seeds.fused.keys().copied(),
         );
-        tracing::info!(
-            fts = fts.len(),
-            lexical = lexical.len(),
-            vector = vector.len(),
-            fused = fused.len(),
-            elapsed_ms = started.elapsed().as_millis(),
-            "finder seed retrieval completed"
+        let columns = if explain { SeedChannel::ALL.len() } else { 1 };
+        let restarts = restarts_of(&graph, seeds, columns);
+        let mass = graph.walk(
+            &restarts,
+            columns,
+            config.damping,
+            config.iterations,
+            config.epsilon,
         );
-        Ok(Seeds {
-            ranks: [fts_ranked, lexical_ranked, vec_ranked],
-            fused,
-            fts_hits: count_u32(fts.len()),
-            lexical_hits: count_u32(lexical.len()),
-            vector_hits: count_u32(vector.len()),
+        let total = sum_columns(&mass, columns);
+        Ok(Walked {
+            graph,
+            columns,
+            mass,
+            total,
+            row_kinds,
+            hubs: neighborhood.hubs,
         })
     }
+
+    /// The hubs the bound kept out, named under `explain`.
+    async fn excluded_hubs(
+        &self,
+        walked: &Walked,
+        explain: bool,
+    ) -> Result<Vec<ExcludedHub>, SeamError> {
+        let mut hubs: Vec<ExcludedHub> = walked
+            .hubs
+            .iter()
+            .map(|(id, degree)| ExcludedHub {
+                fragment: *id,
+                degree: *degree,
+                kind: walked.row_kinds.get(id).copied(),
+                text: None,
+            })
+            .collect();
+        if explain && !hubs.is_empty() {
+            let ids: Vec<FragmentId> = hubs.iter().map(|h| h.fragment).collect();
+            let texts: HashMap<FragmentId, String> = self
+                .store
+                .fragments(&ids)
+                .await?
+                .into_iter()
+                .filter_map(|f| f.text.map(|t| (f.id, preview(&t))))
+                .collect();
+            for hub in &mut hubs {
+                hub.text = texts.get(&hub.fragment).cloned();
+            }
+        }
+        Ok(hubs)
+    }
 }
 
-/// Keep all three lists, weighting lexical evidence before graph propagation.
-fn query_seeds_fuse(lists: [&[i64]; 3], k: f64, lexical_weight: f64) -> HashMap<i64, f64> {
-    assert!(lexical_weight.is_finite());
-    assert!(lexical_weight > 0.0);
-    assert!(lexical_weight <= 1.0);
-    let mut fused = HashMap::new();
-    for (list, weight) in lists.into_iter().zip([1.0, lexical_weight, 1.0]) {
-        for (id, score) in rrf_fuse(&[list], k) {
-            *fused.entry(id).or_insert(0.0) += weight * score;
+/// The restart matrix: the fused seed distribution in one column, or each
+/// channel's share of it in its own column, vertex-major.
+fn restarts_of(graph: &Graph, seeds: &Seeds, columns: usize) -> Vec<f64> {
+    let total = seeds.total();
+    assert!(total > 0.0);
+    let mut restarts = vec![0.0; graph.len() * columns];
+    for (id, fused) in &seeds.fused {
+        let Some(i) = graph.index_of(*id) else {
+            continue;
+        };
+        if columns == 1 {
+            restarts[i] = fused / total;
+            continue;
+        }
+        let shares = seeds.by_channel.get(id).copied().unwrap_or([0.0; 5]);
+        for (c, share) in shares.iter().enumerate() {
+            restarts[i * columns + c] = share / total;
         }
     }
-    fused
+    restarts
 }
 
-/// The seeds of one query with where they came from. Fusion keeps only an
-/// id's best rank per list, so `fused` never exceeds the lists' sum.
-struct Seeds {
-    ranks: [Vec<i64>; 3],
-    fused: HashMap<i64, f64>,
-    fts_hits: u32,
-    lexical_hits: u32,
-    vector_hits: u32,
-}
-
-/// Ranked sources plus how many sources competed for the limit.
+/// Ranked sources plus what the rollup saw before the limit cut.
 struct Rollup {
     evidence: Vec<SourceEvidence>,
     ranked: Vec<RankedSource>,
     candidate_sources: u32,
+    filtered_sources: u32,
 }
 
 /// Wall-clock milliseconds for a trace field; a phase that runs longer than
@@ -443,36 +362,48 @@ fn count_u32(length: usize) -> u32 {
     u32::try_from(length).unwrap_or(u32::MAX)
 }
 
+fn preview(text: &str) -> String {
+    inseam_seams::text::truncate_chars(
+        &inseam_seams::text::collapse_ws(text),
+        LEDGER_TEXT_CHARS_MAX,
+    )
+}
+
+/// A fragment id with its final (seed + activated) score.
+type ScoredFragment = (FragmentId, f64);
+
 impl FinderService {
-    /// Group fragment scores by source, aggregate, and dress results with
-    /// envelope, summary, and hints.
+    /// Group fragment scores by source, filter, aggregate, and dress results
+    /// with envelope, summary, hints, and evidence.
     async fn rollup(
         &self,
+        config: &FinderConfig,
+        request: &FinderRequest,
         final_scores: HashMap<i64, f64>,
-        limit: usize,
         seeds: &Seeds,
-        boosted: &HashMap<i64, f64>,
+        walked: &Walked,
     ) -> Result<Rollup, SeamError> {
         let ids: Vec<FragmentId> = final_scores.keys().map(|id| FragmentId(*id)).collect();
         let owners = self.store.sources_of_fragments(&ids).await?;
-
         let mut per_source: HashMap<SourceId, Vec<ScoredFragment>> = HashMap::new();
         for (fid, sid) in owners {
             let score = final_scores[&fid.0];
             per_source.entry(sid).or_default().push((fid, score));
         }
+        let before_filter = per_source.len();
+        let per_source = self.apply_filters(&request.filters, per_source).await?;
+        let filtered_sources = count_u32(before_filter - per_source.len());
 
         let mut ranked: Vec<(SourceId, f64, Vec<ScoredFragment>)> = per_source
             .into_iter()
             .map(|(sid, mut frags)| {
-                frags.sort_by(|a, b| b.1.total_cmp(&a.1));
+                frags.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
                 (sid, source_score(&frags), frags)
             })
             .collect();
-        ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+        ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.0.cmp(&b.0.0)));
         let candidate_sources = count_u32(ranked.len());
-        ranked.truncate(limit);
-
+        ranked.truncate(request.limit);
         let top = ranked.first().map(|(_, s, _)| *s).unwrap_or(1.0);
         let norm = if top > 0.0 { top } else { 1.0 };
 
@@ -482,11 +413,16 @@ impl FinderService {
             let Some(source) = self.store.source(sid).await? else {
                 continue;
             };
+            let ledger = if request.explain {
+                Some(self.ledger(config, &frags, seeds, walked).await?)
+            } else {
+                None
+            };
             evidence.push(rollup_evidence(
-                &source, score, norm, &frags, seeds, boosted,
+                &source, score, norm, &frags, seeds, walked, ledger,
             ));
             let summary = self.store.summary_of(sid).await?;
-            let hints = self.rollup_hints(&frags, norm).await?;
+            let hints = self.rollup_hints(config, &frags, norm).await?;
             out.push(RankedSource {
                 source,
                 score: score / norm,
@@ -496,27 +432,86 @@ impl FinderService {
             });
         }
         let ranked = collapse_by_digest(out);
-        evidence.retain(|item| {
-            ranked
-                .iter()
-                .any(|result| result.source.address == item.address)
-        });
+        evidence.retain(|item| ranked.iter().any(|r| r.source.address == item.address));
         Ok(Rollup {
             evidence,
             ranked,
             candidate_sources,
+            filtered_sources,
         })
+    }
+
+    /// Drop the candidate sources a request's filters exclude, before the
+    /// rollup — the way boundary properties are applied
+    /// (`design/vocabulary.md`, facets).
+    async fn apply_filters(
+        &self,
+        filters: &QueryFilters,
+        per_source: HashMap<SourceId, Vec<ScoredFragment>>,
+    ) -> Result<HashMap<SourceId, Vec<ScoredFragment>>, SeamError> {
+        if filters.is_empty() {
+            return Ok(per_source);
+        }
+        let faceted = self.sources_with_facets(&filters.facets).await?;
+        let mut kept = HashMap::with_capacity(per_source.len());
+        for (sid, frags) in per_source {
+            if let Some(allowed) = &faceted
+                && !allowed.contains(&sid)
+            {
+                continue;
+            }
+            let Some(source) = self.store.source(sid).await? else {
+                continue;
+            };
+            if envelope_passes(filters, &source) {
+                kept.insert(sid, frags);
+            }
+        }
+        Ok(kept)
+    }
+
+    /// The sources anchored to every named facet value (an intersection),
+    /// or `None` when no facet was asked for.
+    async fn sources_with_facets(
+        &self,
+        facets: &[String],
+    ) -> Result<Option<HashSet<SourceId>>, SeamError> {
+        if facets.is_empty() {
+            return Ok(None);
+        }
+        let mut allowed: Option<HashSet<SourceId>> = None;
+        for facet in facets {
+            let normalized = inseam_kernel::store::normalize_spelling(facet);
+            let rows = self.store.vocabulary_rows_spelled(&normalized).await?;
+            let mut sources: HashSet<SourceId> = HashSet::new();
+            for row in rows
+                .iter()
+                .filter(|r| matches!(r.kind, VocabularyKind::Facet | VocabularyKind::Entity))
+            {
+                sources.extend(
+                    self.store
+                        .sources_anchored_to(row.fragment, FACET_SOURCES_MAX)
+                        .await?,
+                );
+            }
+            allowed = Some(match allowed {
+                None => sources,
+                Some(previous) => previous.intersection(&sources).copied().collect(),
+            });
+        }
+        Ok(allowed)
     }
 
     async fn rollup_hints(
         &self,
+        config: &FinderConfig,
         fragments: &[ScoredFragment],
         normalization: f64,
     ) -> Result<Vec<RankedFragment>, SeamError> {
         assert!(normalization > 0.0);
         let mut hints = Vec::new();
         for (fid, fscore) in fragments {
-            if hints.len() >= self.config.max_hints {
+            if hints.len() >= config.max_hints {
                 break;
             }
             let Some(fragment) = self.store.fragment(*fid).await? else {
@@ -537,37 +532,167 @@ impl FinderService {
         }
         Ok(hints)
     }
+
+    /// The exact decomposition of one source's raw score over its scoring
+    /// fragments: per channel (seed and the walk it induced), per row kind
+    /// the walk arrived through, and the neighbours that carried the most.
+    async fn ledger(
+        &self,
+        config: &FinderConfig,
+        fragments: &[ScoredFragment],
+        seeds: &Seeds,
+        walked: &Walked,
+    ) -> Result<Ledger, SeamError> {
+        assert_eq!(walked.columns, SeedChannel::ALL.len());
+        let mut channel_seed = [0.0; 5];
+        let mut channel_walk = [0.0; 5];
+        let mut by_kind = std::collections::BTreeMap::new();
+        let mut carriers: HashMap<i64, f64> = HashMap::new();
+        for ((id, _), weight) in fragments.iter().zip(SOURCE_SCORE_WEIGHTS) {
+            let shares = seeds.by_channel.get(&id.0).copied().unwrap_or([0.0; 5]);
+            for (c, share) in shares.iter().enumerate() {
+                channel_seed[c] += weight * share;
+            }
+            for (c, mass) in walked.boost_by_column(id.0).iter().enumerate() {
+                channel_walk[c] += weight * mass;
+            }
+            let Some(vertex) = walked.graph.index_of(id.0) else {
+                continue;
+            };
+            for (kind, mass) in walked.graph.arrivals_by_kind(
+                &walked.total,
+                vertex,
+                config.damping,
+                &walked.row_kinds,
+            ) {
+                *by_kind.entry(kind).or_insert(0.0) += weight * mass;
+            }
+            for (neighbour, mass) in walked.graph.arrivals(&walked.total, vertex, config.damping) {
+                *carriers.entry(neighbour).or_insert(0.0) += weight * mass;
+            }
+        }
+        let channels = SeedChannel::ALL
+            .iter()
+            .filter(|c| channel_seed[c.index()] > 0.0 || channel_walk[c.index()] > 0.0)
+            .map(|c| ChannelLine {
+                channel: *c,
+                seed: channel_seed[c.index()],
+                walk: channel_walk[c.index()],
+            })
+            .collect();
+        let rows = self
+            .carrying_rows(carriers, walked, config.explain_rows_max)
+            .await?;
+        Ok(Ledger {
+            channels,
+            walk_by_row_kind: by_kind,
+            rows,
+        })
+    }
+
+    /// The best carriers, named: text, row kind, document frequency and
+    /// cluster when they are vocabulary rows.
+    async fn carrying_rows(
+        &self,
+        carriers: HashMap<i64, f64>,
+        walked: &Walked,
+        limit: u32,
+    ) -> Result<Vec<CarryingRow>, SeamError> {
+        let mut best: Vec<(i64, f64)> = carriers.into_iter().collect();
+        best.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+        best.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+        let ids: Vec<FragmentId> = best.iter().map(|(id, _)| FragmentId(*id)).collect();
+        let texts: HashMap<FragmentId, String> = self
+            .store
+            .fragments(&ids)
+            .await?
+            .into_iter()
+            .map(|f| (f.id, f.text.as_deref().map(preview).unwrap_or_default()))
+            .collect();
+        let vocabulary: HashMap<FragmentId, (u32, Option<inseam_kernel::store::ClusterId>)> = self
+            .store
+            .vocabulary_rows_of(&ids)
+            .await?
+            .into_iter()
+            .map(|row| (row.fragment, (row.document_frequency, row.cluster)))
+            .collect();
+        Ok(best
+            .into_iter()
+            .map(|(id, mass)| {
+                let fragment = FragmentId(id);
+                let (document_frequency, cluster) = match vocabulary.get(&fragment) {
+                    Some((frequency, cluster)) => (Some(*frequency), *cluster),
+                    None => (None, None),
+                };
+                CarryingRow {
+                    fragment,
+                    kind: walked
+                        .row_kinds
+                        .get(&fragment)
+                        .copied()
+                        .unwrap_or(RowKind::Other),
+                    text: texts.get(&fragment).cloned().unwrap_or_default(),
+                    document_frequency,
+                    cluster,
+                    mass,
+                }
+            })
+            .collect())
+    }
 }
 
-/// Preserve the actual rollup inputs so clients never reconstruct scores from hints.
+/// Whether a source's envelope passes the request's envelope filters.
+fn envelope_passes(filters: &QueryFilters, source: &StoredSource) -> bool {
+    if let Some(host) = &filters.host
+        && source.address.host.as_str() != host
+    {
+        return false;
+    }
+    if let Some(source_type) = &filters.source_type
+        && source.envelope.source_type != *source_type
+    {
+        return false;
+    }
+    let modified = source.envelope.modified;
+    if let Some(after) = filters.modified_after
+        && modified.is_none_or(|m| m < after)
+    {
+        return false;
+    }
+    if let Some(before) = filters.modified_before
+        && modified.is_none_or(|m| m > before)
+    {
+        return false;
+    }
+    true
+}
+
+/// Preserve the actual rollup inputs so clients never reconstruct scores
+/// from hints.
 fn rollup_evidence(
     source: &StoredSource,
     score_raw: f64,
     normalization: f64,
     fragments: &[ScoredFragment],
     seeds: &Seeds,
-    boosted: &HashMap<i64, f64>,
+    walked: &Walked,
+    ledger: Option<Ledger>,
 ) -> SourceEvidence {
     assert!(normalization > 0.0);
     let fragments = fragments
         .iter()
         .take(3)
         .zip(SOURCE_SCORE_WEIGHTS)
-        .map(|((id, _), weight)| {
-            let ranks = seeds.ranks.each_ref().map(|list| {
-                list.iter()
-                    .position(|candidate| *candidate == id.0)
-                    .map(|index| count_u32(index + 1))
-            });
-            FragmentEvidence {
-                fragment: *id,
-                prose_rank: ranks[0],
-                lexical_rank: ranks[1],
-                vector_rank: ranks[2],
-                seed: seeds.fused.get(&id.0).copied().unwrap_or(0.0),
-                graph: boosted.get(&id.0).copied().unwrap_or(0.0),
-                weight,
-            }
+        .map(|((id, _), weight)| FragmentEvidence {
+            fragment: *id,
+            prose_rank: seeds.rank_in(SeedChannel::Prose, id.0),
+            lexical_rank: seeds.rank_in(SeedChannel::Lexical, id.0),
+            vector_rank: seeds.rank_in(SeedChannel::Vector, id.0),
+            exact_rank: seeds.rank_in(SeedChannel::Exact, id.0),
+            cluster_rank: seeds.rank_in(SeedChannel::Cluster, id.0),
+            seed: seeds.fused.get(&id.0).copied().unwrap_or(0.0),
+            graph: walked.boost(id.0),
+            weight,
         })
         .collect();
     SourceEvidence {
@@ -575,6 +700,7 @@ fn rollup_evidence(
         score_raw,
         normalization,
         fragments,
+        ledger,
     }
 }
 
@@ -622,133 +748,6 @@ pub(crate) fn collapse_by_digest_by<T>(
     collapsed
 }
 
-/// Reciprocal rank fusion over best-first id lists: score(d) = Σ 1/(k + rank).
-/// Rank-based, so BM25 scores and cosine distances never need to be made
-/// comparable — the reason RRF is the working fusion (`design/finder.md`).
-/// Only an id's best rank in each list counts.
-pub fn rrf_fuse(lists: &[&[i64]], k: f64) -> HashMap<i64, f64> {
-    let mut fused: HashMap<i64, f64> = HashMap::new();
-    for list in lists {
-        let mut seen = std::collections::HashSet::new();
-        for (rank, id) in list.iter().enumerate() {
-            if seen.insert(*id) {
-                *fused.entry(*id).or_insert(0.0) += 1.0 / (k + rank as f64 + 1.0);
-            }
-        }
-    }
-    fused
-}
-
-/// Undirected weighted edges from the relation graph, weights by kind.
-/// Parallel edges between a pair sum.
-pub fn weighted_edges(relations: &[Relation], weights: &RelationWeights) -> Vec<(i64, i64, f64)> {
-    let mut merged: HashMap<(i64, i64), f64> = HashMap::new();
-    for r in relations {
-        if r.from == r.to {
-            continue;
-        }
-        let w = weights.weight(&r.kind);
-        if w <= 0.0 {
-            continue;
-        }
-        let key = if r.from.0 <= r.to.0 {
-            (r.from.0, r.to.0)
-        } else {
-            (r.to.0, r.from.0)
-        };
-        *merged.entry(key).or_insert(0.0) += w;
-    }
-    merged.into_iter().map(|((a, b), w)| (a, b, w)).collect()
-}
-
-/// Personalized PageRank by power iteration. Seeds are the restart
-/// distribution (normalized inside); edges are undirected and weighted.
-/// Walks continue with probability `damping`; dangling mass restarts at the
-/// seeds. Returns a distribution over every node walks can reach.
-pub fn personalized_pagerank(
-    seeds: &HashMap<i64, f64>,
-    edges: &[(i64, i64, f64)],
-    damping: f64,
-    iterations: usize,
-    epsilon: f64,
-) -> HashMap<i64, f64> {
-    let total: f64 = seeds.values().copied().sum();
-    if total <= 0.0 {
-        return HashMap::new();
-    }
-
-    // Node universe: seeds plus every edge endpoint.
-    let mut index: HashMap<i64, usize> = HashMap::new();
-    let mut nodes: Vec<i64> = Vec::new();
-    let intern = |id: i64, index: &mut HashMap<i64, usize>, nodes: &mut Vec<i64>| -> usize {
-        *index.entry(id).or_insert_with(|| {
-            nodes.push(id);
-            nodes.len() - 1
-        })
-    };
-    for id in seeds.keys() {
-        intern(*id, &mut index, &mut nodes);
-    }
-    for (a, b, _) in edges {
-        intern(*a, &mut index, &mut nodes);
-        intern(*b, &mut index, &mut nodes);
-    }
-
-    let n = nodes.len();
-    let mut adjacency: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
-    let mut out_weight: Vec<f64> = vec![0.0; n];
-    for (a, b, w) in edges {
-        let (ia, ib) = (index[a], index[b]);
-        adjacency[ia].push((ib, *w));
-        adjacency[ib].push((ia, *w));
-        out_weight[ia] += *w;
-        out_weight[ib] += *w;
-    }
-
-    let mut restart = vec![0.0; n];
-    for (id, score) in seeds {
-        restart[index[id]] = score / total;
-    }
-
-    let mut p = restart.clone();
-    for _ in 0..iterations {
-        let mut next = vec![0.0; n];
-        let mut dangling = 0.0;
-        for i in 0..n {
-            if p[i] == 0.0 {
-                continue;
-            }
-            if out_weight[i] == 0.0 {
-                dangling += p[i];
-                continue;
-            }
-            let share = p[i] / out_weight[i];
-            for (j, w) in &adjacency[i] {
-                next[*j] += share * w;
-            }
-        }
-        let mut delta = 0.0;
-        for i in 0..n {
-            let value = (1.0 - damping) * restart[i] + damping * (next[i] + dangling * restart[i]);
-            delta += (value - p[i]).abs();
-            p[i] = value;
-        }
-        if delta < epsilon {
-            break;
-        }
-    }
-
-    nodes
-        .into_iter()
-        .enumerate()
-        .filter(|(i, _)| p[*i] > 0.0)
-        .map(|(i, id)| (id, p[i]))
-        .collect()
-}
-
-/// A fragment id with its final (seed + activated) score.
-type ScoredFragment = (FragmentId, f64);
-
 /// Max plus a tapered bonus for additional independent hits: sum invites
 /// long-document bias, max alone ignores corroboration (`design/finder.md`).
 fn source_score(sorted: &[ScoredFragment]) -> f64 {
@@ -762,102 +761,8 @@ fn source_score(sorted: &[ScoredFragment]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn weights() -> RelationWeights {
-        RelationWeights::default()
-    }
-
-    #[test]
-    fn rrf_rewards_presence_in_both_lists() {
-        let fused = rrf_fuse(&[&[1, 2, 3], &[2, 9]], 60.0);
-        assert!(fused[&2] > fused[&1], "rank-2+rank-1 beats a single rank-1");
-        assert!(fused[&1] > fused[&3]);
-        assert!(fused.contains_key(&9));
-    }
-
-    #[test]
-    fn rrf_of_empty_lists_is_empty() {
-        assert!(rrf_fuse(&[&[], &[]], 60.0).is_empty());
-    }
-
-    #[test]
-    fn ppr_flows_relevance_to_connected_neighbors() {
-        let seeds = HashMap::from([(1, 1.0)]);
-        let edges = vec![(1, 2, 1.0), (2, 3, 1.0), (4, 5, 1.0)];
-        let p = personalized_pagerank(&seeds, &edges, 0.5, 20, 1e-9);
-        assert!(p[&2] > p[&3], "one hop beats two hops");
-        assert!(p[&3] > 0.0, "two hops still reached");
-        assert!(!p.contains_key(&4), "disconnected components get nothing");
-    }
-
-    #[test]
-    fn ppr_respects_edge_weights() {
-        let seeds = HashMap::from([(1, 1.0)]);
-        let heavy = personalized_pagerank(&seeds, &[(1, 2, 1.0), (1, 3, 0.1)], 0.5, 20, 1e-9);
-        assert!(heavy[&2] > heavy[&3]);
-    }
-
-    #[test]
-    fn ppr_without_edges_returns_the_restart_distribution() {
-        let seeds = HashMap::from([(1, 3.0), (2, 1.0)]);
-        let p = personalized_pagerank(&seeds, &[], 0.5, 20, 1e-9);
-        assert!((p[&1] - 0.75).abs() < 1e-9);
-        assert!((p[&2] - 0.25).abs() < 1e-9);
-    }
-
-    #[test]
-    fn ppr_of_empty_seeds_is_empty() {
-        assert!(personalized_pagerank(&HashMap::new(), &[(1, 2, 1.0)], 0.5, 10, 1e-9).is_empty());
-    }
-
-    #[test]
-    fn weighted_edges_merge_parallel_and_drop_self_loops() {
-        let kind = |k: &str| RelationKind::new(k).expect("valid kind");
-        let relations = vec![
-            Relation::new(FragmentId(1), kind("contains"), FragmentId(2)),
-            Relation::new(FragmentId(2), kind("mentions"), FragmentId(1)),
-            Relation::new(FragmentId(3), kind("contains"), FragmentId(3)),
-        ];
-        let edges = weighted_edges(&relations, &weights());
-        assert_eq!(edges.len(), 1);
-        let (a, b, w) = edges[0];
-        assert_eq!((a, b), (1, 2));
-        assert!((w - 1.8).abs() < 1e-9, "contains 1.0 + mentions 0.8");
-    }
-
-    #[test]
-    fn unknown_relation_kinds_get_the_default_weight_and_config_layers_over_it() {
-        let weights = weights();
-        assert_eq!(
-            weights.weight(&RelationKind::new("cites").expect("valid")),
-            0.5
-        );
-        let configured: RelationWeights = toml::from_str(
-            "default = 0.1
-[by_kind]
-\"links-to\" = 0.2
-cites = 0.7",
-        )
-        .expect("parses");
-        let merged = configured.over_defaults();
-        assert_eq!(
-            merged.weight(&RelationKind::new("links-to").expect("valid")),
-            0.2
-        );
-        assert_eq!(
-            merged.weight(&RelationKind::new("cites").expect("valid")),
-            0.7
-        );
-        assert_eq!(
-            merged.weight(&RelationKind::contains()),
-            1.0,
-            "unnamed kinds keep the table"
-        );
-        assert_eq!(
-            merged.weight(&RelationKind::new("other").expect("valid")),
-            0.1
-        );
-    }
+    use inseam_kernel::address::{Address, ContentLength, Envelope, Timestamp};
+    use inseam_kernel::fragment::Mimetype;
 
     #[test]
     fn source_score_prefers_corroborated_sources_without_length_bias() {
@@ -870,5 +775,64 @@ cites = 0.7",
         let long_weak: Vec<(FragmentId, f64)> = (0..50).map(|i| (FragmentId(i), 0.2)).collect();
         assert!(corroborated > strong_single);
         assert!(strong_single > source_score(&long_weak));
+    }
+
+    fn source(host: &str, source_type: &str, modified: Option<i64>) -> StoredSource {
+        StoredSource {
+            id: SourceId(1),
+            address: format!("inseam://{host}/a/b")
+                .parse::<Address>()
+                .expect("valid"),
+            envelope: Envelope {
+                source_type: source_type.into(),
+                content_type: Mimetype::text_plain(),
+                length: ContentLength::Bytes(1),
+                created: None,
+                modified: modified.map(Timestamp),
+                observed: Timestamp(0),
+                properties: Vec::new(),
+                facets: Vec::new(),
+                hint: None,
+                content_digest: None,
+            },
+            root_fragment: None,
+            origin: None,
+        }
+    }
+
+    #[test]
+    fn envelope_filters_narrow_by_host_type_and_time() {
+        let filters = QueryFilters {
+            host: Some("fs-a".into()),
+            source_type: Some("email".into()),
+            facets: Vec::new(),
+            modified_after: Some(Timestamp(10)),
+            modified_before: Some(Timestamp(20)),
+        };
+        assert!(envelope_passes(
+            &filters,
+            &source("fs-a", "email", Some(15))
+        ));
+        assert!(!envelope_passes(
+            &filters,
+            &source("fs-b", "email", Some(15))
+        ));
+        assert!(!envelope_passes(
+            &filters,
+            &source("fs-a", "file", Some(15))
+        ));
+        assert!(!envelope_passes(
+            &filters,
+            &source("fs-a", "email", Some(5))
+        ));
+        assert!(!envelope_passes(
+            &filters,
+            &source("fs-a", "email", Some(25))
+        ));
+        assert!(!envelope_passes(&filters, &source("fs-a", "email", None)));
+        assert!(envelope_passes(
+            &QueryFilters::default(),
+            &source("x", "y", None)
+        ));
     }
 }

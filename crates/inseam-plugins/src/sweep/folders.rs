@@ -176,6 +176,7 @@ mod tests {
                 modified: None,
                 observed: Timestamp(0),
                 properties: Vec::new(),
+                facets: Vec::new(),
                 hint: None,
                 content_digest: None,
             },

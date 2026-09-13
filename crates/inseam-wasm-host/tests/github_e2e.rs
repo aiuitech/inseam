@@ -415,10 +415,7 @@ async fn a_loaded_connection_stewards_a_repository_the_node_can_index_and_read()
     assert_eq!(report.indexed, 3, "{report:?}");
 
     let found = ops
-        .query(QueryRequest {
-            text: "painting a garden shed".into(),
-            limit: 5,
-        })
+        .query(QueryRequest::new("painting a garden shed", 5))
         .await
         .expect("queries");
     assert!(

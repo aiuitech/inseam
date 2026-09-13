@@ -77,7 +77,7 @@ The same without `--skip-agent` adds the agent answers and the LLM judge: hours,
 python3 benchmarks/enterprise_rag_bench.py run --skip-agent --corpus-slice 25000 --structural markdown --vectors summaries --summary-target-chars 600
 ```
 
-`--corpus-slice N`, `--structural`, `--vectors` (`summaries`, `all`, or `none`), `--summary-target-chars`, `--keywords-max`, `--finder-seeds`, and `--finder-max-vector-distance` are recorded in the manifest's `options` and `models` (`models.corpus` reads `slice-<N>` or `full`). The shapes already measured and what each cost are tabulated in `design/benchmarking.md`; read it before proposing a new one.
+`--corpus-slice N`, `--structural`, `--vectors` (`summaries`, `all`, or `none`), `--summary-target-chars`, `--keywords-max`, `--finder-seeds`, and `--finder-max-vector-distance` are recorded in the manifest's `options` and `models` (`models.corpus` reads `slice-<N>` or `full`). `--finder-override KEY=VALUE` (repeatable) passes a query-time Finder override to every query without touching the index, and `--explain` (the default; `--no-explain` turns it off) asks each query for its score ledger; both are recorded in `options`. The run writes `attribution.jsonl` (each gold document's rank within 50 and its ledger) and `retrieval-attribution.json` (per channel, row kind, and row: what bought recall and what carried noise, split by question type) — see `docs/benchmarking.md`. The shapes already measured and what each cost are tabulated in `design/benchmarking.md`; read it before proposing a new one.
 
 A harness check that still builds a valid full-corpus index but answers one question:
 
@@ -122,7 +122,7 @@ Open the new `benchmarks/runs/<benchmark>/<run-id>/manifest.json` and check:
 5. System specifications and the Inseam CLI version, binary hash, repository revision, and dirty state are present.
 6. Every model entry matches the assignments above, including disabled entity extraction and the vector scope.
 7. For BEIR: `scores.beir` has `ndcg@10`, `recall@10`, `map@10`, and `precision@10`, and `run.trec` plus `query-scores.jsonl` sit beside the manifest.
-8. For EnterpriseRAG-Bench: `scores.retrieval` is present. Unless `--skip-evaluation` was requested, `scores.enterprise_rag_bench` and `enterprise-rag-bench-results.json` are also present.
+8. For EnterpriseRAG-Bench: `scores.retrieval` is present, with `attribution_ready` true when the binary returned ledgers, and `attribution.jsonl` plus `retrieval-attribution.json` sit beside the manifest. Unless `--skip-evaluation` was requested, `scores.enterprise_rag_bench` and `enterprise-rag-bench-results.json` are also present.
 9. `queries.jsonl` has one row per question or query with durations and raw Finder scores.
 
 Treat the upstream raw results file (EnterpriseRAG-Bench) or `run.trec` (BEIR) as authoritative. Compare runs only when dataset pins, evaluator revision, model assignments, vector scope, question count, and relevant options match. Never compare a BEIR score with an EnterpriseRAG-Bench score. Call out dirty source trees and hardware differences instead of hiding them.

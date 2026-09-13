@@ -26,7 +26,7 @@ use inseam_seams::SeamError;
 use inseam_seams::connection::{
     Capabilities, Connection, Connections, HostDescription, HostKind, Registration,
 };
-use inseam_seams::finder::{Discovery, Expansion, Finder, QueryTrace, RankedSource};
+use inseam_seams::finder::{Discovery, Expansion, Finder, FinderRequest, QueryTrace, RankedSource};
 use inseam_seams::node::{Node, SecretKeyBytes};
 use inseam_seams::roster::{HostStewards, Invitation, Roster};
 use inseam_seams::text::count_lines;
@@ -461,10 +461,14 @@ impl StubFinder {
 
 #[async_trait::async_trait]
 impl Finder for StubFinder {
-    async fn query(&self, _text: &str, limit: usize) -> Result<Discovery, SeamError> {
+    async fn discover(&self, request: &FinderRequest) -> Result<Discovery, SeamError> {
         self.queries.fetch_add(1, Ordering::SeqCst);
         Ok(Discovery {
-            ranked: lock(&self.ranked).iter().take(limit).cloned().collect(),
+            ranked: lock(&self.ranked)
+                .iter()
+                .take(request.limit)
+                .cloned()
+                .collect(),
             trace: QueryTrace::default(),
         })
     }
@@ -523,6 +527,7 @@ impl TestSource {
                 modified: None,
                 observed: Timestamp(0),
                 properties: Vec::new(),
+                facets: Vec::new(),
                 hint: None,
                 content_digest: None,
             },

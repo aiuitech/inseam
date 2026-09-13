@@ -275,6 +275,27 @@ pub enum TrustLevel {
     Verified,
 }
 
+/// What the host says about a source, in the connection's own vocabulary
+/// (`channel`, `thread`, `label`, `repository`, `author`): descriptive
+/// metadata the vocabulary pass turns into facet rows and query filters
+/// (`design/vocabulary.md`, facets). A separate thing from a [`Property`],
+/// which carries a trust level and feeds boundary filtering — a channel
+/// name must never be read as an access decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Facet {
+    pub key: String,
+    pub value: String,
+}
+
+impl Facet {
+    pub fn new(key: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            value: value.into(),
+        }
+    }
+}
+
 /// A `key:value` trust claim attached to a host or a source's envelope.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Property {
@@ -296,6 +317,10 @@ pub struct Envelope {
     pub modified: Option<Timestamp>,
     pub observed: Timestamp,
     pub properties: Vec<Property>,
+    /// Descriptive facets in the connection's vocabulary; empty for hosts
+    /// that declare none (a path host's container is its folder).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub facets: Vec<Facet>,
     /// Title-grade discovery hint the index can use without fetching.
     pub hint: Option<String>,
     /// BLAKE3 over the source's raw bytes, when the steward has one: set from

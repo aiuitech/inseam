@@ -18,6 +18,7 @@
 //! applies (`design/composition.md`).
 
 mod install;
+mod vocabulary;
 pub(crate) mod ladder;
 mod merge;
 mod network;
@@ -266,15 +267,14 @@ impl OperationsService {
 async fn query_across(
     finder: &dyn Finder,
     routing: Option<&dyn Routing>,
-    text: &str,
-    limit: usize,
+    request: &FinderRequest,
 ) -> Result<(Vec<QueryResult>, QueryTrace, Vec<FanOutSummary>), SeamError> {
     let (local, replies) = tokio::join!(
-        ladder::query(finder, text, limit),
-        fan_out(routing, text, limit)
+        ladder::query(finder, request),
+        fan_out(routing, &request.text, request.limit)
     );
     let (results, trace) = local?;
-    let merged = merge::merge(results, replies, limit);
+    let merged = merge::merge(results, replies, request.limit);
     Ok((merged.results, trace, merged.remote))
 }
 
@@ -301,8 +301,15 @@ impl Operations for OperationsService {
         let started = std::time::Instant::now();
         let limit = ladder::clamp_query_limit(request.limit);
         let routing = self.network.routing.as_deref();
+        let finder_request = FinderRequest {
+            text: request.text,
+            limit,
+            overrides: request.finder,
+            explain: request.explain,
+            filters: request.filters,
+        };
         let (results, trace, remote) =
-            query_across(self.finder.as_ref(), routing, &request.text, limit).await?;
+            query_across(self.finder.as_ref(), routing, &finder_request).await?;
         let meta = QueryMeta {
             elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
             // The clamp above bounds `limit` to 50, so this conversion
@@ -596,7 +603,16 @@ impl Operations for OperationsService {
             cached_embeddings: caches.embeddings,
             cached_transform_outputs: caches.transforms,
             remote_sources: stats.remote_sources,
+            vocabulary: Some(self.store.vocabulary_counts().await?),
         })
+    }
+
+    async fn vocabulary(
+        &self,
+        request: VocabularyRequest,
+    ) -> Result<VocabularyResponse, SeamError> {
+        self.guard("vocabulary")?;
+        vocabulary::respond(&self.store, request).await
     }
 
     async fn repair(&self, request: RepairRequest) -> Result<RepairReport, SeamError> {
@@ -784,7 +800,7 @@ mod tests {
     #[tokio::test]
     async fn a_query_without_routing_is_the_local_list() {
         let (finder, _dir) = finder_with(&[("inseam://fs-a/a.md", None)]).await;
-        let (results, _trace, remote) = query_across(finder.as_ref(), None, "a", 8)
+        let (results, _trace, remote) = query_across(finder.as_ref(), None, &FinderRequest::new("a", 8))
             .await
             .expect("queries");
         assert_eq!(results.len(), 1);
@@ -820,7 +836,7 @@ mod tests {
             ],
             fan_outs: AtomicU32::new(0),
         };
-        let (results, _trace, remote) = query_across(finder.as_ref(), Some(&routing), "x", 8)
+        let (results, _trace, remote) = query_across(finder.as_ref(), Some(&routing), &FinderRequest::new("x", 8))
             .await
             .expect("queries");
         assert_eq!(routing.fan_outs.load(Ordering::SeqCst), 1);

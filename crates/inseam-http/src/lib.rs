@@ -776,6 +776,7 @@ mod tests {
         AwaitAuthorizationRequest, ExpandResponse, FetchResponse, IndexRequest, LogSummary,
         NetworkHostView, NetworkNodeView, PLUGIN_UPLOAD_BYTES_MAX, PluginState, QueryMeta,
         QueryResponse, RepairOutcome, RepairReport, RepairRequest, ScanResponse,
+        VocabularyRequest, VocabularyResponse,
     };
     use inseam_seams::roster::Invitation;
     use inseam_seams::sweep::IndexReport;
@@ -920,6 +921,13 @@ mod tests {
             }])
         }
 
+        async fn vocabulary(
+            &self,
+            _request: VocabularyRequest,
+        ) -> Result<VocabularyResponse, SeamError> {
+            Ok(VocabularyResponse::default())
+        }
+
         async fn catalog(&self, _request: CatalogRequest) -> Result<CatalogResponse, SeamError> {
             Ok(CatalogResponse {
                 sources: 3,
@@ -947,6 +955,7 @@ mod tests {
                 cached_embeddings: 0,
                 cached_transform_outputs: 0,
                 remote_sources: 0,
+                vocabulary: None,
             })
         }
 

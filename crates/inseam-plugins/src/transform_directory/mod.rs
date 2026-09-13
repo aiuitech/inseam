@@ -133,6 +133,7 @@ mod tests {
             modified: Some(Timestamp(1_700_000_000)),
             observed: Timestamp(1_700_000_100),
             properties: Vec::new(),
+            facets: Vec::new(),
             hint: Some("notes".into()),
             content_digest: None,
         }

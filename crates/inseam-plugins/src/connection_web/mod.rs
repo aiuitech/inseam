@@ -252,6 +252,7 @@ impl Connection for WebHost {
             modified: None,
             observed: Timestamp::from(SystemTime::now()),
             properties: Vec::new(),
+            facets: Vec::new(),
             hint,
             content_digest: None,
         })

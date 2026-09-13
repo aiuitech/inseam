@@ -16,7 +16,7 @@ use inseam_kernel::store::{IndexStore, SourceId, StoredFragment, StoredSource};
 use inseam_seams::SeamError;
 use inseam_seams::connection::Connection;
 use inseam_seams::dates::ymd;
-use inseam_seams::finder::{Finder, QueryTrace, RankedFragment, RankedSource};
+use inseam_seams::finder::{Finder, FinderRequest, QueryTrace, RankedFragment, RankedSource};
 use inseam_seams::operations::{
     EnvelopeView, ExpandResponse, FETCH_BYTES_MAX, FetchBytesResponse, FetchResponse, FileBytes,
     FragmentHint, FragmentView, QueryResult, RelationView, SCAN_LINES_MAX, ScanResponse,
@@ -90,14 +90,16 @@ pub(crate) fn clamp_query_limit(limit: usize) -> usize {
 /// results, `via` unset because they are this node's own.
 pub(crate) async fn query(
     finder: &dyn Finder,
-    text: &str,
-    limit: usize,
+    request: &FinderRequest,
 ) -> Result<(Vec<QueryResult>, QueryTrace), SeamError> {
-    assert!(limit >= 1);
-    assert!(limit <= QUERY_LIMIT_MAX);
-    let discovery = finder.query(text, limit).await?;
+    assert!(request.limit >= 1);
+    assert!(request.limit <= QUERY_LIMIT_MAX);
+    let discovery = finder.discover(request).await?;
     let results: Vec<QueryResult> = discovery.ranked.into_iter().map(query_result).collect();
-    assert!(results.len() <= limit, "the finder honors its limit");
+    assert!(
+        results.len() <= request.limit,
+        "the finder honors its limit"
+    );
     Ok((results, discovery.trace))
 }
 

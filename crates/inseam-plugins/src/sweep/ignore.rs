@@ -238,6 +238,7 @@ mod tests {
             modified: None,
             observed: Timestamp(0),
             properties: Vec::new(),
+            facets: Vec::new(),
             hint: Some(hint.into()),
             content_digest: None,
         };

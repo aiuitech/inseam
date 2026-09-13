@@ -54,6 +54,39 @@ class HarnessTests(unittest.TestCase):
 
         self.assertEqual(arguments[-4:], ["statins and cancer", "--limit", "10", "--json"])
 
+    def test_query_arguments_append_finder_overrides_and_explain(self) -> None:
+        arguments = harness.query_arguments(
+            Path("data"), Path("composition"), "statins", 50,
+            overrides=["seed_lists.cluster.weight=0", "hub_degree_max=200"], explain=True,
+        )
+
+        self.assertEqual(arguments[-8:], [
+            "--limit", "50", "--json",
+            "--finder", "seed_lists.cluster.weight=0",
+            "--finder", "hub_degree_max=200",
+            "--explain",
+        ])
+
+    def test_query_arguments_refuse_malformed_overrides(self) -> None:
+        for override in ["hub_degree_max", "=200", "key=", "key=a b", "-limit=3"]:
+            with self.assertRaises(harness.BenchmarkError):
+                harness.query_arguments(
+                    Path("data"), Path("composition"), "text", 10, overrides=[override]
+                )
+        with self.assertRaises(harness.BenchmarkError):
+            harness.query_arguments(
+                Path("data"), Path("composition"), "text", 10,
+                overrides=["k=v"] * (harness.FINDER_OVERRIDES_MAX + 1),
+            )
+
+    def test_manifest_finder_overrides_must_be_a_list_of_key_values(self) -> None:
+        self.assertEqual(
+            harness.manifest_option_finder_overrides({"o": ["a.b=1"]}, "o"), ["a.b=1"]
+        )
+        for value in ["a.b=1", ["a.b"], [3], ["k=v"] * (harness.FINDER_OVERRIDES_MAX + 1)]:
+            with self.assertRaises(harness.BenchmarkError):
+                harness.manifest_option_finder_overrides({"o": value}, "o")
+
     def test_observability_preserves_folder_ranks_and_phase_percentiles(self) -> None:
         queries = [{"query_id": "q1", "query_meta": {"seeds_ms": 7}, "results": [
             {"envelope": {"content_type": "inode/directory"}},
