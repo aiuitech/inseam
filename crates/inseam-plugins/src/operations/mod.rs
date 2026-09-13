@@ -37,11 +37,12 @@ use inseam_kernel::substrate::{
     Manifest, Plugin, PluginError, STORE, SubstrateError, Verdict,
 };
 use inseam_seams::SeamError;
+use inseam_seams::call_capture::{CALL_CAPTURE, CallCapture, CaptureStatus};
 use inseam_seams::connection::{
     CONNECTIONS, Connections, Registration as ConnectionRegistration, resolve_default,
 };
 use inseam_seams::dates::ymd;
-use inseam_seams::finder::{FINDER, Finder, QueryTrace};
+use inseam_seams::finder::{FINDER, Finder, FinderRequest, QueryTrace};
 use inseam_seams::node::NODE;
 use inseam_seams::oauth::{
     AuthorizationCallback, AuthorizationStarted, Grant, GrantId, OAUTH, OAuth,
@@ -52,8 +53,9 @@ use inseam_seams::operations::{
     FetchBytesRequest, FetchBytesResponse, FetchRequest, FetchResponse, GrantView, HostView,
     IndexRequest, InstallPluginRequest, JoinRequest, NetworkView, OPERATIONS, OperationRequest,
     Operations, PluginView, QueryMeta, QueryRequest, QueryResponse, QueryResult, RepairOutcome,
-    RepairReport, RepairRequest, RevokeGrantRequest, ScanRequest, ScanResponse, Settings,
-    StatusReport,
+    RepairReport, RepairRequest, RevokeGrantRequest, ScanRequest, ScanResponse,
+    SetCaptureNumberRequest, Settings, StatusReport, VerifyCaptureNumberRequest,
+    VocabularyRequest, VocabularyResponse,
 };
 use inseam_seams::roster::{Invitation, ROSTER};
 use inseam_seams::routing::{FanOutReply, ROUTING, Routing};
@@ -90,6 +92,7 @@ impl Plugin for OperationsPlugin {
             Inject::required("sweep"),
             Inject::required("composition"),
             Inject::optional("oauth"),
+            Inject::optional("call-capture"),
             // The network seams are optional so a node composed without
             // them keeps every local operation; each network operation
             // then names the entry it lacks.
@@ -112,6 +115,7 @@ impl Plugin for OperationsPlugin {
             finder: cx.get(&FINDER)?,
             sweep: cx.get(&SWEEP)?,
             oauth: cx.try_get(&OAUTH)?,
+            call_capture: cx.try_get(&CALL_CAPTURE)?,
             network: NetworkOperations {
                 routing: cx.try_get(&ROUTING)?,
                 roster: cx.try_get(&ROSTER)?,
@@ -139,6 +143,9 @@ pub struct OperationsService {
     /// Absent when no oauth entry is active: the grant operations then say
     /// so instead of pretending there are no grants.
     oauth: Option<Arc<dyn OAuth>>,
+    /// Absent when no call-capture provider is mounted (no telephony
+    /// entry): the capture operations then name what is missing.
+    call_capture: Option<Arc<dyn CallCapture>>,
     /// The network seams, each absent on a node composed without it.
     network: NetworkOperations,
     /// The kernel's edit channel: how a plugin asks the distribution to
@@ -153,6 +160,15 @@ impl OperationsService {
     fn oauth(&self) -> Result<&Arc<dyn OAuth>, SeamError> {
         self.oauth.as_ref().ok_or_else(|| {
             SeamError::Unavailable("the oauth entry is not active on this node".to_string())
+        })
+    }
+
+    fn call_capture(&self) -> Result<&Arc<dyn CallCapture>, SeamError> {
+        self.call_capture.as_ref().ok_or_else(|| {
+            SeamError::Unavailable(
+                "no call-capture provider is active on this node (mount a `connection-twilio-calls` entry)"
+                    .to_string(),
+            )
         })
     }
 
@@ -430,6 +446,29 @@ impl Operations for OperationsService {
         let grant = self.grant(&request.grant)?;
         grant.revoke().await?;
         Ok(grant_view(grant.as_ref()).await)
+    }
+
+    async fn call_capture_status(&self) -> Result<CaptureStatus, SeamError> {
+        // Owner operation: not boundary-guarded (local transports only).
+        self.call_capture()?.status().await
+    }
+
+    async fn set_capture_number(
+        &self,
+        request: SetCaptureNumberRequest,
+    ) -> Result<CaptureStatus, SeamError> {
+        self.call_capture()?.set_owner_number(request.number).await
+    }
+
+    async fn verify_capture_number(
+        &self,
+        request: VerifyCaptureNumberRequest,
+    ) -> Result<CaptureStatus, SeamError> {
+        self.call_capture()?.verify_owner_number(&request.code).await
+    }
+
+    async fn start_call_capture(&self) -> Result<CaptureStatus, SeamError> {
+        self.call_capture()?.start().await
     }
 
     async fn plugins(&self) -> Result<Vec<PluginView>, SeamError> {

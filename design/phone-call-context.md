@@ -1,6 +1,6 @@
 # Phone call context
 
-Research checked on 2026-09-13. These are options and proposed experiments, not a decision to build a dialer or a carrier service. The current implementation remains the import flow in [ios-app.md](ios-app.md).
+Research checked on 2026-09-13. These are options and proposed experiments, not a decision to build a dialer or a carrier service. The import flow in [ios-app.md](ios-app.md) remains; the callback conference route below has since been adopted as [call-capture](call-capture.md), with its experiment gate still open.
 
 The goal is to remember conversations with minimal interruption to the user's existing setup. Keeping the existing carrier, number, and calling habits is a requirement. Carrier switching, number porting, and replacement SIM/eSIM service are excluded. Preserving the number alone does not satisfy this requirement.
 

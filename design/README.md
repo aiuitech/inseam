@@ -13,6 +13,8 @@ Current concepts include [network](network.md), which defines the graph of nodes
 
 Research supporting the iOS design: [phone-call-context](phone-call-context.md) compares Apple recording imports, Mac capture, carrier recording, and programmable calling. Its alternatives are proposals with explicit validation gates, not adopted architecture.
 
+[Call capture](call-capture.md) adopts the callback route from that research: the owner's always-on node owns a number in a per-tenant Twilio subaccount, rings the owner on request, records from the merge, and archives the call and its transcript as sources.
+
 [In-person meeting recording](meeting-recording.md) defines lossless stereo capture, mono fallback, capture metadata, and interruption handling in the iOS app.
 
 [Vocabulary](vocabulary.md) is a proposal with validation gates: the corpus's own terms mined from the index's statistics, grouped into clusters the model grounds once each, so documents and questions are read in the corpus's words and hub terms are bounded rather than damped.

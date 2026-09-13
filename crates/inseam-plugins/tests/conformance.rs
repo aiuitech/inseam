@@ -21,6 +21,7 @@ fn conformance_config(name: &str) -> toml::Table {
         | "connection-fs"
         | "connection-google"
         | "connection-web"
+        | "connection-twilio-calls"
         | "oauth"
         | "llm-endpoint"
         | "transforms"

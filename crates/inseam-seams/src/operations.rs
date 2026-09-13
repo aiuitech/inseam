@@ -19,6 +19,9 @@ use inseam_kernel::substrate::{FiberState, FiberView, Guard, SecretNeed, Service
 use serde::{Deserialize, Serialize};
 
 use crate::SeamError;
+use crate::call_capture::{CaptureStatus, PhoneNumber};
+use crate::finder::QueryFilters;
+use inseam_kernel::store::{VocabularyCounts, VocabularyKind};
 use crate::connection::{Capabilities, HostKind};
 use crate::finder::QueryTrace;
 use crate::llm::LlmLane;
@@ -102,6 +105,23 @@ pub trait Operations: Send + Sync {
     ) -> Result<GrantView, SeamError>;
     /// Owner operation: forget a grant's tokens; hosts behind it withdraw.
     async fn revoke_grant(&self, request: RevokeGrantRequest) -> Result<GrantView, SeamError>;
+
+    /// Owner: where call capture stands on this node — the number to
+    /// merge, the owner's own number, the last call placed.
+    async fn call_capture_status(&self) -> Result<CaptureStatus, SeamError>;
+    /// Owner: begin verifying the owner's phone; the node calls it and
+    /// speaks a code.
+    async fn set_capture_number(
+        &self,
+        request: SetCaptureNumberRequest,
+    ) -> Result<CaptureStatus, SeamError>;
+    /// Owner: finish verification with the spoken code.
+    async fn verify_capture_number(
+        &self,
+        request: VerifyCaptureNumberRequest,
+    ) -> Result<CaptureStatus, SeamError>;
+    /// Owner: place the capture call to the verified number now.
+    async fn start_call_capture(&self) -> Result<CaptureStatus, SeamError>;
     /// Owner operation: every composition entry as the kernel runs it —
     /// what `inseam plugins` prints, for every transport.
     async fn plugins(&self) -> Result<Vec<PluginView>, SeamError>;
@@ -504,6 +524,16 @@ pub struct AuthorizeGrantRequest {
 pub struct AwaitAuthorizationRequest {
     /// The `state` the authorization started with.
     pub state: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetCaptureNumberRequest {
+    pub number: PhoneNumber,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerifyCaptureNumberRequest {
+    pub code: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

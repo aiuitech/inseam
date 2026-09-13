@@ -52,6 +52,12 @@ A hosted node lives at `<tenant>.inseam.io`, and Google matches redirect URIs ex
 
 This revisits a decision [connections](connections.md) recorded as not taken — "a central callback broker relaying codes to nodes" — and it is a narrower thing than what was rejected there. The router never receives the code server-side: it redirects a browser that is already carrying it, the same way the provider did. It holds no tokens, performs no exchange, and cannot replay anything. What it does add is a name-resolution service in the sign-in path, which is a real availability dependency and is accepted as one — sign-in for hosted tenants fails while it is down, existing grants keep working. Self-hosted nodes are unaffected; they register their own redirect URI directly, as today.
 
+## Telephony is a subaccount per tenant
+
+Call capture ([call-capture](call-capture.md)) gives every hosted node a phone number. The credential that reaches it is the same shape as the volume key: **one Twilio subaccount per tenant**, created by the control plane at provision time, with the number bought inside it, a transcription service created with the tenant's own key, and an **API key scoped to the subaccount** handed to the node through cloud-init. The node reaches one account; the master credentials never leave the control plane. The key's secret is returned once and never stored — a rebuild mints a new one and deletes the old, like the node token — so the control plane holds SIDs and nothing that opens a tenant's calls.
+
+Recordings rest in Twilio under an account the master credentials can open, which is the one place the invariant above would leak. The node closes it: a recording is deleted from Twilio the moment the node's archive has the audio and the transcript has settled, so the window is minutes and the only durable copy is on the tenant's volume. Suspend and archive suspend the subaccount (calls stop; the number is kept and still billed); destroy releases the number and closes the subaccount, which is permanent. The number's inbound instructions are one static TwiML document the console serves for every tenant alike, content-free by construction. *Rejected:* the master credentials on every node (one compromised node reads every tenant's calls — the Hetzner-token argument again), and a separate Twilio account per tenant (a billing relationship each; subaccounts isolate under one bill).
+
 ## Private plugins are the moat
 
 Inseam authors plugins it does not publish, and ships them to the hosted distribution. This reverses [positioning](positioning.md)'s earlier rejection of proprietary connectors, and the reasons are recorded there. The mechanism is not new: a **custom distribution** — a private repo of linked plugins compiled from source, inheriting the conformance battery through the shared harness — is already the professional-configuration path for the linked tier ([plugins](plugins.md)). The hosted distribution is one.
@@ -91,6 +97,7 @@ Volumes grow but do not shrink, so a customer who deletes half their catalog can
 ## Open questions
 
 - Provisioned versus used gigabytes as the billed quantity, and whether volume shrink is worth a migration path.
+- Metering call minutes: the number, the two legs, recording, and transcription are per-use costs the flat rate does not cover; a pass-through line or a monthly minute allowance both fit the existing meter shape ([call-capture](call-capture.md)).
 - Where the per-tenant volume key lives such that the control plane can attach a volume it cannot decrypt, and what recovery looks like when a customer loses their owner token.
 - Whether `auth.inseam.io` should also serve self-hosted nodes as an opt-in convenience, which would make it a shared dependency the design currently avoids.
 - Cohort assignment policy for releases: how long canary runs, and what health signal promotes it.

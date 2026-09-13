@@ -60,6 +60,21 @@ services = [
 ]
 sources_max = 5000
 
+# Call capture through the tenant's Twilio subaccount (design/call-capture.md).
+# The control plane provisions the subaccount, API key, number, and
+# transcription service, and hands them to the node through the environment.
+[[entry]]
+id = "twilio-calls"
+disabled = false
+
+[entry.config]
+account_sid_env = "TWILIO_ACCOUNT_SID"
+api_key_sid_env = "TWILIO_API_KEY_SID"
+api_key_secret_env = "TWILIO_API_KEY_SECRET"
+phone_number_env = "TWILIO_PHONE_NUMBER"
+intelligence_service_sid_env = "TWILIO_INTELLIGENCE_SERVICE_SID"
+retain_at_provider = false
+
 [[entry]]
 id = "transforms"
 disabled = false

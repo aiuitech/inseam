@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var queryText = ""
     @State private var showingSettings = false
     @State private var showingRecorder = false
+    @State private var showingCapture = false
 
     var body: some View {
         @Bindable var model = model
@@ -15,7 +16,10 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 12) {
                 StitchStrip(height: 10)
                     .foregroundStyle(Brand.thread)
-                meetingButton
+                HStack {
+                    meetingButton
+                    captureButton
+                }
                 TextField("search your data…", text: $queryText)
                     .textFieldStyle(.roundedBorder)
                     .font(Brand.font(.body))
@@ -68,6 +72,9 @@ struct ContentView: View {
             .sheet(isPresented: $showingRecorder) {
                 MeetingRecordingView().environment(model)
             }
+            .sheet(isPresented: $showingCapture) {
+                CallCaptureView().environment(model)
+            }
             .sheet(isPresented: $showingSettings) {
                 SettingsView()
                     .environment(model)
@@ -86,6 +93,19 @@ struct ContentView: View {
         .buttonStyle(.borderedProminent)
         .tint(Brand.thread)
         .foregroundStyle(Brand.ground)
+        .disabled(model.busy)
+    }
+
+    /// Call capture is the hosted node's to place; the phone only asks.
+    private var captureButton: some View {
+        Button {
+            showingCapture = true
+        } label: {
+            Label("capture this call", systemImage: "phone.badge.plus")
+                .font(Brand.font(.body))
+        }
+        .buttonStyle(.bordered)
+        .tint(Brand.thread)
         .disabled(model.busy)
     }
 

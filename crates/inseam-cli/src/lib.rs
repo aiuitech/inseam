@@ -30,15 +30,19 @@ use agent::{AgentEvent, run_agent};
 use inseam_kernel::address::{Address, HostId, Timestamp};
 use inseam_kernel::network::{NodeId, NodeRecord};
 use inseam_kernel::substrate::{Composition, CompositionEdits, FiberState, Kernel, SubstrateError};
-use inseam_seams::dates::ymd;
+use inseam_seams::dates::{parse_ymd_epoch, ymd};
 use inseam_seams::llm::{self, LLM, LlmLane, ModelInfo};
+use inseam_seams::call_capture::{CaptureStatus, OwnerNumber, PhoneNumber};
 use inseam_seams::oauth::{GrantId, GrantState, Redirect};
 use inseam_seams::operations::{
     AuthorizeGrantRequest, AwaitAuthorizationRequest, CatalogFilter, CatalogRequest,
     CatalogResponse, ExpandRequest, ExpelRequest, FetchBytesRequest, FetchRequest, GrantView,
     IndexRequest, JoinRequest, NetworkView, OPERATIONS, Operations, QueryRequest, QueryResponse,
     RepairOutcome, RepairReport, RepairRequest, RevokeGrantRequest, ScanRequest,
+    SetCaptureNumberRequest, VerifyCaptureNumberRequest, VocabularyRequest, VocabularyResponse,
 };
+use inseam_kernel::store::VocabularyKind;
+use inseam_seams::finder::QueryFilters;
 use inseam_seams::roster::Invitation;
 use inseam_seams::sweep::DeepBudget;
 
@@ -64,6 +68,11 @@ plugin = "oauth"
 [[entry]]
 id = "google"
 plugin = "connection-google"
+
+[[entry]]
+id = "twilio-calls"
+plugin = "connection-twilio-calls"
+disabled = true
 
 [[entry]]
 id = "llm"
@@ -369,6 +378,16 @@ enum Command {
         #[arg(long, global = true)]
         json: bool,
     },
+    /// Call capture: the phone number this node can join a call through,
+    /// the owner's verified phone, and the button that places the call
+    /// (`docs/indexing/call-capture-host.md`).
+    Capture {
+        #[command(subcommand)]
+        command: Option<CaptureCommand>,
+        /// Emit the capture status as JSON.
+        #[arg(long, global = true)]
+        json: bool,
+    },
     /// Repair the derived search index without fetching or re-embedding
     /// sources. Use --rebuild to reconstruct an existing DiskANN index.
     Repair {
@@ -504,6 +523,21 @@ enum PluginCommand {
         #[arg(long, env = "INSEAM_REGISTRY")]
         registry: Option<String>,
     },
+}
+
+#[derive(Subcommand)]
+enum CaptureCommand {
+    /// Set the owner's phone: the node calls it and speaks a six-digit
+    /// code, which `inseam capture verify <code>` confirms.
+    Number {
+        /// The owner's phone in E.164 form (`+14155550123`).
+        number: String,
+    },
+    /// Confirm the code the verification call spoke.
+    Verify { code: String },
+    /// Place the capture call to the verified number now; answer it and
+    /// merge it into the call you are on.
+    Start,
 }
 
 #[derive(Subcommand)]
@@ -1096,6 +1130,10 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
             let ops = kernel.service(&OPERATIONS)?;
             run_network_command(ops.as_ref(), command, json).await?;
         }
+        Command::Capture { command, json } => {
+            let ops = kernel.service(&OPERATIONS)?;
+            run_capture_command(ops.as_ref(), command, json).await?;
+        }
         Command::Repair { rebuild } => {
             let ops = kernel.service(&OPERATIONS)?;
             let report = repair_with_progress(ops.as_ref(), rebuild).await?;
@@ -1127,6 +1165,61 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
     }
     kernel.shutdown().await;
     Ok(())
+}
+
+/// The `capture` group: every action answers with the capture status,
+/// printed the same way as the bare listing.
+async fn run_capture_command(
+    operations: &dyn Operations,
+    command: Option<CaptureCommand>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let status = match command {
+        None => operations.call_capture_status().await?,
+        Some(CaptureCommand::Number { number }) => {
+            let number = PhoneNumber::parse(&number)?;
+            let status = operations
+                .set_capture_number(SetCaptureNumberRequest { number })
+                .await?;
+            println!("Calling {} with a six-digit code; confirm it with `inseam capture verify <code>`.", status.owner_number_masked());
+            status
+        }
+        Some(CaptureCommand::Verify { code }) => {
+            operations
+                .verify_capture_number(VerifyCaptureNumberRequest { code })
+                .await?
+        }
+        Some(CaptureCommand::Start) => {
+            let status = operations.start_call_capture().await?;
+            println!("Calling {}: answer, then merge the call into the one you are on.", status.owner_number_masked());
+            status
+        }
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&status)?);
+    } else {
+        print_capture_status(&status);
+    }
+    Ok(())
+}
+
+fn print_capture_status(status: &CaptureStatus) {
+    println!("capture number   {}", status.capture_number);
+    let owner = match &status.owner_number {
+        OwnerNumber::Unset => "unset — run `inseam capture number +<country><number>`".to_string(),
+        OwnerNumber::Pending { number, expires_at } => format!(
+            "{} pending verification until {}",
+            number.masked(),
+            ymd(*expires_at)
+        ),
+        OwnerNumber::Verified { number } => format!("{} verified", number.masked()),
+    };
+    println!("owner number     {owner}");
+    match &status.last_call {
+        Some(call) => println!("last call        {} on {}", call.id, ymd(call.started_at)),
+        None => println!("last call        none"),
+    }
+    println!("recordings       {}", status.recordings_archived);
 }
 
 /// The `network` group: every ceremony answers with the network as it

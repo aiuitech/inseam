@@ -21,6 +21,9 @@ final class NodeModel {
     private(set) var parkedWarnings: [String] = []
     /// A recording the user is attaching to a call (the attach sheet).
     var pendingAttachment: PendingAttachment?
+    /// The owner's always-on node, when its URL and owner token are saved:
+    /// call capture is that node's to place (design/call-capture.md).
+    private(set) var hostedNode: HostedNodeClient?
 
     let coreVersion = CoreNode.coreVersion()
     let dataDir: URL
@@ -39,6 +42,12 @@ final class NodeModel {
         dataDir = support.appendingPathComponent("inseam")
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         recordings = CallRecordingsHost(folder: documents.appendingPathComponent("Call Recordings"))
+        reloadHostedNode()
+    }
+
+    /// Re-read the hosted node's URL and token after settings change.
+    func reloadHostedNode() {
+        hostedNode = HostedNodeClient.savedConfiguration().map { HostedNodeClient(configuration: $0) }
     }
 
     /// Open the node with the on-device embedder when the device has one,

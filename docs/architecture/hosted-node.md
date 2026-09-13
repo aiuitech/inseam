@@ -39,6 +39,17 @@ reports the resulting callback URL, which must be registered on the OAuth
 client. `GET /owner/grants` and `POST /owner/grants/revoke` complete the set
 ([../plugins/oauth.md](../plugins/oauth.md)).
 
+## Call capture from the phone
+
+`GET /owner/capture`, `POST /owner/capture/number`, `POST /owner/capture/verify`,
+and `POST /owner/capture/start` are the `call-capture` owner operations
+([../indexing/call-capture-host.md](../indexing/call-capture-host.md)). The iOS
+app drives them against a hosted node with the owner token, logging in for a
+session cookie exactly as the console does. On a hosted node the Twilio
+subaccount, API key, number, and transcription service arrive through the
+environment at provision time, and the `twilio-calls` entry is enabled in the
+tenant's composition overlay; the control plane's side is in inseam-console.
+
 `GET /api/v1/owner/raw?address=<address>` is the one route whose answer is
 not JSON: the `fetch_bytes` operation unwrapped to a body under its own
 `Content-Type`, so the console's `<img>` or any HTTP client with the owner

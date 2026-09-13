@@ -70,6 +70,8 @@ So the feature is shaped around what exists:
 
 Everything a phone number would have carried automatically is carried by the sidecar, claimed by the owner.
 
+The second route is the always-on node's, and the phone only asks for it: **capture this call** drives the `call-capture` owner operations on the hosted node over its HTTP owner API ([call-capture](call-capture.md)). The node rings the phone from the number it owns; the owner answers and merges. The phone holds the node's URL and owner token (Keychain) and nothing else — no Twilio credential, no number of its own — and `CXCallObserver` can later confirm that a second call connected without ever learning the number.
+
 *Rejected:* **inseam as a VoIP dialer.** A CallKit VoIP call the app itself places owns its audio pipeline and could record both parties on separate channels. That is a phone product, not a context product, and it records only calls made through inseam. *Rejected:* **reading Notes' container.** It is sandboxed and end-to-end encrypted; there is no API.
 
 ## Storage

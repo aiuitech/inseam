@@ -13,6 +13,9 @@ struct SettingsView: View {
                     SecretsSettingsView()
                     AdvancedSettingsView()
                 }
+                Section("hosted node") {
+                    HostedNodeSettingsView()
+                }
                 Section {
                     LabeledContent("core", value: model.coreVersion)
                     Text(model.dataDir.path)
@@ -530,6 +533,59 @@ private struct SecretsEditor: View {
             message = "Removed. Reopening node…"
         } catch {
             message = error.localizedDescription
+        }
+    }
+}
+
+/// Where the phone finds the owner's always-on node for call capture.
+/// The URL is a preference; the owner token is a Keychain secret like
+/// every other secret the app holds.
+private struct HostedNodeSettingsView: View {
+    @Environment(NodeModel.self) private var model
+    @State private var url = UserDefaults.standard.string(forKey: HostedNodeClient.baseURLDefaultsKey) ?? ""
+    @State private var token = ""
+    @State private var message = ""
+
+    var body: some View {
+        NavigationLink("hosted node") {
+            Form {
+                Section {
+                    labeledTextField("node URL", text: $url, prompt: "https://you.inseam.io")
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    ConfigField("owner token") {
+                        SecureField("from the claim page", text: $token)
+                    }
+                    Button("save") { save() }
+                        .disabled(url.isEmpty || model.busy)
+                } footer: {
+                    Text("Call capture is placed by this node: it owns the phone line and keeps the recordings. Leave the token blank to keep the one already saved.")
+                        .font(Brand.font(.caption2))
+                }
+                if !message.isEmpty {
+                    Text(message).font(Brand.font(.caption)).foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("hosted node")
+        }
+    }
+
+    private func save() {
+        guard let parsed = URL(string: url.trimmingCharacters(in: .whitespaces)), parsed.host != nil else {
+            message = "enter the node's full URL, scheme included"
+            return
+        }
+        do {
+            UserDefaults.standard.set(parsed.absoluteString, forKey: HostedNodeClient.baseURLDefaultsKey)
+            if !token.isEmpty {
+                try SecretStore.write(name: HostedNodeClient.ownerTokenSecretName, value: token)
+                token = ""
+            }
+            model.reloadHostedNode()
+            message = model.hostedNode == nil ? "saved the URL; an owner token is still needed" : "saved"
+        } catch {
+            message = "save failed: \(error.localizedDescription)"
         }
     }
 }

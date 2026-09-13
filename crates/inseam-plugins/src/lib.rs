@@ -13,6 +13,7 @@
 
 pub mod connection_fs;
 pub mod connection_google;
+pub mod connection_twilio_calls;
 pub mod connection_web;
 pub mod connections;
 pub mod embedder;
@@ -53,6 +54,7 @@ pub fn factories() -> Vec<Arc<dyn PluginFactory>> {
         Arc::new(connection_fs::FsConnectionFactory),
         Arc::new(connection_google::GoogleConnectionFactory),
         Arc::new(connection_web::WebConnectionFactory),
+        Arc::new(connection_twilio_calls::TwilioCallsFactory),
         Arc::new(oauth::OAuthFactory),
         Arc::new(llm_endpoint::LlmEndpointFactory),
         Arc::new(embedder::EmbedderFactory),

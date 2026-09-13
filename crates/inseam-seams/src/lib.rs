@@ -18,6 +18,7 @@
 //! modules: the kernel knows no file format, renders nothing, and opens no
 //! socket.
 
+pub mod call_capture;
 pub mod connection;
 pub mod dates;
 pub mod discovery;

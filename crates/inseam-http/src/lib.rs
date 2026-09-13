@@ -36,9 +36,10 @@ use inseam_seams::operations::{
     AuthorizeGrantRequest, CatalogRequest, CatalogResponse, ExpandRequest, ExpandResponse,
     ExpelRequest, FetchBytesRequest, FetchBytesResponse, FetchRequest, FetchResponse, GrantView,
     HostView, IndexRequest, InstallPluginRequest, JoinRequest, NetworkView, Operations, PluginView,
-    QueryRequest, QueryResponse, RevokeGrantRequest, ScanRequest, ScanResponse, Settings,
-    StatusReport,
+    QueryRequest, QueryResponse, RevokeGrantRequest, ScanRequest, ScanResponse,
+    SetCaptureNumberRequest, Settings, StatusReport, VerifyCaptureNumberRequest,
 };
+use inseam_seams::call_capture::CaptureStatus;
 use inseam_seams::sweep::DeepBudget;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
@@ -302,6 +303,10 @@ fn owner_router(state: &AppState) -> Router<AppState> {
         .route("/grants", get(grants))
         .route("/grants/authorize", post(authorize_grant))
         .route("/grants/revoke", post(revoke_grant))
+        .route("/capture", get(call_capture_status))
+        .route("/capture/number", post(set_capture_number))
+        .route("/capture/verify", post(verify_capture_number))
+        .route("/capture/start", post(start_call_capture))
         .route("/plugins", get(plugins))
         .route("/settings", get(settings).put(configure))
         .route("/network", get(network))
@@ -418,6 +423,38 @@ async fn revoke_grant(
             })
             .await?,
     ))
+}
+
+async fn call_capture_status(
+    State(state): State<AppState>,
+) -> Result<Json<CaptureStatus>, ApiError> {
+    Ok(Json(state.operations.get().call_capture_status().await?))
+}
+
+async fn set_capture_number(
+    State(state): State<AppState>,
+    Json(request): Json<SetCaptureNumberRequest>,
+) -> Result<Json<CaptureStatus>, ApiError> {
+    Ok(Json(state.operations.get().set_capture_number(request).await?))
+}
+
+async fn verify_capture_number(
+    State(state): State<AppState>,
+    Json(request): Json<VerifyCaptureNumberRequest>,
+) -> Result<Json<CaptureStatus>, ApiError> {
+    Ok(Json(
+        state
+            .operations
+            .get()
+            .verify_capture_number(request)
+            .await?,
+    ))
+}
+
+async fn start_call_capture(
+    State(state): State<AppState>,
+) -> Result<Json<CaptureStatus>, ApiError> {
+    Ok(Json(state.operations.get().start_call_capture().await?))
 }
 
 /// The provider's redirect. Unauthenticated by necessity — the session
@@ -976,6 +1013,28 @@ mod tests {
 
         async fn revoke_grant(&self, _request: RevokeGrantRequest) -> Result<GrantView, SeamError> {
             Ok(grant_view(GrantState::Unauthorized))
+        }
+
+        async fn call_capture_status(&self) -> Result<CaptureStatus, SeamError> {
+            Err(unused())
+        }
+
+        async fn set_capture_number(
+            &self,
+            _request: SetCaptureNumberRequest,
+        ) -> Result<CaptureStatus, SeamError> {
+            Err(unused())
+        }
+
+        async fn verify_capture_number(
+            &self,
+            _request: VerifyCaptureNumberRequest,
+        ) -> Result<CaptureStatus, SeamError> {
+            Err(unused())
+        }
+
+        async fn start_call_capture(&self) -> Result<CaptureStatus, SeamError> {
+            Err(unused())
         }
 
         async fn plugins(&self) -> Result<Vec<PluginView>, SeamError> {

@@ -14,6 +14,10 @@ inseam hosts                        # the hosts this node stewards and what each
 inseam grants                       # the OAuth grants this node holds and where each stands
 inseam authorize <grant>            # sign in to a provider: prints the URL, waits for the browser
 inseam revoke <grant>               # forget a grant's tokens; its hosts withdraw
+inseam capture                      # call capture: the node's number, your verified phone, the last call (indexing/call-capture-host.md)
+inseam capture number +1…           # verify your phone: the node calls it and speaks a code
+inseam capture verify <code>        # confirm the code
+inseam capture start                # during a call: the node rings you; answer and merge
 inseam network                      # this node and every roster node: live or not, last sync, hosts; the log's size; --json
 inseam network invite               # mint a one-time invitation (inseam-invite:…), open for 24 hours (network/joining.md)
 inseam network join <invitation>    # dial the inviter with the token, sync once, print the network
