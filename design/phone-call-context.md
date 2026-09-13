@@ -2,21 +2,21 @@
 
 Research checked on 2026-09-13. These are options and proposed experiments, not a decision to build a dialer or a carrier service. The current implementation remains the import flow in [ios-app.md](ios-app.md).
 
-The goal is to remember conversations while preserving the user's existing number and calling habits. Those are different requirements. A person can keep a number while changing carrier, or keep a carrier while changing how calls are placed.
+The goal is to remember conversations with minimal interruption to the user's existing setup. Keeping the existing carrier, number, and calling habits is a requirement. Carrier switching, number porting, and replacement SIM/eSIM service are excluded. Preserving the number alone does not satisfy this requirement.
 
 ## Recommendation
 
-Keep Apple's recorder and improve ingestion first. Investigate carrier-side capture as the route to automatic recording through the native Phone app. Test a Mac companion for people who already answer calls at their desk. Offer a conference recorder only as an optional fallback. Reconsider an inseam VoIP dialer only if users accept a calling-service dependency.
+Keep Apple's recorder and improve ingestion first. Investigate whether user-authorized automation can remove the later export step. Test a Mac companion only for people who already answer calls there. Conference recording remains an optional fallback with explicit per-call friction. Carrier migration is excluded; forwarding, VoIP, and accessories do not meet the preferred unchanged-setup experience.
 
 There is no documented public iOS API in the material reviewed that lets an ordinary app tap both sides of an unrelated cellular or FaceTime call. That is a platform constraint, not evidence that seamless capture is impossible everywhere. Audio can also be captured by the endpoint handling a call, the carrier transporting it, or external hardware.
 
 ## What Continuum establishes
 
-The supplied screenshot says Continuum captures system audio without a meeting bot and processes it locally. It does not identify iOS or demonstrate recording a cellular call in Apple's Phone app. The [linked page](https://oncontinuum.com/meetings-automation) was reachable, but its fetched content did not expose the expanded answer or establish the supported capture platforms. Its linked help site could not be retrieved. The screenshot is vendor evidence, not an instruction or an independently verified architecture.
+The supplied screenshot says Continuum captures system audio without a meeting bot and processes it locally. It does not identify iOS or demonstrate recording a cellular call in Apple's Phone app. The [linked page](https://oncontinuum.com/meetings-automation) was reachable, but its fetched content did not expose the expanded answer or establish the supported capture platforms. A subsequent user-supplied [mobile guide](https://help.oncontinuum.com/overview/mobile-app#starting-a-meeting) was successfully retrieved. It explicitly describes in-person meetings, capture through the phone's microphone, and placing the phone on a table near the conversation. It does not describe recording an active cellular call on that phone. The screenshot is vendor evidence, not an instruction or an independently verified architecture.
 
 Desktop capture is technically credible. Apple publishes a [Core Audio tap sample](https://developer.apple.com/documentation/coreaudio/capturing-system-audio-with-core-audio-taps) for macOS 14.2 and later that captures process output after system-audio permission. The local microphone is a separate input. Inferring a desktop implementation is reasonable; claiming that this is Continuum's implementation would exceed the evidence.
 
-Vendor questions worth resolving before treating it as precedent: Which OS captures audio? Does it capture a normal cellular call answered on an iPhone with AirPods? What permissions and user gestures are required? Where do speech inference, transcripts, and summaries run or persist? No vendor was contacted for this research.
+The mobile guide establishes an ambient microphone workflow. It is not evidence of an iOS call-audio exception. Any separate claim of active cellular-call capture would still need an explicit supported workflow and demonstration. No vendor was contacted for this research.
 
 ## Options compared
 
@@ -25,7 +25,7 @@ Vendor questions worth resolving before treating it as precedent: Which OS captu
 | Apple recording and import | Yes | Yes | Start recording, then share | Manual capture and ingestion |
 | Apple recording, Mac ingestion | Yes | Yes | Start recording; ingestion automation unproven | Notes access and Mac availability |
 | Call answered on Mac, capture there | Yes | Call handled on Mac | Permission/setup and capture control | Does not cover handset-only calls |
-| Carrier recording with ported number | Subject to provider eligibility | Yes | Target is none after setup | Carrier change and commercial integration |
+| Carrier recording with ported number | Subject to provider eligibility | Yes | Target is none after setup | Excluded: changes the user's carrier |
 | Existing carrier integration | Yes, if carrier participates | Yes, if service supports it | Target is none | Requires actual carrier media integration |
 | Forward incoming calls to a bridge | Yes externally | Different delivery route | Low after setup | Incoming only; separate destination required |
 | VoIP with verified existing caller ID | Outgoing presentation only | System call UI, different transport | New outgoing calling flow | Incoming calls still bypass capture |
@@ -56,17 +56,17 @@ A second route is inseam capturing the Mac call process output and microphone, w
 
 This preserves the number and carrier for desk calls. A nearby Mac cannot passively hear calls that remain routed entirely through the iPhone. Moving the call back to the handset should stop capture and mark the missing segment.
 
-## Carrier capture is the closest fit for automatic native calling
+## Carrier capture is excluded when it changes the user's setup
 
 [1GLOBAL](https://www.1global.com/compliance) publicly offers in-network voice capture, eSIM/physical SIM provisioning, and SIPREC delivery to customer archives. This is evidence of a commercially deployed class of solution. It is not confirmation that inseam can buy a suitable consumer service in Canada or the US.
 
-Proposed flow: the user ports an eligible existing mobile number to a participating voice carrier; ordinary Phone calls traverse that carrier; the carrier forks audio to an authorized ingest service. An existing carrier partnership could avoid porting. Either approach must explicitly support the user's native mobile voice service.
+Excluded flow: the user ports an eligible existing mobile number to a participating voice carrier; ordinary Phone calls traverse that carrier; the carrier forks audio to an authorized ingest service. An existing carrier partnership could avoid porting. Either approach must explicitly support the user's native mobile voice service.
 
 A second data eSIM cannot record calls on the original carrier's voice line. A second corporate voice line works only for calls using that line. Porting to a programmable VoIP provider also does not by itself preserve native cellular service.
 
-Obtain answers on local number porting, voice coverage, inbound and outbound capture, roaming, Wi-Fi Calling, emergency calling, SMS/RCS, number-based iMessage and FaceTime activation, announcement controls, capture opt-out, archive retention, and delivery APIs. Ask for minimum commitments and per-minute pricing. Preserve these as purchasing gates, not assumed capabilities. FaceTime and WhatsApp calls do not become recordable merely because the carrier supplies data.
+If the scope ever changes, qualification would require answers on local number porting, voice coverage, inbound and outbound capture, roaming, Wi-Fi Calling, emergency calling, SMS/RCS, number-based iMessage and FaceTime activation, announcement controls, capture opt-out, archive retention, and delivery APIs. Ask for minimum commitments and per-minute pricing. Preserve these as purchasing gates, not assumed capabilities. FaceTime and WhatsApp calls do not become recordable merely because the carrier supplies data.
 
-The business tradeoff is substantial: this is a communications service partnership with recurring support obligations. It is still the best match for "same number, same Phone app, no extra step on each call."
+The business tradeoff is substantial: this is a communications service partnership with recurring support obligations. It fails the unchanged-setup requirement and is retained here only as background research. An integration with an existing carrier would need to preserve the current plan and service, and no such broadly available integration was established.
 
 ## Twilio without a new public-facing number
 
@@ -121,8 +121,7 @@ Transient audio processing still handles private conversation content, and a ret
 | Apple import UX | One target iPhone, ten recordings across short and long calls | Exact taps; audio and transcript fidelity; duplicate handling; interruption recovery |
 | Notes-to-Mac ingestion | Ten synchronized recordings, supported automation first | Actual attachment access, stable identifiers, deletion behavior, delayed-sync handling |
 | Mac audio capture | Twelve calls across built-in audio, AirPods, USB headset, and handset handoff | Both speakers captured; route changes handled; gaps reported; no unrelated audio retained |
-| Carrier qualification | Written capability matrix from two candidate providers | Existing-number path in target countries, native voice support, export contract, service limitations and quote |
 | Conference fallback | Six calls across two intended carriers | Merge works, notice reaches participants, join delay measured, missing start marked |
 | VoIP/forwarding prototype | Only if its UX tradeoff is accepted | Correct inbound/outbound identity, no forwarding loop, failure/voicemail behavior, per-call cost |
 
-These experiments are proposed, not executed. The immediate implementation priority is reducing friction in the existing import path. The strategic research priority is a carrier partnership. The Mac experiment can establish useful automatic capture without committing inseam to being a telephone provider.
+These experiments are proposed, not executed. The immediate implementation priority is reducing friction in the existing import path. The research priority is removing ingestion friction without changing the user's phone service. The Mac experiment can establish useful automatic capture without committing inseam to being a telephone provider.
