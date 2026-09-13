@@ -14,6 +14,7 @@ Start here:
 - [configuration.md](configuration.md) — the composition file, the node's only config.
 - [releases.md](releases.md) — how a binary updates itself, and how a release is built, signed, and promoted.
 - [benchmarking.md](benchmarking.md) — set up EnterpriseRAG-Bench, run it through the CLI, and record comparable results.
+- [sred.md](sred.md) — SR&ED technical project record, experiment history, evidence, draft T661 narratives, and outstanding claimant information.
 - [glossary.md](glossary.md) — the vocabulary, one page.
 
 Then by area:
