@@ -1,0 +1,261 @@
+{
+  "question_count": 20,
+  "tool_calls": {
+    "query": 75,
+    "fetch": 3,
+    "scan": 47,
+    "expand": 12
+  },
+  "answer_cost_usd": 1.6361,
+  "answer_duration_seconds": 261.76,
+  "retrieval_duration_seconds": 34.877,
+  "answer_latency_median_seconds": 13.664299499999998,
+  "judge_cost_usd": null,
+  "cost_note": "Answer cost is summed from CLI provider totals rounded to four decimals. The upstream judge does not report cost.",
+  "questions": [
+    {
+      "question_id": "qst_0001",
+      "question_type": "basic",
+      "turns": 3,
+      "tool_calls": {
+        "query": 1,
+        "fetch": 2
+      },
+      "answer_cost_usd": 0.0246,
+      "answer_duration_seconds": 5.338001,
+      "retrieval_duration_seconds": 2.362321
+    },
+    {
+      "question_id": "qst_0002",
+      "question_type": "basic",
+      "turns": 8,
+      "tool_calls": {
+        "query": 4,
+        "scan": 3
+      },
+      "answer_cost_usd": 0.079,
+      "answer_duration_seconds": 16.072146,
+      "retrieval_duration_seconds": 1.78766
+    },
+    {
+      "question_id": "qst_0003",
+      "question_type": "basic",
+      "turns": 3,
+      "tool_calls": {
+        "query": 1,
+        "scan": 1
+      },
+      "answer_cost_usd": 0.022,
+      "answer_duration_seconds": 5.381762,
+      "retrieval_duration_seconds": 0.669403
+    },
+    {
+      "question_id": "qst_0004",
+      "question_type": "basic",
+      "turns": 3,
+      "tool_calls": {
+        "query": 1,
+        "scan": 2
+      },
+      "answer_cost_usd": 0.0337,
+      "answer_duration_seconds": 6.695439,
+      "retrieval_duration_seconds": 1.782453
+    },
+    {
+      "question_id": "qst_0005",
+      "question_type": "basic",
+      "turns": 3,
+      "tool_calls": {
+        "query": 1,
+        "expand": 2
+      },
+      "answer_cost_usd": 0.0329,
+      "answer_duration_seconds": 6.427152,
+      "retrieval_duration_seconds": 1.554214
+    },
+    {
+      "question_id": "qst_0006",
+      "question_type": "basic",
+      "turns": 3,
+      "tool_calls": {
+        "query": 1,
+        "expand": 2
+      },
+      "answer_cost_usd": 0.0343,
+      "answer_duration_seconds": 5.895192,
+      "retrieval_duration_seconds": 0.862769
+    },
+    {
+      "question_id": "qst_0007",
+      "question_type": "basic",
+      "turns": 3,
+      "tool_calls": {
+        "query": 1,
+        "scan": 1
+      },
+      "answer_cost_usd": 0.0216,
+      "answer_duration_seconds": 4.739716,
+      "retrieval_duration_seconds": 1.874719
+    },
+    {
+      "question_id": "qst_0008",
+      "question_type": "basic",
+      "turns": 3,
+      "tool_calls": {
+        "query": 1,
+        "scan": 1
+      },
+      "answer_cost_usd": 0.0209,
+      "answer_duration_seconds": 4.569304,
+      "retrieval_duration_seconds": 1.965898
+    },
+    {
+      "question_id": "qst_0009",
+      "question_type": "basic",
+      "turns": 3,
+      "tool_calls": {
+        "query": 1,
+        "scan": 1
+      },
+      "answer_cost_usd": 0.024,
+      "answer_duration_seconds": 5.044119,
+      "retrieval_duration_seconds": 2.424942
+    },
+    {
+      "question_id": "qst_0010",
+      "question_type": "basic",
+      "turns": 3,
+      "tool_calls": {
+        "query": 1,
+        "fetch": 1
+      },
+      "answer_cost_usd": 0.0206,
+      "answer_duration_seconds": 6.126675,
+      "retrieval_duration_seconds": 1.677159
+    },
+    {
+      "question_id": "qst_0491",
+      "question_type": "info_not_found",
+      "turns": 6,
+      "tool_calls": {
+        "query": 3,
+        "scan": 5
+      },
+      "answer_cost_usd": 0.0859,
+      "answer_duration_seconds": 15.032488,
+      "retrieval_duration_seconds": 1.726576
+    },
+    {
+      "question_id": "qst_0492",
+      "question_type": "info_not_found",
+      "turns": 5,
+      "tool_calls": {
+        "query": 8,
+        "scan": 3
+      },
+      "answer_cost_usd": 0.1064,
+      "answer_duration_seconds": 13.695222,
+      "retrieval_duration_seconds": 1.603375
+    },
+    {
+      "question_id": "qst_0493",
+      "question_type": "info_not_found",
+      "turns": 9,
+      "tool_calls": {
+        "query": 8,
+        "scan": 6
+      },
+      "answer_cost_usd": 0.1595,
+      "answer_duration_seconds": 25.658746,
+      "retrieval_duration_seconds": 1.728386
+    },
+    {
+      "question_id": "qst_0494",
+      "question_type": "info_not_found",
+      "turns": 6,
+      "tool_calls": {
+        "query": 4,
+        "scan": 2
+      },
+      "answer_cost_usd": 0.0736,
+      "answer_duration_seconds": 13.633377,
+      "retrieval_duration_seconds": 2.02375
+    },
+    {
+      "question_id": "qst_0495",
+      "question_type": "info_not_found",
+      "turns": 9,
+      "tool_calls": {
+        "query": 6,
+        "expand": 2,
+        "scan": 2
+      },
+      "answer_cost_usd": 0.124,
+      "answer_duration_seconds": 19.186905,
+      "retrieval_duration_seconds": 1.539028
+    },
+    {
+      "question_id": "qst_0496",
+      "question_type": "info_not_found",
+      "turns": 4,
+      "tool_calls": {
+        "query": 5,
+        "expand": 2,
+        "scan": 3
+      },
+      "answer_cost_usd": 0.1079,
+      "answer_duration_seconds": 17.033262,
+      "retrieval_duration_seconds": 2.030836
+    },
+    {
+      "question_id": "qst_0497",
+      "question_type": "info_not_found",
+      "turns": 10,
+      "tool_calls": {
+        "query": 9,
+        "expand": 1,
+        "scan": 3
+      },
+      "answer_cost_usd": 0.1608,
+      "answer_duration_seconds": 20.895594,
+      "retrieval_duration_seconds": 1.600946
+    },
+    {
+      "question_id": "qst_0498",
+      "question_type": "info_not_found",
+      "turns": 9,
+      "tool_calls": {
+        "query": 4,
+        "expand": 2,
+        "scan": 5
+      },
+      "answer_cost_usd": 0.2095,
+      "answer_duration_seconds": 27.961217,
+      "retrieval_duration_seconds": 1.829443
+    },
+    {
+      "question_id": "qst_0499",
+      "question_type": "info_not_found",
+      "turns": 8,
+      "tool_calls": {
+        "query": 10,
+        "expand": 1
+      },
+      "answer_cost_usd": 0.1521,
+      "answer_duration_seconds": 17.590454,
+      "retrieval_duration_seconds": 1.623663
+    },
+    {
+      "question_id": "qst_0500",
+      "question_type": "info_not_found",
+      "turns": 11,
+      "tool_calls": {
+        "query": 5,
+        "scan": 9
+      },
+      "answer_cost_usd": 0.1428,
+      "answer_duration_seconds": 24.783248,
+      "retrieval_duration_seconds": 2.209839
+    }
+  ]
+}

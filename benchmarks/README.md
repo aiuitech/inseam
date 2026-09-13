@@ -40,6 +40,44 @@ The harness is tested without network or the real binary:
 cd benchmarks && python3 -m unittest test_harness test_enterprise_rag_bench test_beir
 ```
 
+## Fast GPT-5.4 navigation check
+
+Reuse a completed full-corpus index and judge the first 10 and last 10 questions
+in release order:
+
+```sh
+python3 benchmarks/requery.py enterprise 20260913T181642Z-b414e6e7aa0f \
+  --bookend-count 10 \
+  --answer-model openai/gpt-5.4 \
+  --evaluation-model openai/gpt-5.4 \
+  --finder-lexical-weight 0.1
+```
+
+This runs the installed `inseam agent` with Finder's `query`, `expand`, `scan`,
+and `fetch` operations against all 511,962 documents. It inherits the source
+run's 12-turn limit and index configuration. It performs no indexing or repair.
+Install changed Rust code before rerunning. Query settings can change using the
+same Finder flags as a retrieval replay; index-shape changes require a new index.
+
+The pinned upstream evaluator judges answers with GPT-5.4, including fact checks,
+with gold correction disabled. The headline metric is its
+`combined_correctness_completeness_score`. A 20-question check evaluates 4% of
+the 500 questions. The first 10 are `basic`; the last 10 are `info_not_found`.
+This sample checks direct retrieval and unsupported-answer behavior but does
+not cover the intervening semantic, constrained, or multi-document questions.
+It is a development check, not a full-corpus leaderboard estimate. One question
+can move correctness by five percentage points; repeat small apparent gains and
+use a broader sample before accepting them.
+
+Results go under the source run's `agent/<run-id>/` directory. The manifest
+records the question IDs, model names, binary hash, source revision, index
+origin, and settings. `selected-questions.jsonl`, `answers.jsonl`, and the upstream
+per-question judgments support comparisons of the same questions across runs.
+The document-recall field retains the existing harness convention: initial
+Finder hits plus document IDs appearing in the agent trace. It is not a measure
+of final-answer citations alone. Compare the judged answer score separately
+from the initial retrieval score.
+
 ## BEIR NFCorpus
 
 BEIR (Benchmarking IR) datasets share one shape: a corpus, a set of queries, and graded relevance judgments (qrels). NFCorpus is the smallest corpus in the suite and the one to reach for when a full EnterpriseRAG-Bench run is too expensive: a 2.4 MB download, 3,633 documents, 323 test queries, 12,334 judgments graded 1 or 2. The harness pins the archive BEIR's own loader downloads by SHA-256 and by row counts.

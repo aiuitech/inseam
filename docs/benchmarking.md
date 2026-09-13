@@ -8,3 +8,11 @@ The repository's benchmark harness and commands live in [benchmarks/README.md](.
 Benchmark design decisions, including data pins, model policy, scoring, run evidence, and the performance estimate, live in [design/benchmarking.md](../design/benchmarking.md).
 
 [The September 2026 retrieval audit](../benchmarks/reports/20260913-retrieval-audit.md) compares folder-aware retrieval tuning, query-only replays, and incremental folder re-indexing before the GPT-5.4 agent phase.
+
+For a short end-to-end iteration, use the [GPT-5.4 navigation check](../benchmarks/README.md#fast-gpt-54-navigation-check).
+It judges the first and last 10 questions while retaining the full document
+corpus and reusing its index. Keep the question IDs and models fixed when
+comparing Finder changes.
+
+[The first GPT-5.4 bookend baseline](../benchmarks/reports/20260913-gpt54-bookends.md)
+scored 92.0 in 5 minutes 42 seconds and records the failures to track next.

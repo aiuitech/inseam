@@ -95,3 +95,15 @@ Whole-document indexing needs an independent folder-summary target. A document c
 The performance estimate favors measuring query-time controls first. A 25,000-document slice writes about 290 MB in under 20 seconds on the current Mac; a full 512,000-document index requires roughly 5–6 GB. Changing a folder target affects only a few hundred folder outputs. Fresh benchmark runs rebuild all sources for comparable indexing measurements; the separate incremental experiment records reuse explicitly. No extra network calls are needed for the model-free EnterpriseRAG configurations. BEIR's embeddings dominate network latency; changing fusion costs no additional index rows. CPU and disk contention during concurrent exploratory runs makes their indexing time descriptive rather than a speed comparison. Final full-corpus runs should be sequential.
 
 Retrieval-only replays reuse a completed index and preserve index-shape settings. They record the origin manifest hash and have no indexing duration, so they isolate ranking changes without pretending to be fresh indexing measurements. Input-specific transform identities let folder-only summary configuration dirty folders while keeping ordinary source marks and cache keys stable.
+
+Judged agent replays can select fixed question bookends while preserving the
+full distractor corpus. The initial fast profile uses 10 questions from each end
+of release order, GPT-5.4 answers and judging, and the source run's turn budget.
+This reduces paid question workloads from 500 to 20 and removes the indexing
+phase. At 12 tool turns plus a closing call, answer generation is bounded to 260
+model requests, plus the upstream per-fact and whole-answer judge requests.
+Network model latency dominates; the reused 5.2 GB index needs no duplicate
+copy. The sample contains basic and unanswerable questions only. It is a paired
+regression check for those behaviors, not evidence about all question types.
+Fixed gold answers and recorded IDs make comparisons interpretable; the
+upstream evaluator runs without its gold-correction flow.

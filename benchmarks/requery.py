@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rescore a completed benchmark index using query-time controls only."""
+"""Replay retrieval or a small judged agent sample against a completed index."""
 from __future__ import annotations
 
 import argparse
@@ -73,7 +73,34 @@ def selected_options(runner: Any, origin: dict[str, Any], arguments: argparse.Na
                if getattr(arguments, name) is not None}
     if runner is enterprise:
         changes.update(skip_agent=True, skip_evaluation=True)
+        if getattr(arguments, "bookend_count", 0):
+            if options.corpus_slice != 0:
+                raise harness.BenchmarkError("judged bookends require the full document corpus")
+            changes.update(skip_agent=False, skip_evaluation=False,
+                           question_limit=2 * arguments.bookend_count,
+                           answer_model=arguments.answer_model,
+                           evaluation_model=arguments.evaluation_model)
     return dataclasses.replace(options, **changes)
+
+
+def select_bookends(questions: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
+    """Keep disjoint beginning/end questions in release order for paired comparisons."""
+    if not 1 <= count <= enterprise.MAX_QUESTIONS // 2:
+        raise harness.BenchmarkError("bookend count is outside the supported bounds")
+    if 2 * count > len(questions):
+        raise harness.BenchmarkError("beginning and end question slices would overlap")
+    selected = questions[:count] + questions[-count:]
+    assert len(selected) == 2 * count
+    assert len({row["question_id"] for row in selected}) == len(selected)
+    return selected
+
+
+def replay_inputs(runner: Any, options: Any, bookend_count: int) -> list[dict[str, Any]]:
+    if runner is beir:
+        return beir.load_queries(options.query_count)
+    if bookend_count:
+        return select_bookends(enterprise.load_questions(enterprise.MAX_QUESTIONS, exact=False), bookend_count)
+    return enterprise.load_questions(options.question_limit)
 
 
 def score(runner: Any, run_dir: Path, rows: list[dict[str, Any]], inputs: list[dict[str, Any]], options: Any) -> dict[str, Any]:
@@ -82,22 +109,45 @@ def score(runner: Any, run_dir: Path, rows: list[dict[str, Any]], inputs: list[d
         harness.write_json_lines(run_dir / "query-scores.jsonl", per_query, beir.MAX_QUERIES)
         beir.write_trec_run(run_dir, rows)
         return {"beir": aggregate}
-    return {"retrieval": enterprise.retrieval_scores(rows, inputs)}
+    scores = {"retrieval": enterprise.retrieval_scores(rows, inputs)}
+    if not options.skip_evaluation:
+        scores["enterprise_rag_bench"] = enterprise.evaluate(
+            run_dir, run_dir / "logs", options.evaluation_parallelism,
+            len(inputs), options.evaluation_model)
+        enterprise.pip_freeze(run_dir)
+    return scores
+
+
+def record_source_diff(run_dir: Path) -> str:
+    """Keep uncommitted Rust changes so a dirty binary's source can be identified."""
+    result = harness.run_capture(
+        ["git", "diff", "--binary", "HEAD", "--", "crates", "Cargo.toml", "Cargo.lock"],
+        timeout_seconds=harness.METADATA_TIMEOUT_SECONDS, cwd=harness.REPOSITORY_ROOT)
+    harness.require_success(result, "recording benchmark source changes")
+    path = run_dir / "source-diff.patch"
+    path.write_text(result.stdout, encoding="utf-8")
+    return harness.sha256_file(path)
 
 
 def run(arguments: argparse.Namespace) -> None:
     runner = RUNNERS[arguments.benchmark]
+    if arguments.bookend_count:
+        if runner is not enterprise:
+            raise harness.BenchmarkError("judged bookends are only supported for EnterpriseRAG")
+        enterprise.evaluator_environment(arguments.evaluation_model)
     origin, source_manifest, data_dir = load_origin(runner, arguments.run_id)
     options = selected_options(runner, source_manifest, arguments)
+    inputs = replay_inputs(runner, options, arguments.bookend_count)
     started_at = harness.utc_now()
     replay_id = harness.new_run_id(started_at)
-    run_dir = origin / "retrieval" / replay_id
+    run_kind = "agent" if arguments.bookend_count else "retrieval"
+    run_dir = origin / run_kind / replay_id
     run_dir.mkdir(parents=True, exist_ok=False)
     composition = run_dir / "composition.toml"
     composition.write_text(composition_with_query_options(
         (origin / "composition.toml").read_text(), vars(options)), encoding="utf-8")
     manifest = {
-        "schema_version": 1, "run_kind": "retrieval-replay", "run_id": replay_id,
+        "schema_version": 1, "run_kind": f"{run_kind}-replay", "run_id": replay_id,
         "status": "running", "started_at": started_at, "queries_completed": 0,
         "origin_run_id": arguments.run_id, "origin_manifest_sha256": harness.sha256_file(origin / "manifest.json"),
         "data_dir": str(data_dir), "benchmark": runner.benchmark_pins(),
@@ -106,12 +156,20 @@ def run(arguments: argparse.Namespace) -> None:
         "system": harness.system_specs(data_dir), "indexing": None,
         "indexing_note": "Reuses the origin index. No indexing or repair command is run.",
     }
-    inputs = (beir.load_queries(options.query_count) if runner is beir
-              else enterprise.load_questions(options.question_limit))
+    if arguments.bookend_count:
+        manifest["source_diff_sha256"] = record_source_diff(run_dir)
+        manifest["question_selection"] = {
+            "method": "release-order-bookends", "count_per_end": arguments.bookend_count,
+            "question_ids": [row["question_id"] for row in inputs],
+        }
+        harness.write_json_lines(run_dir / "selected-questions.jsonl", inputs, enterprise.MAX_QUESTIONS)
     started = time.monotonic()
     harness.write_json(run_dir / "manifest.json", manifest)
     try:
         rows = runner.run_queries(run_dir, data_dir, composition, manifest, inputs, options, [], run_dir / "logs")
+        if arguments.bookend_count:
+            manifest["phase"] = "evaluating"
+            harness.write_json(run_dir / "manifest.json", manifest)
         manifest["scores"] = score(runner, run_dir, rows, inputs, options)
         harness.write_retrieval_observability(run_dir, rows)
         harness.record_final_index_footprint(manifest, data_dir)
@@ -126,13 +184,17 @@ def run(arguments: argparse.Namespace) -> None:
         manifest["finished_at"] = harness.utc_now()
         manifest["duration_seconds"] = round(time.monotonic() - started, 6)
         harness.write_json(run_dir / "manifest.json", manifest)
-    print(f"Retrieval replay recorded in {run_dir}", flush=True)
+    print(f"{run_kind.capitalize()} replay recorded in {run_dir}", flush=True)
 
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("benchmark", choices=RUNNERS)
     parser.add_argument("run_id")
+    parser.add_argument("--bookend-count", type=harness.bounded_argument("bookend-count", enterprise.MAX_QUESTIONS // 2), default=0,
+                        help="Judge the first N and last N questions with the agent on the full corpus.")
+    parser.add_argument("--answer-model", default="openai/gpt-5.4")
+    parser.add_argument("--evaluation-model", default="openai/gpt-5.4")
     parser.add_argument("--finder-seeds", choices=sorted(harness.FINDER_SEEDS))
     parser.add_argument("--finder-seed-k", type=harness.bounded_argument("finder-seed-k", 1000))
     parser.add_argument("--finder-rrf-k", type=harness.bounded_argument("finder-rrf-k", 1000))
