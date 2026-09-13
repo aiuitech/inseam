@@ -31,7 +31,7 @@ impl Llm for ScriptedLlm {
     }
 }
 
-async fn run(replies: Vec<ChatMessage>) -> Result<AgentOutcome, AgentError> {
+async fn fixture() -> (tempfile::TempDir, Kernel) {
     let data = tempfile::tempdir().unwrap();
     let mut kernel = Kernel::boot(data.path(), inseam_plugins::factories(), Vec::new())
         .await
@@ -63,12 +63,26 @@ dimensions = 64
         .reconcile(&Composition::parse(&configuration, "agent test").unwrap())
         .await
         .unwrap();
+    (data, kernel)
+}
+
+async fn run(replies: Vec<ChatMessage>) -> Result<AgentOutcome, AgentError> {
+    let (_data, kernel) = fixture().await;
     let operations = kernel.service(&OPERATIONS).unwrap();
     let llm = ScriptedLlm {
         replies,
         calls: AtomicU32::new(0),
     };
-    let outcome = run_agent(operations.as_ref(), &llm, "scripted", "fixture", 1, |_| {}).await;
+    let outcome = run_agent(
+        operations.as_ref(),
+        &llm,
+        "scripted",
+        "fixture",
+        1,
+        None,
+        |_| {},
+    )
+    .await;
     assert_eq!(llm.calls.load(Ordering::SeqCst), 2);
     outcome
 }
@@ -110,4 +124,69 @@ async fn tool_call_preamble_is_not_a_fallback_answer() {
     preamble.content = Some("I will search.".into());
     let result = run(vec![preamble, answer("")]).await;
     assert!(matches!(result, Err(AgentError::EmptyAnswer(1))));
+}
+
+#[tokio::test]
+async fn batch_preserves_each_question_in_a_separate_record() {
+    let (_data, kernel) = fixture().await;
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("questions.jsonl");
+    let questions = (0..10)
+        .map(|index| format!("{{\"question_id\":\"q_{index}\",\"question\":\"fixture\"}}\n"))
+        .collect::<String>();
+    std::fs::write(&input, questions).unwrap();
+    let llm = std::sync::Arc::new(ScriptedLlm {
+        replies: vec![answer("Supported answer."); 20],
+        calls: AtomicU32::new(0),
+    });
+    crate::agent_batch::run(
+        kernel.service(&OPERATIONS).unwrap(),
+        llm.clone(),
+        "scripted".into(),
+        &input,
+        directory.path(),
+        1,
+        Some("low".into()),
+    )
+    .await
+    .unwrap();
+    for index in 0..10 {
+        let value: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(directory.path().join(format!("q_{index}.json"))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(value["question_id"], format!("q_{index}"));
+        assert_eq!(value["answer"], "Supported answer.");
+    }
+    assert_eq!(llm.calls.load(Ordering::SeqCst), 20);
+}
+
+#[tokio::test]
+async fn batch_rejects_duplicate_and_unsafe_ids_before_model_calls() {
+    let (_data, kernel) = fixture().await;
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("questions.jsonl");
+    let llm = std::sync::Arc::new(ScriptedLlm {
+        replies: Vec::new(),
+        calls: AtomicU32::new(0),
+    });
+    for text in [
+        "{\"question_id\":\"../escape\",\"question\":\"fixture\"}\n",
+        "{\"question_id\":\"q\",\"question\":\"fixture\"}\n{\"question_id\":\"q\",\"question\":\"fixture\"}\n",
+        "",
+    ] {
+        std::fs::write(&input, text).unwrap();
+        let result = crate::agent_batch::run(
+            kernel.service(&OPERATIONS).unwrap(),
+            llm.clone(),
+            "scripted".into(),
+            &input,
+            directory.path(),
+            1,
+            None,
+        )
+        .await;
+        assert!(result.is_err());
+    }
+    assert_eq!(llm.calls.load(Ordering::SeqCst), 0);
 }

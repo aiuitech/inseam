@@ -455,3 +455,38 @@ agent tests, strict CLI clippy with the repository's nested-if exception, and
 build for the model baseline as well as the current implementation. This preserves
 the ability to distinguish the retrieval/indexing change from this response-handling
 change. No successful full GLM score is claimed yet.
+
+The owner subsequently requested lower reasoning effort. The answer loop and final
+review now accept an explicit effort, and the new full runs use `low`. A wrapper
+passes `low` into the pinned upstream judge's two model factories; the evaluator's
+scoring code and gold data remain unchanged. Earlier partial default-effort runs
+are retained as failed/interrupted execution evidence, not mixed into the new score.
+
+Eight separate APFS node clones were tried to parallelize answers. The first
+queries stalled during SQLite shutdown/checkpoint writes, confirmed by a process
+stack sample. The workers were stopped and the disposable clones removed; no
+parallel question had completed. The replacement keeps one database owner and
+runs up to eight independent discovery sessions in that node. Tests cover separate
+question records, duplicate/unsafe ID rejection before model calls, and the earlier
+empty-review paths. All eight agent tests and strict CLI clippy passed. The shared
+provider meter is recorded as a batch total, with no invented per-question spend.
+The batch path and low-effort option are execution changes, and their effects on
+runtime are to be measured separately from retrieval quality.
+
+The owner then requested a speed comparison before continuing and instructed us to
+abandon GLM and wait for a replacement model. At interruption, twelve matching
+completed questions averaged 50.04 seconds with GLM low effort versus 7.19 seconds
+in the earlier GPT-5.4 run. The observed ratio is 6.96, with different concurrency
+settings, eight versus one, and incomplete-question selection. It is a preliminary
+latency observation, not a completed benchmark or a controlled model-speed estimate.
+The pair-level evidence is in
+[the timing comparison](../benchmarks/experiments/20260913-glm-full/timing-comparison.json).
+Both answer evaluation and the resumed vocabulary indexing process were stopped;
+checkpoints remain locally. No new BEIR, full vocabulary-corpus evaluation, or
+judged GLM quality comparison was completed. No automatic continuation is scheduled.
+
+The owner then selected GPT-5.4 again and authorized a 100-question check only,
+followed by a score review and a pause before any 500-question extension. The
+selection is the first fifty and last fifty release questions on the existing
+full index. Agent effort returns to the endpoint default and judging uses the
+original upstream medium setting. Vocabulary indexing remains interrupted.

@@ -40,6 +40,7 @@ pub async fn run_agent(
     model: &str,
     question: &str,
     max_turns: usize,
+    reasoning_effort: Option<&str>,
     mut on_event: impl FnMut(AgentEvent),
 ) -> Result<AgentOutcome, AgentError> {
     assert!((1..=64).contains(&max_turns));
@@ -54,7 +55,9 @@ pub async fn run_agent(
     messages.push(ChatMessage::tool_result(first.id, initial));
     let mut tool_calls = 1;
     for turn in 1..=max_turns {
-        let request = ChatRequest::new(model, messages.clone()).with_tools(tool_definitions());
+        let request = ChatRequest::new(model, messages.clone())
+            .with_tools(tool_definitions())
+            .with_reasoning_effort(reasoning_effort);
         let reply = llm.chat(&request).await?;
         let calls = reply.tool_calls.clone().unwrap_or_default();
         if calls.len() > 8 {
@@ -62,7 +65,7 @@ pub async fn run_agent(
         }
         messages.push(reply);
         if calls.is_empty() {
-            return finish(llm, model, messages, turn, tool_calls).await;
+            return finish(llm, model, messages, turn, tool_calls, reasoning_effort).await;
         }
         // A model response cannot create an unbounded queue of batches.
         for call in &calls {
@@ -71,7 +74,15 @@ pub async fn run_agent(
             messages.push(ChatMessage::tool_result(&call.id, result));
         }
     }
-    finish(llm, model, messages, max_turns, tool_calls).await
+    finish(
+        llm,
+        model,
+        messages,
+        max_turns,
+        tool_calls,
+        reasoning_effort,
+    )
+    .await
 }
 
 async fn finish(
@@ -80,6 +91,7 @@ async fn finish(
     mut messages: Vec<ChatMessage>,
     turns: usize,
     tool_calls: usize,
+    reasoning_effort: Option<&str>,
 ) -> Result<AgentOutcome, AgentError> {
     // Final review is optional polish. An empty provider reply must not erase
     // a completed answer, and a tool-call preamble is never a fallback answer.
@@ -104,7 +116,9 @@ async fn finish(
          relationship. Include supported details you omitted, remove unsupported claims, \
          and state unresolved gaps. Return the complete final answer, citing source addresses.",
     ));
-    let reply = llm.chat(&ChatRequest::new(model, messages)).await?;
+    let reply = llm
+        .chat(&ChatRequest::new(model, messages).with_reasoning_effort(reasoning_effort))
+        .await?;
     let reviewed = reply.content.filter(|text| !text.trim().is_empty());
     if reviewed.is_none() {
         tracing::warn!(

@@ -126,3 +126,10 @@ agent now preserves a completed draft in that case and reports a true empty-answ
 error when neither response contains an answer. Four new offline behavior tests
 pass. This is an execution repair, not evidence of a retrieval improvement.
 See the [SR&ED continuation](../docs/sred.md) for the probes and measurement plan.
+
+The GLM attempt was subsequently abandoned at the owner's request, pending a new
+model choice. Twelve completed same-question pairs showed 50.04 seconds average
+answer time for GLM low versus 7.19 for the prior GPT-5.4 run. Different concurrency
+settings and unfinished questions limit the comparison. Both the answer run and
+resumed slice were stopped, with checkpoints retained. See the
+[partial experiment record](../benchmarks/experiments/20260913-glm-full/README.md).

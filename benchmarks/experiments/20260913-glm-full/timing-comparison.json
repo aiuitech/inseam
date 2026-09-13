@@ -1,0 +1,108 @@
+{
+  "status": "preliminary interrupted timing sample, not a completed benchmark",
+  "glm_run_id": "20260913T232555Z-ffd99adb4c0c",
+  "gpt54_run_id": "20260913T214310Z-a4951ac828ca",
+  "completed_answers": 12,
+  "execution_error_records": 0,
+  "paired_questions": 12,
+  "glm_answer_mean_seconds": 50.04087960066666,
+  "gpt54_answer_mean_seconds": 7.188637333333333,
+  "ratio_glm_to_gpt54": 6.961107826184211,
+  "glm_answer_median_seconds": 56.12955191699999,
+  "gpt54_answer_median_seconds": 7.136467000000001,
+  "glm_effort": "low",
+  "gpt54_effort": "endpoint default",
+  "glm_concurrency": 8,
+  "gpt54_concurrency": 1,
+  "limitations": [
+    "Different concurrency and provider paths; not a controlled causal latency ratio.",
+    "Only completed questions at interruption; slow unfinished questions are excluded.",
+    "No judged answer-quality score or judge latency measured."
+  ],
+  "pairs": [
+    {
+      "question_id": "qst_0001",
+      "glm_answer_seconds": 40.688218791,
+      "gpt54_answer_seconds": 6.10904,
+      "glm_turns": 2,
+      "glm_tool_calls": 2
+    },
+    {
+      "question_id": "qst_0002",
+      "glm_answer_seconds": 22.317613707999996,
+      "gpt54_answer_seconds": 4.692612,
+      "glm_turns": 1,
+      "glm_tool_calls": 1
+    },
+    {
+      "question_id": "qst_0003",
+      "glm_answer_seconds": 72.133859833,
+      "gpt54_answer_seconds": 9.057325,
+      "glm_turns": 2,
+      "glm_tool_calls": 2
+    },
+    {
+      "question_id": "qst_0005",
+      "glm_answer_seconds": 62.81345683399999,
+      "gpt54_answer_seconds": 10.422856,
+      "glm_turns": 2,
+      "glm_tool_calls": 2
+    },
+    {
+      "question_id": "qst_0006",
+      "glm_answer_seconds": 71.077684625,
+      "gpt54_answer_seconds": 9.490285,
+      "glm_turns": 2,
+      "glm_tool_calls": 2
+    },
+    {
+      "question_id": "qst_0007",
+      "glm_answer_seconds": 49.445646999999994,
+      "gpt54_answer_seconds": 5.393021,
+      "glm_turns": 2,
+      "glm_tool_calls": 2
+    },
+    {
+      "question_id": "qst_0008",
+      "glm_answer_seconds": 24.875204916999998,
+      "gpt54_answer_seconds": 5.89351,
+      "glm_turns": 1,
+      "glm_tool_calls": 1
+    },
+    {
+      "question_id": "qst_0009",
+      "glm_answer_seconds": 71.503921459,
+      "gpt54_answer_seconds": 8.163894,
+      "glm_turns": 2,
+      "glm_tool_calls": 2
+    },
+    {
+      "question_id": "qst_0010",
+      "glm_answer_seconds": 69.35622416599999,
+      "gpt54_answer_seconds": 8.337437,
+      "glm_turns": 2,
+      "glm_tool_calls": 2
+    },
+    {
+      "question_id": "qst_0011",
+      "glm_answer_seconds": 19.166985292,
+      "gpt54_answer_seconds": 4.375958,
+      "glm_turns": 1,
+      "glm_tool_calls": 1
+    },
+    {
+      "question_id": "qst_0012",
+      "glm_answer_seconds": 68.072350333,
+      "gpt54_answer_seconds": 8.822873,
+      "glm_turns": 2,
+      "glm_tool_calls": 2
+    },
+    {
+      "question_id": "qst_0015",
+      "glm_answer_seconds": 29.03938825,
+      "gpt54_answer_seconds": 5.504837,
+      "glm_turns": 2,
+      "glm_tool_calls": 2
+    }
+  ]
+}

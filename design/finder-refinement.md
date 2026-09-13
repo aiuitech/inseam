@@ -128,3 +128,26 @@ agents should demonstrate a search followed by several reads plus another
 search, preserving the original candidates. Run the same 20-question GPT-5.4
 sample for score, omissions, unsupported answers, calls, and latency before
 expanding the evaluation set.
+
+## Full benchmark execution and effort control
+
+Full answer evaluation can hold eight independent `DiscoverySession` values in
+one CLI node through the internal `agent-batch` command. The operations and model
+provider are shared; candidate IDs and conversation history remain per question.
+Input is bounded to 500 questions and two megabytes. IDs are unique and cannot
+contain path separators. Each answer is atomically written to its own file before
+the next question replaces its worker. A failed question does not erase completed
+answers. Provider spend is a batch total, not a per-question measurement.
+
+The performance estimate motivating this path is 500 questions times 45 seconds,
+about 375 minutes sequentially or 47 minutes at eight sessions before contention
+and judging. Eight transcripts with twelve 24,000-character tool responses are
+roughly 2.3 million characters before model messages and retained candidates.
+The database and source corpus remain shared. These are estimates, not measured
+benchmark results. An earlier attempt with separate APFS database clones stalled
+in SQLite checkpoint writes and was stopped; those disposable clones were removed.
+
+`--reasoning-effort` controls both the discovery loop and final review. Omitting
+it preserves the endpoint default. GLM full runs requested on 13 September use
+`low`. The pinned judge is launched through a small wrapper that supplies `low`
+to both upstream model factories without changing scoring or gold data.

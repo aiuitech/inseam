@@ -90,3 +90,10 @@ If the final review returns empty content, the agent keeps its preceding complet
 answer and logs the fallback. It never treats an assistant message that called a
 tool as a completed answer. If neither reply contains an answer, it reports an
 empty-answer error instead of suggesting that the turn limit was exhausted.
+
+`inseam agent --reasoning-effort low` applies the selected effort to discovery
+and final review. Omit the flag to retain the endpoint's default. The internal
+`agent-batch` benchmark command runs at most eight independent sessions on one
+node and writes a separate JSON record for each answer. Its provider cost is
+reported once for the batch because concurrent calls cannot be attributed using
+a shared cumulative spend counter.

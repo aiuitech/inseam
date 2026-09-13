@@ -24,6 +24,7 @@ use anyhow::{Context, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 
 mod agent;
+mod agent_batch;
 mod authoring;
 
 use agent::{AgentEvent, run_agent};
@@ -406,6 +407,22 @@ enum Command {
         model: Option<String>,
         #[arg(long, default_value_t = 12)]
         turns: usize,
+        #[arg(long, value_parser = ["none", "low", "medium", "high", "xhigh", "max"])]
+        reasoning_effort: Option<String>,
+    },
+    /// Evaluate bounded question sessions while keeping one database owner.
+    #[command(hide = true)]
+    AgentBatch {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        model: String,
+        #[arg(long, default_value_t = 12)]
+        turns: usize,
+        #[arg(long, value_parser = ["none", "low", "medium", "high", "xhigh", "max"])]
+        reasoning_effort: Option<String>,
     },
     /// List endpoint models suitable for a role, cheapest first.
     Models {
@@ -1091,10 +1108,15 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 },
             }
         }
+        Command::AgentBatch { input, output, model, turns, reasoning_effort } => {
+            agent_batch::run(kernel.service(&OPERATIONS)?, kernel.service(&LLM)?,
+                model, &input, &output, turns, reasoning_effort).await?;
+        }
         Command::Agent {
             question,
             model,
             turns,
+            reasoning_effort,
         } => {
             let ops = kernel.service(&OPERATIONS)?;
             let Ok(client) = kernel.service(&LLM) else {
@@ -1115,6 +1137,7 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
                 &model,
                 &question,
                 turns,
+                reasoning_effort.as_deref(),
                 |event| match event {
                     AgentEvent::ToolCall { name, arguments } => {
                         println!("→ {name} {arguments}");

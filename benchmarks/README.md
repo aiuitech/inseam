@@ -298,8 +298,8 @@ See the [13 September 2026 retrieval audit](reports/20260913-retrieval-audit.md)
 
 ### Full GLM answer evaluation on an existing index
 
-Judged replays now default to `z-ai/glm-5.3-flash` for answer generation and both
-upstream judge roles. Explicit model flags still override those defaults.
+Judged replays default to GPT-5.4.
+The explicit flags below select GLM for answer generation and both upstream judge roles.
 For all 500 questions, select 250 disjoint questions from each end:
 
 ```sh

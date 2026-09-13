@@ -193,8 +193,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("run_id")
     parser.add_argument("--bookend-count", type=harness.bounded_argument("bookend-count", enterprise.MAX_QUESTIONS // 2), default=0,
                         help="Judge the first N and last N questions with the agent on the full corpus.")
-    parser.add_argument("--answer-model", default="z-ai/glm-5.3-flash")
-    parser.add_argument("--evaluation-model", default="z-ai/glm-5.3-flash")
+    parser.add_argument("--answer-model", default="openai/gpt-5.4")
+    parser.add_argument("--evaluation-model", default="openai/gpt-5.4")
     parser.add_argument("--finder-seeds", choices=sorted(harness.FINDER_SEEDS))
     parser.add_argument("--finder-seed-k", type=harness.bounded_argument("finder-seed-k", 1000))
     parser.add_argument("--finder-rrf-k", type=harness.bounded_argument("finder-rrf-k", 1000))
