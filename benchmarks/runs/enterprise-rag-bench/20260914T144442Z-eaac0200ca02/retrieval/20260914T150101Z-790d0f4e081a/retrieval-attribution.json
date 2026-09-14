@@ -1,0 +1,3965 @@
+{
+  "attribution_limit": 50,
+  "attribution_ready": true,
+  "by_question_type": {
+    "basic": {
+      "channels": {
+        "cluster": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "exact": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "lexical": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "prose": {
+          "gold_largest": 166,
+          "gold_only_seeded": 166,
+          "gold_seeded": 166,
+          "noise_largest": 1177,
+          "noise_only_seeded": 1177,
+          "noise_seeded": 1177
+        },
+        "vector": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        }
+      },
+      "gold_documents": 175,
+      "gold_documents_found": 166,
+      "gold_documents_with_ledger": 166,
+      "noise_documents": 1177,
+      "row_kinds": {
+        "alias": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entity": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entry": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "facet": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "identifier": {
+          "gold_largest": 13,
+          "noise_largest": 77
+        },
+        "other": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "prose": {
+          "gold_largest": 66,
+          "noise_largest": 827
+        },
+        "summary": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "term": {
+          "gold_largest": 87,
+          "noise_largest": 273
+        }
+      },
+      "rows_carried_gold": [
+        {
+          "document_frequency": null,
+          "gold_documents": 160,
+          "kind": "prose",
+          "noise_documents": 1157,
+          "text": ""
+        },
+        {
+          "document_frequency": 82,
+          "gold_documents": 4,
+          "kind": "term",
+          "noise_documents": 30,
+          "text": "founder"
+        },
+        {
+          "document_frequency": 4,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "Birch"
+        },
+        {
+          "document_frequency": 4,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "OpenAI-compatibility"
+        },
+        {
+          "document_frequency": 165,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "composite"
+        },
+        {
+          "document_frequency": 157,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 10,
+          "text": "contractor"
+        },
+        {
+          "document_frequency": 117,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "newly"
+        },
+        {
+          "document_frequency": 62,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "3-hour"
+        },
+        {
+          "document_frequency": 8,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 3,
+          "text": "3-shot"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 1,
+          "text": "513-2k"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "ADR: Declarative Contract Tests and Schema Fencing Summary This ADR defines a company-wide standard for declarative con\u2026"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "API Behavioral Probe Matrix and Prospectivity Playbook Create a repeatable, region-aware API Behavioral Probe Matrix an\u2026"
+        },
+        {
+          "document_frequency": 13,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 3,
+          "text": "AWS/Azure"
+        },
+        {
+          "document_frequency": 24,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 3,
+          "text": "AWS/Azure/GCP"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Account Blitz Log \u2014 AM rounds Morning blitz (short log + action list) \u2014 May 10 2026 08:10 \u2014 quick pass through high-ris\u2026"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Activation safeguards and initiative tide for Private VPC waves Objective: Define and sequence the quarterly activation\u2026"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Adaptive Degradation Safety & Verification Manual Summary:\\n\\nThis manual defines the safety contracts, verification ch\u2026"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Adoption Velocity Radar \u2014 Customer Implementation Compact One-page compact tracker designed for weekly check-ins with c\u2026"
+        },
+        {
+          "document_frequency": 241,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "Assurance"
+        },
+        {
+          "document_frequency": 14,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "Bootcamp"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Bounded-window KV cache with adaptive backpressure and graceful GPU-OOM fallback Context: We're seeing tail-latency spi\u2026"
+        },
+        {
+          "document_frequency": 19,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "BrightHealth"
+        },
+        {
+          "document_frequency": 20,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "BrightPath"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Bursting 5xx errors caused by API gateway backpressure amplifying runtime thread exhaustion on dedicated pool Issue sum\u2026"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "CI agent sudoers rule change prevents nightly artifact upload step Issue summary: During the 03:00 nightly release pipe\u2026"
+        }
+      ],
+      "rows_carried_noise": [
+        {
+          "document_frequency": null,
+          "gold_documents": 160,
+          "kind": "prose",
+          "noise_documents": 1157,
+          "text": ""
+        },
+        {
+          "document_frequency": 82,
+          "gold_documents": 4,
+          "kind": "term",
+          "noise_documents": 30,
+          "text": "founder"
+        },
+        {
+          "document_frequency": 189,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 15,
+          "text": "entitlement"
+        },
+        {
+          "document_frequency": 405,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 13,
+          "text": "SaaS"
+        },
+        {
+          "document_frequency": 157,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 10,
+          "text": "contractor"
+        },
+        {
+          "document_frequency": 18,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 10,
+          "text": "founder-led"
+        },
+        {
+          "document_frequency": 139,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 8,
+          "text": "Priced"
+        },
+        {
+          "document_frequency": 159,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 8,
+          "text": "penetration"
+        },
+        {
+          "document_frequency": 19,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "ClearPath"
+        },
+        {
+          "document_frequency": 50,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "MDM"
+        },
+        {
+          "document_frequency": 27,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "MedicoRe"
+        },
+        {
+          "document_frequency": 177,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "OpenAI"
+        },
+        {
+          "document_frequency": 49,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "RDMA"
+        },
+        {
+          "document_frequency": 86,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "Zendesk"
+        },
+        {
+          "document_frequency": 8,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 7,
+          "text": "founder/CTO"
+        },
+        {
+          "document_frequency": 79,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "multipart"
+        },
+        {
+          "document_frequency": 18,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "south"
+        },
+        {
+          "document_frequency": 27,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "Apple"
+        },
+        {
+          "document_frequency": 99,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "NCCL"
+        },
+        {
+          "document_frequency": 221,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "SI"
+        },
+        {
+          "document_frequency": 342,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "SSE"
+        },
+        {
+          "document_frequency": 129,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "Usability"
+        },
+        {
+          "document_frequency": 8,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "Velora"
+        },
+        {
+          "document_frequency": 15,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "Wi-Fi"
+        },
+        {
+          "document_frequency": 13,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "Wi\u2011Fi"
+        }
+      ]
+    },
+    "completeness": {
+      "channels": {
+        "cluster": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "exact": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "lexical": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "prose": {
+          "gold_largest": 92,
+          "gold_only_seeded": 92,
+          "gold_seeded": 92,
+          "noise_largest": 71,
+          "noise_only_seeded": 71,
+          "noise_seeded": 71
+        },
+        "vector": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        }
+      },
+      "gold_documents": 130,
+      "gold_documents_found": 92,
+      "gold_documents_with_ledger": 92,
+      "noise_documents": 71,
+      "row_kinds": {
+        "alias": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entity": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entry": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "facet": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "identifier": {
+          "gold_largest": 12,
+          "noise_largest": 9
+        },
+        "other": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "prose": {
+          "gold_largest": 69,
+          "noise_largest": 55
+        },
+        "summary": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "term": {
+          "gold_largest": 11,
+          "noise_largest": 7
+        }
+      },
+      "rows_carried_gold": [
+        {
+          "document_frequency": null,
+          "gold_documents": 91,
+          "kind": "prose",
+          "noise_documents": 68,
+          "text": ""
+        },
+        {
+          "document_frequency": 319,
+          "gold_documents": 8,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "communications"
+        },
+        {
+          "document_frequency": 89,
+          "gold_documents": 6,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "Orion"
+        },
+        {
+          "document_frequency": 4,
+          "gold_documents": 6,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "Q4-2025"
+        },
+        {
+          "document_frequency": 317,
+          "gold_documents": 6,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "Symptom"
+        },
+        {
+          "document_frequency": 148,
+          "gold_documents": 6,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "discrepancy"
+        },
+        {
+          "document_frequency": 4,
+          "gold_documents": 4,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "RRB-17"
+        },
+        {
+          "document_frequency": 65,
+          "gold_documents": 4,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "SOP"
+        },
+        {
+          "document_frequency": 125,
+          "gold_documents": 3,
+          "kind": "identifier",
+          "noise_documents": 2,
+          "text": "H1"
+        },
+        {
+          "document_frequency": 37,
+          "gold_documents": 3,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "Kestrel"
+        },
+        {
+          "document_frequency": 7,
+          "gold_documents": 3,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "capacity/quota"
+        },
+        {
+          "document_frequency": 89,
+          "gold_documents": 3,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "pre-deploy"
+        },
+        {
+          "document_frequency": 8,
+          "gold_documents": 3,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "retention-exception"
+        },
+        {
+          "document_frequency": 275,
+          "gold_documents": 3,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "serving-runtime"
+        },
+        {
+          "document_frequency": 19,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "JSON-schema"
+        },
+        {
+          "document_frequency": 147,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "Post-launch"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "Restart/redeploy"
+        },
+        {
+          "document_frequency": 21,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "activating"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "capacity-exhaustion"
+        },
+        {
+          "document_frequency": 130,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "introducing"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "runtime-release-2025.01.17"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "runtime-release-2025.02.01"
+        },
+        {
+          "document_frequency": 257,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "transcripts"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "ASSUME_ROLE"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Acme Private upgrade escalation (rollback keeps re-triggering) Meeting header - Date: 2026-02-14 - Time: 1:00 PM PT - D\u2026"
+        }
+      ],
+      "rows_carried_noise": [
+        {
+          "document_frequency": null,
+          "gold_documents": 91,
+          "kind": "prose",
+          "noise_documents": 68,
+          "text": ""
+        },
+        {
+          "document_frequency": 238,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 8,
+          "text": "postmortems"
+        },
+        {
+          "document_frequency": 23,
+          "gold_documents": 0,
+          "kind": "identifier",
+          "noise_documents": 5,
+          "text": "Python/TypeScript/Go"
+        },
+        {
+          "document_frequency": 3,
+          "gold_documents": 0,
+          "kind": "identifier",
+          "noise_documents": 5,
+          "text": "TypeScript/Go"
+        },
+        {
+          "document_frequency": 319,
+          "gold_documents": 8,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "communications"
+        },
+        {
+          "document_frequency": 257,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "transcripts"
+        },
+        {
+          "document_frequency": 304,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "GRANTED"
+        },
+        {
+          "document_frequency": 55,
+          "gold_documents": 0,
+          "kind": "identifier",
+          "noise_documents": 3,
+          "text": "Python/TS/Go"
+        },
+        {
+          "document_frequency": 4,
+          "gold_documents": 0,
+          "kind": "identifier",
+          "noise_documents": 3,
+          "text": "approvals_required"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 2,
+          "text": "Change Management Policy for Model-Version and Runtime Changes h1. Purpose This policy defines the minimum change-manag\u2026"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 0,
+          "kind": "summary",
+          "noise_documents": 2,
+          "text": "Emergency production change policy # Purpose This policy defines Redwood Inference\u2019s required process for *emergency pr\u2026"
+        },
+        {
+          "document_frequency": 125,
+          "gold_documents": 3,
+          "kind": "identifier",
+          "noise_documents": 2,
+          "text": "H1"
+        },
+        {
+          "document_frequency": 17,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "Inference's"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 2,
+          "text": "Production Change Management Policy ## Overview This policy defines the minimum process and approvals required for prod\u2026"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 2,
+          "text": "Production Change Management Standard (v2) h1. Purpose This policy defines what constitutes a production change at Redw\u2026"
+        },
+        {
+          "document_frequency": 317,
+          "gold_documents": 6,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "Symptom"
+        },
+        {
+          "document_frequency": 21,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "activating"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 0,
+          "kind": "identifier",
+          "noise_documents": 2,
+          "text": "eng-platform/runbooks/hosted-rollout-and-rollback-procedure"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 0,
+          "kind": "identifier",
+          "noise_documents": 2,
+          "text": "eng-serving-runtime/runbooks/serving-runtime-hotfix-runbook"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "per-secret"
+        },
+        {
+          "document_frequency": 105,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "prerequisites"
+        },
+        {
+          "document_frequency": 4,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "private-upgrade"
+        },
+        {
+          "document_frequency": 111,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "stories"
+        },
+        {
+          "document_frequency": 17,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "writeups"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 0,
+          "kind": "summary",
+          "noise_documents": 1,
+          "text": "API key lifecycle (Hosted): creation, rotation, and revocation # Purpose This policy defines Redwood Inference requirem\u2026"
+        }
+      ]
+    },
+    "conflicting_info": {
+      "channels": {
+        "cluster": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "exact": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "lexical": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "prose": {
+          "gold_largest": 38,
+          "gold_only_seeded": 38,
+          "gold_seeded": 38,
+          "noise_largest": 110,
+          "noise_only_seeded": 110,
+          "noise_seeded": 110
+        },
+        "vector": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        }
+      },
+      "gold_documents": 39,
+      "gold_documents_found": 38,
+      "gold_documents_with_ledger": 38,
+      "noise_documents": 110,
+      "row_kinds": {
+        "alias": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entity": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entry": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "facet": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "identifier": {
+          "gold_largest": 16,
+          "noise_largest": 15
+        },
+        "other": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "prose": {
+          "gold_largest": 7,
+          "noise_largest": 83
+        },
+        "summary": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "term": {
+          "gold_largest": 15,
+          "noise_largest": 12
+        }
+      },
+      "rows_carried_gold": [
+        {
+          "document_frequency": null,
+          "gold_documents": 31,
+          "kind": "prose",
+          "noise_documents": 108,
+          "text": ""
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "CUSTOMER_IMPACT_TIER_1"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "ClearEdge"
+        },
+        {
+          "document_frequency": 3,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "Copperfield"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "EXP-002"
+        },
+        {
+          "document_frequency": 6,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "Streamly"
+        },
+        {
+          "document_frequency": 216,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "canonicalization"
+        },
+        {
+          "document_frequency": 77,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "canvas"
+        },
+        {
+          "document_frequency": 5,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "cohort-driven"
+        },
+        {
+          "document_frequency": 12,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "cost_penalty"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "customer-impact-tier"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "deploy/warm-pool-manager"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "dp-132-usw"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "enable_tool_signal"
+        },
+        {
+          "document_frequency": 30,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "exclusively"
+        },
+        {
+          "document_frequency": 8,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "keycard"
+        },
+        {
+          "document_frequency": 104,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "playback"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "po_fingerprint"
+        },
+        {
+          "document_frequency": 4,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "prompt_len_bucket"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "redwood/warm-pool-handoff"
+        },
+        {
+          "document_frequency": 6,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "super-admin"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "tool-signal"
+        },
+        {
+          "document_frequency": 223,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "unified"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "v1/migration/start"
+        },
+        {
+          "document_frequency": 6,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "v9"
+        }
+      ],
+      "rows_carried_noise": [
+        {
+          "document_frequency": null,
+          "gold_documents": 31,
+          "kind": "prose",
+          "noise_documents": 108,
+          "text": ""
+        },
+        {
+          "document_frequency": 80,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "breakpoints"
+        },
+        {
+          "document_frequency": 52,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "OpenAI-compat"
+        },
+        {
+          "document_frequency": 5,
+          "gold_documents": 0,
+          "kind": "identifier",
+          "noise_documents": 6,
+          "text": "openai_compat"
+        },
+        {
+          "document_frequency": 223,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "unified"
+        },
+        {
+          "document_frequency": 216,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "canonicalization"
+        },
+        {
+          "document_frequency": 77,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "canvas"
+        },
+        {
+          "document_frequency": 161,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "classifier"
+        },
+        {
+          "document_frequency": 5,
+          "gold_documents": 0,
+          "kind": "identifier",
+          "noise_documents": 4,
+          "text": "gpu/driver"
+        },
+        {
+          "document_frequency": 8,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "keycard"
+        },
+        {
+          "document_frequency": 23,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "Orphan"
+        },
+        {
+          "document_frequency": 6,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "Streamly"
+        },
+        {
+          "document_frequency": 165,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "composite"
+        },
+        {
+          "document_frequency": 225,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "decoding"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 0,
+          "kind": "summary",
+          "noise_documents": 2,
+          "text": "Anchored Audit Evidence Export Playbook and WORM Anchoring for Admin Access Events Purpose: Define and deliver an expor\u2026"
+        },
+        {
+          "document_frequency": 445,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "BYOK"
+        },
+        {
+          "document_frequency": 3,
+          "gold_documents": 0,
+          "kind": "identifier",
+          "noise_documents": 2,
+          "text": "Composite_score"
+        },
+        {
+          "document_frequency": 159,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "Nimbus"
+        },
+        {
+          "document_frequency": 172,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "Sentinel"
+        },
+        {
+          "document_frequency": 4,
+          "gold_documents": 0,
+          "kind": "identifier",
+          "noise_documents": 2,
+          "text": "baseline_qps"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 0,
+          "kind": "summary",
+          "noise_documents": 2,
+          "text": "eng-ml devon: Heads-up \u2014 the structured-output eval runner started failing on the Llama-3-quant onboarding run. CI show\u2026"
+        },
+        {
+          "document_frequency": 385,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "integrity"
+        },
+        {
+          "document_frequency": 53,
+          "gold_documents": 0,
+          "kind": "identifier",
+          "noise_documents": 2,
+          "text": "kernel/driver"
+        },
+        {
+          "document_frequency": 13,
+          "gold_documents": 0,
+          "kind": "identifier",
+          "noise_documents": 2,
+          "text": "legal_hold"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 0,
+          "kind": "identifier",
+          "noise_documents": 2,
+          "text": "manifest/signature"
+        }
+      ]
+    },
+    "constrained": {
+      "channels": {
+        "cluster": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "exact": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "lexical": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "prose": {
+          "gold_largest": 43,
+          "gold_only_seeded": 43,
+          "gold_seeded": 43,
+          "noise_largest": 177,
+          "noise_only_seeded": 177,
+          "noise_seeded": 177
+        },
+        "vector": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        }
+      },
+      "gold_documents": 43,
+      "gold_documents_found": 43,
+      "gold_documents_with_ledger": 43,
+      "noise_documents": 177,
+      "row_kinds": {
+        "alias": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entity": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entry": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "facet": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "identifier": {
+          "gold_largest": 11,
+          "noise_largest": 16
+        },
+        "other": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "prose": {
+          "gold_largest": 10,
+          "noise_largest": 120
+        },
+        "summary": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "term": {
+          "gold_largest": 22,
+          "noise_largest": 41
+        }
+      },
+      "rows_carried_gold": [
+        {
+          "document_frequency": null,
+          "gold_documents": 33,
+          "kind": "prose",
+          "noise_documents": 172,
+          "text": ""
+        },
+        {
+          "document_frequency": 13,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 1,
+          "text": "1024-d"
+        },
+        {
+          "document_frequency": 92,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "GAME"
+        },
+        {
+          "document_frequency": 62,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "Sev-2"
+        },
+        {
+          "document_frequency": 8,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "Sev0/Sev1"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "cross_region_fallback"
+        },
+        {
+          "document_frequency": 129,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "evaluator"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "incident_bot.break_glass.activate"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "incident_bot.config_diff.read"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "kv.compaction.step"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 1,
+          "text": "kv_compaction_steps_total"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "open-embed-512-v1"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "open-embed-default"
+        },
+        {
+          "document_frequency": 89,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "perf-canary"
+        },
+        {
+          "document_frequency": 150,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "redirects"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "upgrade/migrations"
+        },
+        {
+          "document_frequency": 108,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 1,
+          "text": "403s"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "ADR-021: Region Pinning \u2014 Enforcement Boundaries and Cross-Region Allowances ## Status Published (effective for Hosted\u2026"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Audit events for Dedicated rollout actions (staged rollouts) ## Overview This document defines the audit logging requir\u2026"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Console cached query results and trace links resolve to previous API key after customer rotated API key Issue summary:\u2026"
+        },
+        {
+          "document_frequency": 3,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "Console/usage"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Dynamic quant handoff and latency budgeting manifest Summary: This document defines the operational contract, evaluatio\u2026"
+        },
+        {
+          "document_frequency": 51,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "GPG"
+        },
+        {
+          "document_frequency": 12,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "GitLab"
+        },
+        {
+          "document_frequency": 239,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "HMAC"
+        }
+      ],
+      "rows_carried_noise": [
+        {
+          "document_frequency": null,
+          "gold_documents": 33,
+          "kind": "prose",
+          "noise_documents": 172,
+          "text": ""
+        },
+        {
+          "document_frequency": 32,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "executions"
+        },
+        {
+          "document_frequency": 110,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "membership"
+        },
+        {
+          "document_frequency": 66,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "break-glass"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 0,
+          "kind": "identifier",
+          "noise_documents": 5,
+          "text": "break_glass"
+        },
+        {
+          "document_frequency": 74,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "child"
+        },
+        {
+          "document_frequency": 129,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "evaluator"
+        },
+        {
+          "document_frequency": 18,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "identity-proxy"
+        },
+        {
+          "document_frequency": 425,
+          "gold_documents": 0,
+          "kind": "identifier",
+          "noise_documents": 4,
+          "text": "502s"
+        },
+        {
+          "document_frequency": 137,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "cookie"
+        },
+        {
+          "document_frequency": 12,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "overstated"
+        },
+        {
+          "document_frequency": 197,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "presets"
+        },
+        {
+          "document_frequency": 134,
+          "gold_documents": 0,
+          "kind": "identifier",
+          "noise_documents": 3,
+          "text": "HTTP/2"
+        },
+        {
+          "document_frequency": 4,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "ad\u2011hoc"
+        },
+        {
+          "document_frequency": 62,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "comma-separated"
+        },
+        {
+          "document_frequency": 403,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "consumers"
+        },
+        {
+          "document_frequency": 24,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "in-cluster"
+        },
+        {
+          "document_frequency": 395,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "restored"
+        },
+        {
+          "document_frequency": 93,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "retryable"
+        },
+        {
+          "document_frequency": 167,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "terminal"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 0,
+          "kind": "identifier",
+          "noise_documents": 2,
+          "text": "BREAK_GLASS_REQUIRED"
+        },
+        {
+          "document_frequency": 51,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "GPG"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 0,
+          "kind": "summary",
+          "noise_documents": 2,
+          "text": "IdP-initiated RelayState double-encoding mangles tenant routing in private deployment Customer reports that IdP-initiat\u2026"
+        },
+        {
+          "document_frequency": 110,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "JWT"
+        },
+        {
+          "document_frequency": 83,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "Postgres"
+        }
+      ]
+    },
+    "intra_document_reasoning": {
+      "channels": {
+        "cluster": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 2,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "exact": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "lexical": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "prose": {
+          "gold_largest": 40,
+          "gold_only_seeded": 40,
+          "gold_seeded": 40,
+          "noise_largest": 268,
+          "noise_only_seeded": 269,
+          "noise_seeded": 269
+        },
+        "vector": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        }
+      },
+      "gold_documents": 40,
+      "gold_documents_found": 40,
+      "gold_documents_with_ledger": 40,
+      "noise_documents": 270,
+      "row_kinds": {
+        "alias": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entity": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entry": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "facet": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "identifier": {
+          "gold_largest": 2,
+          "noise_largest": 27
+        },
+        "other": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "prose": {
+          "gold_largest": 15,
+          "noise_largest": 188
+        },
+        "summary": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "term": {
+          "gold_largest": 23,
+          "noise_largest": 55
+        }
+      },
+      "rows_carried_gold": [
+        {
+          "document_frequency": null,
+          "gold_documents": 37,
+          "kind": "prose",
+          "noise_documents": 262,
+          "text": ""
+        },
+        {
+          "document_frequency": 28,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "1k-token"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "2167777777 maria-support: Hey team \u2014 escalation from a Private customer: collector failed to upload a debug bundle. Cus\u2026"
+        },
+        {
+          "document_frequency": 38,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 1,
+          "text": "35k"
+        },
+        {
+          "document_frequency": 3,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "AcmeSec"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Adaptive Log Zipper: tenant-aware compacting and deterministic ordering for high-throughput Loki/ELK ingest Problem: Du\u2026"
+        },
+        {
+          "document_frequency": 19,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "Arcadia"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "AuditWorks"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "CartPilot trial \u2014 POC scope & quick sync From: Sam Roth <sam.roth@cartpilot.com> To: Ben Carter <ben_carter@redwood.com\u2026"
+        },
+        {
+          "document_frequency": 114,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "Cheng"
+        },
+        {
+          "document_frequency": 4,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "Corr-id"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Data Processing Agreement \u2014 PayRight initial redline & counsel notes From: Emily Chen <emily.chen@payright.com> To: Sof\u2026"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Decision Breadcrumbs: Chained Routing Context and Per-Hop Metrics for Fallback Explainability Summary: Add a compact, h\u2026"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Dedicated capacity intake heuristic and stakeholder synthesis Summary: Consolidate a deterministic intake heuristic for\u2026"
+        },
+        {
+          "document_frequency": 63,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "HEC"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Handoff: Jupiter Therapeutics \u2014 Activation & Networking Roadmap From: Marissa Cole <marissa.cole@redwood.com> To: tessa\u2026"
+        },
+        {
+          "document_frequency": 50,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "Helios"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Hosted API: implement failure grace-window + customer fast-path to contain retry storms during escalations Summary: Mul\u2026"
+        },
+        {
+          "document_frequency": 34,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "IDE"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "IT + Finance Ops: On-call Runbook handoff and billing tag cleanup Handoff of on-call runbook and finance tag standardiz\u2026"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Incremental token latency allocation and cache impact tracing Summary: We need fine-grained instrumentation that attrib\u2026"
+        },
+        {
+          "document_frequency": 180,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "KPI"
+        },
+        {
+          "document_frequency": 444,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "MVP"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "MapFlow"
+        },
+        {
+          "document_frequency": 66,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "Meridian"
+        }
+      ],
+      "rows_carried_noise": [
+        {
+          "document_frequency": null,
+          "gold_documents": 37,
+          "kind": "prose",
+          "noise_documents": 262,
+          "text": ""
+        },
+        {
+          "document_frequency": 63,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "HEC"
+        },
+        {
+          "document_frequency": 103,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "linkcheck"
+        },
+        {
+          "document_frequency": 25,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "mkdocs"
+        },
+        {
+          "document_frequency": 135,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "prepay"
+        },
+        {
+          "document_frequency": 387,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "rubric"
+        },
+        {
+          "document_frequency": 50,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "Helios"
+        },
+        {
+          "document_frequency": 34,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "IDE"
+        },
+        {
+          "document_frequency": 180,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "KPI"
+        },
+        {
+          "document_frequency": 479,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "allocations"
+        },
+        {
+          "document_frequency": 153,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "briefing"
+        },
+        {
+          "document_frequency": 5,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 6,
+          "text": "resume_success"
+        },
+        {
+          "document_frequency": 19,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "Arcadia"
+        },
+        {
+          "document_frequency": 114,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "Cheng"
+        },
+        {
+          "document_frequency": 50,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "TP"
+        },
+        {
+          "document_frequency": 53,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "allreduce"
+        },
+        {
+          "document_frequency": 266,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "benchmarking"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "executive-briefing"
+        },
+        {
+          "document_frequency": 227,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "heartbeat"
+        },
+        {
+          "document_frequency": 8,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 5,
+          "text": "resume_success_rate"
+        },
+        {
+          "document_frequency": 116,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "sampleapp"
+        },
+        {
+          "document_frequency": 3,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 5,
+          "text": "splunk_hec"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 5,
+          "text": "tls_handshake_failures"
+        },
+        {
+          "document_frequency": 444,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "MVP"
+        },
+        {
+          "document_frequency": 66,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "Therapeutics"
+        }
+      ]
+    },
+    "miscellaneous": {
+      "channels": {
+        "cluster": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "exact": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "lexical": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "prose": {
+          "gold_largest": 20,
+          "gold_only_seeded": 20,
+          "gold_seeded": 20,
+          "noise_largest": 116,
+          "noise_only_seeded": 116,
+          "noise_seeded": 116
+        },
+        "vector": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        }
+      },
+      "gold_documents": 20,
+      "gold_documents_found": 20,
+      "gold_documents_with_ledger": 20,
+      "noise_documents": 116,
+      "row_kinds": {
+        "alias": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entity": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entry": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "facet": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "identifier": {
+          "gold_largest": 0,
+          "noise_largest": 1
+        },
+        "other": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "prose": {
+          "gold_largest": 2,
+          "noise_largest": 41
+        },
+        "summary": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "term": {
+          "gold_largest": 18,
+          "noise_largest": 74
+        }
+      },
+      "rows_carried_gold": [
+        {
+          "document_frequency": null,
+          "gold_documents": 17,
+          "kind": "prose",
+          "noise_documents": 113,
+          "text": ""
+        },
+        {
+          "document_frequency": 3,
+          "gold_documents": 3,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "softball"
+        },
+        {
+          "document_frequency": 229,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 10,
+          "text": "Interview"
+        },
+        {
+          "document_frequency": 8,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 11,
+          "text": "fantasy"
+        },
+        {
+          "document_frequency": 15,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 9,
+          "text": "summer"
+        },
+        {
+          "document_frequency": 21,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "4th"
+        },
+        {
+          "document_frequency": 142,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "CAT"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Cafeteria Beanbag and Ambient Noise Guidelines Summary This page documents a lightweight, experimental set of guideline\u2026"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Candidate Interview: Senior Sales Engineer First-stage technical interview for a Senior Sales Engineer candidate. Cover\u2026"
+        },
+        {
+          "document_frequency": 78,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "Kitchen"
+        },
+        {
+          "document_frequency": 53,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "bracket"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "cafeteria"
+        },
+        {
+          "document_frequency": 3,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "canyon"
+        },
+        {
+          "document_frequency": 8,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "courtyard"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "entry",
+          "noise_documents": 0,
+          "text": "dsid_bb14e2f3925b4e27829c4f3c1aea3af1__office-art-and-plants-guidelines-2024.txt (text/plain)"
+        },
+        {
+          "document_frequency": 30,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "entrance"
+        },
+        {
+          "document_frequency": 111,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "facilities"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "figma.com/file/placeholder"
+        },
+        {
+          "document_frequency": 28,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "fridge"
+        },
+        {
+          "document_frequency": 8,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "hackathon"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "hackathon-2025-inference-ui-demo Motivation: lightweight hackathon project to build a minimal interactive demo that vis\u2026"
+        },
+        {
+          "document_frequency": 52,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "histories"
+        },
+        {
+          "document_frequency": 30,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "kiosk"
+        },
+        {
+          "document_frequency": 11,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "league"
+        },
+        {
+          "document_frequency": 27,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "meme"
+        }
+      ],
+      "rows_carried_noise": [
+        {
+          "document_frequency": null,
+          "gold_documents": 17,
+          "kind": "prose",
+          "noise_documents": 113,
+          "text": ""
+        },
+        {
+          "document_frequency": 8,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 11,
+          "text": "fantasy"
+        },
+        {
+          "document_frequency": 229,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 10,
+          "text": "Interview"
+        },
+        {
+          "document_frequency": 15,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 9,
+          "text": "summer"
+        },
+        {
+          "document_frequency": 78,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "Kitchen"
+        },
+        {
+          "document_frequency": 30,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "kiosk"
+        },
+        {
+          "document_frequency": 21,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "plants"
+        },
+        {
+          "document_frequency": 3,
+          "gold_documents": 3,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "softball"
+        },
+        {
+          "document_frequency": 28,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "fridge"
+        },
+        {
+          "document_frequency": 307,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "hero"
+        },
+        {
+          "document_frequency": 4,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "jokes"
+        },
+        {
+          "document_frequency": 14,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "Captain"
+        },
+        {
+          "document_frequency": 41,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "casual"
+        },
+        {
+          "document_frequency": 111,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "facilities"
+        },
+        {
+          "document_frequency": 8,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "memes"
+        },
+        {
+          "document_frequency": 8,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "players"
+        },
+        {
+          "document_frequency": 142,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "CAT"
+        },
+        {
+          "document_frequency": 53,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "bracket"
+        },
+        {
+          "document_frequency": 21,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "cleaning"
+        },
+        {
+          "document_frequency": 11,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "league"
+        },
+        {
+          "document_frequency": 27,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "meme"
+        },
+        {
+          "document_frequency": 9,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "soccer"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 0,
+          "kind": "summary",
+          "noise_documents": 2,
+          "text": "2401112223-spring-fantasy-baseball-draft-snacks.json Sam: Anyone down for a tiny spring fantasy baseball league? 6 team\u2026"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 0,
+          "kind": "summary",
+          "noise_documents": 2,
+          "text": "Intro: Sophia Li (Sr ML Engineer) \u2014 scheduling & next steps From: Asha Patel <asha@bluepegtalent.com> To: Jonas Weber <\u2026"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 0,
+          "kind": "summary",
+          "noise_documents": 2,
+          "text": "Serving Runtime \u2014 Candidate synthesis and onboarding plan (Apr 7\u20139, 2025) Meeting context and purpose: This is a synthe\u2026"
+        }
+      ]
+    },
+    "project_related": {
+      "channels": {
+        "cluster": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "exact": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "lexical": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 1
+        },
+        "prose": {
+          "gold_largest": 160,
+          "gold_only_seeded": 160,
+          "gold_seeded": 160,
+          "noise_largest": 157,
+          "noise_only_seeded": 156,
+          "noise_seeded": 157
+        },
+        "vector": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        }
+      },
+      "gold_documents": 169,
+      "gold_documents_found": 160,
+      "gold_documents_with_ledger": 160,
+      "noise_documents": 157,
+      "row_kinds": {
+        "alias": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entity": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entry": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "facet": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "identifier": {
+          "gold_largest": 56,
+          "noise_largest": 40
+        },
+        "other": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "prose": {
+          "gold_largest": 38,
+          "noise_largest": 68
+        },
+        "summary": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "term": {
+          "gold_largest": 66,
+          "noise_largest": 49
+        }
+      },
+      "rows_carried_gold": [
+        {
+          "document_frequency": null,
+          "gold_documents": 127,
+          "kind": "prose",
+          "noise_documents": 144,
+          "text": ""
+        },
+        {
+          "document_frequency": 15,
+          "gold_documents": 10,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "non-burst"
+        },
+        {
+          "document_frequency": 10,
+          "gold_documents": 9,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "fast-tier"
+        },
+        {
+          "document_frequency": 4,
+          "gold_documents": 8,
+          "kind": "identifier",
+          "noise_documents": 1,
+          "text": "reason_codes"
+        },
+        {
+          "document_frequency": 93,
+          "gold_documents": 6,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "ADR"
+        },
+        {
+          "document_frequency": 4,
+          "gold_documents": 6,
+          "kind": "identifier",
+          "noise_documents": 4,
+          "text": "gateway/routing/runtime"
+        },
+        {
+          "document_frequency": 42,
+          "gold_documents": 5,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "Northbridge"
+        },
+        {
+          "document_frequency": 137,
+          "gold_documents": 5,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "double-counting"
+        },
+        {
+          "document_frequency": 50,
+          "gold_documents": 4,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "DEK"
+        },
+        {
+          "document_frequency": 17,
+          "gold_documents": 4,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "Northwind"
+        },
+        {
+          "document_frequency": 5,
+          "gold_documents": 4,
+          "kind": "identifier",
+          "noise_documents": 1,
+          "text": "SUP-1842"
+        },
+        {
+          "document_frequency": 7,
+          "gold_documents": 4,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "audit-log-exporter"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 4,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "burst-denied"
+        },
+        {
+          "document_frequency": 6,
+          "gold_documents": 4,
+          "kind": "identifier",
+          "noise_documents": 3,
+          "text": "residency_policy_violation"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 4,
+          "kind": "identifier",
+          "noise_documents": 1,
+          "text": "throughput/SLO"
+        },
+        {
+          "document_frequency": 4,
+          "gold_documents": 4,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "upgrade-related"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 4,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "upgrade_started"
+        },
+        {
+          "document_frequency": 3,
+          "gold_documents": 3,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "ADR-007"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 3,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "DEMO_MODE"
+        },
+        {
+          "document_frequency": 3,
+          "gold_documents": 3,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "QTD"
+        },
+        {
+          "document_frequency": 12,
+          "gold_documents": 3,
+          "kind": "identifier",
+          "noise_documents": 5,
+          "text": "Sev0"
+        },
+        {
+          "document_frequency": 18,
+          "gold_documents": 3,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "cohorting"
+        },
+        {
+          "document_frequency": 164,
+          "gold_documents": 3,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "counted"
+        },
+        {
+          "document_frequency": 3,
+          "gold_documents": 3,
+          "kind": "identifier",
+          "noise_documents": 1,
+          "text": "denial_reason"
+        },
+        {
+          "document_frequency": 211,
+          "gold_documents": 3,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "disconnects"
+        }
+      ],
+      "rows_carried_noise": [
+        {
+          "document_frequency": null,
+          "gold_documents": 127,
+          "kind": "prose",
+          "noise_documents": 144,
+          "text": ""
+        },
+        {
+          "document_frequency": 47,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 5,
+          "text": "L40S"
+        },
+        {
+          "document_frequency": 12,
+          "gold_documents": 3,
+          "kind": "identifier",
+          "noise_documents": 5,
+          "text": "Sev0"
+        },
+        {
+          "document_frequency": 50,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "TP"
+        },
+        {
+          "document_frequency": 254,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "estimator"
+        },
+        {
+          "document_frequency": 168,
+          "gold_documents": 3,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "funnel"
+        },
+        {
+          "document_frequency": 12,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "time-to-fix"
+        },
+        {
+          "document_frequency": 9,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "time-to-mitigate"
+        },
+        {
+          "document_frequency": 16,
+          "gold_documents": 0,
+          "kind": "identifier",
+          "noise_documents": 4,
+          "text": "Backup/Restore"
+        },
+        {
+          "document_frequency": 24,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "GPU-seconds"
+        },
+        {
+          "document_frequency": 4,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 4,
+          "text": "SIEM/export"
+        },
+        {
+          "document_frequency": 8,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "TTFS"
+        },
+        {
+          "document_frequency": 137,
+          "gold_documents": 5,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "double-counting"
+        },
+        {
+          "document_frequency": 4,
+          "gold_documents": 6,
+          "kind": "identifier",
+          "noise_documents": 4,
+          "text": "gateway/routing/runtime"
+        },
+        {
+          "document_frequency": 11,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 4,
+          "text": "gpu_seconds"
+        },
+        {
+          "document_frequency": 12,
+          "gold_documents": 3,
+          "kind": "identifier",
+          "noise_documents": 4,
+          "text": "incident_type"
+        },
+        {
+          "document_frequency": 89,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 4,
+          "text": "perf-canary"
+        },
+        {
+          "document_frequency": 63,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 3,
+          "text": "7-year"
+        },
+        {
+          "document_frequency": 50,
+          "gold_documents": 4,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "DEK"
+        },
+        {
+          "document_frequency": 62,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "DEKs"
+        },
+        {
+          "document_frequency": 17,
+          "gold_documents": 4,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "Northwind"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 0,
+          "kind": "summary",
+          "noise_documents": 3,
+          "text": "Quickstarts Adoption KPIs (Hosted API) \u2014 draft sheet TAB: Summary Last updated: 2025-03-14 (Nikhil) Goal Define a KPI +\u2026"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "SIEM-export"
+        },
+        {
+          "document_frequency": 9,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "auto-selection"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "identifier",
+          "noise_documents": 3,
+          "text": "blended_cost_per_1m_output_tokens"
+        }
+      ]
+    },
+    "semantic": {
+      "channels": {
+        "cluster": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "exact": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "lexical": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "prose": {
+          "gold_largest": 97,
+          "gold_only_seeded": 97,
+          "gold_seeded": 97,
+          "noise_largest": 858,
+          "noise_only_seeded": 858,
+          "noise_seeded": 858
+        },
+        "vector": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        }
+      },
+      "gold_documents": 125,
+      "gold_documents_found": 97,
+      "gold_documents_with_ledger": 97,
+      "noise_documents": 858,
+      "row_kinds": {
+        "alias": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entity": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entry": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "facet": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "identifier": {
+          "gold_largest": 8,
+          "noise_largest": 35
+        },
+        "other": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "prose": {
+          "gold_largest": 52,
+          "noise_largest": 663
+        },
+        "summary": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "term": {
+          "gold_largest": 37,
+          "noise_largest": 160
+        }
+      },
+      "rows_carried_gold": [
+        {
+          "document_frequency": null,
+          "gold_documents": 95,
+          "kind": "prose",
+          "noise_documents": 852,
+          "text": ""
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "Southeast"
+        },
+        {
+          "document_frequency": 231,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 8,
+          "text": "mixes"
+        },
+        {
+          "document_frequency": 6,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 1,
+          "text": "12-GPU"
+        },
+        {
+          "document_frequency": 4,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 1,
+          "text": "15\u2013Dec"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "2026-10-03T16"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "2026-10-06T09"
+        },
+        {
+          "document_frequency": 108,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 2,
+          "text": "403s"
+        },
+        {
+          "document_frequency": 62,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 4,
+          "text": "40GB"
+        },
+        {
+          "document_frequency": 2,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "90-120m"
+        },
+        {
+          "document_frequency": 5,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 0,
+          "text": "90\u2013120m"
+        },
+        {
+          "document_frequency": 55,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 0,
+          "text": "ARM"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Accept-queue buildup from ephemeral prewarm handshake triggering sustained 5xx wave Issue summary:\\n\\nStarting 2026-03-\u2026"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Access approved but console permissions not provisioned after Okta issuer domain swap Issue summary: Users report that\u2026"
+        },
+        {
+          "document_frequency": 79,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 5,
+          "text": "August"
+        },
+        {
+          "document_frequency": 3,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 2,
+          "text": "AuroraEdge"
+        },
+        {
+          "document_frequency": 110,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 6,
+          "text": "B2B"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Banyan Loop AI SMB inbound \u2014 self-serve signup, early discovery. Focused on hosted API streaming for in-app assistant;\u2026"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "BrambleBox Content Labs Lead source: inbound marketing signup (content marketing template generator). Point of contact:\u2026"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Burst capacity: commit allocation, surge tiers and economic example From: Sam Jenkins <sam.jenkins@acme.com> To: Markus\u2026"
+        },
+        {
+          "document_frequency": 196,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 1,
+          "text": "CDN"
+        },
+        {
+          "document_frequency": 143,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 3,
+          "text": "CONNECTED"
+        },
+        {
+          "document_frequency": 4,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 2,
+          "text": "CRM/email/calendar"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 1,
+          "text": "Cerulean Support Networks Summary: Cerulean is a B2B contact center operator (outsourced support across retail + fintec\u2026"
+        },
+        {
+          "document_frequency": null,
+          "gold_documents": 1,
+          "kind": "summary",
+          "noise_documents": 0,
+          "text": "Cinder Labs \u2014 session tear causing token reordering, retry amplification, streaming truncations and billing spike Issue\u2026"
+        }
+      ],
+      "rows_carried_noise": [
+        {
+          "document_frequency": null,
+          "gold_documents": 95,
+          "kind": "prose",
+          "noise_documents": 852,
+          "text": ""
+        },
+        {
+          "document_frequency": 16,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 11,
+          "text": "Asia"
+        },
+        {
+          "document_frequency": 118,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 10,
+          "text": "tamper-evident"
+        },
+        {
+          "document_frequency": 231,
+          "gold_documents": 2,
+          "kind": "term",
+          "noise_documents": 8,
+          "text": "mixes"
+        },
+        {
+          "document_frequency": 27,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "America"
+        },
+        {
+          "document_frequency": 27,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "agent-assist"
+        },
+        {
+          "document_frequency": 8,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "contact-center"
+        },
+        {
+          "document_frequency": 61,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "interviewers"
+        },
+        {
+          "document_frequency": 249,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "invocation"
+        },
+        {
+          "document_frequency": 69,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "midpoint"
+        },
+        {
+          "document_frequency": 90,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "optimizer"
+        },
+        {
+          "document_frequency": 18,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "south"
+        },
+        {
+          "document_frequency": 47,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 7,
+          "text": "tamper"
+        },
+        {
+          "document_frequency": 110,
+          "gold_documents": 1,
+          "kind": "identifier",
+          "noise_documents": 6,
+          "text": "B2B"
+        },
+        {
+          "document_frequency": 21,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "Immigration"
+        },
+        {
+          "document_frequency": 274,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "July"
+        },
+        {
+          "document_frequency": 131,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "Recruiter"
+        },
+        {
+          "document_frequency": 169,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "THIRD"
+        },
+        {
+          "document_frequency": 260,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "cold-starts"
+        },
+        {
+          "document_frequency": 176,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "containment"
+        },
+        {
+          "document_frequency": 90,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "customs"
+        },
+        {
+          "document_frequency": 63,
+          "gold_documents": 1,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "disaster"
+        },
+        {
+          "document_frequency": 180,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "healthcare"
+        },
+        {
+          "document_frequency": 65,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "lived"
+        },
+        {
+          "document_frequency": 195,
+          "gold_documents": 0,
+          "kind": "term",
+          "noise_documents": 6,
+          "text": "per-session"
+        }
+      ]
+    }
+  },
+  "channels": {
+    "cluster": {
+      "gold_largest": 0,
+      "gold_only_seeded": 0,
+      "gold_seeded": 0,
+      "noise_largest": 2,
+      "noise_only_seeded": 0,
+      "noise_seeded": 0
+    },
+    "exact": {
+      "gold_largest": 0,
+      "gold_only_seeded": 0,
+      "gold_seeded": 0,
+      "noise_largest": 0,
+      "noise_only_seeded": 0,
+      "noise_seeded": 0
+    },
+    "lexical": {
+      "gold_largest": 0,
+      "gold_only_seeded": 0,
+      "gold_seeded": 0,
+      "noise_largest": 0,
+      "noise_only_seeded": 0,
+      "noise_seeded": 1
+    },
+    "prose": {
+      "gold_largest": 656,
+      "gold_only_seeded": 656,
+      "gold_seeded": 656,
+      "noise_largest": 2934,
+      "noise_only_seeded": 2934,
+      "noise_seeded": 2935
+    },
+    "vector": {
+      "gold_largest": 0,
+      "gold_only_seeded": 0,
+      "gold_seeded": 0,
+      "noise_largest": 0,
+      "noise_only_seeded": 0,
+      "noise_seeded": 0
+    }
+  },
+  "gold_documents": 741,
+  "gold_documents_found": 656,
+  "gold_documents_with_ledger": 656,
+  "hubs_excluded": [],
+  "noise_documents": 2936,
+  "row_kinds": {
+    "alias": {
+      "gold_largest": 0,
+      "noise_largest": 0
+    },
+    "entity": {
+      "gold_largest": 0,
+      "noise_largest": 0
+    },
+    "entry": {
+      "gold_largest": 0,
+      "noise_largest": 0
+    },
+    "facet": {
+      "gold_largest": 0,
+      "noise_largest": 0
+    },
+    "identifier": {
+      "gold_largest": 118,
+      "noise_largest": 220
+    },
+    "other": {
+      "gold_largest": 0,
+      "noise_largest": 0
+    },
+    "prose": {
+      "gold_largest": 259,
+      "noise_largest": 2045
+    },
+    "summary": {
+      "gold_largest": 0,
+      "noise_largest": 0
+    },
+    "term": {
+      "gold_largest": 279,
+      "noise_largest": 671
+    }
+  },
+  "rows_carried_gold": [
+    {
+      "document_frequency": null,
+      "gold_documents": 591,
+      "kind": "prose",
+      "noise_documents": 2876,
+      "text": ""
+    },
+    {
+      "document_frequency": 15,
+      "gold_documents": 10,
+      "kind": "term",
+      "noise_documents": 3,
+      "text": "non-burst"
+    },
+    {
+      "document_frequency": 10,
+      "gold_documents": 9,
+      "kind": "term",
+      "noise_documents": 0,
+      "text": "fast-tier"
+    },
+    {
+      "document_frequency": 319,
+      "gold_documents": 8,
+      "kind": "term",
+      "noise_documents": 5,
+      "text": "communications"
+    },
+    {
+      "document_frequency": 4,
+      "gold_documents": 8,
+      "kind": "identifier",
+      "noise_documents": 1,
+      "text": "reason_codes"
+    },
+    {
+      "document_frequency": 93,
+      "gold_documents": 6,
+      "kind": "term",
+      "noise_documents": 1,
+      "text": "ADR"
+    },
+    {
+      "document_frequency": 89,
+      "gold_documents": 6,
+      "kind": "term",
+      "noise_documents": 0,
+      "text": "Orion"
+    },
+    {
+      "document_frequency": 4,
+      "gold_documents": 6,
+      "kind": "identifier",
+      "noise_documents": 0,
+      "text": "Q4-2025"
+    },
+    {
+      "document_frequency": 317,
+      "gold_documents": 6,
+      "kind": "term",
+      "noise_documents": 2,
+      "text": "Symptom"
+    },
+    {
+      "document_frequency": 148,
+      "gold_documents": 6,
+      "kind": "term",
+      "noise_documents": 1,
+      "text": "discrepancy"
+    },
+    {
+      "document_frequency": 4,
+      "gold_documents": 6,
+      "kind": "identifier",
+      "noise_documents": 4,
+      "text": "gateway/routing/runtime"
+    },
+    {
+      "document_frequency": 42,
+      "gold_documents": 5,
+      "kind": "term",
+      "noise_documents": 2,
+      "text": "Northbridge"
+    },
+    {
+      "document_frequency": 65,
+      "gold_documents": 5,
+      "kind": "term",
+      "noise_documents": 0,
+      "text": "SOP"
+    },
+    {
+      "document_frequency": 137,
+      "gold_documents": 5,
+      "kind": "term",
+      "noise_documents": 4,
+      "text": "double-counting"
+    },
+    {
+      "document_frequency": 50,
+      "gold_documents": 4,
+      "kind": "term",
+      "noise_documents": 3,
+      "text": "DEK"
+    },
+    {
+      "document_frequency": 17,
+      "gold_documents": 4,
+      "kind": "term",
+      "noise_documents": 3,
+      "text": "Northwind"
+    },
+    {
+      "document_frequency": 4,
+      "gold_documents": 4,
+      "kind": "identifier",
+      "noise_documents": 0,
+      "text": "RRB-17"
+    },
+    {
+      "document_frequency": 5,
+      "gold_documents": 4,
+      "kind": "identifier",
+      "noise_documents": 1,
+      "text": "SUP-1842"
+    },
+    {
+      "document_frequency": 7,
+      "gold_documents": 4,
+      "kind": "term",
+      "noise_documents": 2,
+      "text": "audit-log-exporter"
+    },
+    {
+      "document_frequency": 2,
+      "gold_documents": 4,
+      "kind": "term",
+      "noise_documents": 0,
+      "text": "burst-denied"
+    },
+    {
+      "document_frequency": 82,
+      "gold_documents": 4,
+      "kind": "term",
+      "noise_documents": 30,
+      "text": "founder"
+    },
+    {
+      "document_frequency": 4,
+      "gold_documents": 4,
+      "kind": "term",
+      "noise_documents": 4,
+      "text": "private-upgrade"
+    },
+    {
+      "document_frequency": 7,
+      "gold_documents": 4,
+      "kind": "identifier",
+      "noise_documents": 2,
+      "text": "quantization_profile_ref"
+    },
+    {
+      "document_frequency": 6,
+      "gold_documents": 4,
+      "kind": "identifier",
+      "noise_documents": 3,
+      "text": "residency_policy_violation"
+    },
+    {
+      "document_frequency": 2,
+      "gold_documents": 4,
+      "kind": "identifier",
+      "noise_documents": 1,
+      "text": "throughput/SLO"
+    }
+  ],
+  "rows_carried_noise": [
+    {
+      "document_frequency": null,
+      "gold_documents": 591,
+      "kind": "prose",
+      "noise_documents": 2876,
+      "text": ""
+    },
+    {
+      "document_frequency": 82,
+      "gold_documents": 4,
+      "kind": "term",
+      "noise_documents": 30,
+      "text": "founder"
+    },
+    {
+      "document_frequency": 405,
+      "gold_documents": 0,
+      "kind": "term",
+      "noise_documents": 17,
+      "text": "SaaS"
+    },
+    {
+      "document_frequency": 189,
+      "gold_documents": 1,
+      "kind": "term",
+      "noise_documents": 17,
+      "text": "entitlement"
+    },
+    {
+      "document_frequency": 23,
+      "gold_documents": 3,
+      "kind": "identifier",
+      "noise_documents": 16,
+      "text": "Python/TypeScript/Go"
+    },
+    {
+      "document_frequency": 157,
+      "gold_documents": 3,
+      "kind": "term",
+      "noise_documents": 15,
+      "text": "contractor"
+    },
+    {
+      "document_frequency": 18,
+      "gold_documents": 2,
+      "kind": "term",
+      "noise_documents": 14,
+      "text": "south"
+    },
+    {
+      "document_frequency": 3,
+      "gold_documents": 3,
+      "kind": "identifier",
+      "noise_documents": 12,
+      "text": "TypeScript/Go"
+    },
+    {
+      "document_frequency": 5,
+      "gold_documents": 2,
+      "kind": "identifier",
+      "noise_documents": 12,
+      "text": "openai_compat"
+    },
+    {
+      "document_frequency": 16,
+      "gold_documents": 0,
+      "kind": "term",
+      "noise_documents": 11,
+      "text": "Asia"
+    },
+    {
+      "document_frequency": 8,
+      "gold_documents": 2,
+      "kind": "term",
+      "noise_documents": 11,
+      "text": "fantasy"
+    },
+    {
+      "document_frequency": 229,
+      "gold_documents": 2,
+      "kind": "term",
+      "noise_documents": 10,
+      "text": "Interview"
+    },
+    {
+      "document_frequency": 50,
+      "gold_documents": 1,
+      "kind": "term",
+      "noise_documents": 10,
+      "text": "TP"
+    },
+    {
+      "document_frequency": 18,
+      "gold_documents": 0,
+      "kind": "term",
+      "noise_documents": 10,
+      "text": "founder-led"
+    },
+    {
+      "document_frequency": 387,
+      "gold_documents": 2,
+      "kind": "term",
+      "noise_documents": 10,
+      "text": "rubric"
+    },
+    {
+      "document_frequency": 118,
+      "gold_documents": 0,
+      "kind": "term",
+      "noise_documents": 10,
+      "text": "tamper-evident"
+    },
+    {
+      "document_frequency": 15,
+      "gold_documents": 2,
+      "kind": "term",
+      "noise_documents": 9,
+      "text": "Wi-Fi"
+    },
+    {
+      "document_frequency": 13,
+      "gold_documents": 2,
+      "kind": "term",
+      "noise_documents": 9,
+      "text": "Wi\u2011Fi"
+    },
+    {
+      "document_frequency": 15,
+      "gold_documents": 2,
+      "kind": "term",
+      "noise_documents": 9,
+      "text": "summer"
+    },
+    {
+      "document_frequency": 223,
+      "gold_documents": 3,
+      "kind": "term",
+      "noise_documents": 9,
+      "text": "unified"
+    },
+    {
+      "document_frequency": 177,
+      "gold_documents": 0,
+      "kind": "term",
+      "noise_documents": 8,
+      "text": "OpenAI"
+    },
+    {
+      "document_frequency": 52,
+      "gold_documents": 1,
+      "kind": "term",
+      "noise_documents": 8,
+      "text": "OpenAI-compat"
+    },
+    {
+      "document_frequency": 139,
+      "gold_documents": 1,
+      "kind": "term",
+      "noise_documents": 8,
+      "text": "Priced"
+    },
+    {
+      "document_frequency": 53,
+      "gold_documents": 1,
+      "kind": "term",
+      "noise_documents": 8,
+      "text": "allreduce"
+    },
+    {
+      "document_frequency": 180,
+      "gold_documents": 0,
+      "kind": "term",
+      "noise_documents": 8,
+      "text": "healthcare"
+    }
+  ]
+}
