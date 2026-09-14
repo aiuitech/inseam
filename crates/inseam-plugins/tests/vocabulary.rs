@@ -88,7 +88,11 @@ async fn the_pass_mines_the_band_and_anchors_every_source() {
     assert!(vocabulary.skipped.is_none(), "{vocabulary}");
     assert_eq!(vocabulary.sources_walked, 6, "{vocabulary}");
     assert!(vocabulary.rows_planted > 0, "{vocabulary}");
-    assert!(vocabulary.anchors_added > 0, "{vocabulary}");
+    assert!(vocabulary.matches_counted > 0, "{vocabulary}");
+    assert_eq!(
+        vocabulary.anchors_added, 0,
+        "a mined row stores no edges: {vocabulary}"
+    );
 
     let ops = common::ops(&kernel);
     let listing = ops
@@ -504,8 +508,9 @@ async fn facets_become_rows_anchored_from_the_root_and_filter_queries() {
         .await
         .expect("sweeps");
     let vocabulary = report.vocabulary.as_ref().expect("the pass ran");
-    // The author and the label; the host row was planted by the first sweep.
-    assert!(vocabulary.facets_planted >= 2, "{vocabulary}");
+    // The author and the label.
+    assert_eq!(vocabulary.facets_planted, 2, "{vocabulary}");
+    assert_eq!(vocabulary.facet_anchors, 2, "{vocabulary}");
 
     let author = ops
         .vocabulary(VocabularyRequest {
@@ -533,24 +538,38 @@ async fn facets_become_rows_anchored_from_the_root_and_filter_queries() {
         .await
         .expect("queries");
     assert!(filtered.results.is_empty(), "no note carries the label");
-    let host_facet = ops
+    // The host is a column on every source and a filter, never a row.
+    let unfiltered = ops
+        .query(QueryRequest::new("Redwood", 10))
+        .await
+        .expect("queries");
+    let host = unfiltered.results[0].address.host.as_str().to_string();
+    let by_host = ops
         .query(QueryRequest {
             text: "Redwood".into(),
             limit: 10,
             finder: Vec::new(),
             explain: false,
             filters: inseam_seams::finder::QueryFilters {
-                facets: vec![format!(
-                    "host:{}",
-                    inseam_seams::connection::HostKind::filesystem().as_str()
-                )],
+                host: Some(host),
                 ..Default::default()
             },
         })
         .await
         .expect("queries");
-    assert!(
-        !host_facet.results.is_empty(),
-        "every note is on the filesystem host"
-    );
+    assert_eq!(by_host.results.len(), unfiltered.results.len());
+    let elsewhere = ops
+        .query(QueryRequest {
+            text: "Redwood".into(),
+            limit: 10,
+            finder: Vec::new(),
+            explain: false,
+            filters: inseam_seams::finder::QueryFilters {
+                host: Some("mail-test".into()),
+                ..Default::default()
+            },
+        })
+        .await
+        .expect("queries");
+    assert!(elsewhere.results.is_empty(), "{elsewhere:?}");
 }

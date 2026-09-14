@@ -156,6 +156,9 @@ class RunOptions:
     # calls; a run that makes a handful (a model-free run summarizes only the
     # corpus folder) would wait on a one-request batch job for nothing.
     summarization_lane: str = SUMMARIZATION_LANE
+    # Grounding calls the vocabulary pass may make per run; 0, the default,
+    # grounds nothing (design/vocabulary.md).
+    vocabulary_llm_budget: int = 0
     # Keywords planted beside each summary for full-text search; 0 plants
     # none, the control for whether the row earns its place.
     keywords_max: int = 12
@@ -453,6 +456,8 @@ max_fragments_per_source = 400
 max_depth = 6
 max_content_bytes = 2000000
 ignore = []
+[entry.config.vocabulary]
+cluster_llm_budget = {options.vocabulary_llm_budget}
 '''
 
 
@@ -938,6 +943,9 @@ def options_from_manifest(manifest: dict[str, Any]) -> RunOptions:
             value, "summary_target_chars", MAX_SUMMARY_TARGET_CHARS
         ),
         summarization_lane=manifest_option_lane(value, "summarization_lane"),
+        vocabulary_llm_budget=manifest_option_count(
+            value, "vocabulary_llm_budget", MAX_LLM_CALL_BUDGET
+        ),
         keywords_max=manifest_option_count(value, "keywords_max", MAX_KEYWORDS),
         embedding_dimensions=manifest_option_integer(
             value, "embedding_dimensions", EMBEDDING_DIMENSIONS_MAX
@@ -1012,6 +1020,12 @@ def parse_arguments() -> argparse.Namespace:
         "--llm-call-budget",
         type=count_argument("llm-call-budget", MAX_LLM_CALL_BUDGET),
         default=500,
+    )
+    run_parser.add_argument(
+        "--vocabulary-llm-budget",
+        type=count_argument("vocabulary-llm-budget", MAX_LLM_CALL_BUDGET),
+        default=0,
+        help="cluster grounding calls the vocabulary pass may make per run; 0 (the default) grounds nothing",
     )
     run_parser.add_argument(
         "--summarization-lane",
@@ -1091,6 +1105,7 @@ def main() -> int:
             llm_call_budget=arguments.llm_call_budget,
             summary_target_chars=arguments.summary_target_chars,
             summarization_lane=arguments.summarization_lane,
+            vocabulary_llm_budget=arguments.vocabulary_llm_budget,
             keywords_max=arguments.keywords_max,
             embedding_dimensions=arguments.embedding_dimensions,
             corpus=arguments.corpus,

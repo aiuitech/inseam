@@ -188,8 +188,12 @@ pub struct VocabularyReport {
     /// Phrases proposed by keywords, cues, and extracted names.
     pub candidates_derived: usize,
     pub rows_planted: usize,
+    /// Row–source pairs the matching walk counted in memory; a matched
+    /// row's anchors are the full-text index, never stored edges.
+    pub matches_counted: usize,
+    /// Relations written this pass: facet and author anchors, aliases.
     pub anchors_added: usize,
-    /// Mined rows the statistics no longer name, unanchored for collection.
+    /// Mined rows the statistics no longer name, retracted.
     pub rows_retracted: usize,
     /// Transform-planted keyed fragments adopted as vocabulary rows.
     pub rows_adopted: usize,
@@ -205,7 +209,8 @@ pub struct VocabularyReport {
     /// Facet and author rows planted from envelopes, and their anchors.
     pub facets_planted: usize,
     pub facet_anchors: usize,
-    /// The vertices over the hub bound, highest degree first, named.
+    /// The most frequent rows, named with their document frequency: the
+    /// first thing to read after a pass.
     pub hubs: Vec<(String, u32)>,
     pub mine_ms: u64,
     pub match_ms: u64,
@@ -220,12 +225,13 @@ impl fmt::Display for VocabularyReport {
         }
         writeln!(
             f,
-            "vocabulary: {} sources walked, {} candidates mined ({} kept, {} derived), {} rows planted, {} anchors, {} retracted, {} adopted, {} facet rows ({} anchors)",
+            "vocabulary: {} sources walked, {} candidates mined ({} kept, {} derived), {} rows planted, {} matches, {} anchors, {} retracted, {} adopted, {} facet rows ({} anchors)",
             self.sources_walked,
             self.candidates_mined,
             self.candidates_kept,
             self.candidates_derived,
             self.rows_planted,
+            self.matches_counted,
             self.anchors_added,
             self.rows_retracted,
             self.rows_adopted,
@@ -257,7 +263,7 @@ impl fmt::Display for VocabularyReport {
                 .take(20)
                 .map(|(name, degree)| format!("{name} ({degree})"))
                 .collect();
-            write!(f, "\nhubs over the bound: {}", named.join(", "))?;
+            write!(f, "\nmost frequent rows: {}", named.join(", "))?;
         }
         Ok(())
     }

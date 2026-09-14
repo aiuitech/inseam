@@ -551,8 +551,6 @@ impl SweepService {
                     embedder: self.embedder.as_ref(),
                     grantor: &grantor,
                     config: &self.config.vocabulary,
-                    host: &steward.host.id,
-                    host_kind: steward.host.kind.as_str(),
                 };
                 let vocabulary = pass.run(changed).await?;
                 tracing::info!("{vocabulary}");

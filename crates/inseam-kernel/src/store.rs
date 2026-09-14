@@ -1169,9 +1169,16 @@ impl IndexStore {
         let tx = self.catalog.transaction().await?;
         let mut rows = tx
             .query(
+                // A mined vocabulary row is anchored by the full-text index,
+                // not by relations (`design/vocabulary.md`, storage): it is
+                // never an orphan, and the pass retracts it itself. Every
+                // other keyed fragment — extracted, envelope, alias — lives by
+                // its relations and goes with the last of them.
                 "SELECT id FROM fragments WHERE source IS NULL
                    AND NOT EXISTS (SELECT 1 FROM relations
-                                   WHERE from_fragment = fragments.id OR to_fragment = fragments.id)",
+                                   WHERE from_fragment = fragments.id OR to_fragment = fragments.id)
+                   AND NOT EXISTS (SELECT 1 FROM vocabulary_rows v
+                                   WHERE v.fragment = fragments.id AND v.origin = 'mined')",
                 (),
             )
             .await?;

@@ -203,6 +203,11 @@ class RunOptions:
     # One call per document plants its cues, glossary terms, identifiers,
     # discriminators, and entities (design/indexing.md).
     hints_llm_call_budget: int = 0
+    # Grounding calls the vocabulary pass may make per run (one per changed
+    # cluster: merges, glosses, aliases). 0, the default, grounds nothing,
+    # so an indexing comparison is model-free unless grounding is what it
+    # measures (design/vocabulary.md).
+    vocabulary_llm_budget: int = 0
     # Which seed lists the Finder runs before fusion; one alone is a
     # diagnostic for which search the fusion is carrying.
     finder_seeds: str = "both"
@@ -452,6 +457,8 @@ max_fragments_per_source = 400
 max_depth = 6
 max_content_bytes = 2000000
 ignore = []
+[entry.config.vocabulary]
+cluster_llm_budget = {options.vocabulary_llm_budget}
 '''
 
 
@@ -1641,6 +1648,9 @@ def options_from_manifest(manifest: dict[str, Any]) -> RunOptions:
         hints_llm_call_budget=manifest_option_count(
             value, "hints_llm_call_budget", MAX_LLM_CALL_BUDGET
         ),
+        vocabulary_llm_budget=manifest_option_count(
+            value, "vocabulary_llm_budget", MAX_LLM_CALL_BUDGET
+        ),
         finder_overrides=manifest_option_finder_overrides(value, "finder_overrides"),
         explain=manifest_option_boolean(value, "explain"),
     )
@@ -1748,6 +1758,12 @@ def parse_arguments() -> argparse.Namespace:
         default=0,
         help="mount the hints transform with this many calls per run; 0 (the default) leaves it off",
     )
+    run_parser.add_argument(
+        "--vocabulary-llm-budget",
+        type=count_argument("vocabulary-llm-budget", MAX_LLM_CALL_BUDGET),
+        default=0,
+        help="cluster grounding calls the vocabulary pass may make per run; 0 (the default) grounds nothing",
+    )
     run_parser.add_argument("--finder-seed-k", type=bounded_argument("finder-seed-k", 1000), default=60)
     run_parser.add_argument("--finder-rrf-k", type=bounded_argument("finder-rrf-k", 1000), default=60)
     run_parser.add_argument("--finder-damping", type=probability_argument, default=0.5)
@@ -1814,6 +1830,7 @@ def main() -> int:
             answer_model=arguments.answer_model,
             evaluation_model=arguments.evaluation_model,
             hints_llm_call_budget=arguments.hints_llm_call_budget,
+            vocabulary_llm_budget=arguments.vocabulary_llm_budget,
             finder_overrides=arguments.finder_override,
             explain=arguments.explain,
         )

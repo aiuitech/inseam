@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use inseam_kernel::address::Address;
 use inseam_kernel::fragment::{FragmentId, RelationKind};
 use inseam_kernel::store::{
-    IndexStore, SourceId, StoredCluster, VocabularyRow, normalize_spelling,
+    IndexStore, SourceId, StoredCluster, VocabularyOrigin, VocabularyRow, normalize_spelling,
 };
 use inseam_seams::SeamError;
 use inseam_seams::operations::{
@@ -86,7 +86,7 @@ async fn show(store: &IndexStore, spelling: &str) -> Result<Option<ShownRow>, Se
         },
         None => None,
     };
-    let sources = anchored_addresses(store, row.fragment).await?;
+    let sources = anchored_addresses(store, &row).await?;
     Ok(Some(ShownRow {
         row: row_view(&row),
         aliases,
@@ -112,11 +112,25 @@ async fn aliases_of(store: &IndexStore, row: FragmentId) -> Result<Vec<String>, 
         .collect())
 }
 
+/// The sources a row reaches: a mined row's by its spelling in the
+/// full-text index, every other row's by its relations
+/// (`design/vocabulary.md`, storage).
 async fn anchored_addresses(
     store: &IndexStore,
-    row: FragmentId,
+    row: &VocabularyRow,
 ) -> Result<Vec<Address>, SeamError> {
-    let sources: Vec<SourceId> = store.sources_anchored_to(row, SHOWN_SOURCES_MAX).await?;
+    let sources: Vec<SourceId> = match row.origin {
+        VocabularyOrigin::Mined => {
+            store
+                .sources_spelling(&row.spelling, SHOWN_SOURCES_MAX)
+                .await?
+        }
+        VocabularyOrigin::Extracted | VocabularyOrigin::Grounded | VocabularyOrigin::Envelope => {
+            store
+                .sources_anchored_to(row.fragment, SHOWN_SOURCES_MAX)
+                .await?
+        }
+    };
     let mut addresses = Vec::with_capacity(sources.len());
     let mut seen: HashMap<SourceId, ()> = HashMap::new();
     for source in sources {

@@ -2,7 +2,10 @@
 //! across sources. Formation is by co-occurrence, not by embedding — a new
 //! row joins the cluster whose members share the most of its sources, and
 //! founds one when none does — which is exact, free, and defined for a row
-//! that appears in a single document. The vector is embedded afterwards,
+//! that appears in a single document. The whole decision runs in memory
+//! over the sources the pass matched, most frequent row first, and is
+//! written to the store afterwards in batches: clusters founded this pass
+//! carry provisional ids until then. The vector is embedded afterwards,
 //! from the members' spellings and glosses in a stable order, for the one
 //! use a discrete match cannot serve: grounding a paraphrased query.
 
@@ -15,93 +18,125 @@ use inseam_kernel::store::{ClusterId, SourceId, StoredCluster, VocabularyRow};
 pub const EMBED_MEMBERS_MAX: usize = 64;
 /// Longest gloss carried into the embedded text.
 const EMBED_GLOSS_CHARS_MAX: usize = 120;
+/// Clusters remembered per source: past this a source is about everything
+/// and says nothing about one topic.
+pub const CLUSTERS_PER_SOURCE_MAX: usize = 32;
 
-/// Where a row should go: an existing cluster, a cluster founded in this
-/// pass, or a cluster of its own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Assignment {
-    Join(ClusterId),
-    Found,
+/// A cluster as the in-memory decision names it: one the store holds, or
+/// one founded this pass, by its index in [`Clustering::founded`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Home {
+    Stored(ClusterId),
+    Founded(usize),
 }
 
-/// The co-occurrence view one pass keeps in memory: for every source the
-/// pass has looked at, the clusters present in it — the store's answer
-/// plus the assignments made earlier in the same pass, so a row founded
-/// a moment ago is a candidate home for the next row.
+/// The co-occurrence view one pass keeps in memory: for every source, the
+/// clusters present in it — the store's assignments plus the ones made
+/// earlier in the same pass, so a row founded a moment ago is a candidate
+/// home for the next row.
 #[derive(Default)]
-pub struct Presence {
-    by_source: HashMap<SourceId, HashSet<ClusterId>>,
-    members: HashMap<ClusterId, u32>,
+pub struct Clustering {
+    by_source: HashMap<SourceId, Vec<Home>>,
+    members: HashMap<Home, u32>,
+    /// Clusters founded this pass: label and members, in founding order.
+    pub founded: Vec<(String, Vec<usize>)>,
+    /// Rows joining clusters the store already holds.
+    pub joins: HashMap<ClusterId, Vec<usize>>,
+    pub joined: usize,
 }
 
-impl Presence {
-    /// Record what the store knows for these sources.
-    pub fn learn(&mut self, stored: HashMap<SourceId, Vec<ClusterId>>) {
-        for (source, clusters) in stored {
-            self.by_source.entry(source).or_default().extend(clusters);
-        }
-    }
-
-    pub fn knows(&self, source: SourceId) -> bool {
-        self.by_source.contains_key(&source)
-    }
-
-    /// Record a cluster's member count as the store reports it.
+impl Clustering {
+    /// Record a stored cluster's member count.
     pub fn size(&mut self, cluster: ClusterId, members: u32) {
-        self.members.insert(cluster, members);
+        self.members.insert(Home::Stored(cluster), members);
     }
 
-    /// Record an assignment made in this pass.
-    pub fn assign(&mut self, cluster: ClusterId, sources: &[SourceId]) {
+    /// Record a row already assigned to a stored cluster: its sources
+    /// carry that cluster.
+    pub fn place(&mut self, cluster: ClusterId, sources: &[SourceId]) {
+        self.mark(Home::Stored(cluster), sources);
+    }
+
+    fn mark(&mut self, home: Home, sources: &[SourceId]) {
         for source in sources {
-            self.by_source.entry(*source).or_default().insert(cluster);
+            let present = self.by_source.entry(*source).or_default();
+            if present.len() >= CLUSTERS_PER_SOURCE_MAX || present.contains(&home) {
+                continue;
+            }
+            present.push(home);
         }
-        *self.members.entry(cluster).or_insert(0) += 1;
     }
 
-    /// Decide a row's home from the fraction of its sources each cluster
-    /// is present in: the best cluster at or over `join_min` with room
-    /// under `members_max`, else a cluster of its own. A row with no
-    /// source founds nothing.
-    pub fn decide(
-        &self,
+    /// Decide and record a row's home: the best cluster present in at
+    /// least `join_min` of its sources with room under `members_max`,
+    /// else a cluster of its own when `clusters_max` allows. A row with no
+    /// source gets nothing. Returns the home taken, if any.
+    pub fn assign(
+        &mut self,
+        row: usize,
+        label: &str,
         sources: &[SourceId],
         join_min: f64,
         members_max: u32,
-    ) -> Option<Assignment> {
+        clusters_max: usize,
+    ) -> Option<Home> {
         if sources.is_empty() {
             return None;
         }
-        let mut shared: HashMap<ClusterId, u32> = HashMap::new();
+        match self.decide(sources, join_min, members_max) {
+            Some(home) => {
+                match home {
+                    Home::Stored(cluster) => self.joins.entry(cluster).or_default().push(row),
+                    Home::Founded(index) => self.founded[index].1.push(row),
+                }
+                self.joined += 1;
+                *self.members.entry(home).or_insert(0) += 1;
+                self.mark(home, sources);
+                Some(home)
+            }
+            None => {
+                if self.members.len() >= clusters_max {
+                    return None;
+                }
+                let home = Home::Founded(self.founded.len());
+                self.founded.push((label.to_string(), vec![row]));
+                self.members.insert(home, 1);
+                self.mark(home, sources);
+                Some(home)
+            }
+        }
+    }
+
+    /// The best cluster present in at least `join_min` of the sources
+    /// with room under `members_max`; ties go to the earlier cluster.
+    fn decide(&self, sources: &[SourceId], join_min: f64, members_max: u32) -> Option<Home> {
+        let mut shared: HashMap<Home, u32> = HashMap::new();
         for source in sources {
-            if let Some(clusters) = self.by_source.get(source) {
-                for cluster in clusters {
-                    *shared.entry(*cluster).or_insert(0) += 1;
+            if let Some(homes) = self.by_source.get(source) {
+                for home in homes {
+                    *shared.entry(*home).or_insert(0) += 1;
                 }
             }
         }
-        let total = sources.len() as f64;
-        let mut best: Option<(ClusterId, f64)> = None;
-        for (cluster, count) in shared {
-            let fraction = f64::from(count) / total;
-            let full = self.members.get(&cluster).copied().unwrap_or(0) >= members_max;
+        let total = u32::try_from(sources.len()).unwrap_or(u32::MAX);
+        let mut best: Option<(Home, u32)> = None;
+        for (home, count) in shared {
+            let fraction = f64::from(count) / f64::from(total);
+            let full = self.members.get(&home).copied().unwrap_or(0) >= members_max;
             if fraction < join_min || full {
                 continue;
             }
             let better = match best {
                 None => true,
-                Some((best_id, best_fraction)) => {
-                    fraction > best_fraction || (fraction == best_fraction && cluster < best_id)
+                Some((best_home, best_count)) => {
+                    count > best_count || (count == best_count && home < best_home)
                 }
             };
             if better {
-                best = Some((cluster, fraction));
+                best = Some((home, count));
             }
         }
-        Some(match best {
-            Some((cluster, _)) => Assignment::Join(cluster),
-            None => Assignment::Found,
-        })
+        best.map(|(home, _)| home)
     }
 }
 
@@ -211,32 +246,53 @@ mod tests {
         }
     }
 
+    fn sources(ids: &[i64]) -> Vec<SourceId> {
+        ids.iter().map(|id| SourceId(*id)).collect()
+    }
+
     #[test]
     fn rows_join_the_cluster_sharing_most_of_their_sources() {
-        let mut presence = Presence::default();
-        presence.learn(HashMap::from([
-            (SourceId(1), vec![ClusterId(7)]),
-            (SourceId(2), vec![ClusterId(7), ClusterId(9)]),
-            (SourceId(3), vec![ClusterId(9)]),
-        ]));
-        presence.size(ClusterId(7), 2);
-        presence.size(ClusterId(9), 2);
-        let sources = [SourceId(1), SourceId(2), SourceId(4)];
+        let mut clustering = Clustering::default();
+        clustering.size(ClusterId(7), 2);
+        clustering.size(ClusterId(9), 2);
+        clustering.place(ClusterId(7), &sources(&[1, 2]));
+        clustering.place(ClusterId(9), &sources(&[2, 3]));
+        let row_sources = sources(&[1, 2, 4]);
         assert_eq!(
-            presence.decide(&sources, 0.5, 64),
-            Some(Assignment::Join(ClusterId(7)))
+            clustering.assign(0, "a", &row_sources, 0.5, 64, 100),
+            Some(Home::Stored(ClusterId(7)))
         );
-        assert_eq!(presence.decide(&sources, 0.9, 64), Some(Assignment::Found));
+        assert_eq!(clustering.joins[&ClusterId(7)], vec![0]);
         assert_eq!(
-            presence.decide(&sources, 0.5, 2),
-            Some(Assignment::Found),
+            clustering.assign(1, "b", &sources(&[4, 5, 6]), 0.9, 64, 100),
+            Some(Home::Founded(0)),
+            "under the join floor a row founds"
+        );
+        assert_eq!(clustering.founded[0], ("b".to_string(), vec![1]));
+        assert_eq!(
+            clustering.assign(2, "c", &sources(&[5, 6]), 0.5, 64, 100),
+            Some(Home::Founded(0)),
+            "a cluster founded this pass is a home for the next row"
+        );
+        assert_eq!(clustering.founded[0].1, vec![1, 2]);
+        assert_eq!(clustering.assign(3, "d", &[], 0.5, 64, 100), None);
+        assert_eq!(clustering.joined, 2);
+    }
+
+    #[test]
+    fn full_clusters_and_the_cluster_cap_hold() {
+        let mut clustering = Clustering::default();
+        clustering.size(ClusterId(7), 2);
+        clustering.place(ClusterId(7), &sources(&[1, 2]));
+        assert_eq!(
+            clustering.assign(0, "a", &sources(&[1, 2]), 0.5, 2, 100),
+            Some(Home::Founded(0)),
             "a full cluster takes nobody"
         );
-        assert_eq!(presence.decide(&[], 0.5, 64), None);
-        presence.assign(ClusterId(11), &[SourceId(4), SourceId(5)]);
         assert_eq!(
-            presence.decide(&[SourceId(4), SourceId(5)], 0.5, 64),
-            Some(Assignment::Join(ClusterId(11)))
+            clustering.assign(1, "b", &sources(&[9]), 0.5, 64, 2),
+            None,
+            "the stored cluster and the founded one fill the cap"
         );
     }
 

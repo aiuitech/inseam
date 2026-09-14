@@ -1,10 +1,18 @@
 //! The vocabulary pass (`design/vocabulary.md`): a sweep phase that runs
 //! after every file has landed and before folders, reads the store and
 //! never a host, and does what needs the whole corpus in view — mine the
-//! candidates the statistics name, match and anchor them across all the
-//! text, cluster the rows by co-occurrence, embed the clusters, and ground
-//! the changed ones with the model once each. Per-source planners stay
-//! pure functions of their text; this is the corpus-level step.
+//! candidates the statistics name, match them across all the text, cluster
+//! the rows by co-occurrence, embed the clusters, and ground the changed
+//! ones with the model once each. Per-source planners stay pure functions
+//! of their text; this is the corpus-level step.
+//!
+//! The pass writes rows and clusters, never an edge per match: a matched
+//! row's anchors are the full-text index's postings for its spelling, read
+//! back at query time, and its document frequency and its cluster are
+//! settled in memory from one walk over the text. Two walks over the
+//! corpus, a few hundred thousand row writes, and no relation table growth
+//! — that is the whole storage and time budget of the pass before the
+//! model is asked anything (`design/vocabulary.md`, storage).
 
 mod cluster;
 mod facets;
@@ -15,9 +23,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
+use futures_util::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 
-use inseam_kernel::address::HostId;
 use inseam_kernel::fragment::{FragmentId, FragmentKey, Mimetype, NewFragment, RelationKind};
 use inseam_kernel::store::{
     ClusterId, IndexStore, NewVocabularyRow, SearchRole, SearchRow, SourceId, StoredCluster,
@@ -29,7 +37,7 @@ use inseam_seams::llm::LlmLane;
 use inseam_seams::sweep::VocabularyReport;
 
 use super::grant::Grantor;
-use cluster::{Assignment, Presence};
+use cluster::Clustering;
 use mine::{Candidates, Matcher, Shape, keyword_phrases, tokenize};
 
 /// The meter the cluster grounding calls are charged to.
@@ -38,16 +46,18 @@ pub const LLM_CONSUMER: &str = "vocabulary";
 const TEXT_PAGE_ROWS: u32 = 2_000;
 /// Pages one scan may read: bounds the loop at two hundred million rows.
 const PAGES_MAX: u32 = 100_000;
-/// Rows planted, anchors written, or joins applied per transaction.
+/// Rows planted, frequencies written, or clusters founded per transaction.
 const WRITE_BATCH: usize = 2_000;
 /// Cluster texts embedded per request.
 const EMBED_BATCH: usize = 64;
-/// Sources read per row when deciding its cluster: past this a row is a
-/// hub whose sources say nothing about one topic.
-const CLUSTER_SOURCES_MAX: u32 = 2_000;
-/// Excerpts handed to the model per cluster, and anchors read per member.
+/// Sources remembered per row for the cluster decision: a sample past
+/// this, and a row past the hub bound says nothing about one topic anyway.
+const CLUSTER_SOURCES_MAX: usize = 256;
+/// Grounding calls in flight at once: the model's latency, not the pass's
+/// bookkeeping, is what the grounding step waits on.
+const GROUND_CONCURRENCY: usize = 8;
+/// Excerpts handed to the model per cluster, one per member.
 const EXCERPT_MEMBERS: usize = 3;
-const EXCERPTS_PER_MEMBER: usize = 1;
 /// Hubs the report names.
 const HUBS_REPORTED: u32 = 20;
 
@@ -65,9 +75,12 @@ pub struct VocabularyConfig {
     /// The percentage is never taken below this count, so a small corpus
     /// still has a band.
     pub term_df_max_floor: u32,
-    /// Distinct candidates the mining table keeps (soft cap for plain
-    /// words; shape-marked tokens may double it).
+    /// Distinct candidate spellings the mining table keeps (tokens that
+    /// recurred with a shape mark, and derived phrases).
     pub candidates_max: u32,
+    /// Distinct recurring tokens the mining table counts, marked or not:
+    /// about sixteen bytes each.
+    pub recurring_tokens_max: u32,
     pub clusters_max: u32,
     pub cluster_terms_max: u32,
     /// The fraction of a row's sources a cluster must be present in for
@@ -91,11 +104,12 @@ impl Default for VocabularyConfig {
             term_df_max_percent: 2,
             term_df_max_floor: 50,
             candidates_max: 200_000,
+            recurring_tokens_max: 8_000_000,
             clusters_max: 10_000,
             cluster_terms_max: 64,
             cluster_join_min: 0.5,
             cluster_merge_cosine: 0.92,
-            cluster_assignments_per_sweep_max: 50_000,
+            cluster_assignments_per_sweep_max: 200_000,
             cluster_llm_budget: 500,
             llm_lane: LlmLane::Interactive,
             aliases_per_row_max: 4,
@@ -104,14 +118,17 @@ impl Default for VocabularyConfig {
 }
 
 impl VocabularyConfig {
-    /// The dials whose change re-runs the pass in full.
+    /// The dials whose change re-runs the pass in full. The version
+    /// prefix moves when the pass's own shape does, so an index built by
+    /// an earlier pass is re-mined on its next sweep.
     pub fn digest(&self) -> String {
         format!(
-            "vocabulary-v1|df_min={}|df_max_percent={}|df_max_floor={}|candidates={}|phrase_tokens={}",
+            "vocabulary-v2|df_min={}|df_max_percent={}|df_max_floor={}|candidates={}|recurring={}|phrase_tokens={}",
             self.term_df_min,
             self.term_df_max_percent,
             self.term_df_max_floor,
             self.candidates_max,
+            self.recurring_tokens_max,
             mine::PHRASE_TOKENS_MAX
         )
     }
@@ -133,10 +150,51 @@ pub(super) struct VocabularyPass<'a> {
     pub embedder: &'a dyn Embedder,
     pub grantor: &'a Arc<Grantor>,
     pub config: &'a VocabularyConfig,
-    /// The swept host and its kind (`filesystem`, `gmail`): the host facet
-    /// every rooted source of the sweep is anchored to.
-    pub host: &'a HostId,
-    pub host_kind: &'a str,
+}
+
+/// A row the store holds, as the pass needs it before matching.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExistingRow {
+    fragment: FragmentId,
+    kind: VocabularyKind,
+    origin: VocabularyOrigin,
+    cluster: Option<ClusterId>,
+}
+
+/// One spelling the matching walk counts: a candidate to plant, or a row
+/// the store has whose frequency and sources are measured again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MatchedRow {
+    normalized: String,
+    spelling: String,
+    shape: Shape,
+    existing: Option<ExistingRow>,
+    /// Whether this spelling is a band candidate (mined or derived) rather
+    /// than only an existing row of another origin.
+    candidate: bool,
+    documents: u32,
+    sources: Vec<SourceId>,
+    /// Filled once the row is planted or known.
+    fragment: Option<FragmentId>,
+}
+
+impl MatchedRow {
+    fn kind(&self) -> VocabularyKind {
+        match &self.existing {
+            Some(existing) => existing.kind,
+            None => match self.shape {
+                Shape::Identifier => VocabularyKind::Identifier,
+                Shape::Term | Shape::None => VocabularyKind::Term,
+            },
+        }
+    }
+
+    fn clusterable(&self) -> bool {
+        matches!(
+            self.kind(),
+            VocabularyKind::Term | VocabularyKind::Identifier | VocabularyKind::Entity
+        )
+    }
 }
 
 impl VocabularyPass<'_> {
@@ -150,6 +208,10 @@ impl VocabularyPass<'_> {
             return Ok(report);
         }
         let generation = self.store.vocabulary_generation().await?.saturating_add(1);
+        let dropped = self.store.drop_mined_anchors().await?;
+        if dropped > 0 {
+            tracing::info!(dropped, "dropped stored anchors of mined rows");
+        }
         report.rows_adopted =
             usize::try_from(self.store.adopt_keyed_fragments().await?).unwrap_or(usize::MAX);
 
@@ -158,22 +220,25 @@ impl VocabularyPass<'_> {
         report.mine_ms = millis(started.elapsed());
 
         let started = Instant::now();
-        self.plant_and_match(candidates, &mut report).await?;
-        let planted = facets::plant_facets(self.store, self.host, self.host_kind).await?;
+        let mut rows = self.table(candidates, &mut report).await?;
+        self.match_all(&mut rows, &mut report).await?;
+        self.plant_all(&mut rows, &mut report).await?;
+        let planted = facets::plant_facets(self.store).await?;
         report.facets_planted = planted.rows_created;
         report.facet_anchors = planted.anchors_written;
-        self.store.recount_document_frequencies().await?;
+        report.anchors_added += planted.anchors_written;
+        self.store.recount_envelope_document_frequencies().await?;
         report.match_ms = millis(started.elapsed());
 
         let started = Instant::now();
-        self.cluster(generation, &mut report).await?;
+        self.cluster(&rows, generation, &mut report).await?;
+        drop(rows);
         self.embed_clusters(generation, &mut report).await?;
         self.merge_clusters(generation, &mut report).await?;
         report.cluster_ms = millis(started.elapsed());
 
         let started = Instant::now();
         self.ground_clusters(generation, &mut report).await?;
-        self.store.recount_document_frequencies().await?;
         self.store.recount_clusters().await?;
         self.embed_clusters(generation, &mut report).await?;
         report.ground_ms = millis(started.elapsed());
@@ -201,8 +266,11 @@ impl VocabularyPass<'_> {
     /// Scan every derived keyword row for phrase candidates and every
     /// content fragment for tokens, counting each once per source.
     async fn mine(&self, report: &mut VocabularyReport) -> Result<Candidates, SeamError> {
-        let mut candidates =
-            Candidates::new(usize::try_from(self.config.candidates_max).unwrap_or(usize::MAX));
+        let mut candidates = Candidates::new(
+            usize::try_from(self.config.recurring_tokens_max).unwrap_or(usize::MAX),
+            usize::try_from(self.config.candidates_max).unwrap_or(usize::MAX),
+            self.config.term_df_min,
+        );
         let mut after = FragmentId(0);
         for _ in 0..PAGES_MAX {
             let page = self
@@ -227,6 +295,8 @@ impl VocabularyPass<'_> {
         for _ in 0..PAGES_MAX {
             let page = self.store.content_texts(after, TEXT_PAGE_ROWS).await?;
             for text in &page {
+                // A source's fragments land in one transaction, so their ids
+                // are contiguous and a source change is a new source.
                 if current != Some(text.source) {
                     current = Some(text.source);
                     sources_walked += 1;
@@ -248,61 +318,72 @@ impl VocabularyPass<'_> {
         if candidates.dropped_at_cap > 0 {
             tracing::warn!(
                 dropped = candidates.dropped_at_cap,
-                "vocabulary candidate table hit its cap; raise sweep.vocabulary.candidates_max"
+                "vocabulary candidate table hit a cap; raise sweep.vocabulary.candidates_max or recurring_tokens_max"
             );
         }
         Ok(candidates)
     }
 
-    /// Keep the band, retract mined rows the band no longer names, plant
-    /// the new ones, then anchor every row — new and existing — across
-    /// all the text.
-    async fn plant_and_match(
+    /// The table the matching walk counts: the band's candidates plus
+    /// every row the store has (facets aside), with mined rows the band no
+    /// longer names retracted first.
+    async fn table(
         &self,
         candidates: Candidates,
         report: &mut VocabularyReport,
-    ) -> Result<(), SeamError> {
+    ) -> Result<Vec<MatchedRow>, SeamError> {
         let sources = self.store.content_source_count().await?;
         let df_max = self.config.df_max(sources);
         let band = candidates.in_band(self.config.term_df_min, df_max);
         report.candidates_kept = band.len();
         report.candidates_derived = band.iter().filter(|(_, t)| t.derived).count();
-        let band_set: HashSet<&str> = band.iter().map(|(n, _)| *n).collect();
+        let band_set: HashSet<&str> = band.iter().map(|(n, _)| n.as_str()).collect();
 
-        let mined = self
-            .store
-            .vocabulary_rows_of_origin(VocabularyOrigin::Mined)
-            .await?;
-        let retract: Vec<FragmentId> = mined
+        let mut existing = self.existing_rows().await?;
+        let retract: Vec<FragmentId> = existing
             .iter()
-            .filter(|(_, normalized)| !band_set.contains(normalized.as_str()))
-            .map(|(id, _)| *id)
+            .filter(|(normalized, row)| {
+                row.origin == VocabularyOrigin::Mined && !band_set.contains(normalized.as_str())
+            })
+            .map(|(_, row)| row.fragment)
             .collect();
-        self.store.unanchor_vocabulary(&retract).await?;
+        self.store.retract_vocabulary_rows(&retract).await?;
         report.rows_retracted = retract.len();
+        let retracted: HashSet<FragmentId> = retract.into_iter().collect();
+        existing.retain(|_, row| !retracted.contains(&row.fragment));
 
-        let mut spellings = self.all_spellings().await?;
-        for id in &retract {
-            spellings.retain(|_, row| row != id);
+        let mut rows: Vec<MatchedRow> = Vec::with_capacity(band.len() + existing.len());
+        for (normalized, tally) in band {
+            let existing = existing.remove(&normalized);
+            rows.push(MatchedRow {
+                fragment: existing.as_ref().map(|e| e.fragment),
+                normalized,
+                spelling: tally.spelling.clone(),
+                shape: tally.shape,
+                existing,
+                candidate: true,
+                documents: 0,
+                sources: Vec::new(),
+            });
         }
-        let new_rows: Vec<NewVocabularyRow> = band
-            .iter()
-            .filter(|(normalized, _)| !spellings.contains_key(*normalized))
-            .map(|(normalized, tally)| mined_row(normalized, tally))
-            .collect();
-        report.rows_planted = self.plant(&new_rows, &mut spellings).await?;
-
-        let relations_before = self.store.stats().await?.relations;
-        self.anchor_all(Matcher::new(spellings)).await?;
-        let relations_after = self.store.stats().await?.relations;
-        report.anchors_added =
-            usize::try_from(relations_after.saturating_sub(relations_before)).unwrap_or(0);
-        Ok(())
+        for (normalized, row) in existing {
+            rows.push(MatchedRow {
+                fragment: Some(row.fragment),
+                spelling: String::new(),
+                normalized,
+                shape: Shape::None,
+                existing: Some(row),
+                candidate: false,
+                documents: 0,
+                sources: Vec::new(),
+            });
+        }
+        Ok(rows)
     }
 
-    /// Every row's normalized spelling → its fragment, by pages.
-    async fn all_spellings(&self) -> Result<HashMap<String, FragmentId>, SeamError> {
-        let mut spellings: HashMap<String, FragmentId> = HashMap::new();
+    /// Every non-facet row's normalized spelling → what the store holds.
+    async fn existing_rows(&self) -> Result<HashMap<String, ExistingRow>, SeamError> {
+        let mut rows: HashMap<String, ExistingRow> = HashMap::new();
         let mut offset: u32 = 0;
         for _ in 0..PAGES_MAX {
             let page = self
@@ -314,32 +395,100 @@ impl VocabularyPass<'_> {
                 if row.kind == VocabularyKind::Facet {
                     continue;
                 }
-                spellings.entry(row.normalized).or_insert(row.fragment);
+                rows.entry(row.normalized).or_insert(ExistingRow {
+                    fragment: row.fragment,
+                    kind: row.kind,
+                    origin: row.origin,
+                    cluster: row.cluster,
+                });
             }
             if count < usize::try_from(VOCABULARY_LIST_MAX).unwrap_or(0) {
                 break;
             }
             offset = offset.saturating_add(VOCABULARY_LIST_MAX);
         }
-        Ok(spellings)
+        Ok(rows)
     }
 
-    /// Plant rows in batches, file lexical search rows for the created
-    /// ones, and add every planted spelling to the matcher's table.
-    async fn plant(
+    /// Walk every content fragment once more and count, for every row,
+    /// the sources that spell it — once per source, with a bounded sample
+    /// of those sources kept for the cluster decision.
+    async fn match_all(
         &self,
-        rows: &[NewVocabularyRow],
-        spellings: &mut HashMap<String, FragmentId>,
-    ) -> Result<usize, SeamError> {
+        rows: &mut [MatchedRow],
+        report: &mut VocabularyReport,
+    ) -> Result<(), SeamError> {
+        let table: HashMap<String, usize> = rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| (row.normalized.clone(), index))
+            .collect();
+        let matcher = Matcher::new(table);
+        if matcher.is_empty() {
+            return Ok(());
+        }
+        let mut current: Option<SourceId> = None;
+        let mut seen_in_source: HashSet<usize> = HashSet::new();
+        let mut matches: usize = 0;
+        let mut after = FragmentId(0);
+        for _ in 0..PAGES_MAX {
+            let page = self.store.content_texts(after, TEXT_PAGE_ROWS).await?;
+            for text in &page {
+                if current != Some(text.source) {
+                    current = Some(text.source);
+                    seen_in_source.clear();
+                }
+                for index in matcher.matches(&tokenize(&text.text)) {
+                    if !seen_in_source.insert(index) {
+                        continue;
+                    }
+                    matches += 1;
+                    let row = &mut rows[index];
+                    row.documents = row.documents.saturating_add(1);
+                    if row.sources.len() < CLUSTER_SOURCES_MAX {
+                        row.sources.push(text.source);
+                    }
+                }
+            }
+            match page.last() {
+                Some(last) if page.len() >= usize::try_from(TEXT_PAGE_ROWS).unwrap_or(0) => {
+                    after = last.fragment;
+                }
+                _ => break,
+            }
+        }
+        report.matches_counted = matches;
+        Ok(())
+    }
+
+    /// Plant the candidates the walk confirmed in the band — a phrase
+    /// counts only here, and a seen-filter false positive is a singleton
+    /// the walk finds out — and record every known row's frequency.
+    async fn plant_all(
+        &self,
+        rows: &mut [MatchedRow],
+        report: &mut VocabularyReport,
+    ) -> Result<(), SeamError> {
+        let sources = self.store.content_source_count().await?;
+        let df_max = self.config.df_max(sources);
+        let in_band =
+            |row: &MatchedRow| row.documents >= self.config.term_df_min && row.documents <= df_max;
+        let new_indexes: Vec<usize> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.existing.is_none() && row.candidate && in_band(row))
+            .map(|(index, _)| index)
+            .collect();
         let surface = self.store.has_search_surface().await?;
-        let mut planted: usize = 0;
-        for batch in rows.chunks(WRITE_BATCH) {
-            let results = self.store.plant_vocabulary_rows(batch).await?;
+        for batch in new_indexes.chunks(WRITE_BATCH) {
+            let new_rows: Vec<NewVocabularyRow> =
+                batch.iter().map(|index| mined_row(&rows[*index])).collect();
+            let results = self.store.plant_vocabulary_rows(&new_rows).await?;
             let mut search_rows: Vec<SearchRow> = Vec::new();
-            for (row, result) in batch.iter().zip(&results) {
-                spellings.insert(row.normalized.clone(), result.fragment);
+            for ((index, row), result) in batch.iter().zip(&new_rows).zip(&results) {
+                rows[*index].fragment = Some(result.fragment);
                 if result.created {
-                    planted += 1;
+                    report.rows_planted += 1;
                     if let Some(text) = &row.fragment.text {
                         search_rows.push(SearchRow {
                             fragment: result.fragment,
@@ -355,131 +504,103 @@ impl VocabularyPass<'_> {
                 self.store.add_search_rows(&search_rows).await?;
             }
         }
-        Ok(planted)
-    }
-
-    /// Walk every content fragment once more and anchor the rows it names.
-    async fn anchor_all(&self, matcher: Matcher<FragmentId>) -> Result<(), SeamError> {
-        if matcher.is_empty() {
-            return Ok(());
+        let known: Vec<(FragmentId, u32)> = rows
+            .iter()
+            .filter(|row| row.existing.is_some())
+            .filter_map(|row| row.fragment.map(|fragment| (fragment, row.documents)))
+            .collect();
+        for batch in known.chunks(WRITE_BATCH) {
+            self.store.set_document_frequencies(batch).await?;
         }
-        let mentions = RelationKind::new("mentions").expect("literal kind is valid");
-        let mut pending: Vec<(FragmentId, FragmentId)> = Vec::new();
-        let mut after = FragmentId(0);
-        for _ in 0..PAGES_MAX {
-            let page = self.store.content_texts(after, TEXT_PAGE_ROWS).await?;
-            for text in &page {
-                for row in matcher.matches(&tokenize(&text.text)) {
-                    pending.push((text.fragment, row));
-                }
-                if pending.len() >= WRITE_BATCH {
-                    self.store.anchor_vocabulary(&mentions, &pending).await?;
-                    pending.clear();
-                }
-            }
-            match page.last() {
-                Some(last) if page.len() >= usize::try_from(TEXT_PAGE_ROWS).unwrap_or(0) => {
-                    after = last.fragment;
-                }
-                _ => break,
-            }
-        }
-        self.store.anchor_vocabulary(&mentions, &pending).await?;
         Ok(())
     }
 
-    /// Assign every unclustered row a home by co-occurrence.
+    /// Decide every unclustered row's home in memory, most frequent first,
+    /// then write the founded clusters and the joins in batches.
     async fn cluster(
         &self,
+        rows: &[MatchedRow],
         generation: u64,
         report: &mut VocabularyReport,
     ) -> Result<(), SeamError> {
-        let rows = self
-            .store
-            .vocabulary_rows_unclustered(self.config.cluster_assignments_per_sweep_max)
-            .await?;
-        let mut presence = Presence::default();
-        let mut cluster_count = 0_u32;
+        let mut clustering = Clustering::default();
+        let mut stored_count: usize = 0;
         for cluster in self.store.clusters().await? {
-            presence.size(cluster.id, cluster.member_count);
-            cluster_count = cluster_count.saturating_add(1);
+            clustering.size(cluster.id, cluster.member_count);
+            stored_count += 1;
         }
-        let mut joins: HashMap<ClusterId, Vec<FragmentId>> = HashMap::new();
-        let mut pending_joins: usize = 0;
-        for row in &rows {
-            let sources = self
-                .store
-                .sources_anchored_to(row.fragment, CLUSTER_SOURCES_MAX)
-                .await?;
-            self.learn_presence(&mut presence, &sources).await?;
-            let decision = presence.decide(
-                &sources,
+        let mut order: Vec<usize> = (0..rows.len())
+            .filter(|index| rows[*index].fragment.is_some() && rows[*index].clusterable())
+            .collect();
+        order.sort_by(|a, b| {
+            rows[*b]
+                .documents
+                .cmp(&rows[*a].documents)
+                .then(rows[*a].normalized.cmp(&rows[*b].normalized))
+        });
+        for index in &order {
+            if let Some(cluster) = rows[*index].existing.as_ref().and_then(|e| e.cluster) {
+                clustering.place(cluster, &rows[*index].sources);
+            }
+        }
+        let clusters_max = usize::try_from(self.config.clusters_max).unwrap_or(usize::MAX);
+        let assignments_max =
+            usize::try_from(self.config.cluster_assignments_per_sweep_max).unwrap_or(usize::MAX);
+        let unclustered = order
+            .iter()
+            .filter(|index| {
+                rows[**index]
+                    .existing
+                    .as_ref()
+                    .is_none_or(|e| e.cluster.is_none())
+            })
+            .take(assignments_max);
+        for index in unclustered {
+            let row = &rows[*index];
+            let label = if row.spelling.is_empty() {
+                row.normalized.as_str()
+            } else {
+                row.spelling.as_str()
+            };
+            clustering.assign(
+                *index,
+                label,
+                &row.sources,
                 self.config.cluster_join_min,
                 self.config.cluster_terms_max,
+                clusters_max.max(stored_count),
             );
-            match decision {
-                None => {}
-                Some(Assignment::Join(cluster)) => {
-                    presence.assign(cluster, &sources);
-                    joins.entry(cluster).or_default().push(row.fragment);
-                    pending_joins += 1;
-                    report.clusters_joined += 1;
-                }
-                Some(Assignment::Found) => {
-                    if cluster_count >= self.config.clusters_max {
-                        continue;
-                    }
-                    let founded = self
-                        .store
-                        .found_cluster(&row.spelling, &[row.fragment], generation)
-                        .await?;
-                    if let Some(cluster) = founded {
-                        presence.assign(cluster, &sources);
-                        cluster_count += 1;
-                        report.clusters_founded += 1;
-                    }
-                }
-            }
-            if pending_joins >= WRITE_BATCH {
-                self.apply_joins(&mut joins, generation).await?;
-                pending_joins = 0;
-            }
         }
-        self.apply_joins(&mut joins, generation).await?;
+        report.clusters_joined = clustering.joined;
+        self.write_clusters(rows, clustering, generation, report)
+            .await?;
         self.store.recount_clusters().await?;
         Ok(())
     }
 
-    async fn learn_presence(
+    async fn write_clusters(
         &self,
-        presence: &mut Presence,
-        sources: &[SourceId],
-    ) -> Result<(), SeamError> {
-        let unknown: Vec<SourceId> = sources
-            .iter()
-            .copied()
-            .filter(|s| !presence.knows(*s))
-            .collect();
-        if unknown.is_empty() {
-            return Ok(());
-        }
-        let mut stored = self.store.clusters_in_sources(&unknown).await?;
-        for source in &unknown {
-            stored.entry(*source).or_default();
-        }
-        presence.learn(stored);
-        Ok(())
-    }
-
-    async fn apply_joins(
-        &self,
-        joins: &mut HashMap<ClusterId, Vec<FragmentId>>,
+        rows: &[MatchedRow],
+        clustering: Clustering,
         generation: u64,
+        report: &mut VocabularyReport,
     ) -> Result<(), SeamError> {
-        for (cluster, members) in joins.drain() {
-            self.store
-                .join_cluster(cluster, &members, generation)
-                .await?;
+        let fragment_of = |index: &usize| rows[*index].fragment;
+        let founded: Vec<(String, Vec<FragmentId>)> = clustering
+            .founded
+            .into_iter()
+            .map(|(label, members)| (label, members.iter().filter_map(fragment_of).collect()))
+            .filter(|(_, members): &(String, Vec<FragmentId>)| !members.is_empty())
+            .collect();
+        for batch in founded.chunks(WRITE_BATCH) {
+            let ids = self.store.found_clusters(batch, generation).await?;
+            report.clusters_founded += ids.iter().filter(|id| id.is_some()).count();
+        }
+        for (cluster, members) in clustering.joins {
+            let fragments: Vec<FragmentId> = members.iter().filter_map(fragment_of).collect();
+            for batch in fragments.chunks(WRITE_BATCH) {
+                self.store.join_cluster(cluster, batch, generation).await?;
+            }
         }
         Ok(())
     }
@@ -544,7 +665,9 @@ impl VocabularyPass<'_> {
         Ok(())
     }
 
-    /// One model call per changed cluster while the budget lasts.
+    /// One model call per changed cluster while the budget lasts, with
+    /// [`GROUND_CONCURRENCY`] calls in flight; each answer is applied as it
+    /// arrives, on this task, so the store sees one writer.
     async fn ground_clusters(
         &self,
         generation: u64,
@@ -554,25 +677,34 @@ impl VocabularyPass<'_> {
             return Ok(());
         };
         let changed = self.store.clusters_changed_since(generation).await?;
-        for cluster in changed.iter().take(self.config.cluster_llm_budget) {
-            let members = self.store.cluster_members(cluster.id).await?;
-            if members.is_empty() {
+        let aliases_max = usize::try_from(self.config.aliases_per_row_max).unwrap_or(4);
+        let llm = llm.as_ref();
+        let mut answers = stream::iter(changed.into_iter().take(self.config.cluster_llm_budget))
+            .map(|cluster| async move {
+                let members = self.store.cluster_members(cluster.id).await?;
+                if members.is_empty() {
+                    return Ok::<_, SeamError>(None);
+                }
+                let excerpts = self.excerpts_for(&members).await?;
+                let grounding = ground::ground(llm, &members, &excerpts, aliases_max).await;
+                Ok(Some((members, grounding)))
+            })
+            .buffer_unordered(GROUND_CONCURRENCY);
+        while let Some(answer) = answers.next().await {
+            let Some((members, grounding)) = answer? else {
                 continue;
-            }
-            let excerpts = self.excerpts_for(&members).await?;
-            let aliases_max = usize::try_from(self.config.aliases_per_row_max).unwrap_or(4);
-            let grounding =
-                match ground::ground(llm.as_ref(), &members, &excerpts, aliases_max).await {
-                    Ok(grounding) => grounding,
-                    Err(SeamError::Refused(reason)) => {
-                        tracing::info!("cluster grounding stopped: {reason}");
-                        break;
-                    }
-                    Err(error) => {
-                        tracing::warn!("cluster grounding failed, continuing: {error}");
-                        continue;
-                    }
-                };
+            };
+            let grounding = match grounding {
+                Ok(grounding) => grounding,
+                Err(SeamError::Refused(reason)) => {
+                    tracing::info!("cluster grounding stopped: {reason}");
+                    break;
+                }
+                Err(error) => {
+                    tracing::warn!("cluster grounding failed, continuing: {error}");
+                    continue;
+                }
+            };
             report.llm_calls += 1;
             report.clusters_grounded += 1;
             self.apply_grounding(&members, grounding, generation, report)
@@ -581,19 +713,24 @@ impl VocabularyPass<'_> {
         Ok(())
     }
 
-    /// Short passages where a cluster's most frequent members appear.
+    /// Short passages where a cluster's most frequent members appear: one
+    /// content fragment per member from the full-text index, or from the
+    /// row's relations when it is anchored that way.
     async fn excerpts_for(&self, members: &[VocabularyRow]) -> Result<Vec<String>, SeamError> {
         let mut excerpts = Vec::new();
         for member in members.iter().take(EXCERPT_MEMBERS) {
-            let anchors: Vec<FragmentId> = self
-                .store
-                .relations_touching(&[member.fragment])
-                .await?
-                .into_iter()
-                .filter(|r| r.to == member.fragment)
-                .map(|r| r.from)
-                .take(EXCERPTS_PER_MEMBER)
-                .collect();
+            let mut anchors = self.store.fragments_spelling(&member.spelling, 1).await?;
+            if anchors.is_empty() {
+                anchors = self
+                    .store
+                    .relations_touching(&[member.fragment])
+                    .await?
+                    .into_iter()
+                    .filter(|r| r.to == member.fragment)
+                    .map(|r| r.from)
+                    .take(1)
+                    .collect();
+            }
             for fragment in self.store.fragments(&anchors).await? {
                 if let Some(text) = fragment.text {
                     excerpts.push(text);
@@ -603,8 +740,9 @@ impl VocabularyPass<'_> {
         Ok(excerpts)
     }
 
-    /// Apply what the model settled: merges re-key anchors, glosses are
-    /// written once, aliases become rows related `aliases` into their word.
+    /// Apply what the model settled: merges demote a row to an alias,
+    /// glosses are written once, aliases become rows related `aliases`
+    /// into their word.
     async fn apply_grounding(
         &self,
         members: &[VocabularyRow],
@@ -624,6 +762,7 @@ impl VocabularyPass<'_> {
                     .merge_vocabulary_rows(survivor.fragment, loser.fragment)
                     .await?;
                 report.rows_merged += 1;
+                report.anchors_added += 1;
             }
         }
         for (term, gloss) in &grounding.glosses {
@@ -645,6 +784,7 @@ impl VocabularyPass<'_> {
             self.store
                 .anchor_vocabulary(&aliases_kind, &anchors)
                 .await?;
+            report.anchors_added += anchors.len();
             let search_rows: Vec<SearchRow> = new_rows
                 .iter()
                 .zip(&planted)
@@ -670,7 +810,7 @@ impl VocabularyPass<'_> {
         Ok(())
     }
 
-    /// The highest-degree rows, named: the first thing to read after a
+    /// The highest-frequency rows, named: the first thing to read after a
     /// pass.
     async fn hubs(&self) -> Result<Vec<(String, u32)>, SeamError> {
         Ok(self
@@ -686,8 +826,9 @@ impl VocabularyPass<'_> {
 /// A mined candidate as a row: identifiers under `identifier:`, terms
 /// under `term:` — the namespaces the hints transform already uses, so a
 /// term it extracted and a term the pass mined are one keyed fragment.
-fn mined_row(normalized: &str, tally: &mine::Tally) -> NewVocabularyRow {
-    let (kind, prefix, mimetype) = match tally.shape {
+fn mined_row(row: &MatchedRow) -> NewVocabularyRow {
+    assert!(row.existing.is_none());
+    let (kind, prefix, mimetype) = match row.shape {
         Shape::Identifier => (
             VocabularyKind::Identifier,
             "identifier",
@@ -696,17 +837,18 @@ fn mined_row(normalized: &str, tally: &mine::Tally) -> NewVocabularyRow {
         Shape::Term | Shape::None => (VocabularyKind::Term, "term", "text/x-inseam-term"),
     };
     NewVocabularyRow {
-        key: FragmentKey::new(format!("{prefix}:{normalized}"))
+        key: FragmentKey::new(format!("{prefix}:{}", row.normalized))
             .expect("a bounded normalized spelling under a literal prefix is a valid key"),
         fragment: NewFragment {
             mimetype: Mimetype::parse(mimetype).expect("literal mimetype is valid"),
-            text: Some(tally.spelling.clone()),
+            text: Some(row.spelling.clone()),
             extent: None,
             content_address: None,
         },
         kind,
         origin: VocabularyOrigin::Mined,
-        normalized: normalized.to_string(),
+        normalized: row.normalized.clone(),
+        document_frequency: row.documents,
     }
 }
 
@@ -724,6 +866,7 @@ fn alias_row(alias: &str) -> NewVocabularyRow {
         kind: VocabularyKind::Alias,
         origin: VocabularyOrigin::Grounded,
         normalized,
+        document_frequency: 0,
     }
 }
 
@@ -734,6 +877,19 @@ fn millis(elapsed: std::time::Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn matched(normalized: &str, spelling: &str, shape: Shape, documents: u32) -> MatchedRow {
+        MatchedRow {
+            normalized: normalized.into(),
+            spelling: spelling.into(),
+            shape,
+            existing: None,
+            candidate: true,
+            documents,
+            sources: Vec::new(),
+            fragment: None,
+        }
+    }
 
     #[test]
     fn the_band_top_is_a_percentage_with_a_floor() {
@@ -768,26 +924,16 @@ mod tests {
 
     #[test]
     fn mined_rows_take_the_extractors_namespaces() {
-        let identifier = mined_row(
-            "sup-100432",
-            &mine::Tally {
-                shape: Shape::Identifier,
-                spelling: "SUP-100432".into(),
-                documents: 3,
-                derived: false,
-            },
-        );
+        let identifier = mined_row(&matched("sup-100432", "SUP-100432", Shape::Identifier, 3));
         assert_eq!(identifier.key.as_str(), "identifier:sup-100432");
         assert_eq!(identifier.kind, VocabularyKind::Identifier);
-        let term = mined_row(
+        assert_eq!(identifier.document_frequency, 3);
+        let term = mined_row(&matched(
             "residency stamp",
-            &mine::Tally {
-                shape: Shape::Term,
-                spelling: "residency stamp".into(),
-                documents: 3,
-                derived: true,
-            },
-        );
+            "residency stamp",
+            Shape::Term,
+            3,
+        ));
         assert_eq!(term.key.as_str(), "term:residency stamp");
         assert_eq!(
             alias_row("The 80GB accelerator").key.as_str(),

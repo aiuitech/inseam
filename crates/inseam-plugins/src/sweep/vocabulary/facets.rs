@@ -1,12 +1,14 @@
 //! Facets (`design/vocabulary.md`): what the host says about a source —
-//! its host kind, its container, its author — planted as vocabulary rows
+//! its container, its author, its labels — planted as vocabulary rows
 //! anchored from the source's **root**, never from text. An author lands
 //! on the entity row, so "wrote it" and "is mentioned in it" meet on one
-//! row; every other facet is its own row under `facet:<key>:<value>`. A
-//! host facet has a degree in the thousands by construction, and the
-//! walk's hub bound keeps it out; a forty-message channel conducts.
+//! row; every other facet is its own row under `facet:<key>:<value>`.
+//! These are the only vocabulary rows with stored anchors: a facet is not
+//! in the text, so the full-text index cannot stand in for its edges, and
+//! a facet is selective by construction — a label, a channel, an author —
+//! so the edges are few. The host is a column on every source and a
+//! query filter already; it is no row.
 
-use inseam_kernel::address::HostId;
 use inseam_kernel::fragment::{FragmentId, FragmentKey, Mimetype, NewFragment, RelationKind};
 use inseam_kernel::store::{
     IndexStore, NewVocabularyRow, SearchRole, SearchRow, SourceId, VocabularyKind,
@@ -20,42 +22,18 @@ const PAGE_SOURCES: u32 = 1_000;
 const PAGES_MAX: u32 = 100_000;
 /// The facet key that names an author.
 pub const AUTHOR_KEY: &str = "author";
-/// The facet key the pass itself plants for every source of a sweep.
-pub const HOST_KEY: &str = "host";
 
-/// What one page of planting produced.
+/// What planting produced.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Planted {
     pub rows_created: usize,
     pub anchors_written: usize,
 }
 
-/// Plant the host facet row for every rooted source of the swept host,
-/// and every faceted source's own rows (whatever its host — a facet
-/// belongs to the source that carries it), all anchored from the root.
-pub async fn plant_facets(
-    store: &IndexStore,
-    host: &HostId,
-    host_kind: &str,
-) -> Result<Planted, SeamError> {
+/// Plant every faceted source's rows (whatever its host — a facet belongs
+/// to the source that carries it), anchored from the root.
+pub async fn plant_facets(store: &IndexStore) -> Result<Planted, SeamError> {
     let mut totals = Planted::default();
-    let mut after = SourceId(0);
-    for _ in 0..PAGES_MAX {
-        let page = store
-            .rooted_sources_of_host(host, after, PAGE_SOURCES)
-            .await?;
-        let batch: Vec<(FragmentId, NewVocabularyRow, bool)> = page
-            .iter()
-            .map(|(_, root)| (*root, host_row(host_kind), false))
-            .collect();
-        totals = totals.plus(plant_batch(store, &batch).await?);
-        match page.last() {
-            Some((last, _)) if page.len() >= usize::try_from(PAGE_SOURCES).unwrap_or(0) => {
-                after = *last;
-            }
-            _ => break,
-        }
-    }
     let mut after = SourceId(0);
     for _ in 0..PAGES_MAX {
         let page = store.sources_with_facets(after, PAGE_SOURCES).await?;
@@ -137,15 +115,9 @@ async fn plant_batch(
     })
 }
 
-/// The host facet row every source of a sweep anchors to.
-fn host_row(host_kind: &str) -> NewVocabularyRow {
-    facet_row(HOST_KEY, host_kind)
-        .expect("a host kind is never empty")
-        .0
-}
-
 /// A facet as a row: an author on the entity row (`entity:person:`), any
-/// other key under `facet:<key>:<value>`. `None` for an empty value.
+/// other key under `facet:<key>:<value>`. `None` for an empty value. The
+/// document frequency is recounted from the anchors after planting.
 fn facet_row(key: &str, value: &str) -> Option<(NewVocabularyRow, bool)> {
     let normalized = normalize_spelling(value);
     let key_normalized = normalize_spelling(key);
@@ -166,6 +138,7 @@ fn facet_row(key: &str, value: &str) -> Option<(NewVocabularyRow, bool)> {
             kind: VocabularyKind::Entity,
             origin: VocabularyOrigin::Envelope,
             normalized,
+            document_frequency: 0,
         };
         return Some((row, true));
     }
@@ -182,6 +155,7 @@ fn facet_row(key: &str, value: &str) -> Option<(NewVocabularyRow, bool)> {
         kind: VocabularyKind::Facet,
         origin: VocabularyOrigin::Envelope,
         normalized: format!("{key_normalized}:{normalized}"),
+        document_frequency: 0,
     };
     Some((row, false))
 }
@@ -204,6 +178,5 @@ mod tests {
         assert_eq!(label.normalized, "label:inbox");
         assert_eq!(label.fragment.mimetype.param("key"), Some("label"));
         assert!(facet_row("label", "  ").is_none());
-        assert_eq!(host_row("gmail").key.as_str(), "facet:host:gmail");
     }
 }

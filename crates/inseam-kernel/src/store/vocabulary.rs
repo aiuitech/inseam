@@ -169,7 +169,8 @@ pub struct VocabularyRow {
     pub spelling: String,
     /// The lowercase, whitespace-collapsed spelling every exact match uses.
     pub normalized: String,
-    /// Sources anchored to the row, as of the last recount.
+    /// Sources whose text spells the row (matched rows) or that anchor to
+    /// it by relation (envelope rows), as of the last pass.
     pub document_frequency: u32,
     pub cluster: Option<ClusterId>,
     pub gloss: Option<String>,
@@ -177,7 +178,9 @@ pub struct VocabularyRow {
 
 /// A vocabulary row to plant: get-or-create the keyed fragment, then file
 /// the row beside it. Planting an existing key leaves the fragment and
-/// its kind alone and files the row only when none is filed yet.
+/// its kind alone; the row is filed when none is filed yet, and its
+/// document frequency is set either way — the pass measures it in memory
+/// and the store never counts it (`design/vocabulary.md`, storage).
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewVocabularyRow {
     pub key: FragmentKey,
@@ -185,6 +188,8 @@ pub struct NewVocabularyRow {
     pub kind: VocabularyKind,
     pub origin: VocabularyOrigin,
     pub normalized: String,
+    /// Sources whose text spells the row, as the pass matched them.
+    pub document_frequency: u32,
 }
 
 /// One planted row: its fragment id and whether this planting created it.
@@ -205,7 +210,7 @@ pub struct StoredCluster {
     #[serde(skip)]
     pub vector: Option<Vec<f32>>,
     pub member_count: u32,
-    /// Distinct sources anchored to any member.
+    /// The sum of the members' document frequencies.
     pub document_frequency: u32,
     /// The pass generation that last changed membership.
     pub changed_sweep: u64,
@@ -313,9 +318,14 @@ impl fmt::Display for RowKind {
 
 /// Which text-bearing fragments are source content for the pass: anything
 /// not inseam-defined, plus a verbatim summary (the text itself, kept
-/// whole).
-const CONTENT_TEXT_PREDICATE: &str = "mimetype NOT LIKE 'text/x-inseam-%' \
-     OR mimetype LIKE 'text/x-inseam-summary;via=verbatim%'";
+/// whole). Qualified on the `fragments` alias `g`.
+const CONTENT_TEXT_PREDICATE: &str = "g.mimetype NOT LIKE 'text/x-inseam-%' \
+     OR g.mimetype LIKE 'text/x-inseam-summary;via=verbatim%'";
+/// Which sources hold content: a folder is a container whose text is its
+/// entries' hints, written after the pass and never a document — it is
+/// neither mined nor a row's anchor. Joins `sources` as `s` on `g`.
+const CONTENT_SOURCE_JOIN: &str =
+    "JOIN sources s ON s.id = g.source AND s.source_type != 'directory'";
 
 /// The store's own name for the vocabulary generation counter: bumped by
 /// every pass that changed a row or a cluster, so query-time caches know
@@ -347,10 +357,11 @@ impl IndexStore {
             .catalog
             .query(
                 &format!(
-                    "SELECT id, source, text FROM fragments
-                     WHERE id > ?1 AND source IS NOT NULL AND text IS NOT NULL
+                    "SELECT g.id, g.source, g.text FROM fragments g
+                     {CONTENT_SOURCE_JOIN}
+                     WHERE g.id > ?1 AND g.text IS NOT NULL
                        AND ({CONTENT_TEXT_PREDICATE})
-                     ORDER BY id LIMIT ?2"
+                     ORDER BY g.id LIMIT ?2"
                 ),
                 params![after.0, i64::from(limit)],
             )
@@ -402,8 +413,9 @@ impl IndexStore {
     /// the document-frequency band is a fraction of.
     pub async fn content_source_count(&self) -> Result<u64, StoreError> {
         self.count_of(&format!(
-            "SELECT COUNT(DISTINCT source) FROM fragments
-             WHERE source IS NOT NULL AND text IS NOT NULL
+            "SELECT COUNT(DISTINCT g.source) FROM fragments g
+             {CONTENT_SOURCE_JOIN}
+             WHERE g.text IS NOT NULL
                AND ({CONTENT_TEXT_PREDICATE})"
         ))
         .await
@@ -442,31 +454,6 @@ impl IndexStore {
         Ok(out)
     }
 
-    /// Every source of one host with a landed root, by pages: what the
-    /// host facet row anchors from.
-    pub async fn rooted_sources_of_host(
-        &self,
-        host: &HostId,
-        after: SourceId,
-        limit: u32,
-    ) -> Result<Vec<(SourceId, FragmentId)>, StoreError> {
-        assert!(limit >= 1);
-        let mut rows = self
-            .catalog
-            .query(
-                "SELECT id, root_fragment FROM sources
-                 WHERE host = ?1 AND id > ?2 AND root_fragment IS NOT NULL
-                 ORDER BY id LIMIT ?3",
-                params![host.as_str(), after.0, i64::from(limit)],
-            )
-            .await?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next().await? {
-            out.push((SourceId(row.get(0)?), FragmentId(row.get(1)?)));
-        }
-        Ok(out)
-    }
-
     // ------------------------------------------------------------------
     // Rows
     // ------------------------------------------------------------------
@@ -485,13 +472,15 @@ impl IndexStore {
             let resolved = keyed_fragment_in(&tx, &row.key, &row.fragment).await?;
             let fragment = resolved.id();
             tx.execute(
-                "INSERT OR IGNORE INTO vocabulary_rows (fragment, kind, origin, normalized)
-                 VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO vocabulary_rows (fragment, kind, origin, normalized, document_frequency)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(fragment) DO UPDATE SET document_frequency = excluded.document_frequency",
                 params![
                     fragment.0,
                     row.kind.as_str(),
                     row.origin.as_str(),
-                    row.normalized.as_str()
+                    row.normalized.as_str(),
+                    i64::from(row.document_frequency)
                 ],
             )
             .await?;
@@ -568,20 +557,21 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Drop every relation into these rows: how a mined row the statistics
-    /// no longer name is retracted (the sweep's keyed-fragment collection
-    /// then removes the row itself).
-    pub async fn unanchor_vocabulary(&self, rows: &[FragmentId]) -> Result<(), StoreError> {
-        if rows.is_empty() {
+    /// Record the document frequency the pass measured for rows it has,
+    /// in one transaction. Callers batch.
+    pub async fn set_document_frequencies(
+        &self,
+        frequencies: &[(FragmentId, u32)],
+    ) -> Result<(), StoreError> {
+        if frequencies.is_empty() {
             return Ok(());
         }
         let _write = self.write().await;
         let tx = self.catalog.transaction().await?;
-        for chunk in rows.chunks(ID_LIST_CHUNK) {
-            let list = id_list(chunk);
+        for (fragment, frequency) in frequencies {
             tx.execute(
-                &format!("DELETE FROM relations WHERE to_fragment IN ({list})"),
-                (),
+                "UPDATE vocabulary_rows SET document_frequency = ?2 WHERE fragment = ?1",
+                params![fragment.0, i64::from(*frequency)],
             )
             .await?;
         }
@@ -589,16 +579,72 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Recount every row's document frequency from its anchors, in one
-    /// statement over the `relations_by_to` index.
-    pub async fn recount_document_frequencies(&self) -> Result<(), StoreError> {
+    /// Retract rows outright: their vocabulary rows, relations, search
+    /// rows, and fragments go in one transaction. A mined row the band no
+    /// longer names is retracted this way, since it has no relations for
+    /// the keyed-fragment collection to notice.
+    pub async fn retract_vocabulary_rows(&self, rows: &[FragmentId]) -> Result<(), StoreError> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let _write = self.write().await;
+        let tx = self.catalog.transaction().await?;
+        let purge_search = search_tables_exist(&tx).await?;
+        for chunk in rows.chunks(ID_LIST_CHUNK) {
+            let list = id_list(chunk);
+            tx.execute(
+                &format!(
+                    "DELETE FROM relations WHERE to_fragment IN ({list}) OR from_fragment IN ({list})"
+                ),
+                (),
+            )
+            .await?;
+            tx.execute(
+                &format!("DELETE FROM vocabulary_rows WHERE fragment IN ({list})"),
+                (),
+            )
+            .await?;
+            if purge_search {
+                tx.execute(&format!("DELETE FROM search_rows WHERE id IN ({list})"), ())
+                    .await?;
+            }
+            tx.execute(&format!("DELETE FROM fragments WHERE id IN ({list})"), ())
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Drop the `mentions` relations an earlier pass stored for mined rows.
+    /// The full-text index is a mined row's anchor now
+    /// (`design/vocabulary.md`, storage); an index built before that
+    /// carries millions of edges that say nothing the index does not. A
+    /// no-op after the first pass that finds none.
+    pub async fn drop_mined_anchors(&self) -> Result<u64, StoreError> {
+        let _write = self.write().await;
+        let dropped = self
+            .catalog
+            .execute(
+                "DELETE FROM relations WHERE kind = 'mentions' AND to_fragment IN
+                   (SELECT fragment FROM vocabulary_rows WHERE origin = 'mined')",
+                (),
+            )
+            .await?;
+        Ok(dropped)
+    }
+
+    /// Recount the document frequency of the rows whose anchors are
+    /// relations — the envelope rows (facets, authors) — from those
+    /// relations. Matched rows carry the frequency the pass measured.
+    pub async fn recount_envelope_document_frequencies(&self) -> Result<(), StoreError> {
         let _write = self.write().await;
         self.catalog
             .execute(
                 "UPDATE vocabulary_rows SET document_frequency =
                    (SELECT COUNT(DISTINCT f.source) FROM relations r
                       JOIN fragments f ON f.id = r.from_fragment
-                     WHERE r.to_fragment = vocabulary_rows.fragment AND f.source IS NOT NULL)",
+                     WHERE r.to_fragment = vocabulary_rows.fragment AND f.source IS NOT NULL)
+                 WHERE origin = 'envelope'",
                 (),
             )
             .await?;
@@ -688,26 +734,6 @@ impl IndexStore {
         collect_rows(&mut rows).await
     }
 
-    /// Rows whose cluster is not yet decided, most frequent first, at most
-    /// `limit`: what one pass assigns.
-    pub async fn vocabulary_rows_unclustered(
-        &self,
-        limit: u32,
-    ) -> Result<Vec<VocabularyRow>, StoreError> {
-        let mut rows = self
-            .catalog
-            .query(
-                &format!(
-                    "{VOCABULARY_ROW_SQL} WHERE v.cluster IS NULL AND v.kind != 'alias' AND v.kind != 'facet'
-                       AND v.document_frequency > 0
-                     ORDER BY v.document_frequency DESC, v.fragment LIMIT ?1"
-                ),
-                params![i64::from(limit)],
-            )
-            .await?;
-        collect_rows(&mut rows).await
-    }
-
     /// Counts per kind and the number of rows over a degree bound: the
     /// pass report's and `status`'s numbers.
     pub async fn vocabulary_counts(&self) -> Result<VocabularyCounts, StoreError> {
@@ -754,8 +780,10 @@ impl IndexStore {
     }
 
     /// Merge one row into another: every anchor of `loser` re-keys to
-    /// `survivor`, the loser's key is dropped so the collection removes
-    /// its fragment. Returns how many anchors moved.
+    /// `survivor`, and the loser stays as an **alias** of the survivor —
+    /// its spelling still grounds a question, and the next pass sees the
+    /// spelling as a row it has and does not plant it again. Returns how
+    /// many anchors moved.
     pub async fn merge_vocabulary_rows(
         &self,
         survivor: FragmentId,
@@ -777,10 +805,13 @@ impl IndexStore {
         )
         .await?;
         tx.execute(
-            "DELETE FROM vocabulary_rows WHERE fragment = ?1",
+            "UPDATE vocabulary_rows SET kind = 'alias', origin = 'grounded', cluster = NULL, gloss = NULL
+             WHERE fragment = ?1",
             params![loser.0],
         )
         .await?;
+        let aliases = RelationKind::new("aliases").expect("literal kind is valid");
+        super::insert_relation_in(&tx, &Relation::new(loser, aliases, survivor)).await?;
         tx.commit().await?;
         Ok(moved)
     }
@@ -788,6 +819,84 @@ impl IndexStore {
     // ------------------------------------------------------------------
     // Anchors and co-occurrence
     // ------------------------------------------------------------------
+
+    /// The content fragments whose text spells a phrase, in no order, at
+    /// most `limit`: a matched row's anchors, read from the prose
+    /// full-text index instead of stored relations
+    /// (`design/vocabulary.md`, storage). Only the text the pass mines
+    /// counts — a derived summary that spells the term is not a source
+    /// that does. The phrase is the spelling's alphanumeric runs in
+    /// sequence, which is how the index tokenized the text. Empty without
+    /// a search surface.
+    pub async fn fragments_spelling(
+        &self,
+        spelling: &str,
+        limit: u32,
+    ) -> Result<Vec<FragmentId>, StoreError> {
+        assert!(limit >= 1);
+        let Some(phrase) = fts_phrase_expression(spelling) else {
+            return Ok(Vec::new());
+        };
+        if !self.has_search_surface().await? {
+            return Ok(Vec::new());
+        }
+        self.refuse_while_reembed_pending()?;
+        let mut rows = self
+            .catalog
+            .query(
+                &format!(
+                    "SELECT f.rowid FROM search_fts f
+                     JOIN fragments g ON g.id = f.rowid
+                     {CONTENT_SOURCE_JOIN}
+                     WHERE search_fts MATCH ?1
+                       AND ({CONTENT_TEXT_PREDICATE})
+                     LIMIT ?2"
+                ),
+                params![phrase, i64::from(limit)],
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push(FragmentId(row.get(0)?));
+        }
+        Ok(out)
+    }
+
+    /// The distinct sources whose text spells a phrase, bounded — the same
+    /// lookup as [`Self::fragments_spelling`] rolled up to sources.
+    pub async fn sources_spelling(
+        &self,
+        spelling: &str,
+        limit: u32,
+    ) -> Result<Vec<SourceId>, StoreError> {
+        assert!(limit >= 1);
+        let Some(phrase) = fts_phrase_expression(spelling) else {
+            return Ok(Vec::new());
+        };
+        if !self.has_search_surface().await? {
+            return Ok(Vec::new());
+        }
+        self.refuse_while_reembed_pending()?;
+        let mut rows = self
+            .catalog
+            .query(
+                &format!(
+                    "SELECT DISTINCT g.source FROM search_fts f
+                     JOIN fragments g ON g.id = f.rowid
+                     {CONTENT_SOURCE_JOIN}
+                     WHERE search_fts MATCH ?1
+                       AND ({CONTENT_TEXT_PREDICATE})
+                     ORDER BY g.source LIMIT ?2"
+                ),
+                params![phrase, i64::from(limit)],
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push(SourceId(row.get(0)?));
+        }
+        Ok(out)
+    }
 
     /// The distinct sources anchored to a row, bounded.
     pub async fn sources_anchored_to(
@@ -808,40 +917,6 @@ impl IndexStore {
         let mut out = Vec::new();
         while let Some(row) = rows.next().await? {
             out.push(SourceId(row.get(0)?));
-        }
-        Ok(out)
-    }
-
-    /// For each source, the clusters of the vocabulary rows anchored in it:
-    /// the co-occurrence signal a new row is assigned by.
-    pub async fn clusters_in_sources(
-        &self,
-        sources: &[SourceId],
-    ) -> Result<HashMap<SourceId, Vec<ClusterId>>, StoreError> {
-        let mut out: HashMap<SourceId, Vec<ClusterId>> = HashMap::new();
-        for chunk in sources.chunks(ID_LIST_CHUNK) {
-            let list = chunk
-                .iter()
-                .map(|s| s.0.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            let mut rows = self
-                .catalog
-                .query(
-                    &format!(
-                        "SELECT DISTINCT f.source, v.cluster FROM fragments f
-                         JOIN relations r ON r.from_fragment = f.id
-                         JOIN vocabulary_rows v ON v.fragment = r.to_fragment
-                         WHERE f.source IN ({list}) AND v.cluster IS NOT NULL"
-                    ),
-                    (),
-                )
-                .await?;
-            while let Some(row) = rows.next().await? {
-                let source = SourceId(row.get(0)?);
-                let cluster = ClusterId(row.get(1)?);
-                out.entry(source).or_default().push(cluster);
-            }
         }
         Ok(out)
     }
@@ -968,38 +1043,48 @@ impl IndexStore {
         collect_rows(&mut rows).await
     }
 
-    /// Found a cluster with these members; returns its id. Refused past
-    /// [`CLUSTERS_MAX`].
-    pub async fn found_cluster(
+    /// Found clusters, each with its members, in one transaction; returns
+    /// one id per input, in order. Refused past [`CLUSTERS_MAX`]: the
+    /// clusters that would cross it are not founded and get no id.
+    pub async fn found_clusters(
         &self,
-        label: &str,
-        members: &[FragmentId],
+        clusters: &[(String, Vec<FragmentId>)],
         sweep: u64,
-    ) -> Result<Option<ClusterId>, StoreError> {
-        assert!(!members.is_empty());
-        let _write = self.write().await;
-        let count = self.count_of("SELECT COUNT(*) FROM clusters").await?;
-        if count >= u64::from(CLUSTERS_MAX) {
-            return Ok(None);
+    ) -> Result<Vec<Option<ClusterId>>, StoreError> {
+        if clusters.is_empty() {
+            return Ok(Vec::new());
         }
+        let _write = self.write().await;
+        let mut count = self.count_of("SELECT COUNT(*) FROM clusters").await?;
         let tx = self.catalog.transaction().await?;
-        let id = super::drain_single_i64(
-            tx.query(
-                "INSERT INTO clusters (label, text_digest, member_count, changed_sweep)
-                 VALUES (?1, '', ?2, ?3) RETURNING id",
-                params![
-                    label,
-                    i64::try_from(members.len()).expect("member count fits i64"),
-                    i64::try_from(sweep).unwrap_or(i64::MAX)
-                ],
+        let mut ids = Vec::with_capacity(clusters.len());
+        for (label, members) in clusters {
+            assert!(!members.is_empty());
+            if count >= u64::from(CLUSTERS_MAX) {
+                ids.push(None);
+                continue;
+            }
+            let id = super::drain_single_i64(
+                tx.query(
+                    "INSERT INTO clusters (label, text_digest, member_count, changed_sweep)
+                     VALUES (?1, '', ?2, ?3) RETURNING id",
+                    params![
+                        label.as_str(),
+                        i64::try_from(members.len()).expect("member count fits i64"),
+                        i64::try_from(sweep).unwrap_or(i64::MAX)
+                    ],
+                )
+                .await?,
             )
-            .await?,
-        )
-        .await?
-        .ok_or_else(|| corrupt(0, "cluster insert returned no id"))?;
-        set_cluster_in(&tx, ClusterId(id), members).await?;
+            .await?
+            .ok_or_else(|| corrupt(0, "cluster insert returned no id"))?;
+            set_cluster_in(&tx, ClusterId(id), members).await?;
+            ids.push(Some(ClusterId(id)));
+            count += 1;
+        }
         tx.commit().await?;
-        Ok(Some(ClusterId(id)))
+        assert_eq!(ids.len(), clusters.len());
+        Ok(ids)
     }
 
     /// Add members to a cluster.
@@ -1052,7 +1137,10 @@ impl IndexStore {
 
     /// Recount every cluster's member count and document frequency from
     /// its members; clusters left with no member are dropped. Returns how
-    /// many were dropped.
+    /// many were dropped. The document frequency is the **sum** of the
+    /// members' — an upper bound on the distinct sources, which only a
+    /// walk over every member's matches could count exactly; listings
+    /// order by it and nothing ranks by it.
     pub async fn recount_clusters(&self) -> Result<u64, StoreError> {
         let _write = self.write().await;
         let tx = self.catalog.transaction().await?;
@@ -1060,10 +1148,8 @@ impl IndexStore {
             "UPDATE clusters SET
                member_count = (SELECT COUNT(*) FROM vocabulary_rows v WHERE v.cluster = clusters.id),
                document_frequency = (
-                 SELECT COUNT(DISTINCT f.source) FROM vocabulary_rows v
-                   JOIN relations r ON r.to_fragment = v.fragment
-                   JOIN fragments f ON f.id = r.from_fragment
-                  WHERE v.cluster = clusters.id AND f.source IS NOT NULL),
+                 SELECT COALESCE(SUM(v.document_frequency), 0) FROM vocabulary_rows v
+                  WHERE v.cluster = clusters.id),
                label = COALESCE((SELECT f.text FROM vocabulary_rows v JOIN fragments f ON f.id = v.fragment
                           WHERE v.cluster = clusters.id
                           ORDER BY v.document_frequency DESC, v.fragment LIMIT 1), label)",
@@ -1300,6 +1386,22 @@ fn kind_of_key(key: &str, mimetype: &str) -> Option<VocabularyKind> {
 
 /// The one normalization every exact match uses: lowercase, inner
 /// whitespace collapsed to one space, edges trimmed. A row's key is built
+/// A spelling as an FTS5 phrase: its alphanumeric runs, each quoted, in
+/// one quoted sequence, so `eu-central-1` asks for the tokens `eu`,
+/// `central`, `1` adjacent and in order — the way the index tokenized the
+/// text. `None` when nothing alphanumeric remains.
+fn fts_phrase_expression(spelling: &str) -> Option<String> {
+    let cleaned: String = spelling
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+        .collect();
+    let tokens: Vec<&str> = cleaned.split_whitespace().collect();
+    if tokens.is_empty() {
+        return None;
+    }
+    Some(format!("\"{}\"", tokens.join(" ")))
+}
+
 /// from it, so a spelling matches by construction.
 pub fn normalize_spelling(spelling: &str) -> String {
     spelling

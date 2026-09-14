@@ -63,6 +63,11 @@ pub struct FinderConfig {
     pub clusters_per_query_max: u32,
     /// Neighbours named per result in the ledger, under `explain`.
     pub explain_rows_max: u32,
+    /// Most mined rows one query reads edges for from the full-text
+    /// index, best seeds first (`design/vocabulary.md`, storage). `0`
+    /// grounds through no row: the exact and cluster lists then seed
+    /// nothing a document can receive.
+    pub grounded_rows_max: u32,
 }
 
 /// The seed lists a query runs before fusion — the older two-list dial.
@@ -178,6 +183,7 @@ impl Default for FinderConfig {
             cluster_query_cosine: 0.55,
             clusters_per_query_max: 3,
             explain_rows_max: 3,
+            grounded_rows_max: 64,
         }
     }
 }

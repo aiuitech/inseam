@@ -17,8 +17,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use inseam_kernel::address::ContentDigest;
-use inseam_kernel::fragment::FragmentId;
-use inseam_kernel::store::{IndexStore, RowKind, SourceId, StoredSource, VocabularyKind};
+use inseam_kernel::fragment::{FragmentId, Relation, RelationKind};
+use inseam_kernel::store::{
+    IndexStore, RowKind, SourceId, StoredSource, VocabularyKind, VocabularyOrigin, VocabularyRow,
+};
 use inseam_kernel::substrate::{
     ApplyCx, Facts, Inject, Manifest, Plugin, PluginError, STORE, parse_config,
 };
@@ -108,6 +110,14 @@ impl FinderService {
             clusters: Arc::new(tokio::sync::Mutex::new(ClusterCache::default())),
         }
     }
+}
+
+/// The edges the mined rows among the seeds contribute, and the rows the
+/// hub bound kept out.
+#[derive(Default)]
+struct Grounded {
+    relations: Vec<Relation>,
+    hubs: Vec<(FragmentId, u32)>,
 }
 
 /// The walk's output for one query: the graph, the per-column mass, and
@@ -238,7 +248,7 @@ impl FinderService {
         explain: bool,
     ) -> Result<Walked, SeamError> {
         let seed_ids: Vec<FragmentId> = seeds.fused.keys().map(|id| FragmentId(*id)).collect();
-        let neighborhood = self
+        let mut neighborhood = self
             .store
             .relations_near_bounded(
                 &seed_ids,
@@ -247,6 +257,9 @@ impl FinderService {
                 config.hub_bound(),
             )
             .await?;
+        let grounded = self.ground_rows(config, seeds).await?;
+        neighborhood.relations.extend(grounded.relations);
+        neighborhood.hubs.extend(grounded.hubs);
         let mut vertex_ids: Vec<FragmentId> = neighborhood
             .relations
             .iter()
@@ -285,6 +298,65 @@ impl FinderService {
             row_kinds,
             hubs: neighborhood.hubs,
         })
+    }
+
+    /// The edges of the mined rows among the seeds, read from the full-text
+    /// index: a mined row stores no anchors (`design/vocabulary.md`,
+    /// storage), so its `mentions` edges are its spelling's postings,
+    /// synthesized here for the walk. A row past the hub bound is a hub
+    /// like any other, by its document frequency. Best seeds first, at
+    /// most `grounded_rows_max` rows, never past the relation limit.
+    async fn ground_rows(
+        &self,
+        config: &FinderConfig,
+        seeds: &Seeds,
+    ) -> Result<Grounded, SeamError> {
+        let mut grounded = Grounded::default();
+        if config.grounded_rows_max == 0 || seeds.fused.is_empty() {
+            return Ok(grounded);
+        }
+        let ids: Vec<FragmentId> = seeds.fused.keys().map(|id| FragmentId(*id)).collect();
+        let mut rows: Vec<VocabularyRow> = self
+            .store
+            .vocabulary_rows_of(&ids)
+            .await?
+            .into_iter()
+            .filter(|row| row.origin == VocabularyOrigin::Mined)
+            .collect();
+        rows.sort_by(|a, b| {
+            let score =
+                |row: &VocabularyRow| seeds.fused.get(&row.fragment.0).copied().unwrap_or(0.0);
+            score(b)
+                .total_cmp(&score(a))
+                .then(a.fragment.cmp(&b.fragment))
+        });
+        rows.truncate(usize::try_from(config.grounded_rows_max).unwrap_or(usize::MAX));
+        let mentions = RelationKind::new("mentions").expect("literal kind is valid");
+        let relation_limit = usize::try_from(config.graph_relation_limit).unwrap_or(usize::MAX);
+        for row in rows {
+            if let Some(bound) = config.hub_bound()
+                && row.document_frequency > bound
+            {
+                grounded.hubs.push((row.fragment, row.document_frequency));
+                continue;
+            }
+            let remaining = relation_limit.saturating_sub(grounded.relations.len());
+            if remaining == 0 {
+                break;
+            }
+            let limit = config
+                .hub_bound()
+                .map_or(config.graph_relation_limit, |bound| bound.saturating_add(1))
+                .min(u32::try_from(remaining).unwrap_or(u32::MAX))
+                .max(1);
+            let hits = self.store.fragments_spelling(&row.spelling, limit).await?;
+            for hit in hits {
+                grounded
+                    .relations
+                    .push(Relation::new(hit, mentions.clone(), row.fragment));
+            }
+        }
+        Ok(grounded)
     }
 
     /// The hubs the bound kept out, named under `explain`.

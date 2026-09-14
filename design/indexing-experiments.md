@@ -47,6 +47,18 @@ clusters in response to these failures. Its validation gates distinguish the
 proposal from demonstrated retrieval gains. An implementation in progress is
 not a benchmark result; add its measurements here when available.
 
+## 14 September 2026: vocabulary pass cost
+
+Evidence: [vocabulary recall report](../benchmarks/reports/20260913-vocabulary-recall.md)
+for the measurements that motivated the change; the reworked pass's own
+timings are appended here as slice runs complete.
+
+| Experiment | Measured result | Conclusion |
+| --- | --- | --- |
+| First vocabulary pass on the full corpus (stored `mentions` edge per match, host facet row, frequency recount over relations, two store reads per row in clustering) | Abandoned after eight hours: 86 minutes matching, four hours planting the host facet, hours in frequency and cluster work, 9.2 million candidates dropped at the cap; `for`, `to`, `in`, `with` the most frequent rows (510,284 sources). | Operational failure. The pass as built cannot be iterated on. |
+| First vocabulary pass on BEIR NFCorpus | Index 63,832,129 bytes against 40,353,857 (+58.2%); 9,119 s to index, 9,060 s of it in sequential grounding; Recall@10 18.764 against 18.708. | Neutral recall; storage and time unacceptable. |
+| Rework: no stored edges for mined rows (the full-text index is the anchor, read at query time), in-memory frequency and clustering, no host facet, normalized-spelling counting under a seen-filter, concurrent grounding, merges demote to aliases | 25,000-document slice, retrieval only, no model calls (`20260914T141017Z-ff096cca3922`): the pass took 19.8 s — mine 12.8 s, match 4.5 s, cluster 2.4 s — inside 45.6 s of indexing; 82,867 rows planted, 1,558,205 row–source matches counted, zero relations written; index 310,001,729 bytes against 290,394,177 for the same slice without rows (+6.8%). Recall@8 83.59%, hit rate 86.6%, MRR 0.674 against 83.73 / 86.81 / 0.649 on the row-less slice (`20260913T224122Z`). Exact grounding fired on 491 of 500 questions and carried walk mass into 20,979 results. | Measured operational fix: the pass is seconds on the slice and adds under seven percent of storage. Recall is neutral within run variation; the vocabulary as mined is not yet buying recall. The twenty most frequent rows (`pray`, `await`, `lots`, `reflect`, `expensive`, document frequency 493–499) are general English under the 2% band top, so the shape rule's function-word list is the next thing to widen. |
+
 ## 13 September 2026: indexing and initial retrieval
 
 Evidence: [retrieval audit](../benchmarks/reports/20260913-retrieval-audit.md),
