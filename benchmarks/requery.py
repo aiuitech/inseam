@@ -71,6 +71,14 @@ def selected_options(runner: Any, origin: dict[str, Any], arguments: argparse.Na
         raise harness.BenchmarkError(f"source run options are incompatible: {error}") from error
     changes = {name: getattr(arguments, name) for name in QUERY_OPTIONS
                if getattr(arguments, name) is not None}
+    overrides = getattr(arguments, "finder_override", None)
+    if overrides:
+        # Query-time overrides ride each request, never the composition
+        # (design/vocabulary.md, dials): a replay may sweep them over one
+        # index, and the manifest records exactly which list ran.
+        if "finder_overrides" not in {field.name for field in dataclasses.fields(options)}:
+            raise harness.BenchmarkError(f"{runner.__name__} replays do not take finder overrides")
+        changes["finder_overrides"] = list(overrides)
     if runner is enterprise:
         changes.update(skip_agent=True, skip_evaluation=True)
         if getattr(arguments, "bookend_count", 0):
@@ -201,6 +209,14 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--finder-damping", type=harness.probability_argument)
     parser.add_argument("--finder-lexical-weight", type=harness.weight_argument)
     parser.add_argument("--finder-max-vector-distance", type=harness.distance_argument)
+    parser.add_argument(
+        "--finder-override",
+        action="append",
+        default=[],
+        type=harness.finder_override_argument,
+        metavar="KEY=VALUE",
+        help="a query-time Finder override for every replayed query (repeatable); replaces the origin's list",
+    )
     return parser.parse_args()
 
 

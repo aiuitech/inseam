@@ -65,6 +65,20 @@ class RequeryTests(unittest.TestCase):
         self.assertIn('lexical_weight = 0.1\n', after[2])
         self.assertEqual(after[2].count('rrf_k = '), 1)
 
+    def test_finder_overrides_replace_the_origins_list_for_a_replay(self) -> None:
+        origin = {"options": dataclasses.asdict(enterprise.RunOptions(500, 8, 5, 8, 0, 4, False))}
+        origin["options"]["finder_overrides"] = ["hub_degree_max=1"]
+        arguments = argparse.Namespace(
+            finder_seeds=None, finder_seed_k=None, finder_rrf_k=None, finder_damping=None,
+            finder_lexical_weight=None, finder_max_vector_distance=None, bookend_count=0,
+            finder_override=["seed_lists.cluster.weight=1", "seed_lists.exact.weight=3"],
+        )
+        options = requery.selected_options(enterprise, origin, arguments)
+        self.assertEqual(options.finder_overrides, ["seed_lists.cluster.weight=1", "seed_lists.exact.weight=3"])
+        self.assertTrue(options.skip_agent)
+        kept = argparse.Namespace(**{**vars(arguments), "finder_override": []})
+        self.assertEqual(requery.selected_options(enterprise, origin, kept).finder_overrides, ["hub_degree_max=1"])
+
     def test_rejects_missing_or_ambiguous_finder(self) -> None:
         options = dataclasses.asdict(enterprise.RunOptions(500, 8, 5, 8, 0, 4, False))
         finder = '[[entry]]\nid = "finder"\n[entry.config]\n'
