@@ -51,7 +51,7 @@ MAX_LLM_CALL_BUDGET = 1_000_000
 MAX_SUMMARY_TARGET_CHARS = 100_000
 MAX_KEYWORDS = 100
 STRUCTURAL_CHOICES = frozenset({"off", "markdown"})
-VECTOR_SCOPES = frozenset({"summaries", "all"})
+VECTOR_SCOPES = frozenset({"summaries", "all", "clusters"})
 FINDER_SEEDS = frozenset({"both", "full-text", "vector"})
 # A query-time Finder override (`inseam query --finder KEY=VALUE`,
 # design/vocabulary.md, dials) is a request parameter, never composition,

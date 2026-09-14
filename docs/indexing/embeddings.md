@@ -9,7 +9,7 @@ id = "embedder"
 provider = "endpoint"      # endpoint | hashed | none
 model = "all-minilm:l6-v2"
 # dimensions = 384         # unset: the model's native width
-vectors = "summaries"      # all | summaries
+vectors = "summaries"      # all | summaries | clusters
 ```
 
 ## Provider
@@ -36,6 +36,7 @@ Vectors are the storage bulk of an index — one `f32` per dimension per text fr
 
 - `all` (default) — every prose fragment gets a vector: source content (sections, chunks, transcripts) and summaries.
 - `summaries` — only summary fragments get vectors: one bounded row per source. Every fragment still enters the full-text index, so exact-term queries reach into sections and chunks; only vector seeding runs over summaries.
+- `clusters` — no fragment gets a vector. The embedder serves the vocabulary pass's clusters and the query alone ([vocabulary.md](vocabulary.md)), so cluster grounding runs at the cost of one embedding per cluster and one per query, and the vector seed list is always empty.
 
 Under either scope, rows that are names and terms rather than prose — keywords, entities and every other keyed fragment, a folder's entries — carry no vector. Full-text search matches those exactly, and a vector over a list of names buys nothing it does not already have; the store calls this the row's **search role** (content, summary, or lexical).
 

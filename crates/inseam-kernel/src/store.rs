@@ -411,6 +411,10 @@ pub enum VectorScope {
     All,
     /// Only summary fragments (`text/x-inseam-summary`) get vectors.
     Summaries,
+    /// No fragment gets a vector; the embedder serves the vocabulary's
+    /// clusters and the query alone (`design/vocabulary.md`, retrieval),
+    /// so cluster grounding runs without a vector per document.
+    Clusters,
 }
 
 impl VectorScope {
@@ -419,6 +423,7 @@ impl VectorScope {
         match self {
             Self::All => "all",
             Self::Summaries => "summaries",
+            Self::Clusters => "clusters",
         }
     }
 
@@ -428,6 +433,7 @@ impl VectorScope {
     fn parse(value: &str) -> Self {
         match value {
             "summaries" => Self::Summaries,
+            "clusters" => Self::Clusters,
             _ => Self::All,
         }
     }
@@ -440,6 +446,8 @@ impl VectorScope {
             (Self::All, SearchRole::Summary) => true,
             (Self::Summaries, SearchRole::Summary) => true,
             (Self::Summaries, SearchRole::Content) => false,
+            (Self::Clusters, SearchRole::Summary) => false,
+            (Self::Clusters, SearchRole::Content) => false,
         }
     }
 }
@@ -461,6 +469,7 @@ impl std::fmt::Display for EmbeddingIdentity {
         match self.vectors {
             VectorScope::All => f.write_str(")"),
             VectorScope::Summaries => f.write_str(", summaries only)"),
+            VectorScope::Clusters => f.write_str(", clusters only)"),
         }
     }
 }

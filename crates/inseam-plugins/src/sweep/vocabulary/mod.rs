@@ -119,11 +119,12 @@ impl Default for VocabularyConfig {
 
 impl VocabularyConfig {
     /// The dials whose change re-runs the pass in full. The version
-    /// prefix moves when the pass's own shape does, so an index built by
-    /// an earlier pass is re-mined on its next sweep.
+    /// prefix moves when the pass's own shape does — the storage of
+    /// anchors, the shape rule — so an index built by an earlier pass is
+    /// re-mined on its next sweep.
     pub fn digest(&self) -> String {
         format!(
-            "vocabulary-v2|df_min={}|df_max_percent={}|df_max_floor={}|candidates={}|recurring={}|phrase_tokens={}",
+            "vocabulary-v3|df_min={}|df_max_percent={}|df_max_floor={}|candidates={}|recurring={}|phrase_tokens={}",
             self.term_df_min,
             self.term_df_max_percent,
             self.term_df_max_floor,

@@ -374,6 +374,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn clusters_scope_embeds_no_row_at_all() {
+        let (_dir, store) = store().await;
+        let embedded = embed_batch(
+            &ScopedHashed {
+                scope: VectorScope::Clusters,
+            },
+            &store,
+            batch(0..6),
+        )
+        .await;
+        assert_eq!(embedded.embedded, 0);
+        assert_eq!(embedded.rows.len(), 6);
+        assert!(embedded.rows.iter().all(|r| r.vector.is_none()));
+    }
+
+    #[tokio::test]
     async fn summaries_scope_embeds_only_summary_rows_and_keeps_the_rest_text_only() {
         let (_dir, store) = store().await;
         let embedded = embed_batch(

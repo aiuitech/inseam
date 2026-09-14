@@ -20,6 +20,29 @@
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher, Hasher};
+use std::sync::OnceLock;
+
+/// General English a plain word is refused for, one word per line. A
+/// plain lowercase word with no mark of internal naming is a candidate
+/// only when it is not everyday language: the prose full-text index
+/// already finds `expensive` and `reflect` in every document that says
+/// them, and a row for such a word adds seeds without adding a name. The
+/// list is a heuristic, not a frequency table (`design/vocabulary.md`,
+/// open questions); marked tokens never consult it.
+const COMMON_WORDS: &str = include_str!("common_words.txt");
+
+/// Whether a lowercase plain word is everyday English.
+pub fn is_common_word(word: &str) -> bool {
+    static SET: OnceLock<HashSet<&'static str>> = OnceLock::new();
+    SET.get_or_init(|| {
+        COMMON_WORDS
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect()
+    })
+    .contains(word)
+}
 
 /// Longest token kept; anything longer is a blob, not a name.
 pub const TOKEN_CHARS_MAX: usize = 64;
@@ -111,8 +134,9 @@ pub enum Shape {
 
 /// Classify a token. The marks are read from the spelling; the function
 /// word test from the normalized form, so `THE` is no more a candidate
-/// than `the`. Plain lowercase words qualify only when long enough — the
-/// bulk of the candidate set, which the document-frequency band thins.
+/// than `the`. Plain words qualify only when long enough and not
+/// everyday English ([`is_common_word`]) — the document-frequency band
+/// then thins what is left.
 pub fn shape_of(spelling: &str) -> Shape {
     let has_letter = spelling.chars().any(char::is_alphabetic);
     if !has_letter {
@@ -134,7 +158,7 @@ pub fn shape_of(spelling: &str) -> Shape {
     if inner_upper || has_word_mark {
         return Shape::Term;
     }
-    if lower.chars().count() >= PLAIN_WORD_CHARS_MIN {
+    if lower.chars().count() >= PLAIN_WORD_CHARS_MIN && !is_common_word(&lower) {
         return Shape::Term;
     }
     Shape::None
@@ -527,6 +551,18 @@ mod tests {
         assert_eq!(shape_of("Redwood"), Shape::Term);
         assert_eq!(shape_of("the"), Shape::None);
         assert_eq!(shape_of("about"), Shape::None);
+        assert_eq!(shape_of("expensive"), Shape::None, "everyday English");
+        assert_eq!(shape_of("Reflect"), Shape::None);
+        assert_eq!(
+            shape_of("reranking"),
+            Shape::Term,
+            "jargon is not on the list"
+        );
+        assert_eq!(
+            shape_of("H100"),
+            Shape::Identifier,
+            "marks never consult the list"
+        );
         assert_eq!(shape_of("2026"), Shape::None);
         assert_eq!(shape_of("ok"), Shape::None);
     }
@@ -544,13 +580,13 @@ mod tests {
         let mut candidates = Candidates::new(100, 100, 2);
         for _ in 0..3 {
             candidates.begin_source();
-            candidates.count(&tokenize("Redwood Redwood launch eu-central-1"));
+            candidates.count(&tokenize("Redwood Redwood rollout eu-central-1"));
         }
         candidates.begin_source();
         candidates.count(&tokenize("Redwood only"));
         let band = candidates.in_band(2, 3);
         let names: Vec<&str> = band.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(names, vec!["eu-central-1", "launch"]);
+        assert_eq!(names, vec!["eu-central-1", "rollout"]);
         assert_eq!(
             candidates.in_band(4, 4)[0],
             (

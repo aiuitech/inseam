@@ -33,6 +33,10 @@ The pass runs when a sweep landed or removed a source, or when its own configura
 
 The pass reports what it did in the index report — sources walked, candidates mined and kept, rows planted, row–source matches counted, relations written (facets, authors, aliases), rows retracted, facet rows, clusters founded, joined, merged, embedded, and grounded, aliases and glosses written, model calls, time per step — and names the twenty most frequent rows, so the first thing to do after a pass is read that list: if it is full of industry words, the shape rule is wrong before any query is run.
 
+## Model extraction per source
+
+Mining is statistics; a model can extract per source as well, as an indexing option. The **hints** transform ([transforms.md](transforms.md)) makes one call per source (`transform_model`, the batch lane by default) and plants, beside its synopsis, cues, and discriminators, the keyed rows the vocabulary adopts: glossary terms under `term:`, exact identifiers under `identifier:`, and entities under `entity:<kind>:`, each anchored `mentions` from the source. The pass adopts them as rows of origin `extracted`, measures their document frequency by matching their spellings across all the text like any other row, and clusters them with the mined ones; the Finder conducts through their stored relations. The **entities** transform plants entity rows the same way. Both are off unless mounted with a budget: in a composition, the transform's `llm_call_budget`; in the benchmark harness, `--hints-llm-call-budget N` ([../benchmarking.md](../benchmarking.md)). Mined rows and extracted rows share one key namespace, so a term the model names and a term the statistics find are one fragment.
+
 ## Configuration
 
 Under the `sweep` entry, `[entry.config.vocabulary]` ([../configuration.md](../configuration.md)):
