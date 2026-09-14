@@ -1,0 +1,102 @@
+[
+  {
+    "kind": "facet",
+    "normalized": "host:fs",
+    "document_frequency": 511963
+  },
+  {
+    "kind": "term",
+    "normalized": "for",
+    "document_frequency": 510284
+  },
+  {
+    "kind": "term",
+    "normalized": "to",
+    "document_frequency": 510080
+  },
+  {
+    "kind": "term",
+    "normalized": "in",
+    "document_frequency": 496375
+  },
+  {
+    "kind": "term",
+    "normalized": "with",
+    "document_frequency": 480589
+  },
+  {
+    "kind": "term",
+    "normalized": "on",
+    "document_frequency": 480381
+  },
+  {
+    "kind": "term",
+    "normalized": "we",
+    "document_frequency": 469798
+  },
+  {
+    "kind": "term",
+    "normalized": "if",
+    "document_frequency": 459296
+  },
+  {
+    "kind": "term",
+    "normalized": "can",
+    "document_frequency": 451956
+  },
+  {
+    "kind": "term",
+    "normalized": "that",
+    "document_frequency": 424153
+  },
+  {
+    "kind": "term",
+    "normalized": "will",
+    "document_frequency": 414301
+  },
+  {
+    "kind": "term",
+    "normalized": "is",
+    "document_frequency": 411498
+  },
+  {
+    "kind": "term",
+    "normalized": "of",
+    "document_frequency": 403300
+  },
+  {
+    "kind": "term",
+    "normalized": "from",
+    "document_frequency": 402305
+  },
+  {
+    "kind": "term",
+    "normalized": "by",
+    "document_frequency": 384550
+  },
+  {
+    "kind": "term",
+    "normalized": "add",
+    "document_frequency": 363319
+  },
+  {
+    "kind": "term",
+    "normalized": "an",
+    "document_frequency": 354072
+  },
+  {
+    "kind": "term",
+    "normalized": "at",
+    "document_frequency": 351745
+  },
+  {
+    "kind": "term",
+    "normalized": "but",
+    "document_frequency": 345848
+  },
+  {
+    "kind": "term",
+    "normalized": "short",
+    "document_frequency": 340122
+  }
+]

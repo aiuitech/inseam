@@ -1,6 +1,7 @@
 ## WIP
 
 ## Todos
+- Twilio integration
 
 ### Web UI
 - ai skills for building inseam plugins, setting up nodes, and publishing to our plugin registry

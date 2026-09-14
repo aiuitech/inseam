@@ -51,3 +51,8 @@ Tests:
 - Table-driven cases over copy-pasted test fns; builders/fixtures over hand-rolled setup repeated in every test.
 - No sleeps, no wall-clock time, no network — inject clocks and use in-memory fakes. Flaky tests get fixed or deleted, never retried.
 - Test error paths as thoroughly as happy paths; assert on the error variant, not the message string.
+
+
+## SRED
+
+This will be submitted as a project to the Scientific Research and Experimental Development (SR&ED) program so document uncertainties and experiments done as the code base evolves in ./docs/sred.md

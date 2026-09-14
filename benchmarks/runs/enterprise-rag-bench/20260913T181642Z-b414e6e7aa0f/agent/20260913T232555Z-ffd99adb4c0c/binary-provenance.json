@@ -1,0 +1,9 @@
+{
+  "binary_source_revision": "a4951ac828ca",
+  "source_patch": "binary-source-diff.patch",
+  "added_source": "binary-agent-batch.rs",
+  "binary_sha256": "81f18df3af2d540f6ca8ddab6b8a2e5f8056431dd83950f617503b3e817b1780",
+  "answer_effort": "low",
+  "judge_effort_planned": "low",
+  "note": "No new retrieval/indexing code in the baseline; batch transport, explicit effort and empty-review handling added."
+}

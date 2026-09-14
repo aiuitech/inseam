@@ -1,0 +1,237 @@
+diff --git a/crates/inseam-cli/src/agent.rs b/crates/inseam-cli/src/agent.rs
+index 7fcbbb7..e8527b2 100644
+--- a/crates/inseam-cli/src/agent.rs
++++ b/crates/inseam-cli/src/agent.rs
+@@ -40,6 +40,7 @@ pub async fn run_agent(
+     model: &str,
+     question: &str,
+     max_turns: usize,
++    reasoning_effort: Option<&str>,
+     mut on_event: impl FnMut(AgentEvent),
+ ) -> Result<AgentOutcome, AgentError> {
+     assert!((1..=64).contains(&max_turns));
+@@ -54,7 +55,9 @@ pub async fn run_agent(
+     messages.push(ChatMessage::tool_result(first.id, initial));
+     let mut tool_calls = 1;
+     for turn in 1..=max_turns {
+-        let request = ChatRequest::new(model, messages.clone()).with_tools(tool_definitions());
++        let request = ChatRequest::new(model, messages.clone())
++            .with_tools(tool_definitions())
++            .with_reasoning_effort(reasoning_effort);
+         let reply = llm.chat(&request).await?;
+         let calls = reply.tool_calls.clone().unwrap_or_default();
+         if calls.len() > 8 {
+@@ -62,7 +65,7 @@ pub async fn run_agent(
+         }
+         messages.push(reply);
+         if calls.is_empty() {
+-            return finish(llm, model, messages, turn, tool_calls).await;
++            return finish(llm, model, messages, turn, tool_calls, reasoning_effort).await;
+         }
+         // A model response cannot create an unbounded queue of batches.
+         for call in &calls {
+@@ -71,7 +74,15 @@ pub async fn run_agent(
+             messages.push(ChatMessage::tool_result(&call.id, result));
+         }
+     }
+-    finish(llm, model, messages, max_turns, tool_calls).await
++    finish(
++        llm,
++        model,
++        messages,
++        max_turns,
++        tool_calls,
++        reasoning_effort,
++    )
++    .await
+ }
+ 
+ async fn finish(
+@@ -80,6 +91,7 @@ async fn finish(
+     mut messages: Vec<ChatMessage>,
+     turns: usize,
+     tool_calls: usize,
++    reasoning_effort: Option<&str>,
+ ) -> Result<AgentOutcome, AgentError> {
+     // Final review is optional polish. An empty provider reply must not erase
+     // a completed answer, and a tool-call preamble is never a fallback answer.
+@@ -104,7 +116,9 @@ async fn finish(
+          relationship. Include supported details you omitted, remove unsupported claims, \
+          and state unresolved gaps. Return the complete final answer, citing source addresses.",
+     ));
+-    let reply = llm.chat(&ChatRequest::new(model, messages)).await?;
++    let reply = llm
++        .chat(&ChatRequest::new(model, messages).with_reasoning_effort(reasoning_effort))
++        .await?;
+     let reviewed = reply.content.filter(|text| !text.trim().is_empty());
+     if reviewed.is_none() {
+         tracing::warn!(
+diff --git a/crates/inseam-cli/src/agent_tests.rs b/crates/inseam-cli/src/agent_tests.rs
+index 6ffedb7..b2f1470 100644
+--- a/crates/inseam-cli/src/agent_tests.rs
++++ b/crates/inseam-cli/src/agent_tests.rs
+@@ -31,7 +31,7 @@ impl Llm for ScriptedLlm {
+     }
+ }
+ 
+-async fn run(replies: Vec<ChatMessage>) -> Result<AgentOutcome, AgentError> {
++async fn fixture() -> (tempfile::TempDir, Kernel) {
+     let data = tempfile::tempdir().unwrap();
+     let mut kernel = Kernel::boot(data.path(), inseam_plugins::factories(), Vec::new())
+         .await
+@@ -63,12 +63,26 @@ dimensions = 64
+         .reconcile(&Composition::parse(&configuration, "agent test").unwrap())
+         .await
+         .unwrap();
++    (data, kernel)
++}
++
++async fn run(replies: Vec<ChatMessage>) -> Result<AgentOutcome, AgentError> {
++    let (_data, kernel) = fixture().await;
+     let operations = kernel.service(&OPERATIONS).unwrap();
+     let llm = ScriptedLlm {
+         replies,
+         calls: AtomicU32::new(0),
+     };
+-    let outcome = run_agent(operations.as_ref(), &llm, "scripted", "fixture", 1, |_| {}).await;
++    let outcome = run_agent(
++        operations.as_ref(),
++        &llm,
++        "scripted",
++        "fixture",
++        1,
++        None,
++        |_| {},
++    )
++    .await;
+     assert_eq!(llm.calls.load(Ordering::SeqCst), 2);
+     outcome
+ }
+@@ -111,3 +125,68 @@ async fn tool_call_preamble_is_not_a_fallback_answer() {
+     let result = run(vec![preamble, answer("")]).await;
+     assert!(matches!(result, Err(AgentError::EmptyAnswer(1))));
+ }
++
++#[tokio::test]
++async fn batch_preserves_each_question_in_a_separate_record() {
++    let (_data, kernel) = fixture().await;
++    let directory = tempfile::tempdir().unwrap();
++    let input = directory.path().join("questions.jsonl");
++    let questions = (0..10)
++        .map(|index| format!("{{\"question_id\":\"q_{index}\",\"question\":\"fixture\"}}\n"))
++        .collect::<String>();
++    std::fs::write(&input, questions).unwrap();
++    let llm = std::sync::Arc::new(ScriptedLlm {
++        replies: vec![answer("Supported answer."); 20],
++        calls: AtomicU32::new(0),
++    });
++    crate::agent_batch::run(
++        kernel.service(&OPERATIONS).unwrap(),
++        llm.clone(),
++        "scripted".into(),
++        &input,
++        directory.path(),
++        1,
++        Some("low".into()),
++    )
++    .await
++    .unwrap();
++    for index in 0..10 {
++        let value: serde_json::Value = serde_json::from_slice(
++            &std::fs::read(directory.path().join(format!("q_{index}.json"))).unwrap(),
++        )
++        .unwrap();
++        assert_eq!(value["question_id"], format!("q_{index}"));
++        assert_eq!(value["answer"], "Supported answer.");
++    }
++    assert_eq!(llm.calls.load(Ordering::SeqCst), 20);
++}
++
++#[tokio::test]
++async fn batch_rejects_duplicate_and_unsafe_ids_before_model_calls() {
++    let (_data, kernel) = fixture().await;
++    let directory = tempfile::tempdir().unwrap();
++    let input = directory.path().join("questions.jsonl");
++    let llm = std::sync::Arc::new(ScriptedLlm {
++        replies: Vec::new(),
++        calls: AtomicU32::new(0),
++    });
++    for text in [
++        "{\"question_id\":\"../escape\",\"question\":\"fixture\"}\n",
++        "{\"question_id\":\"q\",\"question\":\"fixture\"}\n{\"question_id\":\"q\",\"question\":\"fixture\"}\n",
++        "",
++    ] {
++        std::fs::write(&input, text).unwrap();
++        let result = crate::agent_batch::run(
++            kernel.service(&OPERATIONS).unwrap(),
++            llm.clone(),
++            "scripted".into(),
++            &input,
++            directory.path(),
++            1,
++            None,
++        )
++        .await;
++        assert!(result.is_err());
++    }
++    assert_eq!(llm.calls.load(Ordering::SeqCst), 0);
++}
+diff --git a/crates/inseam-cli/src/lib.rs b/crates/inseam-cli/src/lib.rs
+index 586991c..f65be23 100644
+--- a/crates/inseam-cli/src/lib.rs
++++ b/crates/inseam-cli/src/lib.rs
+@@ -24,6 +24,7 @@ use anyhow::{Context, bail};
+ use clap::{Parser, Subcommand, ValueEnum};
+ 
+ mod agent;
++mod agent_batch;
+ mod authoring;
+ 
+ use agent::{AgentEvent, run_agent};
+@@ -406,6 +407,22 @@ enum Command {
+         model: Option<String>,
+         #[arg(long, default_value_t = 12)]
+         turns: usize,
++        #[arg(long, value_parser = ["none", "low", "medium", "high", "xhigh", "max"])]
++        reasoning_effort: Option<String>,
++    },
++    /// Evaluate bounded question sessions while keeping one database owner.
++    #[command(hide = true)]
++    AgentBatch {
++        #[arg(long)]
++        input: PathBuf,
++        #[arg(long)]
++        output: PathBuf,
++        #[arg(long)]
++        model: String,
++        #[arg(long, default_value_t = 12)]
++        turns: usize,
++        #[arg(long, value_parser = ["none", "low", "medium", "high", "xhigh", "max"])]
++        reasoning_effort: Option<String>,
+     },
+     /// List endpoint models suitable for a role, cheapest first.
+     Models {
+@@ -1091,10 +1108,15 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
+                 },
+             }
+         }
++        Command::AgentBatch { input, output, model, turns, reasoning_effort } => {
++            agent_batch::run(kernel.service(&OPERATIONS)?, kernel.service(&LLM)?,
++                model, &input, &output, turns, reasoning_effort).await?;
++        }
+         Command::Agent {
+             question,
+             model,
+             turns,
++            reasoning_effort,
+         } => {
+             let ops = kernel.service(&OPERATIONS)?;
+             let Ok(client) = kernel.service(&LLM) else {
+@@ -1115,6 +1137,7 @@ async fn run_command(cli: Cli, distribution: Distribution) -> anyhow::Result<()>
+                 &model,
+                 &question,
+                 turns,
++                reasoning_effort.as_deref(),
+                 |event| match event {
+                     AgentEvent::ToolCall { name, arguments } => {
+                         println!("→ {name} {arguments}");

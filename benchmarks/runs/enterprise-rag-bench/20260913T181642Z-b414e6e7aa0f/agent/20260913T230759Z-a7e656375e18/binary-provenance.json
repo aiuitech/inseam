@@ -1,0 +1,6 @@
+{
+  "binary_source_revision": "a4951ac828ca",
+  "binary_source_diff": "binary-source-diff.patch",
+  "binary_sha256": "10adff9cc42925551fe1e974c8c88fab6748f920c864c792855fda15bc4e8f20",
+  "note": "The harness revision is the working checkout. This isolated binary uses the prior GPT-5.4 Finder with only empty-final-review handling changed."
+}

@@ -1,0 +1,9 @@
+{
+  "binary_source_revision": "a4951ac828ca",
+  "binary_source_diff": "binary-source-diff.patch",
+  "added_source": "binary-agent-batch.rs",
+  "binary_sha256": "81f18df3af2d540f6ca8ddab6b8a2e5f8056431dd83950f617503b3e817b1780",
+  "answer_reasoning_effort": "low",
+  "judge_reasoning_effort": "low",
+  "note": "Prior GPT-5.4 Finder with draft preservation, effort control, and a bounded shared-node batch transport. Retrieval/index algorithms are unchanged from the source revision."
+}
