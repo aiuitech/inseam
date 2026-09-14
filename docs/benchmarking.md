@@ -55,3 +55,5 @@ The [100-question GPT-5.4 review](../benchmarks/reports/20260913-gpt54-100-booke
 scored 78.98 over the first fifty and last fifty questions on the full index.
 It includes a paired comparison with the earlier fifty and records the pause
 before any extension to 500.
+
+The [vocabulary-enriched recall comparison](../benchmarks/reports/20260913-vocabulary-recall.md) tests fresh indexes against both historical scores and the current Finder on preserved old indexes. It reports initial recall separately from agent answer quality.

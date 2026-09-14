@@ -1,0 +1,110 @@
+{
+  "benchmark": {
+    "archive_sha256": "efe5be03f8c5b86a5870102d0599d227c8c6e2484328e68c6522560385671b0b",
+    "archive_url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/nfcorpus.zip",
+    "dataset": "nfcorpus",
+    "document_count": 3633,
+    "name": "BEIR",
+    "qrel_count": 12334,
+    "query_count": 323,
+    "split": "test"
+  },
+  "data_dir": "/Users/greg/aiui/projects/inseam/benchmarks/fixtures/beir-nfcorpus/nodes/20260913T182211Z-b414e6e7aa0f",
+  "duration_seconds": 114.956045,
+  "final_index_footprint": {
+    "index_bytes": 40374337,
+    "index_files": 2,
+    "measured_at": "2026-09-14T01:47:48.147Z"
+  },
+  "finished_at": "2026-09-14T01:47:48.147Z",
+  "indexing": null,
+  "indexing_note": "Reuses the origin index. No indexing or repair command is run.",
+  "inseam": {
+    "binary_path": "/Users/greg/.cargo/bin/inseam",
+    "binary_sha256": "1699dcc4909ccad5d3324ce7186b0061198f5bba783af3a71482aeb0f4a4f472",
+    "cli_version": "inseam 0.2.0",
+    "repository_dirty": true,
+    "repository_revision": "a6565cec91e791c74c39691c54b4199fdaab031c"
+  },
+  "models": {
+    "corpus": "text",
+    "embedding_dimensions": 384,
+    "embedding_vectors": "all",
+    "embeddings": "openai/text-embedding-3-small",
+    "entity_extraction": "disabled",
+    "finder_max_vector_distance": 0.75,
+    "finder_seeds": "both",
+    "structural": "off",
+    "summarization": "google/gemini-2.5-flash-lite",
+    "summarization_lane": "interactive"
+  },
+  "options": {
+    "corpus": "text",
+    "directory_summary_target_chars": 0,
+    "embedding_dimensions": 384,
+    "finder_damping": 0.5,
+    "finder_lexical_weight": 1.0,
+    "finder_max_vector_distance": 0.75,
+    "finder_rrf_k": 10,
+    "finder_seed_k": 60,
+    "finder_seeds": "both",
+    "index_concurrency": 8,
+    "keywords_max": 0,
+    "llm_call_budget": 0,
+    "query_count": 323,
+    "results_per_query": 10,
+    "structural": "off",
+    "summarization_lane": "interactive",
+    "summary_target_chars": 12000
+  },
+  "origin_manifest_sha256": "731f0d023c99d27009643fb018a1f89bf5765b23e2db2e66a86b3fd3cdd69240",
+  "origin_run_id": "20260913T182211Z-b414e6e7aa0f",
+  "phase": "completed",
+  "queries_completed": 323,
+  "run_id": "20260914T014552Z-a6565cec91e7",
+  "run_kind": "retrieval-replay",
+  "schema_version": 1,
+  "scores": {
+    "beir": {
+      "cutoffs": [
+        1,
+        3,
+        5,
+        10
+      ],
+      "map@1": 0.06739,
+      "map@10": 0.14536,
+      "map@3": 0.10871,
+      "map@5": 0.12412,
+      "ndcg@1": 0.5,
+      "ndcg@10": 0.38031,
+      "ndcg@3": 0.44151,
+      "ndcg@5": 0.41445,
+      "precision@1": 0.51703,
+      "precision@10": 0.27554,
+      "precision@3": 0.41176,
+      "precision@5": 0.35418,
+      "queries_evaluated": 323,
+      "recall@1": 0.06739,
+      "recall@10": 0.18767,
+      "recall@3": 0.11974,
+      "recall@5": 0.14601,
+      "semantics": "trec_eval ndcg_cut, map_cut, recall, and P averaged over queries; linear gains; relevance grade > 0 counts as relevant"
+    }
+  },
+  "started_at": "2026-09-14T01:45:52.842Z",
+  "status": "completed",
+  "system": {
+    "architecture": "arm64",
+    "cpu_model": "Apple M2 Pro",
+    "disk_free_bytes_at_start": 10925654016,
+    "disk_total_bytes": 494384795648,
+    "hostname": "GregMini.lan",
+    "logical_cpu_count": 10,
+    "memory_bytes": 17179869184,
+    "os": "Darwin",
+    "os_release": "25.5.0",
+    "os_version": "Darwin Kernel Version 25.5.0: Tue Jun  9 22:28:24 PDT 2026; root:xnu-12377.121.10~1/RELEASE_ARM64_T6020",
+    "python_version": "3.14.3"
+  }
+}

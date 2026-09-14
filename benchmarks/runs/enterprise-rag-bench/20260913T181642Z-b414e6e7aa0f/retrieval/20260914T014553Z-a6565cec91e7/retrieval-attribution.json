@@ -1,0 +1,797 @@
+{
+  "attribution_limit": 50,
+  "attribution_ready": false,
+  "by_question_type": {
+    "basic": {
+      "channels": {
+        "cluster": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "exact": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "lexical": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 1,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "prose": {
+          "gold_largest": 0,
+          "gold_only_seeded": 149,
+          "gold_seeded": 150,
+          "noise_largest": 0,
+          "noise_only_seeded": 1265,
+          "noise_seeded": 1265
+        },
+        "vector": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        }
+      },
+      "gold_documents": 175,
+      "gold_documents_found": 150,
+      "gold_documents_with_ledger": 0,
+      "noise_documents": 1265,
+      "row_kinds": {
+        "alias": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entity": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entry": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "facet": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "identifier": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "other": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "prose": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "summary": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "term": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        }
+      },
+      "rows_carried_gold": [],
+      "rows_carried_noise": []
+    },
+    "completeness": {
+      "channels": {
+        "cluster": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "exact": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "lexical": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "prose": {
+          "gold_largest": 0,
+          "gold_only_seeded": 73,
+          "gold_seeded": 73,
+          "noise_largest": 0,
+          "noise_only_seeded": 105,
+          "noise_seeded": 105
+        },
+        "vector": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        }
+      },
+      "gold_documents": 130,
+      "gold_documents_found": 73,
+      "gold_documents_with_ledger": 0,
+      "noise_documents": 105,
+      "row_kinds": {
+        "alias": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entity": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entry": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "facet": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "identifier": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "other": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "prose": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "summary": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "term": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        }
+      },
+      "rows_carried_gold": [],
+      "rows_carried_noise": []
+    },
+    "conflicting_info": {
+      "channels": {
+        "cluster": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "exact": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "lexical": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "prose": {
+          "gold_largest": 0,
+          "gold_only_seeded": 36,
+          "gold_seeded": 36,
+          "noise_largest": 0,
+          "noise_only_seeded": 128,
+          "noise_seeded": 128
+        },
+        "vector": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        }
+      },
+      "gold_documents": 39,
+      "gold_documents_found": 36,
+      "gold_documents_with_ledger": 0,
+      "noise_documents": 128,
+      "row_kinds": {
+        "alias": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entity": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entry": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "facet": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "identifier": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "other": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "prose": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "summary": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "term": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        }
+      },
+      "rows_carried_gold": [],
+      "rows_carried_noise": []
+    },
+    "constrained": {
+      "channels": {
+        "cluster": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "exact": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "lexical": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 1
+        },
+        "prose": {
+          "gold_largest": 0,
+          "gold_only_seeded": 41,
+          "gold_seeded": 41,
+          "noise_largest": 0,
+          "noise_only_seeded": 205,
+          "noise_seeded": 206
+        },
+        "vector": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        }
+      },
+      "gold_documents": 43,
+      "gold_documents_found": 41,
+      "gold_documents_with_ledger": 0,
+      "noise_documents": 206,
+      "row_kinds": {
+        "alias": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entity": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entry": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "facet": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "identifier": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "other": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "prose": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "summary": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "term": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        }
+      },
+      "rows_carried_gold": [],
+      "rows_carried_noise": []
+    },
+    "intra_document_reasoning": {
+      "channels": {
+        "cluster": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "exact": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "lexical": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "prose": {
+          "gold_largest": 0,
+          "gold_only_seeded": 39,
+          "gold_seeded": 39,
+          "noise_largest": 0,
+          "noise_only_seeded": 285,
+          "noise_seeded": 285
+        },
+        "vector": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        }
+      },
+      "gold_documents": 40,
+      "gold_documents_found": 39,
+      "gold_documents_with_ledger": 0,
+      "noise_documents": 285,
+      "row_kinds": {
+        "alias": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entity": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entry": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "facet": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "identifier": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "other": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "prose": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "summary": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "term": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        }
+      },
+      "rows_carried_gold": [],
+      "rows_carried_noise": []
+    },
+    "miscellaneous": {
+      "channels": {
+        "cluster": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "exact": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "lexical": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "prose": {
+          "gold_largest": 0,
+          "gold_only_seeded": 18,
+          "gold_seeded": 18,
+          "noise_largest": 0,
+          "noise_only_seeded": 133,
+          "noise_seeded": 133
+        },
+        "vector": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        }
+      },
+      "gold_documents": 20,
+      "gold_documents_found": 18,
+      "gold_documents_with_ledger": 0,
+      "noise_documents": 133,
+      "row_kinds": {
+        "alias": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entity": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entry": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "facet": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "identifier": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "other": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "prose": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "summary": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "term": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        }
+      },
+      "rows_carried_gold": [],
+      "rows_carried_noise": []
+    },
+    "project_related": {
+      "channels": {
+        "cluster": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "exact": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "lexical": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 3
+        },
+        "prose": {
+          "gold_largest": 0,
+          "gold_only_seeded": 144,
+          "gold_seeded": 144,
+          "noise_largest": 0,
+          "noise_only_seeded": 229,
+          "noise_seeded": 232
+        },
+        "vector": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        }
+      },
+      "gold_documents": 169,
+      "gold_documents_found": 144,
+      "gold_documents_with_ledger": 0,
+      "noise_documents": 232,
+      "row_kinds": {
+        "alias": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entity": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entry": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "facet": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "identifier": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "other": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "prose": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "summary": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "term": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        }
+      },
+      "rows_carried_gold": [],
+      "rows_carried_noise": []
+    },
+    "semantic": {
+      "channels": {
+        "cluster": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "exact": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "lexical": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        },
+        "prose": {
+          "gold_largest": 0,
+          "gold_only_seeded": 71,
+          "gold_seeded": 71,
+          "noise_largest": 0,
+          "noise_only_seeded": 948,
+          "noise_seeded": 948
+        },
+        "vector": {
+          "gold_largest": 0,
+          "gold_only_seeded": 0,
+          "gold_seeded": 0,
+          "noise_largest": 0,
+          "noise_only_seeded": 0,
+          "noise_seeded": 0
+        }
+      },
+      "gold_documents": 125,
+      "gold_documents_found": 71,
+      "gold_documents_with_ledger": 0,
+      "noise_documents": 948,
+      "row_kinds": {
+        "alias": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entity": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "entry": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "facet": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "identifier": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "other": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "prose": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "summary": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        },
+        "term": {
+          "gold_largest": 0,
+          "noise_largest": 0
+        }
+      },
+      "rows_carried_gold": [],
+      "rows_carried_noise": []
+    }
+  },
+  "channels": {
+    "cluster": {
+      "gold_largest": 0,
+      "gold_only_seeded": 0,
+      "gold_seeded": 0,
+      "noise_largest": 0,
+      "noise_only_seeded": 0,
+      "noise_seeded": 0
+    },
+    "exact": {
+      "gold_largest": 0,
+      "gold_only_seeded": 0,
+      "gold_seeded": 0,
+      "noise_largest": 0,
+      "noise_only_seeded": 0,
+      "noise_seeded": 0
+    },
+    "lexical": {
+      "gold_largest": 0,
+      "gold_only_seeded": 0,
+      "gold_seeded": 1,
+      "noise_largest": 0,
+      "noise_only_seeded": 0,
+      "noise_seeded": 4
+    },
+    "prose": {
+      "gold_largest": 0,
+      "gold_only_seeded": 571,
+      "gold_seeded": 572,
+      "noise_largest": 0,
+      "noise_only_seeded": 3298,
+      "noise_seeded": 3302
+    },
+    "vector": {
+      "gold_largest": 0,
+      "gold_only_seeded": 0,
+      "gold_seeded": 0,
+      "noise_largest": 0,
+      "noise_only_seeded": 0,
+      "noise_seeded": 0
+    }
+  },
+  "gold_documents": 741,
+  "gold_documents_found": 572,
+  "gold_documents_with_ledger": 0,
+  "hubs_excluded": [],
+  "noise_documents": 3302,
+  "row_kinds": {
+    "alias": {
+      "gold_largest": 0,
+      "noise_largest": 0
+    },
+    "entity": {
+      "gold_largest": 0,
+      "noise_largest": 0
+    },
+    "entry": {
+      "gold_largest": 0,
+      "noise_largest": 0
+    },
+    "facet": {
+      "gold_largest": 0,
+      "noise_largest": 0
+    },
+    "identifier": {
+      "gold_largest": 0,
+      "noise_largest": 0
+    },
+    "other": {
+      "gold_largest": 0,
+      "noise_largest": 0
+    },
+    "prose": {
+      "gold_largest": 0,
+      "noise_largest": 0
+    },
+    "summary": {
+      "gold_largest": 0,
+      "noise_largest": 0
+    },
+    "term": {
+      "gold_largest": 0,
+      "noise_largest": 0
+    }
+  },
+  "rows_carried_gold": [],
+  "rows_carried_noise": []
+}

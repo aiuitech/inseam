@@ -149,3 +149,9 @@ One database owner with eight independent answer sessions completed answers in
 judge charges unrecorded. Both workload mix and concurrency differ from the earlier
 50-question run. The existing full index was reused; vocabulary enrichment remains
 unmeasured. Stopped at the owner's gate: no 500-question extension or indexing resume.
+
+## Vocabulary-enriched recall comparison, 13 September 2026
+
+The owner authorized fresh vocabulary-enriched indexing and recall-only evaluation on BEIR NFCorpus and full EnterpriseRAG after the latest algorithm changes. The [comparison report](../benchmarks/reports/20260913-vocabulary-recall.md) records the methodology, controls, run identities, indexing observations, and completed results. No agent answers or LLM judging are involved; vocabulary grounding still uses model calls.
+
+BEIR Recall@10 is 18.764% after enrichment, versus 18.708% historically and 18.767% with the current Finder on the old index. These changes are within earlier retrieval variation and do not demonstrate improvement. All 323 test queries ran. Indexing took 9,118.744 seconds, chiefly 500 sequential grounding calls, and the settled index grew 58.2% to 63,832,129 bytes. The full EnterpriseRAG old-index control remains at 66.42% Recall@8. The owner abandoned fresh EnterpriseRAG enrichment after eight hours, before recall scoring. Both processes exited, and no restart is scheduled. Full enriched EnterpriseRAG recall remains unknown. The report records host-facet paging, common-word vocabulary, candidate-cap drops, and prolonged clustering as evidence for a later indexing investigation.
